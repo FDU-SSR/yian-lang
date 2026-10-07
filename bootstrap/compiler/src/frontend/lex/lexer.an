@@ -578,8 +578,12 @@ impl Lexer {
         let body = numeric_body(raw.as_str(), suffix.spelling());
         let value = self.parse_number<u64>(body, start)?;
         if value > suffix_max(suffix) {
-            let message = String.from(&"Integer literal exceeds maximum value for type ");
+            let message = String.from(&"Integer literal ");
             defer message.drop();
+            let digits = value.to_string_radix(10);
+            defer digits.drop();
+            message.push_str(digits.as_str());
+            message.push_str(" exceeds maximum value for type ");
             message.push_str(suffix.spelling());
             return Result<Token, LexError>.Err(self.fail(message.as_str(), start));
         }

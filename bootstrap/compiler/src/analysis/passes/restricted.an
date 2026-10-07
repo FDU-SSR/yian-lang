@@ -30,8 +30,8 @@ impl TryAstVisitor<AnalysisError> for RestrictedVisitor {
                 };
 
                 if restricted {
-                    return Result<WalkControl, AnalysisError>.Err(AnalysisError.user(DiagnosticCode.Access,
-                        Option<SourceSpan>.Some(SourceSpan(self.source, node.span)), "restricted operation is only allowed in trusted sources"));
+                    return Result<WalkControl, AnalysisError>.Err(AnalysisError.named(DiagnosticCode.Restricted,
+                        Option<SourceSpan>.Some(SourceSpan(self.source, node.span)), "restricted operation '@", kind.spelling(), "' is only allowed in the standard library"));
                 }
             },
             _ => {},

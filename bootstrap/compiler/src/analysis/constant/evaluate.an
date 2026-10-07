@@ -6,7 +6,7 @@ from compiler.analysis.constant.value import ConstValue, IntegerValue, IntegerWi
 from compiler.analysis.hir.node import HirNode, Builtin, Binary;
 from compiler.analysis.hir.store import HirStore;
 from compiler.analysis.ty.store import TypeStore;
-from compiler.diagnostics.model import DiagnosticCode, AnalysisError;
+from compiler.diagnostics.model import DiagnosticCode, AnalysisError, AnalysisErrorKind;
 from compiler.frontend.ast.atoms import BuiltinKind;
 from compiler.frontend.ast.operator import BinaryOperator, UnaryOperator;
 from std.core.ops import Index;
@@ -318,5 +318,7 @@ fn compare_result(op: BinaryOperator, relation: i32) -> bool {
 }
 
 fn failed(error: ConstEvalError, location: SourceSpan) -> AnalysisError {
-    AnalysisError.user(DiagnosticCode.Constant, Option<SourceSpan>.Some(location), error.message())
+    let problem = AnalysisError.user(DiagnosticCode.Constant, Option<SourceSpan>.Some(location), error.message());
+    if error == ConstEvalError.NotConstant { problem.kind = AnalysisErrorKind.NotConstant; }
+    problem
 }

@@ -7,7 +7,7 @@ from compiler.analysis.ty.display import type_text;
 from std.core.string import String;
 from compiler.common.ids import TypeId, NameId, ImplId;
 from compiler.common.location import SourceSpan;
-from compiler.diagnostics.model import AnalysisError, DiagnosticCode;
+from compiler.diagnostics.model import AnalysisError, AnalysisErrorKind, DiagnosticCode;
 from std.collections.hash_map import HashMap;
 from std.core.clone import Clone;
 from std.core.drop import Drop;
@@ -150,7 +150,9 @@ fn solve_trait(ctx: ResolutionContext&, target: TypeId, trait_id: TypeId, outer:
         index += 1;
     }
 
-    let selected = match select_candidate(&candidates, Option<SourceSpan>.Some(span))? {
+    let description = trait_description(ctx, trait_id, target)?;
+    defer description.drop();
+    let selected = match select_candidate(&candidates, Option<SourceSpan>.Some(span), description.as_str())? {
         Some(value) => value,
         None => return Result<bool, AnalysisError>.Ok(false),
     };
@@ -173,6 +175,24 @@ struct MethodCandidate {
     blanket: bool,
 }
 
+fn trait_description(ctx: ResolutionContext&, trait_id: TypeId, target: TypeId) -> Result<String, AnalysisError> {
+    let definition = match ctx.session.types.require(trait_id)? {
+        Nominal(id, _) => match ctx.session.types.definition(*id) {
+            Some(value) => value,
+            None => return Result<String, AnalysisError>.Err(AnalysisError.internal("trait diagnostic has an invalid definition ID")),
+        },
+        _ => return Result<String, AnalysisError>.Err(AnalysisError.internal("trait diagnostic requires a nominal trait")),
+    };
+    let message = String.from(&"trait '");
+    message.push_str(ctx.session.names.text(definition.header().name));
+    message.push_str("' for type '");
+    let target_name = type_text(ctx, target);
+    defer target_name.drop();
+    message.push_str(target_name.as_str());
+    message.push_str("'");
+    Result<String, AnalysisError>.Ok(message)
+}
+
 fn same_trait(left: Option<TypeId>, right: Option<TypeId>) -> bool {
     match left {
         Some(value) => match right {
@@ -184,7 +204,7 @@ fn same_trait(left: Option<TypeId>, right: Option<TypeId>) -> bool {
 
 // Ranking happens after collection so declaration order cannot turn a lower-priority
 // ambiguity into an error before an inherent or explicit implementation is seen.
-fn select_candidate(candidates: Vec<MethodCandidate>&, span: Option<SourceSpan>) -> Result<Option<TypeId>, AnalysisError> {
+fn select_candidate(candidates: Vec<MethodCandidate>&, span: Option<SourceSpan>, description: str) -> Result<Option<TypeId>, AnalysisError> {
     let selected = Option<TypeId>.None;
     for candidate in *candidates {
         let dominated = false;
@@ -201,7 +221,7 @@ fn select_candidate(candidates: Vec<MethodCandidate>&, span: Option<SourceSpan>)
         match selected {
             Some(method) => {
                 if method != candidate.method {
-                    return Result<Option<TypeId>, AnalysisError>.Err(AnalysisError.user(DiagnosticCode.TypeMismatch, span, "ambiguous implementation query"));
+                    return Result<Option<TypeId>, AnalysisError>.Err(AnalysisError.named(DiagnosticCode.Type, span, "Ambiguous implementation of ", description, ""));
                 }
             },
             None => {
@@ -226,8 +246,6 @@ pub fn lookup_method_with_generics(ctx: ResolutionContext&, target: TypeId, name
     let candidates = Vec<MethodCandidate>.new();
     defer candidates.drop();
     let index = 0u64;
-    let wrong_arity = false;
-    let matching_arity = false;
     let active = Vec<TraitQuery>.new();
     defer active.drop();
     let query_trait = match required {
@@ -253,6 +271,23 @@ pub fn lookup_method_with_generics(ctx: ResolutionContext&, target: TypeId, name
             continue;
         }
 
+        // An unrelated trait cannot contribute arity failures to a qualified call.
+        match required {
+            Some(trait_id) => match &record.trait_id {
+                Some(pattern) => {
+                    if !match_trait(&ctx.session.types, *pattern, trait_id, &substitutions) {
+                        index += 1;
+                        continue;
+                    }
+                },
+                None => {
+                    index += 1;
+                    continue;
+                },
+            },
+            None => {},
+        }
+
         match ctx.session.types.require(method)? {
             Nominal(definition, method_arguments) => {
                 let header = *ctx.session.types.definition(*definition).unwrap();
@@ -265,12 +300,10 @@ pub fn lookup_method_with_generics(ctx: ResolutionContext&, target: TypeId, name
                     Some(values) => {
                         let count = header.generic_count() - body.inherited_generics;
                         if values.len() > count {
-                            wrong_arity = true;
                             index += 1;
                             continue;
                         }
 
-                        matching_arity = true;
                         let position = 0u64;
                         while position < values.len() {
                             substitutions.insert(*header.generic(header.generic_count() - values.len() + position).unwrap(), values[position]);
@@ -338,22 +371,42 @@ pub fn lookup_method_with_generics(ctx: ResolutionContext&, target: TypeId, name
         index += 1;
     }
 
-    match select_candidate(&candidates, Option<SourceSpan>.Some(span))? {
+    let description = String.new();
+    defer description.drop();
+    let target_name = type_text(ctx, target);
+    defer target_name.drop();
+    match required {
+        Some(trait_id) => {
+            let trait_name = trait_description(ctx, trait_id, target)?;
+            defer trait_name.drop();
+            description.push_str(trait_name.as_str());
+        },
+        None => {
+            description.push_str("method '");
+            description.push_str(ctx.session.names.text(name));
+            description.push_str("' on ");
+            description.push_str(target_name.as_str());
+        },
+    }
+
+    match select_candidate(&candidates, Option<SourceSpan>.Some(span), description.as_str())? {
         Some(value) => Result<TypeId, AnalysisError>.Ok(value),
         None => {
-            if wrong_arity && !matching_arity {
-                return Result<TypeId, AnalysisError>.Err(AnalysisError.user(DiagnosticCode.GenericArguments,
-                    Option<SourceSpan>.Some(span), "method generic argument count mismatch"));
+            if required.is_some() {
+                let problem = AnalysisError.named(DiagnosticCode.Type,
+                    Option<SourceSpan>.Some(span), "No matching implementation of ", description.as_str(), "");
+                problem.kind = AnalysisErrorKind.NoCandidate;
+                return Result<TypeId, AnalysisError>.Err(problem);
             }
 
-            let message = String.from(&"method '");
+            let message = String.from(&"Unknown method call '");
             defer message.drop();
             message.push_str(ctx.session.names.text(name));
-            message.push_str("' is not implemented for ");
-            let target_name = type_text(ctx, target);
-            defer target_name.drop();
+            message.push_str("' on ");
             message.push_str(target_name.as_str());
-            Result<TypeId, AnalysisError>.Err(AnalysisError.user(DiagnosticCode.Undefined, Option<SourceSpan>.Some(span), message.as_str()))
+            let problem = AnalysisError.user(DiagnosticCode.NoSuchMethod, Option<SourceSpan>.Some(span), message.as_str());
+            problem.kind = AnalysisErrorKind.NoCandidate;
+            Result<TypeId, AnalysisError>.Err(problem)
         },
     }
 }

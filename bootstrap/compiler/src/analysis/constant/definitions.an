@@ -5,7 +5,7 @@ from compiler.analysis.hir.node import HirKind;
 from compiler.analysis.ty.relations import default_type;
 from compiler.analysis.resolution.types import resolve_type;
 from compiler.common.ids import SymbolId, HirId;
-from compiler.diagnostics.model import AnalysisError, DiagnosticCode;
+from compiler.diagnostics.model import AnalysisError, DiagnosticCode, AnalysisErrorKind;
 from std.core.option import Option;
 from std.core.drop import Drop;
 from std.core.result import Result;
@@ -19,7 +19,7 @@ pub fn evaluate_constant(ctx: ResolutionContext&, symbol: SymbolId, sizes: Optio
     let declaration = *ctx.for_symbol(symbol).unwrap();
 
     if declaration.state == DeclarationState.Resolving {
-        return Result<HirId, AnalysisError>.Err(ctx.error(declaration.unit, declaration.item.span, DiagnosticCode.Constant, "recursive constant definition"));
+        return Result<HirId, AnalysisError>.Err(ctx.error(declaration.unit, declaration.item.span, DiagnosticCode.Resolution, "Circular constant dependency"));
     }
 
     declaration.state = DeclarationState.Resolving;
@@ -45,7 +45,17 @@ pub fn evaluate_constant(ctx: ResolutionContext&, symbol: SymbolId, sizes: Optio
     };
     let converted = checker.coerce(lowered, type_id)?;
     let evaluator = ConstantEvaluator.new(&ctx.session.types, &ctx.session.hir, sizes);
-    let constant = evaluator.evaluate(converted)?;
+    let constant = match evaluator.evaluate(converted) {
+        Ok(value) => value,
+        Err(problem) => {
+            if problem.kind == AnalysisErrorKind.NotConstant {
+                problem.kind = AnalysisErrorKind.User;
+                problem.diagnostic.code = DiagnosticCode.Resolution;
+                return Result<HirId, AnalysisError>.Err(problem.with_message("constant initializer is not compile-time evaluable"));
+            }
+            return Result<HirId, AnalysisError>.Err(problem);
+        },
+    };
     let kind = match &constant.value {
         Integer(value) => HirKind.IntLiteral(*value),
         Float(value) => HirKind.FloatLiteral(*value),

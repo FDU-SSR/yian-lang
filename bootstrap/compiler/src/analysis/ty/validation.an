@@ -88,13 +88,13 @@ fn validate_inner(ctx: ResolutionContext&, type_id: TypeId, span: SourceSpan, vi
     if !visited.insert(type_id) { return Result<(), AnalysisError>.Ok(()); }
 
     if contains_ffi(&ctx.session.types, type_id, true) {
-        return Result<(), AnalysisError>.Err(AnalysisError.user(DiagnosticCode.TypeMismatch, Option<SourceSpan>.Some(span), "opaque C type must be used through cptr"));
+        return Result<(), AnalysisError>.Err(AnalysisError.user(DiagnosticCode.Type, Option<SourceSpan>.Some(span), "opaque C type must be used through cptr<T>"));
     }
 
     match ctx.session.types.require(type_id)? {
         Nominal(id, _) => {
             if ctx.session.types.definition(*id).unwrap().header().kind == NominalKind.Trait {
-                return Result<(), AnalysisError>.Err(AnalysisError.user(DiagnosticCode.TypeMismatch, Option<SourceSpan>.Some(span), "bare trait has no value representation; use a trait reference"));
+                return Result<(), AnalysisError>.Err(AnalysisError.user(DiagnosticCode.Type, Option<SourceSpan>.Some(span), "trait types are unsized; an unsized trait type requires a trait reference"));
             }
             let substitutions = instance_substitutions(ctx, type_id)?;
             defer substitutions.drop();
@@ -155,8 +155,8 @@ fn validate_inner(ctx: ResolutionContext&, type_id: TypeId, span: SourceSpan, vi
             let methods = object_methods(ctx, *trait_id)?;
             methods.drop();
         },
-        LiteralValue(_, _, _) | ConstGeneric(_, _) | ConstUnary(_, _) | ConstBinary(_, _, _) => return Result<(), AnalysisError>.Err(AnalysisError.user(DiagnosticCode.TypeMismatch, Option<SourceSpan>.Some(span), "constant argument is not a value type")),
-        Error => return Result<(), AnalysisError>.Err(AnalysisError.user(DiagnosticCode.TypeMismatch, Option<SourceSpan>.Some(span), "value type must be specified")),
+        LiteralValue(_, _, _) | ConstGeneric(_, _) | ConstUnary(_, _) | ConstBinary(_, _, _) => return Result<(), AnalysisError>.Err(AnalysisError.user(DiagnosticCode.Type, Option<SourceSpan>.Some(span), "constant argument is not a value type")),
+        Error => return Result<(), AnalysisError>.Err(AnalysisError.user(DiagnosticCode.Type, Option<SourceSpan>.Some(span), "value type must be specified")),
         _ => {},
     }
 
@@ -232,22 +232,22 @@ fn validate_callable(ctx: ResolutionContext&, parameters: Vec<Parameter>&, resul
     validate_value(ctx, result, span)?;
 
     if external && !c_abi_type(&ctx.session.types, result, true, false) {
-        return Result<(), AnalysisError>.Err(AnalysisError.user(DiagnosticCode.TypeMismatch, Option<SourceSpan>.Some(span), "extern result is not C ABI compatible"));
+        return Result<(), AnalysisError>.Err(AnalysisError.user(DiagnosticCode.Type, Option<SourceSpan>.Some(span), "extern C result requires C ABI scalar, cptr<T>, or void"));
     }
 
     if !ffi && contains_ffi(&ctx.session.types, result, false) {
-        return Result<(), AnalysisError>.Err(AnalysisError.user(DiagnosticCode.Access, Option<SourceSpan>.Some(span), "C type in a result requires an ffi function"));
+        return Result<(), AnalysisError>.Err(AnalysisError.user(DiagnosticCode.Type, Option<SourceSpan>.Some(span), "C ABI types require a private or pub(ffi) ffi fn signature"));
     }
 
     for parameter in *parameters {
         validate_value(ctx, parameter.type_id, span)?;
 
         if external && !c_abi_type(&ctx.session.types, parameter.type_id, false, false) {
-            return Result<(), AnalysisError>.Err(AnalysisError.user(DiagnosticCode.TypeMismatch, Option<SourceSpan>.Some(span), "extern parameter is not C ABI compatible"));
+            return Result<(), AnalysisError>.Err(AnalysisError.user(DiagnosticCode.Type, Option<SourceSpan>.Some(span), "extern C parameters require C ABI scalar or cptr<T>"));
         }
 
         if !ffi && contains_ffi(&ctx.session.types, parameter.type_id, false) {
-            return Result<(), AnalysisError>.Err(AnalysisError.user(DiagnosticCode.Access, Option<SourceSpan>.Some(span), "C type in a parameter requires an ffi function"));
+            return Result<(), AnalysisError>.Err(AnalysisError.user(DiagnosticCode.Type, Option<SourceSpan>.Some(span), "C ABI types require a private or pub(ffi) ffi fn signature"));
         }
     }
 

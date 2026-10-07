@@ -2,11 +2,13 @@ from compiler.analysis.lowering.checker import ExprChecker;
 from compiler.analysis.ty.trait_object import object_methods;
 from compiler.analysis.ty.method_lookup import lookup_method, implements;
 from compiler.analysis.ty.callable import signature, schedule;
+from compiler.analysis.ty.display import type_text;
 from compiler.analysis.hir.node import HirKind, TraitObjectCoerce, TraitObjectMethodCall;
 from compiler.common.ids import TypeId, HirId, NameId;
+from compiler.common.location import SourceSpan;
 from compiler.frontend.source import Span;
 from compiler.frontend.ast.operator import UnaryOperator;
-from compiler.diagnostics.model import AnalysisError;
+from compiler.diagnostics.model import AnalysisError, DiagnosticCode;
 from std.core.drop import Drop;
 from std.core.iter import Iterator, IntoIterator;
 from std.core.option import Option;
@@ -25,7 +27,7 @@ impl ExprChecker {
         match &node.kind {
             Unary(value) => {
                 if value.op == UnaryOperator.AddrOf && !self.ctx.session.hir.require(value.operand)?.is_place {
-                    return Result<HirId, AnalysisError>.Err(self.error(node.span.span, "trait object cannot borrow a temporary"));
+                    return Result<HirId, AnalysisError>.Err(self.error(node.span.span, "cannot create a trait object from a temporary value"));
                 }
             },
             _ => {},
@@ -35,7 +37,10 @@ impl ExprChecker {
         defer required.drop();
 
         if !implements(self.ctx, concrete, trait_id, node.span)? {
-            return Result<HirId, AnalysisError>.Err(self.error(node.span.span, "concrete type does not implement the object trait"));
+            let trait_name = type_text(self.ctx, trait_id);
+            defer trait_name.drop();
+            return Result<HirId, AnalysisError>.Err(AnalysisError.named(DiagnosticCode.Type,
+                Option<SourceSpan>.Some(node.span), "concrete type does not implement '", trait_name.as_str(), "'"));
         }
 
         let implementations = Vec<TypeId>.new();

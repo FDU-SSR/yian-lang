@@ -19,7 +19,7 @@ impl ExprChecker {
         }
 
         if !self.ffi_allowed && self.ffi_syntax(syntax)? {
-            return Result<TypeId, AnalysisError>.Err(self.error(syntax.span, "C ABI type syntax requires an ffi function"));
+            return Result<TypeId, AnalysisError>.Err(self.error(syntax.span, "C ABI types require an ffi fn"));
         }
         Result<TypeId, AnalysisError>.Ok(type_id)
     }

@@ -7,7 +7,7 @@ from compiler.common.ids import HirId, TypeId, SymbolId, DefId;
 from compiler.common.location import SourceSpan;
 from compiler.frontend.ast.operator import BinaryOperator, UnaryOperator;
 from compiler.frontend.source import Span;
-from compiler.diagnostics.model import AnalysisError, DiagnosticCode;
+from compiler.diagnostics.model import AnalysisError, AnalysisErrorKind, DiagnosticCode;
 from std.core.drop import Drop;
 from std.core.iter import Iterator, IntoIterator;
 from std.core.option import Option;
@@ -100,7 +100,7 @@ impl ExprChecker {
         let method = match lookup_method(self.ctx, self.type_of(value), name, Option<TypeId>.Some(required), self.ctx.span(self.unit, span)) {
             Ok(value) => value,
             Err(problem) => {
-                if problem.diagnostic.code == DiagnosticCode.Undefined {
+                if problem.kind == AnalysisErrorKind.NoCandidate {
                     problem.drop();
                     return Result<Option<HirId>, AnalysisError>.Ok(Option<HirId>.None);
                 }

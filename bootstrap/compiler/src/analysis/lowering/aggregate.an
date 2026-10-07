@@ -1,8 +1,11 @@
 from compiler.analysis.lowering.checker import ExprChecker;
+from std.core.string import String;
+from std.core.convert import From;
 from compiler.analysis.ty.substitution import infer, substitute;
 from compiler.analysis.ty.callable import instance_substitutions;
 from compiler.analysis.ty.aggregate import payload_fields;
 from compiler.analysis.ty.relations import default_type, has_literal, compatible;
+from compiler.analysis.ty.display import type_text;
 from compiler.analysis.ty.model import StructField, AccessMode, EnumVariant;
 from compiler.analysis.hir.node import HirKind, StructConstruct, VariantConstruct, FieldAccess, TupleAccess, Unary;
 from compiler.common.ids import TypeId, HirId, NameId, DefId;
@@ -23,7 +26,7 @@ impl ExprChecker {
 
             for arg in *args {
                 if arg.data.name.is_some() != named {
-                    return Result<HirId, AnalysisError>.Err(self.error(arg.span, "constructor arguments cannot mix named and positional fields"));
+                    return Result<HirId, AnalysisError>.Err(self.error(arg.span, "named and positional arguments cannot be mixed"));
                 }
             }
         }
@@ -116,7 +119,7 @@ impl ExprChecker {
 
             match substitutions.get(&generic) {
                 Some(value) => arguments.push(*value),
-                None => return Result<HirId, AnalysisError>.Err(self.ctx.error(self.unit, span, DiagnosticCode.GenericArguments, "cannot infer aggregate generic argument")),
+                None => return Result<HirId, AnalysisError>.Err(self.ctx.error(self.unit, span, DiagnosticCode.Inference, "cannot infer generic arguments for aggregate")),
             }
 
             index += 1;
@@ -233,7 +236,7 @@ impl ExprChecker {
 
                 match substitutions.get(&generic) {
                     Some(value) => arguments.push(*value),
-                    None => return Result<Option<HirId>, AnalysisError>.Err(self.ctx.error(self.unit, span, DiagnosticCode.GenericArguments, "cannot infer enum generic argument")),
+                    None => return Result<Option<HirId>, AnalysisError>.Err(self.ctx.error(self.unit, span, DiagnosticCode.Inference, "cannot infer generic arguments for enum")),
                 }
 
                 index += 1;
@@ -303,6 +306,16 @@ impl ExprChecker {
                                 return Result<HirId, AnalysisError>.Ok(self.node(span, field_type, self.ctx.session.hir.require(value)?.is_place, HirKind.FieldAccess(FieldAccess(value, copy))));
                             }
                         }
+
+                        let receiver_name = type_text(self.ctx, type_id);
+                        defer receiver_name.drop();
+                        let message = String.from(&"Struct '");
+                        defer message.drop();
+                        message.push_str(receiver_name.as_str());
+                        message.push_str("' has no field named '");
+                        message.push_str(name);
+                        message.push_str("'.");
+                        return Result<HirId, AnalysisError>.Err(self.ctx.error(self.unit, span, DiagnosticCode.NoSuchField, message.as_str()));
                     },
                     Enum(_) => {
                         let empty = Vec<Argument&>.new();
@@ -346,7 +359,7 @@ impl ExprChecker {
             _ => {},
         }
 
-        Result<HirId, AnalysisError>.Err(self.ctx.error(self.unit, span, DiagnosticCode.Undefined, "field does not exist"))
+        Result<HirId, AnalysisError>.Err(self.error(span, "field access is only supported on struct instances and enum types"))
     }
 
     pub fn check_field_access(definition: DefId, field: StructField, span: Span) -> Result<(), AnalysisError> {
@@ -370,6 +383,12 @@ impl ExprChecker {
             None => {},
         }
 
-        Result<(), AnalysisError>.Err(self.ctx.error(self.unit, span, DiagnosticCode.Access, "structure field is private"))
+        let message = String.from(&"Field '");
+        defer message.drop();
+        message.push_str(self.ctx.session.names.text(field.name));
+        message.push_str("' of struct '");
+        message.push_str(self.ctx.session.names.text(header.name));
+        message.push_str("' is private and cannot be accessed from unit");
+        Result<(), AnalysisError>.Err(self.ctx.error(self.unit, span, DiagnosticCode.Type, message.as_str()))
     }
 }

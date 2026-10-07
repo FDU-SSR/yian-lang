@@ -116,8 +116,9 @@ pub fn render(diagnostic: Diagnostic&, sources: Option<SourceManager&>) -> Resul
         }
     };
 
+    text.push_str(match diagnostic.severity { Error => "error[", Warning => "warning[", Note => "note[", });
     text.push_str(diagnostic.code.text());
-    text.push_str(": ");
+    text.push_str("]: ");
     text.push_str(diagnostic.message.as_str());
 
     match &diagnostic.location {

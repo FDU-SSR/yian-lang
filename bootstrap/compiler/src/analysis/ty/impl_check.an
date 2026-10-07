@@ -21,11 +21,11 @@ pub fn check_impls(ctx: ResolutionContext&) -> Result<(), AnalysisError> {
             Some(trait_id) => {
                 let trait_definition = match ctx.session.types.require(*trait_id)? {
                     Nominal(definition, _) => *definition,
-                    _ => return Result<(), AnalysisError>.Err(AnalysisError.user(DiagnosticCode.TypeMismatch, Option<SourceSpan>.Some(record.span), "impl target is not a trait")),
+                    _ => return Result<(), AnalysisError>.Err(AnalysisError.user(DiagnosticCode.Type, Option<SourceSpan>.Some(record.span), "impl target is not a trait")),
                 };
                 let trait_body = match ctx.session.types.complete_definition(trait_definition)? {
                     Trait(value) => value,
-                    _ => return Result<(), AnalysisError>.Err(AnalysisError.user(DiagnosticCode.TypeMismatch, Option<SourceSpan>.Some(record.span), "impl requires a trait definition")),
+                    _ => return Result<(), AnalysisError>.Err(AnalysisError.user(DiagnosticCode.Type, Option<SourceSpan>.Some(record.span), "impl requires a trait definition")),
                 };
 
                 for entry in trait_body.entries() {
@@ -61,7 +61,7 @@ pub fn check_impls(ctx: ResolutionContext&) -> Result<(), AnalysisError> {
                         Some(value) => *value,
                         None => {
                             if required_body.is_header {
-                                return Result<(), AnalysisError>.Err(AnalysisError.user(DiagnosticCode.TypeMismatch, Option<SourceSpan>.Some(record.span), "impl is missing a required trait method"));
+                                return Result<(), AnalysisError>.Err(AnalysisError.user(DiagnosticCode.Type, Option<SourceSpan>.Some(record.span), "impl is missing a required trait method"));
                             }
 
                             let default_method = substitute(&ctx.session.types, required, &substitutions)?;
@@ -78,7 +78,7 @@ pub fn check_impls(ctx: ResolutionContext&) -> Result<(), AnalysisError> {
                     let actual_own = actual_header.generic_count() - record.generics.len();
 
                     if required_own != actual_own {
-                        return Result<(), AnalysisError>.Err(AnalysisError.user(DiagnosticCode.GenericArguments, Option<SourceSpan>.Some(record.span), "trait method generic count mismatch"));
+                        return Result<(), AnalysisError>.Err(AnalysisError.user(DiagnosticCode.Type, Option<SourceSpan>.Some(record.span), "trait method generic count mismatch"));
                     }
 
                     let generic = 0u64;
@@ -95,7 +95,7 @@ pub fn check_impls(ctx: ResolutionContext&) -> Result<(), AnalysisError> {
                     };
 
                     if actual_body.parameters.len() != required_body.parameters.len() || actual_body.is_static != required_body.is_static {
-                        return Result<(), AnalysisError>.Err(AnalysisError.user(DiagnosticCode.TypeMismatch, Option<SourceSpan>.Some(record.span), "trait method signature mismatch"));
+                        return Result<(), AnalysisError>.Err(AnalysisError.user(DiagnosticCode.Type, Option<SourceSpan>.Some(record.span), "trait method signature mismatch"));
                     }
 
                     let parameter = 0u64;
@@ -104,20 +104,20 @@ pub fn check_impls(ctx: ResolutionContext&) -> Result<(), AnalysisError> {
                         let expected = substitute(&ctx.session.types, required_body.parameters[parameter].type_id, &substitutions)?;
 
                         if expected != actual_body.parameters[parameter].type_id {
-                            return Result<(), AnalysisError>.Err(AnalysisError.user(DiagnosticCode.TypeMismatch, Option<SourceSpan>.Some(record.span), "trait method parameter type mismatch"));
+                            return Result<(), AnalysisError>.Err(AnalysisError.user(DiagnosticCode.Type, Option<SourceSpan>.Some(record.span), "trait method parameter type mismatch"));
                         }
 
                         parameter += 1;
                     }
 
                     if substitute(&ctx.session.types, required_body.result, &substitutions)? != actual_body.result {
-                        return Result<(), AnalysisError>.Err(AnalysisError.user(DiagnosticCode.TypeMismatch, Option<SourceSpan>.Some(record.span), "trait method return type mismatch"));
+                        return Result<(), AnalysisError>.Err(AnalysisError.user(DiagnosticCode.Type, Option<SourceSpan>.Some(record.span), "trait method return type mismatch"));
                     }
                 }
 
                 for entry in record.methods.entries() {
                     if !trait_body.contains(entry[0]) {
-                        return Result<(), AnalysisError>.Err(AnalysisError.user(DiagnosticCode.TypeMismatch, Option<SourceSpan>.Some(record.span), "impl declares a method absent from its trait"));
+                        return Result<(), AnalysisError>.Err(AnalysisError.user(DiagnosticCode.Type, Option<SourceSpan>.Some(record.span), "impl declares a method absent from its trait"));
                     }
                 }
             },

@@ -40,7 +40,7 @@ pub fn parameters(ctx: ResolutionContext&, unit: UnitId, scope: ScopeId, syntax:
                 let type_id = resolve_type(ctx, unit, scope, value.data.var_type)?;
 
                 if type_id == ctx.primitives.error {
-                    return Result<Vec<Parameter>, AnalysisError>.Err(ctx.error(unit, value.span, DiagnosticCode.TypeMismatch, "parameter type cannot be inferred"));
+                    return Result<Vec<Parameter>, AnalysisError>.Err(ctx.error(unit, value.span, DiagnosticCode.Type, "parameter type cannot be inferred"));
                 }
 
                 result.push(Parameter(name, type_id, Option<SourceSpan>.Some(ctx.span(unit, value.span))));

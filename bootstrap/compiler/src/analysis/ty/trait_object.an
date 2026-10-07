@@ -103,18 +103,18 @@ pub fn store_object_methods(store: TypeStore&, trait_id: TypeId) -> Result<Vec<T
         }
 
         if header.generic_count() != trait_header.generic_count() + 1 {
-            return Result<Vec<TypeId>, AnalysisError>.Err(AnalysisError.user(DiagnosticCode.TypeMismatch, Option<SourceSpan>.Some(header.header().span), "generic instance methods cannot be used through trait objects"));
+            return Result<Vec<TypeId>, AnalysisError>.Err(AnalysisError.user(DiagnosticCode.Type, Option<SourceSpan>.Some(header.header().span), "trait is not object-safe: generic instance methods cannot be used through trait objects"));
         }
 
         let self_type = *header.generic(trait_header.generic_count()).unwrap();
 
         if mentions(store, callable.result, self_type)? {
-            return Result<Vec<TypeId>, AnalysisError>.Err(AnalysisError.user(DiagnosticCode.TypeMismatch, Option<SourceSpan>.Some(header.header().span), "trait object method returns concrete Self"));
+            return Result<Vec<TypeId>, AnalysisError>.Err(AnalysisError.user(DiagnosticCode.Type, Option<SourceSpan>.Some(header.header().span), "trait is not object-safe: method returns concrete Self"));
         }
 
         for parameter in callable.parameters {
             if mentions(store, parameter.type_id, self_type)? {
-                return Result<Vec<TypeId>, AnalysisError>.Err(AnalysisError.user(DiagnosticCode.TypeMismatch, Option<SourceSpan>.Some(header.header().span), "trait object method parameter uses concrete Self"));
+                return Result<Vec<TypeId>, AnalysisError>.Err(AnalysisError.user(DiagnosticCode.Type, Option<SourceSpan>.Some(header.header().span), "trait object method parameter uses concrete Self"));
             }
         }
 

@@ -23,7 +23,7 @@ impl ExprChecker {
         let initializer = match &self.ctx.session.hir.require(value)?.kind {
             Ty => {
                 if !is_zst(self.ctx, element_type)? {
-                    return Result<HirId, AnalysisError>.Err(self.error(span, "uninitialized dynamic allocation requires a restricted allocation builtin"));
+                    return Result<HirId, AnalysisError>.Err(self.error(span, "uninitialized heap allocation is written '@alloc<T>(n)'"));
                 }
 
                 Option<HirId>.None
@@ -109,7 +109,7 @@ impl ExprChecker {
         let length = match &constant.value {
             Integer(value) => {
                 if value.is_negative() {
-                    return Result<HirId, AnalysisError>.Err(self.error(span, "array length must be nonnegative"));
+                    return Result<HirId, AnalysisError>.Err(self.error(span, "array length must be a non-negative integer"));
                 }
 
                 value.raw_bits()

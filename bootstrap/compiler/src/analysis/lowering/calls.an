@@ -5,6 +5,7 @@ from compiler.analysis.ty.relations import compatible, default_type, is_numeric,
 from compiler.analysis.ty.validation import contains_ffi;
 from compiler.analysis.hir.node import HirKind, Invoke, Cast, Call as HirCall, MethodCall as HirMethodCall;
 from compiler.common.ids import HirId, TypeId;
+from compiler.common.location import SourceSpan;
 from compiler.frontend.ast.node import Expr, Argument;
 from compiler.frontend.source import Span;
 from compiler.diagnostics.model import DiagnosticCode, AnalysisError;
@@ -41,7 +42,7 @@ impl ExprChecker {
 
         if is_numeric(self.ctx, type_id) || type_id == self.ctx.primitives.character {
             if !type_expression {
-                return Result<HirId, AnalysisError>.Err(self.error(span, "scalar conversion requires a type expression"));
+                return Result<HirId, AnalysisError>.Err(self.error(span, "expression is not callable"));
             }
             if args.len() != 1 {
                 return Result<HirId, AnalysisError>.Err(self.error(span, "scalar conversion requires one argument"));
@@ -78,7 +79,8 @@ impl ExprChecker {
 
     fn invoke(span: Span, target: HirId, parameters: Vec<TypeId>&, result: TypeId, args: Vec<Argument&>&) -> Result<HirId, AnalysisError> {
         if parameters.len() != args.len() {
-            return Result<HirId, AnalysisError>.Err(self.error(span, "callable argument count mismatch"));
+            return Result<HirId, AnalysisError>.Err(AnalysisError.arity(Option<SourceSpan>.Some(self.ctx.span(self.unit, span)),
+                "function pointer", parameters.len(), args.len(), false));
         }
 
         let values = Vec<HirId>.new();
@@ -121,7 +123,8 @@ impl ExprChecker {
         };
 
         if args.len() != definition.parameters.len() {
-            return Result<HirId, AnalysisError>.Err(self.error(span, "function argument count mismatch"));
+            return Result<HirId, AnalysisError>.Err(AnalysisError.arity(Option<SourceSpan>.Some(self.ctx.span(self.unit, span)),
+                self.ctx.session.names.text(self.ctx.session.types.definition(nominal).unwrap().header().name), definition.parameters.len(), args.len(), false));
         }
 
         let values = Vec<HirId>.new();
@@ -158,7 +161,8 @@ impl ExprChecker {
         };
 
         if arguments.len() != definition.parameters.len() {
-            return Result<HirId, AnalysisError>.Err(self.error(span, "function argument count mismatch"));
+            return Result<HirId, AnalysisError>.Err(AnalysisError.arity(Option<SourceSpan>.Some(self.ctx.span(self.unit, span)),
+                self.ctx.session.names.text(self.ctx.session.types.definition(nominal).unwrap().header().name), definition.parameters.len(), arguments.len(), false));
         }
 
         if definition.ffi_only && !self.ffi_allowed {
@@ -212,7 +216,7 @@ impl ExprChecker {
 
             match substitutions.get(&generic) {
                 Some(value) => actual_arguments.push(*value),
-                None => return Result<HirId, AnalysisError>.Err(self.ctx.error(self.unit, span, DiagnosticCode.GenericArguments, "cannot infer generic argument")),
+                None => return Result<HirId, AnalysisError>.Err(self.ctx.error(self.unit, span, DiagnosticCode.Inference, "cannot infer generic arguments for function call")),
             }
 
             index += 1;

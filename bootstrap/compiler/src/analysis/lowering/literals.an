@@ -8,6 +8,8 @@ from compiler.analysis.constant.integer import cast_integer, integer_fits;
 from compiler.analysis.constant.floating import round_float;
 from compiler.analysis.constant.definitions import evaluate_constant;
 from compiler.common.ids import HirId;
+from compiler.common.location import SourceSpan;
+from std.core.option import Option;
 from compiler.frontend.ast.node import Literal;
 from compiler.frontend.source import Span;
 from compiler.frontend.lex.token import IntSuffix;
@@ -88,7 +90,7 @@ impl ExprChecker {
     fn identifier(span: Span, name: str) -> Result<HirId, AnalysisError> {
         if name == "c_int" || name == "c_uint" || name == "c_size" || name == "c_char" {
             if !self.ffi_allowed {
-                return Result<HirId, AnalysisError>.Err(self.error(span, "C ABI conversion requires an ffi function"));
+                return Result<HirId, AnalysisError>.Err(self.error(span, "extern C function calls require an ffi fn"));
             }
 
             let width = if name == "c_char" {
@@ -112,7 +114,8 @@ impl ExprChecker {
         let interned = self.ctx.session.names.intern(name);
         let symbol = match self.ctx.session.symbols.lookup(self.scope, interned) {
             Some(value) => value,
-            None => return Result<HirId, AnalysisError>.Err(self.ctx.error(self.unit, span, DiagnosticCode.Undefined, "unknown name")),
+            None => return Result<HirId, AnalysisError>.Err(AnalysisError.named(DiagnosticCode.Undefined,
+                Option<SourceSpan>.Some(self.ctx.span(self.unit, span)), "Unknown identifier '", name, "'")),
         };
         let record = *self.ctx.session.symbols.get(symbol).unwrap();
         let type_id = record.type_id;

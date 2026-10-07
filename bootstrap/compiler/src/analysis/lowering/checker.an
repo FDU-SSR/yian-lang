@@ -1,5 +1,6 @@
 from compiler.analysis.resolution.context import ResolutionContext;
 from compiler.analysis.ty.relations import compatible;
+from compiler.analysis.ty.display import type_text;
 from compiler.analysis.symbol.model import Symbol, SymbolKind;
 from compiler.analysis.hir.node import HirNode, HirKind, Block as HirBlock, Cast;
 from compiler.analysis.constant.evaluate import ConstantEvaluator, TypeSizeProvider;
@@ -15,6 +16,8 @@ from std.core.iter import Iterator, IntoIterator;
 from std.core.option import Option;
 from std.core.result import Result;
 from std.core.vec import Vec;
+from std.core.string import String;
+from std.core.convert import From;
 
 // The checker owns no session data. Lexical state is restored by defer on every error path.
 pub struct ExprChecker {
@@ -82,7 +85,7 @@ impl ExprChecker {
     }
 
     fn error(span: Span, message: str) -> AnalysisError {
-        self.ctx.error(self.unit, span, DiagnosticCode.TypeMismatch, message)
+        self.ctx.error(self.unit, span, DiagnosticCode.Type, message)
     }
 
     pub fn coerce(id: HirId, expected: TypeId) -> Result<HirId, AnalysisError> {
@@ -97,7 +100,17 @@ impl ExprChecker {
         }
 
         if !compatible(self.ctx, node.type_id, expected) {
-            return Result<HirId, AnalysisError>.Err(self.error(node.span.span, "incompatible expression type"));
+            let wanted = type_text(self.ctx, expected);
+            defer wanted.drop();
+            let actual = type_text(self.ctx, node.type_id);
+            defer actual.drop();
+            let message = String.from(&"Expected type '");
+            defer message.drop();
+            message.push_str(wanted.as_str());
+            message.push_str("' but got '");
+            message.push_str(actual.as_str());
+            message.push_str("'");
+            return Result<HirId, AnalysisError>.Err(self.ctx.error(self.unit, node.span.span, DiagnosticCode.TypeMismatch, message.as_str()));
         }
 
         if node.type_id == self.ctx.primitives.integer_literal && self.constant_shape(id)? {
@@ -155,7 +168,8 @@ impl ExprChecker {
             match self.ctx.session.symbols.lookup(self.scope, interned) {
                 Some(existing) => {
                     if self.ctx.session.symbols.get(existing).unwrap().kind == SymbolKind.Parameter {
-                        return Result<SymbolId, AnalysisError>.Err(self.ctx.error(self.unit, span, DiagnosticCode.Duplicate, "pattern binding duplicates a function parameter"));
+                        return Result<SymbolId, AnalysisError>.Err(AnalysisError.named(DiagnosticCode.Type,
+                            Option<SourceSpan>.Some(self.ctx.span(self.unit, span)), "Variable '", name, "' is already defined in the current scope"));
                     }
                 },
                 None => {},

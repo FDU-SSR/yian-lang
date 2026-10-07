@@ -23,8 +23,25 @@ pub enum DiagnosticCode {
     Source,
     Duplicate,
     Undefined,
+    UnknownType,
+    ImportNotFound,
+    NotPublic,
+    NotAType,
+    ImportEntry,
+    UnknownPackage,
+    NotDependency,
+    NotModule,
+    Resolution,
     Access,
     TypeMismatch,
+    Inference,
+    NoSuchField,
+    NoSuchMethod,
+    UnsupportedOperator,
+    CircularAlias,
+    RecursiveStorage,
+    Type,
+    Restricted,
     ControlFlow,
     Coverage,
     Uninitialized,
@@ -49,12 +66,29 @@ impl DiagnosticCode {
             ReservedWord => "E204",
             Syntax => "E299",
             Source => "E399",
-            Duplicate => "E401",
-            Undefined => "E402",
-            Access => "E403",
-            TypeMismatch => "E404",
-            ControlFlow => "E406",
-            Coverage => "E501",
+            Duplicate => "E303",
+            Undefined => "E301",
+            UnknownType => "E302",
+            ImportNotFound => "E304",
+            NotPublic => "E305",
+            NotAType => "E306",
+            ImportEntry => "E307",
+            UnknownPackage => "E308",
+            NotDependency => "E309",
+            NotModule => "E310",
+            Resolution => "E399",
+            Access => "E399",
+            TypeMismatch => "E401",
+            Inference => "E402",
+            NoSuchField => "E403",
+            NoSuchMethod => "E404",
+            UnsupportedOperator => "E406",
+            CircularAlias => "E407",
+            RecursiveStorage => "E599",
+            Type => "E499",
+            ControlFlow => "E499",
+            Restricted => "E501",
+            Coverage => "E504",
             Uninitialized => "E502",
             UnreachablePattern => "W501",
             Unsupported => "E598",
@@ -73,6 +107,8 @@ pub enum Severity {
 
 pub enum AnalysisErrorKind {
     User,
+    NotConstant,
+    NoCandidate,
     Internal,
     Unsupported,
 }
@@ -172,8 +208,39 @@ impl AnalysisError {
         *self
     }
 
+    // The new buffer is independent before the previous owned message is released.
+    pub fn with_message(message: str) -> Self {
+        let owned = String.from(&message);
+        self.diagnostic.message.drop();
+        self.diagnostic.message = owned;
+        *self
+    }
+
     static pub fn user(code: DiagnosticCode, location: Option<SourceSpan>, message: str) -> Self {
         Self(AnalysisErrorKind.User, Diagnostic.new(code, Severity.Error, location, message))
+    }
+
+    // The diagnostic copies the completed text and owns it independently of all inputs.
+    static pub fn named(code: DiagnosticCode, location: Option<SourceSpan>, prefix: str, name: str, suffix: str) -> Self {
+        let message = String.from(&prefix);
+        defer message.drop();
+        message.push_str(name);
+        message.push_str(suffix);
+        Self.user(code, location, message.as_str())
+    }
+
+    static pub fn arity(location: Option<SourceSpan>, subject: str, expected: u64, actual: u64, generic: bool) -> Self {
+        let message = String.from(&subject);
+        defer message.drop();
+        let wanted = expected.to_string();
+        defer wanted.drop();
+        let provided = actual.to_string();
+        defer provided.drop();
+        message.push_str(" expects ");
+        message.push_str(wanted.as_str());
+        message.push_str(if generic { " generic arguments, got " } else { " arguments, got " });
+        message.push_str(provided.as_str());
+        Self.user(DiagnosticCode.GenericArguments, location, message.as_str())
     }
 
     static pub fn internal(message: str) -> Self {

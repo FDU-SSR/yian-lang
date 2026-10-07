@@ -116,7 +116,7 @@ impl ExprChecker {
                     };
 
                     if !direct_address {
-                        return Result<HirId, AnalysisError>.Err(self.error(binding.span, "pointer values cannot be destructured; use the address of a place"));
+                        return Result<HirId, AnalysisError>.Err(self.error(binding.span, "Pointer values cannot be destructured; use the address of a place"));
                     }
 
                     expected = self.ctx.session.types.reference(*inner);
@@ -131,7 +131,7 @@ impl ExprChecker {
                 let body = self.block(*branch)?;
 
                 if self.type_of(body) != self.ctx.primitives.never {
-                    return Result<HirId, AnalysisError>.Err(self.error(branch.span, "let-else branch must not return normally"));
+                    return Result<HirId, AnalysisError>.Err(self.error(branch.span, "else block of a pattern declaration must diverge"));
                 }
 
                 Option<HirId>.Some(body)
@@ -494,7 +494,7 @@ impl ExprChecker {
                         }
                     } else {
                         if names.len() != first.len() {
-                            return Result<PatternId, AnalysisError>.Err(self.error(span, "or-pattern alternatives bind different names"));
+                            return Result<PatternId, AnalysisError>.Err(self.error(span, "OR alternatives must bind the same names"));
                         }
 
                         let replacements = HashMap<SymbolId, SymbolId>.new();
@@ -503,11 +503,11 @@ impl ExprChecker {
                         for entry in names.entries() {
                             let original = match first.get(entry[0]) {
                                 Some(value) => *value,
-                                None => return Result<PatternId, AnalysisError>.Err(self.error(span, "or-pattern alternatives bind different names")),
+                                None => return Result<PatternId, AnalysisError>.Err(self.error(span, "OR alternatives must bind the same names")),
                             };
 
                             if self.ctx.session.symbols.get(*entry[1]).unwrap().type_id != self.ctx.session.symbols.get(original).unwrap().type_id {
-                                return Result<PatternId, AnalysisError>.Err(self.error(span, "or-pattern binding types differ"));
+                                return Result<PatternId, AnalysisError>.Err(self.error(span, "OR binding has a different type or mode"));
                             }
 
                             replacements.insert(*entry[1], original);
@@ -539,7 +539,7 @@ impl ExprChecker {
                 };
 
                 if low > high {
-                    return Result<PatternId, AnalysisError>.Err(self.error(span, "range lower bound exceeds upper bound"));
+                    return Result<PatternId, AnalysisError>.Err(self.error(span, "Range lower bound exceeds upper bound"));
                 }
 
                 let end = Boundary.Finite(high).next();

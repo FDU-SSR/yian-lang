@@ -29,7 +29,7 @@ fn attributes(ctx: ResolutionContext&, unit: UnitId, item: Item&, attrs: Vec<Att
     for attr in *attrs {
         for previous in seen {
             if *previous == attr.data.kind {
-                return Result<(), AnalysisError>.Err(ctx.error(unit, attr.span, DiagnosticCode.Duplicate, "duplicate declaration modifier"));
+                return Result<(), AnalysisError>.Err(ctx.error(unit, attr.span, DiagnosticCode.Syntax, "Duplicate declaration modifier"));
             }
         }
 
@@ -142,7 +142,8 @@ fn collect_named(ctx: ResolutionContext&, unit: UnitId, item: Item&, name: Ident
         has_attr(attrs, AttrKind.PubFfi), Option<SymbolId>.None, definition));
 
     if !ctx.session.symbols.bind(parent, name_id, symbol)? {
-        return Result<(), AnalysisError>.Err(ctx.error(unit, name.span, DiagnosticCode.Duplicate, "duplicate symbol name"));
+        return Result<(), AnalysisError>.Err(AnalysisError.named(DiagnosticCode.Duplicate,
+            Option<SourceSpan>.Some(ctx.span(unit, name.span)), "Duplicate symbol name: ", name.data.name.as_str(), ""));
     }
 
     ctx.add(Declaration(item, unit, scope, symbol, definition, DeclarationState.Declared));

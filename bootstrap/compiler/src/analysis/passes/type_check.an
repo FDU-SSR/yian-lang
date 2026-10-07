@@ -66,7 +66,7 @@ pub fn check_procedures(ctx: ResolutionContext&, options: AnalysisOptions&) -> R
                         match signature {
                             Function(value) => {
                                 if generics.len() != 0 || value.parameters.len() != 0 || value.result != ctx.primitives.void {
-                                    return Result<AnalysisOutput, AnalysisError>.Err(ctx.error(declaration.unit, name.span, DiagnosticCode.TypeMismatch, "main must have no parameters, be nongeneric, and return void"));
+                                    return Result<AnalysisOutput, AnalysisError>.Err(ctx.error(declaration.unit, name.span, DiagnosticCode.Type, "main must have no parameters, be nongeneric, and return void"));
                                 }
                             },
                             _ => {},

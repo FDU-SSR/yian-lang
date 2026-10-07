@@ -222,7 +222,7 @@ impl AssignmentChecker {
         match self.place(id, state)? {
             Some(place) => {
                 if !self.assigned(place, state)? {
-                    return Result<(), AnalysisError>.Err(AnalysisError.user(DiagnosticCode.Uninitialized, Option<SourceSpan>.Some(self.session.hir.require(id)?.span), "variable may be uninitialized"));
+                    return Result<(), AnalysisError>.Err(self.uninitialized(id)?);
                 }
             },
             None => {},
@@ -291,6 +291,24 @@ impl AssignmentChecker {
         Result<(), AnalysisError>.Ok(())
     }
 
+    fn uninitialized(id: HirId) -> Result<AnalysisError, AnalysisError> {
+        let original = self.session.hir.require(id)?;
+        let current = id;
+        loop {
+            match &self.session.hir.require(current)?.kind {
+                Var(symbol) => {
+                    let record = self.session.symbols.get(*symbol).unwrap();
+                    return Result<AnalysisError, AnalysisError>.Ok(AnalysisError.named(DiagnosticCode.Uninitialized,
+                        Option<SourceSpan>.Some(original.span), "variable '", self.session.names.text(record.name),
+                        "' is used before it is definitely assigned"));
+                },
+                FieldAccess(value) => current = value.receiver,
+                TupleAccess(value) => current = value.receiver,
+                _ => return Result<AnalysisError, AnalysisError>.Err(AnalysisError.internal("uninitialized place has no root symbol")),
+            }
+        }
+    }
+
     fn flush(base: u64, state: FlowState&) -> Result<(), AnalysisError> {
         // Deferred assignments do not establish facts for the enclosing expression.
         let deferred_state = state.snapshot();
@@ -327,8 +345,7 @@ impl AssignmentChecker {
         match &node.kind {
             Var(symbol) => {
                 if !self.assigned(self.root(*symbol), state)? {
-                    return Result<(), AnalysisError>.Err(AnalysisError.user(DiagnosticCode.Uninitialized,
-                        Option<SourceSpan>.Some(node.span), "variable may be uninitialized"));
+                    return Result<(), AnalysisError>.Err(self.uninitialized(id)?);
                 }
             },
             Block(value) => {

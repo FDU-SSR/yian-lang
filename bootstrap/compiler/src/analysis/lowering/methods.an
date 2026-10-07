@@ -7,7 +7,7 @@ from compiler.common.ids import HirId, TypeId;
 from compiler.frontend.ast.node import Expr, TypeSyntax, Argument;
 from compiler.frontend.ast.operator import UnaryOperator;
 from compiler.frontend.source import Span;
-from compiler.diagnostics.model import AnalysisError, DiagnosticCode;
+from compiler.diagnostics.model import AnalysisError, AnalysisErrorKind, DiagnosticCode;
 from std.core.clone import Clone;
 from std.core.drop import Drop;
 from std.core.iter import Iterator, IntoIterator;
@@ -15,6 +15,9 @@ from std.core.option import Option;
 from std.core.result import Result;
 from std.core.vec import Vec;
 from std.collections.hash_set import HashSet;
+from compiler.analysis.ty.display import type_text;
+from std.core.string import String;
+from std.core.convert import From;
 
 impl ExprChecker {
     pub fn method(span: Span, receiver: Expr&, spelling: str, generics: Vec<TypeSyntax&>&, args: Vec<Argument&>&) -> Result<HirId, AnalysisError> {
@@ -56,12 +59,22 @@ impl ExprChecker {
         if static_call {
             match self.ctx.session.types.require(receiver_type)? {
                 Nominal(id, _) => match self.ctx.session.types.complete_definition(*id)? {
-                    Trait(_) => {
+                    Trait(methods) => {
                         if generics.len() == 0 {
-                            return Result<HirId, AnalysisError>.Err(self.error(span, "trait static call requires a concrete Self argument"));
+                            return Result<HirId, AnalysisError>.Err(self.error(span, "trait static call requires an explicit Self type"));
                         }
 
                         required = Option<TypeId>.Some(receiver_type);
+                        let declared = match methods.get(&name) {
+                            Some(value) => *value,
+                            None => return Result<HirId, AnalysisError>.Err(self.error(span, "Unknown trait method")),
+                        };
+                        let declared_signature = signature(self.ctx, declared)?;
+                        defer declared_signature.drop();
+                        if !declared_signature.is_static {
+                            return Result<HirId, AnalysisError>.Err(self.error(span, "trait-qualified calls require a static method"));
+                        }
+
                         receiver_type = self.local_type(generics[0])?;
                         generic_start = 1;
                     },
@@ -129,7 +142,17 @@ impl ExprChecker {
                     break;
                 },
                 Err(problem) => {
-                    if static_call || problem.diagnostic.code != DiagnosticCode.Undefined {
+                    if static_call && problem.diagnostic.code == DiagnosticCode.NoSuchMethod {
+                        let message = String.from(&"Unknown static method call '");
+                        defer message.drop();
+                        message.push_str(spelling);
+                        message.push_str("' on ");
+                        let receiver_name = type_text(self.ctx, receiver_type);
+                        defer receiver_name.drop();
+                        message.push_str(receiver_name.as_str());
+                        return Result<HirId, AnalysisError>.Err(problem.with_message(message.as_str()));
+                    }
+                    if static_call || problem.kind != AnalysisErrorKind.NoCandidate {
                         return Result<HirId, AnalysisError>.Err(problem);
                     }
 
@@ -167,7 +190,7 @@ impl ExprChecker {
         }
 
         if static_call {
-            return Result<HirId, AnalysisError>.Err(self.error(span, "instance method requires a receiver"));
+            return Result<HirId, AnalysisError>.Err(self.error(span, "trait-qualified calls require a static method"));
         }
 
         receiver_id = self.receiver_place(span, receiver_id, &prefix)?;

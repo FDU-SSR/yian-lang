@@ -34,6 +34,29 @@ fn append(ctx: ResolutionContext&, id: TypeId, text: String&, depth: u64) {
             append(ctx, *length, text, depth + 1);
             text.push_str("]");
         },
+        Tuple(elements) => {
+            text.push_str("(");
+            let index = 0u64;
+            for element in *elements {
+                if index != 0 { text.push_str(", "); }
+                append(ctx, *element, text, depth + 1);
+                index += 1;
+            }
+            if elements.len() == 1 { text.push_str(","); }
+            text.push_str(")");
+        },
+        FunctionPointer(parameters, result) => {
+            text.push_str("fn(");
+            let index = 0u64;
+            for parameter in *parameters {
+                if index != 0 { text.push_str(", "); }
+                append(ctx, *parameter, text, depth + 1);
+                index += 1;
+            }
+            text.push_str(") -> ");
+            append(ctx, *result, text, depth + 1);
+        },
+        CScalar(_, _, name) | Opaque(name, _) => text.push_str(ctx.session.names.text(*name)),
         Nominal(definition, arguments) => {
             text.push_str(ctx.session.names.text(ctx.session.types.definition(*definition).unwrap().header().name));
 

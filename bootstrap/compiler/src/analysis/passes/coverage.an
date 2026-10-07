@@ -863,7 +863,7 @@ impl HirVisitor for CoverageChecker {
                 defer wildcard.drop();
 
                 if self.useful(&rows, &wildcard, &types)? {
-                    return Result<WalkControl, AnalysisError>.Err(AnalysisError.user(DiagnosticCode.Coverage, Option<SourceSpan>.Some(node.span), "match is not exhaustive"));
+                    return Result<WalkControl, AnalysisError>.Err(AnalysisError.user(DiagnosticCode.Coverage, Option<SourceSpan>.Some(node.span), "non-exhaustive match"));
                 }
             },
             PatternLet(value) => {
@@ -882,7 +882,8 @@ impl HirVisitor for CoverageChecker {
                     types.push(self.ctx.session.hir.require(value.value)?.type_id);
 
                     if self.useful(&rows, &wildcard, &types)? {
-                        return Result<WalkControl, AnalysisError>.Err(AnalysisError.user(DiagnosticCode.Coverage, Option<SourceSpan>.Some(node.span), "refutable binding requires an else branch"));
+                        return Result<WalkControl, AnalysisError>.Err(AnalysisError.user(DiagnosticCode.Coverage,
+                            Option<SourceSpan>.Some(node.span), if value.is_parameter { "parameter pattern may fail" } else { "let pattern may fail" }));
                     }
                 }
             },

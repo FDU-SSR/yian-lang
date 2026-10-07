@@ -63,6 +63,7 @@ impl ExprChecker {
                             let literal = self.node(node.span.span, expected, false, HirKind.FloatLiteral(integer_float(*integer)));
                             return Result<Option<HirId>, AnalysisError>.Ok(Option<HirId>.Some(literal));
                         },
+                        Bool => return Result<Option<HirId>, AnalysisError>.Err(self.error(node.span.span, "cannot coerce integer literal to 'bool'")),
                         _ => {},
                     }
                 }
@@ -184,7 +185,12 @@ impl ExprChecker {
         let bitcast = match actual {
             Pointer(inner) => match target {
                 Reference(value) => *inner == *value,
-                Slice(value) => !self.ctx.session.raw_pointers && *inner == *value,
+                Slice(value) => {
+                    if self.ctx.session.raw_pointers && *inner == *value {
+                        return Result<Option<HirId>, AnalysisError>.Err(self.error(node.span.span, "implicit pointer-to-slice conversion is not supported"));
+                    }
+                    !self.ctx.session.raw_pointers && *inner == *value
+                },
                 Pointer(value) => match self.ctx.session.types.require(*inner)? {
                     Array(element, _) => *element == *value, _ => false
                 },

@@ -52,8 +52,9 @@ fn check_value(ctx: ResolutionContext&, type_id: TypeId, active_types: HashSet<T
                     active_definitions.contains(id)
                 };
                 if recursive {
-                    return Result<(), AnalysisError>.Err(AnalysisError.user(DiagnosticCode.TypeMismatch,
-                        Option<SourceSpan>.Some(definition.header().span), "type has recursive by-value storage"));
+                    return Result<(), AnalysisError>.Err(AnalysisError.named(DiagnosticCode.RecursiveStorage,
+                        Option<SourceSpan>.Some(definition.header().span), "Self-referential type detected: ",
+                        ctx.session.names.text(definition.header().name), ""));
                 }
 
                 if expand {

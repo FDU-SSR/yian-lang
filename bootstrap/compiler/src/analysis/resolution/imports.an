@@ -1,5 +1,6 @@
 from compiler.analysis.resolution.context import ResolutionContext;
 from compiler.common.ids import UnitId, SymbolId;
+from compiler.common.location import SourceSpan;
 from compiler.frontend.ast.node import Identifier;
 from compiler.frontend.source import Span;
 from compiler.diagnostics.model import DiagnosticCode, AnalysisError;
@@ -49,11 +50,11 @@ fn target_unit(ctx: ResolutionContext&, unit: UnitId, paths: Vec<Identifier&>&, 
             Some(packages) => {
                 let spec = match packages.find(first) {
                     Some(value) => value,
-                    None => return Result<UnitId, AnalysisError>.Err(ctx.error(unit, span, DiagnosticCode.Undefined, "unknown package in import")),
+                    None => return Result<UnitId, AnalysisError>.Err(ctx.error(unit, span, DiagnosticCode.UnknownPackage, "unknown package in import")),
                 };
 
                 if !packages.visible(packages.package_of(source.canonical_path()), first) {
-                    return Result<UnitId, AnalysisError>.Err(ctx.error(unit, span, DiagnosticCode.Access, "imported package is not a dependency"));
+                    return Result<UnitId, AnalysisError>.Err(ctx.error(unit, span, DiagnosticCode.NotDependency, "imported package is not a dependency"));
                 }
 
                 path.push(spec.source_root.as_str());
@@ -67,7 +68,7 @@ fn target_unit(ctx: ResolutionContext&, unit: UnitId, paths: Vec<Identifier&>&, 
     }
 
     if start >= paths.len() {
-        return Result<UnitId, AnalysisError>.Err(ctx.error(unit, span, DiagnosticCode.Undefined, "import names a package rather than a module"));
+        return Result<UnitId, AnalysisError>.Err(ctx.error(unit, span, DiagnosticCode.NotModule, "import names a package rather than a module"));
     }
 
     while start < paths.len() {
@@ -82,7 +83,7 @@ fn target_unit(ctx: ResolutionContext&, unit: UnitId, paths: Vec<Identifier&>&, 
         Ok(value) => value,
         Err(problem) => {
             problem.drop();
-            return Result<UnitId, AnalysisError>.Err(ctx.error(unit, span, DiagnosticCode.Undefined, "imported module does not exist"));
+            return Result<UnitId, AnalysisError>.Err(ctx.error(unit, span, DiagnosticCode.ImportNotFound, "imported module does not exist"));
         },
     };
     defer canonical.drop();
@@ -90,7 +91,7 @@ fn target_unit(ctx: ResolutionContext&, unit: UnitId, paths: Vec<Identifier&>&, 
     match ctx.session.package_map() {
         Some(packages) => {
             if packages.is_entry(canonical.as_str()) {
-                return Result<UnitId, AnalysisError>.Err(ctx.error(unit, span, DiagnosticCode.Access, "package entry module cannot be imported"));
+                return Result<UnitId, AnalysisError>.Err(ctx.error(unit, span, DiagnosticCode.ImportEntry, "package entry module cannot be imported"));
             }
         },
         None => {},
@@ -98,7 +99,7 @@ fn target_unit(ctx: ResolutionContext&, unit: UnitId, paths: Vec<Identifier&>&, 
 
     match find_unit(ctx, canonical.as_str()) {
         Some(id) => Result<UnitId, AnalysisError>.Ok(id),
-        None => Result<UnitId, AnalysisError>.Err(ctx.error(unit, span, DiagnosticCode.Undefined, "imported module is absent from compilation inputs")),
+        None => Result<UnitId, AnalysisError>.Err(ctx.error(unit, span, DiagnosticCode.ImportNotFound, "imported module is absent from compilation inputs")),
     }
 }
 
@@ -111,7 +112,8 @@ fn bind_import(ctx: ResolutionContext&, unit: UnitId, target: UnitId, name: str,
     let record = *ctx.session.symbols.get(symbol).unwrap();
 
     if !record.is_public {
-        return Result<bool, AnalysisError>.Err(ctx.error(unit, span, DiagnosticCode.Access, "imported symbol is private"));
+        return Result<bool, AnalysisError>.Err(AnalysisError.named(DiagnosticCode.NotPublic,
+            Option<SourceSpan>.Some(ctx.span(unit, span)), "Symbol '", name, "' exists in the imported unit but is not declared 'pub'"));
     }
 
     let alias_id = ctx.session.names.intern(alias);
@@ -159,7 +161,8 @@ pub fn resolve_imports(ctx: ResolutionContext&) -> Result<(), AnalysisError> {
 
                         if !bind_import(ctx, unit, destination, target.data.name.as_str(), alias_name, item.span)? {
                             if round == ctx.session.len() {
-                                return Result<(), AnalysisError>.Err(ctx.error(unit, item.span, DiagnosticCode.Undefined, "imported symbol does not exist"));
+                                return Result<(), AnalysisError>.Err(AnalysisError.named(DiagnosticCode.ImportNotFound,
+                                    Option<SourceSpan>.Some(ctx.span(unit, item.span)), "Symbol '", target.data.name.as_str(), "' is not found in the imported unit"));
                             }
 
                             missing = true;

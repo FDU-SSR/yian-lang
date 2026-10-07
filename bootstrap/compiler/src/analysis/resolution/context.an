@@ -67,6 +67,7 @@ pub struct ResolutionContext {
     pub constants: HashMap<SymbolId, HirId>,
     pub closure_captures: HashMap<DefId, Vec<SymbolId>>,
     pub sizes: Option<TypeSizeProvider&>,
+    pub alias_stack: Vec<SymbolId>,
 }
 
 impl ResolutionContext {
@@ -88,7 +89,7 @@ impl ResolutionContext {
         }
 
         accepted = true;
-        Result<Self, AnalysisError>.Ok(Self(session, primitives, scopes, Arena<Declaration>.new(), HashMap<DefId, ScopeId>.new(), HashMap<SymbolId, HirId>.new(), HashMap<DefId, Vec<SymbolId>>.new(), Option<TypeSizeProvider&>.None))
+        Result<Self, AnalysisError>.Ok(Self(session, primitives, scopes, Arena<Declaration>.new(), HashMap<DefId, ScopeId>.new(), HashMap<SymbolId, HirId>.new(), HashMap<DefId, Vec<SymbolId>>.new(), Option<TypeSizeProvider&>.None, Vec<SymbolId>.new()))
     }
 
     pub fn span(unit: UnitId, span: Span) -> SourceSpan {
@@ -139,6 +140,7 @@ impl Drop for ResolutionContext {
         self.declarations.drop();
         self.callable_scopes.drop();
         self.constants.drop();
+        self.alias_stack.drop();
 
         for captures in self.closure_captures.values() {
             captures.drop();

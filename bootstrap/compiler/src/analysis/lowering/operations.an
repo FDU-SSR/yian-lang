@@ -121,7 +121,7 @@ impl ExprChecker {
 
         if (op == BinaryOperator.Shl || op == BinaryOperator.Shr || op == BinaryOperator.ShlAssign || op == BinaryOperator.ShrAssign) && is_integer(self.ctx, lhs_type) && is_integer(self.ctx, rhs_type) {
             if assignment && !self.ctx.session.hir.require(lhs)?.is_place {
-                return Result<HirId, AnalysisError>.Err(self.error(span, "shift assignment requires a place"));
+                return Result<HirId, AnalysisError>.Err(self.error(span, "shift assignment target must be an l-value"));
             }
 
             let result = if assignment {
@@ -134,7 +134,7 @@ impl ExprChecker {
 
         if assignment {
             if !self.ctx.session.hir.get(lhs).unwrap().is_place {
-                return Result<HirId, AnalysisError>.Err(self.error(span, "assignment requires a place"));
+                return Result<HirId, AnalysisError>.Err(self.error(span, "assignment target must be an l-value"));
             }
 
             let boolean_bit = lhs_type == self.ctx.primitives.boolean && (op == BinaryOperator.BitAndAssign || op == BinaryOperator.BitOrAssign || op == BinaryOperator.BitXorAssign);

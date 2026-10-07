@@ -1,7 +1,7 @@
 from compiler.analysis.lowering.checker import ExprChecker;
 from compiler.analysis.resolution.types import resolve_type;
 from compiler.analysis.ty.relations import default_type;
-from compiler.analysis.ty.method_lookup import lookup_method;
+from compiler.analysis.ty.method_lookup import lookup_method_args;
 from compiler.analysis.ty.callable import signature;
 from compiler.analysis.hir.node import HirKind;
 from compiler.common.ids import TypeId, HirId;
@@ -38,7 +38,18 @@ impl ExprChecker {
         };
 
         match self.ctx.session.types.complete_definition(definition)? {
-            Trait(_) => {},
+            Trait(methods) => {
+                let name = self.ctx.session.names.intern(method_name);
+                let declared = match methods.get(&name) {
+                    Some(value) => *value,
+                    None => return Result<HirId, AnalysisError>.Err(self.error(span, "Unknown trait method")),
+                };
+                let declared_signature = signature(self.ctx, declared)?;
+                defer declared_signature.drop();
+                if !declared_signature.is_static {
+                    return Result<HirId, AnalysisError>.Err(self.error(span, "trait-qualified calls require a static method"));
+                }
+            },
             _ => return Result<HirId, AnalysisError>.Err(self.error(span, "qualified call requires a trait")),
         }
 
@@ -75,7 +86,10 @@ impl ExprChecker {
 
         let required = self.ctx.session.types.instance(definition, &arguments)?;
         let name = self.ctx.session.names.intern(method_name);
-        let method = lookup_method(self.ctx, target, name, Option<TypeId>.Some(required), self.ctx.span(self.unit, span))?;
+        let types = Vec<TypeId>.new();
+        defer types.drop();
+        for value in values { types.push(self.type_of(*value)); }
+        let method = lookup_method_args(self.ctx, target, name, Option<TypeId>.Some(required), Option<Vec<TypeId>&>.Some(&types), self.ctx.span(self.unit, span))?;
         let callable = signature(self.ctx, method)?;
         defer callable.drop();
 
