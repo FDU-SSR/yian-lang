@@ -1,143 +1,256 @@
-"""Versioned LSP analysis and project-topology regression tests."""
+"""Worker IPC, coalesced analysis, and serial process lifecycle tests."""
 
 from __future__ import annotations
 
 import asyncio
+import os
+import signal
 import tempfile
-import threading
 import unittest
+from collections.abc import AsyncGenerator
+from contextlib import AsyncExitStack, asynccontextmanager
 from pathlib import Path
-from unittest.mock import patch
 
-from pygls.exceptions import JsonRpcException
-
-from compiler.analysis.documents import Document
-from compiler.analysis.queries.context import QueryContext
-from compiler.analysis.session import AnalysisResult
 from lsp.coordinator import AnalysisCoordinator
-from lsp.server import __query as query_snapshot, create_server
-from lsp.workspace import AnalysisPayload, Workspace
+from lsp.ipc.protocol import FrameDecoder, FrameError, encode_message
+from lsp.ipc.types import JsonObject
+from lsp.supervisor import WorkerOperationError, WorkerSupervisor
 
 
 ROOT = Path(__file__).resolve().parents[2]
 
 
-class BlockingSession:
+class ControlledWorker:
     def __init__(self) -> None:
-        self.started = threading.Event()
-        self.release = threading.Event()
-        self.calls = 0
+        self.revision = 1
+        self.busy = False
+        self.syntax_started = asyncio.Event()
+        self.syntax_cancelled = asyncio.Event()
+        self.analysis_started = asyncio.Event()
+        self.release_first_analysis = asyncio.Event()
+        self.analysis_revisions: list[int] = []
 
-    def analyze(self, files: tuple[Path, ...], *, documents: object, syntax_only: bool) -> AnalysisResult:
-        self.calls += 1
-        self.started.set()
-        self.release.wait(timeout=5)
-        return AnalysisResult(sources={files[0]: "fn main() {}"}, syntax_only=syntax_only)
+    async def analyze(self, *, full: bool, reason: str) -> JsonObject:
+        del reason
+        revision = self.revision
+        self.analysis_revisions.append(revision)
+        self.analysis_started.set()
+        if revision == 1:
+            await self.release_first_analysis.wait()
+        return {"revision": revision, "full": full}
+
+    async def syntax(self, uri: str) -> JsonObject:
+        del uri
+        self.syntax_started.set()
+        try:
+            await asyncio.Future()
+        except asyncio.CancelledError:
+            self.syntax_cancelled.set()
+            raise
+
+    async def format(self, uri: str, text: str | None) -> JsonValue:
+        del uri, text
+        return None
+
+    async def query(self, method: str, params: JsonObject) -> JsonValue:
+        del method, params
+        return None
+
+    @asynccontextmanager
+    async def client_request_slot(self) -> AsyncGenerator[None, None]:
+        yield
+
+    def begin_shutdown(self) -> None:
+        pass
+
+    async def close(self) -> None:
+        pass
 
 
-class CoordinatorTests(unittest.IsolatedAsyncioTestCase):
-    async def test_query_rejects_a_snapshot_superseded_while_running(self) -> None:
-        server = create_server(compiler_root=ROOT)
-        source = ROOT / "tests" / "basic" / "array" / "access.an"
-        result = AnalysisResult(sources={source: "fn main() {}"})
-        snapshot = server.model.accept(
-            server.model.revision, (source,), AnalysisPayload(result, QueryContext(result), {})
+class FrameProtocolTests(unittest.TestCase):
+    def test_split_and_coalesced_utf8_frames_preserve_message_order(self) -> None:
+        first: JsonObject = {
+            "protocol_version": 1,
+            "payload": {"text": "emoji 😀"},
+            "internal_request_id": 1,
+        }
+        second: JsonObject = {
+            "protocol_version": 1,
+            "payload": {"revision": 42},
+            "internal_request_id": 2,
+        }
+        frames = encode_message(first) + encode_message(second)
+        decoder = FrameDecoder()
+        messages = []
+        messages.extend(decoder.feed(frames[:7]))
+        messages.extend(decoder.feed(frames[7:29]))
+        messages.extend(decoder.feed(frames[29:]))
+        self.assertEqual(messages, [first, second])
+
+    def test_oversized_header_is_rejected(self) -> None:
+        decoder = FrameDecoder()
+        with self.assertRaises(FrameError):
+            decoder.feed(b"X" * (8 * 1024 + 1))
+
+    def test_oversized_body_declaration_is_rejected_without_allocating_it(self) -> None:
+        decoder = FrameDecoder()
+        with self.assertRaises(FrameError):
+            decoder.feed(b"Content-Length: 67108865\r\n\r\n")
+
+
+class WorkerAnalysisTests(unittest.IsolatedAsyncioTestCase):
+    async def test_client_request_limit_is_enforced_before_worker_queueing(self) -> None:
+        worker = WorkerSupervisor(compiler_root=ROOT, raw_pointers=False)
+        stack = AsyncExitStack()
+        try:
+            for _ in range(128):
+                await stack.enter_async_context(worker.client_request_slot())
+            with self.assertRaises(WorkerOperationError) as raised:
+                async with worker.client_request_slot():
+                    self.fail("over-limit request unexpectedly acquired a slot")
+            self.assertEqual(raised.exception.code, -32803)
+        finally:
+            await stack.aclose()
+            await worker.close()
+
+    async def test_failed_worker_restarts_once_and_rebuilds_its_snapshot(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "main.an"
+            text = "fn main() { let value: i32 = 1; value; }\n"
+            source.write_text(text, encoding="utf-8")
+            worker = WorkerSupervisor(compiler_root=ROOT, raw_pointers=False)
+            worker.set_workspace_root(root)
+            worker.open_document(source.as_uri(), text, 1)
+            try:
+                await worker.start()
+                old_pid = worker.worker_pid
+                assert old_pid is not None
+                os.kill(old_pid, signal.SIGKILL)
+                result = await asyncio.wait_for(
+                    worker.analyze(full=True, reason="worker restart test"),
+                    timeout=30,
+                )
+                self.assertEqual(worker.restart_count, 1)
+                self.assertNotEqual(worker.worker_pid, old_pid)
+                self.assertEqual(result.get("diagnostic_count"), 0)
+            finally:
+                await worker.close()
+
+    async def test_semantic_request_overtakes_queued_syntax(self) -> None:
+        worker = ControlledWorker()
+        worker.release_first_analysis.set()
+        coordinator = AnalysisCoordinator(
+            worker, lambda _result, _reason, _elapsed: None
         )
-        self.assertIsNotNone(snapshot)
-        started = threading.Event()
-        release = threading.Event()
-
-        def slow_query() -> int:
-            started.set()
-            release.wait(timeout=5)
-            return 42
-
         try:
-            request = asyncio.create_task(query_snapshot(server, result, slow_query))
-            self.assertTrue(await asyncio.wait_for(asyncio.to_thread(started.wait, 2), 3))
-            server.model.invalidate()
-            release.set()
-            with self.assertRaises(JsonRpcException):
-                await asyncio.wait_for(request, 2)
+            coordinator.schedule_edit("edit", "file:///main.an")
+            await asyncio.wait_for(worker.syntax_started.wait(), timeout=2)
+            result = await coordinator.request_full()
+            self.assertIsNotNone(result)
+            self.assertTrue(worker.syntax_cancelled.is_set())
+            self.assertEqual(worker.analysis_revisions, [1])
         finally:
-            release.set()
-            server.cancel_analysis()
-
-    async def test_stale_result_is_discarded_without_blocking_loop(self) -> None:
-        model = Workspace(compiler_root=ROOT)
-        source = ROOT / "tests" / "basic" / "array" / "access.an"
-        session = BlockingSession()
-        published: list[int] = []
-        coordinator = AnalysisCoordinator(model, lambda snapshot, _reason, _ms: published.append(snapshot.revision))
-        try:
-            with patch.object(model, "capture", return_value=((source,), (Document(source, "", 1),), session)):
-                request = asyncio.create_task(coordinator.request_full())
-                self.assertTrue(await asyncio.wait_for(asyncio.to_thread(session.started.wait, 2), 3))
-                await asyncio.wait_for(asyncio.sleep(0), 1)
-                model.invalidate()
-                session.release.set()
-                self.assertIsNone(await asyncio.wait_for(request, 2))
-                self.assertEqual(published, [])
-                self.assertIsNotNone(await asyncio.wait_for(coordinator.request_full(), 2))
-                self.assertEqual(published, [model.revision])
-                self.assertEqual(session.calls, 2)
-                self.assertIsNotNone(await coordinator.request_full())
-                self.assertEqual(session.calls, 2)
-        finally:
-            session.release.set()
             coordinator.close()
+            await coordinator.aclose()
 
-    async def test_cancelled_request_does_not_cancel_shared_analysis(self) -> None:
-        model = Workspace(compiler_root=ROOT)
-        source = ROOT / "tests" / "basic" / "array" / "access.an"
-        session = BlockingSession()
+    async def test_stale_analysis_result_is_discarded_after_revision_change(self) -> None:
+        worker = ControlledWorker()
         published: list[int] = []
-        coordinator = AnalysisCoordinator(model, lambda snapshot, _reason, _ms: published.append(snapshot.revision))
+        coordinator = AnalysisCoordinator(
+            worker,
+            lambda result, _reason, _elapsed: published.append(
+                int(result["revision"])
+            ),
+        )
         try:
-            with patch.object(model, "capture", return_value=((source,), (), session)):
+            old_request = asyncio.create_task(coordinator.request_full())
+            await asyncio.wait_for(worker.analysis_started.wait(), timeout=2)
+            worker.revision = 2
+            worker.release_first_analysis.set()
+            self.assertIsNone(await old_request)
+            current = await coordinator.request_full()
+            self.assertIsNotNone(current)
+            self.assertEqual(published, [2])
+        finally:
+            coordinator.close()
+            await coordinator.aclose()
+
+    async def test_cancelled_waiter_keeps_shared_analysis_and_worker_is_reaped(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "main.an"
+            source.write_text("fn main() { let value: i32 = 1; value; }\n", encoding="utf-8")
+            worker = WorkerSupervisor(compiler_root=ROOT, raw_pointers=False)
+            worker.set_workspace_root(root)
+            worker.open_document(
+                source.as_uri(),
+                "fn main() { let value: i32 = 1; value; }\n",
+                1,
+            )
+            completed: list[JsonObject] = []
+            coordinator = AnalysisCoordinator(
+                worker,
+                lambda result, _reason, _elapsed: completed.append(result),
+            )
+            try:
+                await worker.start()
                 first = asyncio.create_task(coordinator.request_full())
-                self.assertTrue(await asyncio.wait_for(asyncio.to_thread(session.started.wait, 2), 3))
                 second = asyncio.create_task(coordinator.request_full())
+                await asyncio.sleep(0)
                 first.cancel()
                 with self.assertRaises(asyncio.CancelledError):
                     await first
-                session.release.set()
-                self.assertIsNotNone(await asyncio.wait_for(second, 2))
-                self.assertEqual(published, [model.revision])
-                coordinator.schedule_edit("test")
-                await asyncio.sleep(0.75)
-                self.assertEqual(published, [model.revision])
-        finally:
-            session.release.set()
-            coordinator.close()
+                result = await asyncio.wait_for(second, timeout=10)
+                self.assertIsNotNone(result)
+                assert result is not None
+                self.assertIs(result["full"], True)
+                self.assertEqual(result["diagnostic_count"], 0)
+                self.assertEqual(len(completed), 1)
+                self.assertIsNotNone(worker.worker_pid)
+            finally:
+                coordinator.close()
+                await coordinator.aclose()
+            self.assertIsNone(worker.worker_pid)
 
-
-class ProjectTopologyTests(unittest.TestCase):
-    def test_directory_reload_tracks_source_and_manifest_changes(self) -> None:
+    async def test_edit_schedules_single_document_syntax_before_full_analysis(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            src = root / "src"
-            src.mkdir()
-            main = src / "main.an"
-            main.write_text("fn main() {}\n", encoding="utf-8")
-            model = Workspace(compiler_root=ROOT)
-            self.assertIsNone(model.use_directory(root))
-            manifest = root / "package.anx"
-            manifest.write_text('[package]\nname = "example"\nversion = "0.1.0"\n', encoding="utf-8")
-            self.assertIsNotNone(model.use_directory(root))
-            self.assertIn(main.resolve(), {path.resolve() for path in model.files()})
+            source = root / "main.an"
+            source.write_text("fn main() {}\n", encoding="utf-8")
+            uri = source.as_uri()
+            worker = WorkerSupervisor(compiler_root=ROOT, raw_pointers=False)
+            worker.set_workspace_root(root)
+            worker.open_document(uri, "fn main() {}\n", 1)
+            syntax_done = asyncio.Event()
+            seen: list[JsonObject] = []
 
-            added = src / "added.an"
-            added.write_text("fn helper() {}\n", encoding="utf-8")
-            self.assertIsNotNone(model.use_directory(root))
-            self.assertIn(added.resolve(), {path.resolve() for path in model.files()})
-            added.unlink()
-            self.assertIsNotNone(model.use_directory(root))
-            self.assertNotIn(added.resolve(), {path.resolve() for path in model.files()})
+            def completed(result: JsonObject, _reason: str, _elapsed: float) -> None:
+                if result.get("syntax_document") == uri:
+                    seen.append(result)
+                    syntax_done.set()
 
-            manifest.unlink()
-            self.assertIsNone(model.use_directory(root))
-            self.assertIsNone(model.project)
+            coordinator = AnalysisCoordinator(worker, completed)
+            try:
+                await worker.start()
+                worker.change_document(uri, "fn main() { let value = ; }\n", 2)
+                coordinator.invalidate()
+                coordinator.schedule_edit("didChange", uri)
+                await asyncio.wait_for(syntax_done.wait(), timeout=10)
+                self.assertEqual(len(seen), 1)
+                diagnostics_value = seen[0].get("diagnostics")
+                self.assertIsInstance(diagnostics_value, dict)
+                assert isinstance(diagnostics_value, dict)
+                items = diagnostics_value.get(uri)
+                self.assertIsInstance(items, list)
+                assert isinstance(items, list)
+                self.assertTrue(any(
+                    isinstance(item, dict) and item.get("code") == "E203"
+                    for item in items
+                ))
+            finally:
+                coordinator.close()
+                await coordinator.aclose()
 
 
 if __name__ == "__main__":
