@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 """Run the YIAN test suites.
 
-Three suites live under ``tests/`` and share one runner:
+The repository suites share one runner and run against both compiler/package
+manager implementations by default. Native execution refreshes the installed
+binaries through ``scripts/install.sh`` before starting:
 
 - ``basic``   — standalone compilation of one or more .an files, each run
   twice: once with the default fat-pointer representation and once with
@@ -9,6 +11,8 @@ Three suites live under ``tests/`` and share one runner:
 - ``safety``  — the fat-pointer safety regressions.
 - ``package`` — package-mode fixtures (a ``package.anx`` project directory),
   driven through ``anx build`` / ``anx check``.
+- ``bootstrap`` — existing package tests for the bootstrap compiler, JSON
+  package, and TOML package, each in fat and raw pointer modes.
 
 Tests without a corresponding .ans file under ``tests/output/<suite>`` are
 treated as success tests (expected exit code 0, no output comparison).
@@ -23,9 +27,10 @@ Test inputs are discovered from ``tests/input/<suite>``:
   - <name>.stdin → content piped to the executable's stdin
 
 Usage:
-    python scripts/run_tests.py                  # basic suite
-    python scripts/run_tests.py --suite safety   # one suite
-    python scripts/run_tests.py --all            # basic + safety + package
+    python scripts/run_tests.py                  # basic suite, Python + native
+    python scripts/run_tests.py --suite safety   # one suite, both implementations
+    python scripts/run_tests.py --all            # all suites, both implementations
+    python scripts/run_tests.py --implementation python --suite basic  # focused reference run
     python scripts/run_tests.py -v               # verbose: show failure details
     python scripts/run_tests.py -q               # quiet: only the summary line
     python scripts/run_tests.py -x               # include <suite>/experimental/
@@ -36,7 +41,7 @@ from __future__ import annotations
 
 import argparse
 import json
-import shutil
+import os
 import subprocess
 import sys
 import time
@@ -44,33 +49,38 @@ from dataclasses import dataclass
 from dataclasses import field
 from dataclasses import replace
 from pathlib import Path
-from typing import TextIO
+from typing import TextIO, cast
 
 ROOT_DIR = Path(__file__).resolve().parent.parent
 TESTS_DIR = ROOT_DIR / "tests"
 
-# The suites drive the installed console scripts, never `python3 -m ...`: that is
-# the same entry point users and CI have, and it keeps one way of invoking the
-# toolchain. Development requires the editable install (`scripts/install.sh`).
-COMPILER_COMMAND = "yianc"
-ANX_COMMAND = "anx"
-
-SUITES = ("basic", "safety", "package")
-SUITE_NAME = "basic"
-SOURCE_DIR = TESTS_DIR / SUITE_NAME
-OUTPUT_DIR = TESTS_DIR / "output" / SUITE_NAME
-INPUT_DIR = TESTS_DIR / "input" / SUITE_NAME
+SUITES = ("basic", "safety", "package", "bootstrap")
+BOOTSTRAP_PACKAGES = ("bootstrap/compiler", "bootstrap/json", "bootstrap/toml")
+_suite_name = "basic"
+_source_dir = TESTS_DIR / _suite_name
+_output_dir = TESTS_DIR / "output" / _suite_name
+_input_dir = TESTS_DIR / "input" / _suite_name
 LIB_DIR = ROOT_DIR / "lib" / "src"
 BUILD_DIR = ROOT_DIR / "build"
+
+
+@dataclass(frozen=True)
+class Toolchain:
+    """One matched compiler and package-manager implementation."""
+
+    name: str
+    compiler: tuple[str, ...]
+    anx: tuple[str, ...]
+    environment: dict[str, str]
 
 # ---------------------------------------------------------------------------
 # Multi-file test configuration
 # ---------------------------------------------------------------------------
-# Test source file (relative to SOURCE_DIR) → extra .an files to compile alongside.
+# Test source file (relative to _source_dir) → extra .an files to compile alongside.
 EXTRA_SOURCES: dict[str, list[str]] = {
 }
 
-# Directories (relative to SOURCE_DIR) whose .an files are compiled together.
+# Directories (relative to _source_dir) whose .an files are compiled together.
 MULTI_FILE_DIRS: set[str] = {"try/cross_module", "trait/qualified_private", "type/alias/imported_scope"}
 
 
@@ -86,6 +96,14 @@ class CompileVariant:
     compiler_args: list[str]
     expected_substring: str | None = None
     expected_exit_code: int | None = None
+
+
+def _empty_string_list() -> list[str]:
+    return []
+
+
+def _empty_compile_variant_list() -> list[CompileVariant]:
+    return []
 
 
 @dataclass
@@ -116,10 +134,10 @@ class TestCase:
     stdin: bytes = b""
     """Bytes to pipe to the executable's stdin without decoding or newline translation."""
 
-    compiler_args: list[str] = field(default_factory=list)
+    compiler_args: list[str] = field(default_factory=_empty_string_list)
     """Additional compiler arguments for this test or one of its variants."""
 
-    compile_variants: list[CompileVariant] = field(default_factory=list)
+    compile_variants: list[CompileVariant] = field(default_factory=_empty_compile_variant_list)
     """Existing compiler-mode variants for this test."""
 
     package_root: Path | None = None
@@ -128,7 +146,7 @@ class TestCase:
     anx_command: str | None = None
     """For package fixtures: the anx subcommand to drive (default build/check)."""
 
-    anx_args: list[str] = field(default_factory=list)
+    anx_args: list[str] = field(default_factory=_empty_string_list)
     """For package fixtures: extra anx flags, e.g. --raw-pointers."""
 
 
@@ -220,13 +238,13 @@ def __parse_ans(file_path: Path, is_error_test: bool = False) -> tuple[bool, int
 def __find_ans(test_rel: str) -> Path | None:
     """Look for a .ans file corresponding to *test_rel*.
 
-    *test_rel* is relative to SOURCE_DIR:
+    *test_rel* is relative to _source_dir:
       - "call/variant_construct.an"         → …/call/variant_construct.an.ans
       - "error/circular_dep1.err.an"        → …/error/circular_dep1.an.ans
       - "import/func"  (multi-file dir)     → …/import/func.ans
     """
     if not test_rel.endswith(".an"):
-        p = OUTPUT_DIR / (test_rel + ".ans")
+        p = _output_dir / (test_rel + ".ans")
         return p if p.exists() else None
 
     if test_rel.endswith(".err.an"):
@@ -234,7 +252,7 @@ def __find_ans(test_rel: str) -> Path | None:
     else:
         ans_name = test_rel + ".ans"
 
-    p = OUTPUT_DIR / ans_name
+    p = _output_dir / ans_name
     return p if p.exists() else None
 
 
@@ -253,14 +271,14 @@ def __find_input(test_rel: str) -> tuple[list[str] | None, bytes]:
     if base.endswith(".err.an"):
         base = base[:-7] + ".an"
 
-    args_path = INPUT_DIR / (base + ".args")
+    args_path = _input_dir / (base + ".args")
     cli_args: list[str] | None = None
     if args_path.exists():
         text = args_path.read_text().strip()
         cli_args = text.split() if text else []
 
     stdin = b""
-    stdin_path = INPUT_DIR / (base + ".stdin")
+    stdin_path = _input_dir / (base + ".stdin")
     if stdin_path.exists():
         stdin = stdin_path.read_bytes()
 
@@ -269,15 +287,16 @@ def __find_input(test_rel: str) -> tuple[list[str] | None, bytes]:
 
 def __find_compile_config(test_rel: str) -> Path | None:
     """Find the optional compiler-variant metadata for a test."""
-    path = INPUT_DIR / (test_rel + ".compile.json")
+    path = _input_dir / (test_rel + ".compile.json")
     return path if path.exists() else None
 
 
 def __parse_compile_variants(file_path: Path) -> list[CompileVariant]:
     """Parse strict compiler-variant metadata from *file_path*."""
-    raw = json.loads(file_path.read_text())
+    raw: object = json.loads(file_path.read_text())
     if not isinstance(raw, list):
         raise ValueError(f"{file_path}: top level must be an array")
+    entries = cast(list[object], raw)
 
     variants: list[CompileVariant] = []
     names: set[str] = set()
@@ -287,30 +306,31 @@ def __parse_compile_variants(file_path: Path) -> list[CompileVariant]:
         "expect_error_substring",
         "expected_exit_code",
     }
-    for index, item in enumerate(raw):
+    for index, item in enumerate(entries):
         if not isinstance(item, dict):
             raise ValueError(f"{file_path}: variant {index} must be an object")
-        unknown = set(item) - allowed
+        variant = cast(dict[str, object], item)
+        unknown = set(variant) - allowed
         if unknown:
             names_text = ", ".join(sorted(str(name) for name in unknown))
             raise ValueError(f"{file_path}: variant {index} has unknown fields: {names_text}")
 
-        name = item.get("name")
+        name = variant.get("name")
         if not isinstance(name, str) or not name:
             raise ValueError(f"{file_path}: variant {index} name must be a non-empty string")
         if name in names:
             raise ValueError(f"{file_path}: duplicate variant name: {name}")
         names.add(name)
 
-        compiler_args = item.get("compiler_args")
+        compiler_args = variant.get("compiler_args")
         if not isinstance(compiler_args, list) or not all(
-            isinstance(arg, str) for arg in compiler_args
+            isinstance(arg, str) for arg in cast(list[object], compiler_args)
         ):
             raise ValueError(
                 f"{file_path}: variant {name} compiler_args must be a string array"
             )
 
-        expected_substring = item.get("expect_error_substring")
+        expected_substring = variant.get("expect_error_substring")
         if expected_substring is not None and (
             not isinstance(expected_substring, str) or not expected_substring
         ):
@@ -318,7 +338,7 @@ def __parse_compile_variants(file_path: Path) -> list[CompileVariant]:
                 f"{file_path}: variant {name} expect_error_substring must be a non-empty string"
             )
 
-        expected_exit_code = item.get("expected_exit_code")
+        expected_exit_code = variant.get("expected_exit_code")
         if expected_exit_code is not None and (
             isinstance(expected_exit_code, bool) or not isinstance(expected_exit_code, int)
         ):
@@ -333,7 +353,7 @@ def __parse_compile_variants(file_path: Path) -> list[CompileVariant]:
         variants.append(
             CompileVariant(
                 name=name,
-                compiler_args=list(compiler_args),
+                compiler_args=cast(list[str], compiler_args),
                 expected_substring=expected_substring,
                 expected_exit_code=expected_exit_code,
             )
@@ -344,10 +364,10 @@ def __parse_compile_variants(file_path: Path) -> list[CompileVariant]:
 def __find_orphaned_compile_configs() -> list[str]:
     """Return compiler metadata files without a corresponding YIAN source."""
     orphaned: list[str] = []
-    for config in sorted(INPUT_DIR.rglob("*.compile.json")):
-        rel = config.relative_to(INPUT_DIR)
+    for config in sorted(_input_dir.rglob("*.compile.json")):
+        rel = config.relative_to(_input_dir)
         source_rel = str(rel)[: -len(".compile.json")]
-        if not (SOURCE_DIR / source_rel).exists():
+        if not (_source_dir / source_rel).exists():
             orphaned.append(str(config))
     return orphaned
 
@@ -361,7 +381,7 @@ def discover_tests() -> list[TestCase]:
     comparison).
     """
 
-    if SUITE_NAME == "package":
+    if _suite_name == "package":
         return discover_package_tests()
 
     helpers: set[str] = {h for v in EXTRA_SOURCES.values() for h in v}
@@ -369,8 +389,8 @@ def discover_tests() -> list[TestCase]:
     tests: list[TestCase] = []
     orphaned: list[str] = []
 
-    for an_file in sorted(SOURCE_DIR.rglob("*.an")):
-        rel = an_file.relative_to(SOURCE_DIR)
+    for an_file in sorted(_source_dir.rglob("*.an")):
+        rel = an_file.relative_to(_source_dir)
 
         src_rel = str(rel)
 
@@ -391,7 +411,7 @@ def discover_tests() -> list[TestCase]:
         # --- Standalone test ---
         else:
             extra = EXTRA_SOURCES.get(src_rel, [])
-            source_files = [an_file] + [SOURCE_DIR / e for e in extra]
+            source_files = [an_file] + [_source_dir / e for e in extra]
             name = src_rel
 
         # .err.an files (including those in multi-file dirs) are error tests.
@@ -426,18 +446,18 @@ def discover_tests() -> list[TestCase]:
         ))
 
     # Report orphaned .ans files (no matching source).
-    for ans_file in sorted(OUTPUT_DIR.rglob("*.ans")):
-        ans_rel = ans_file.relative_to(OUTPUT_DIR)
+    for ans_file in sorted(_output_dir.rglob("*.ans")):
+        ans_rel = ans_file.relative_to(_output_dir)
         if ans_rel.name.endswith(".an.ans"):
             source_name = str(ans_rel.parent / ans_rel.name[:-4])
-            if (SOURCE_DIR / source_name).exists():
+            if (_source_dir / source_name).exists():
                 continue
             err_name = source_name[:-3] + ".err.an"
-            if (SOURCE_DIR / err_name).exists():
+            if (_source_dir / err_name).exists():
                 continue
         else:
             dir_name = str(ans_rel.parent / ans_rel.stem)
-            if (SOURCE_DIR / dir_name).is_dir():
+            if (_source_dir / dir_name).is_dir():
                 continue
         orphaned.append(str(ans_file))
 
@@ -465,10 +485,10 @@ def __find_package_ans(fixture: str) -> tuple[Path | None, bool]:
     ``(path, is_error)``; ``(None, False)`` when the fixture ships no
     expectation, which means "build, run, expect exit 0, ignore stdout".
     """
-    err = OUTPUT_DIR / (fixture + ".err.ans")
+    err = _output_dir / (fixture + ".err.ans")
     if err.exists():
         return err, True
-    ok = OUTPUT_DIR / (fixture + ".ans")
+    ok = _output_dir / (fixture + ".ans")
     if ok.exists():
         return ok, False
     return None, False
@@ -481,7 +501,7 @@ def __find_package_command(fixture: str) -> list[str] | None:
     ``build``, ``check``, ``test`` or ``graph --json``. Fixtures without it
     build and run, as before.
     """
-    path = INPUT_DIR / (fixture + ".command")
+    path = _input_dir / (fixture + ".command")
     if not path.is_file():
         return None
     tokens = path.read_text().split()
@@ -501,12 +521,12 @@ def discover_package_tests() -> list[TestCase]:
     cases: list[Path] = []
     tests: list[TestCase] = []
 
-    for manifest in sorted(SOURCE_DIR.rglob("package.anx")):
+    for manifest in sorted(_source_dir.rglob("package.anx")):
         base = manifest.parent
         if any(parent in base.parents for parent in cases):
             continue
 
-        name = str(base.relative_to(SOURCE_DIR))
+        name = str(base.relative_to(_source_dir))
         ans_path, ans_is_error = __find_package_ans(name)
         command_tokens = __find_package_command(name)
         anx_command = command_tokens[0] if command_tokens is not None else None
@@ -543,11 +563,11 @@ def discover_package_tests() -> list[TestCase]:
         ))
 
     orphans: list[str] = []
-    for ans_file in sorted(OUTPUT_DIR.rglob("*.ans")):
-        rel = ans_file.relative_to(OUTPUT_DIR)
+    for ans_file in sorted(_output_dir.rglob("*.ans")):
+        rel = ans_file.relative_to(_output_dir)
         suffix = ".err.ans" if rel.name.endswith(".err.ans") else ".ans"
         fixture = str(rel.parent / rel.name[: -len(suffix)])
-        if not (SOURCE_DIR / fixture / "package.anx").exists():
+        if not (_source_dir / fixture / "package.anx").exists():
             orphans.append(str(ans_file))
     if orphans:
         print("⚠  Orphaned package expectations (no matching fixture):")
@@ -564,6 +584,7 @@ def discover_package_tests() -> list[TestCase]:
 
 def run_test(
     test: TestCase,
+    toolchain: Toolchain,
     dump: bool = False,
     run: bool = False,
     compile_only: bool = False,
@@ -576,9 +597,9 @@ def run_test(
     """
 
     if test.package_root is not None:
-        return run_package_test(test, run=run, compile_only=compile_only)
+        return run_package_test(test, toolchain, run=run, compile_only=compile_only)
 
-    cmd = [COMPILER_COMMAND, str(LIB_DIR)]
+    cmd = [*toolchain.compiler, str(LIB_DIR)]
     cmd += [str(f) for f in test.source_files]
     cmd += ["-O3"]
     cmd += test.compiler_args
@@ -586,7 +607,7 @@ def run_test(
     if test.expect_error:
         cmd += ["-t", "none"]
     elif run:
-        exe_path = BUILD_DIR / "test_exe" / SUITE_NAME / test.name
+        exe_path = BUILD_DIR / "test_exe" / _suite_name / test.name
         exe_path.parent.mkdir(parents=True, exist_ok=True)
         cmd += ["-t", "exe", "-o", str(exe_path)]
     else:
@@ -602,6 +623,7 @@ def run_test(
         encoding="utf-8",
         errors="replace",
         check=False,
+        env=toolchain.environment,
     )
     compile_elapsed = (time.monotonic() - start) * 1000.0
 
@@ -630,6 +652,7 @@ def run_test(
             input=test.stdin,
             capture_output=True,
             check=False,
+            env=toolchain.environment,
         )
         run_elapsed = (time.monotonic() - run_start) * 1000.0
 
@@ -656,7 +679,12 @@ def __decode_output(data: bytes) -> str:
     return data.decode("utf-8", errors="replace").replace("\r\n", "\n").replace("\r", "\n")
 
 
-def run_package_test(test: TestCase, run: bool, compile_only: bool) -> TestResult:
+def run_package_test(
+    test: TestCase,
+    toolchain: Toolchain,
+    run: bool,
+    compile_only: bool,
+) -> TestResult:
     """Drive a package fixture through anx, then run its executable.
 
     The subcommand defaults to ``build`` (or ``check`` under ``--no-run``); a
@@ -666,7 +694,7 @@ def run_package_test(test: TestCase, run: bool, compile_only: bool) -> TestResul
     """
     assert test.package_root is not None
     subcommand = test.anx_command or ("check" if compile_only else "build")
-    cmd = [ANX_COMMAND, subcommand, str(test.package_root), *test.anx_args]
+    cmd = [*toolchain.anx, subcommand, str(test.package_root), *test.anx_args]
 
     start = time.monotonic()
     proc = subprocess.run(
@@ -676,6 +704,7 @@ def run_package_test(test: TestCase, run: bool, compile_only: bool) -> TestResul
         encoding="utf-8",
         errors="replace",
         check=False,
+        env=toolchain.environment,
     )
     compile_elapsed = (time.monotonic() - start) * 1000.0
     output = proc.stdout + proc.stderr
@@ -709,6 +738,7 @@ def run_package_test(test: TestCase, run: bool, compile_only: bool) -> TestResul
         input=test.stdin,
         capture_output=True,
         check=False,
+        env=toolchain.environment,
     )
     run_elapsed = (time.monotonic() - run_start) * 1000.0
 
@@ -870,13 +900,69 @@ def __indent(text: str, prefix: str) -> str:
 # Main
 # ---------------------------------------------------------------------------
 
-def run_suite(suite: str, args: argparse.Namespace) -> int:
+def __run_bootstrap_suite(args: argparse.Namespace, toolchain: Toolchain) -> int:
+    """Run the existing bootstrap package tests through the selected anx stack."""
+    selected: list[TestCase] = []
+    command = "check" if args.no_run else "test"
+    for package in BOOTSTRAP_PACKAGES:
+        for mode in ("fat", "raw"):
+            name = f"{package}@{mode}"
+            if args.filter_str and args.filter_str not in name:
+                continue
+            selected.append(TestCase(
+                name=name,
+                source_files=[],
+                expect_error=False,
+                expected_substring="",
+                package_root=ROOT_DIR / package,
+                anx_command=command,
+                anx_args=["--raw-pointers"] if mode == "raw" else [],
+            ))
+
+    if not selected:
+        print(f"No bootstrap package tests match filter '{args.filter_str or ''}'.")
+        return 1
+
+    print(f"Running {len(selected)} bootstrap package test(s) [{toolchain.name}]…\n")
+    results: list[TestResult] = []
+    total_start = time.monotonic()
+    for index, test in enumerate(selected, 1):
+        result = run_package_test(
+            test,
+            toolchain,
+            run=not args.no_run,
+            compile_only=args.no_run,
+        )
+        results.append(result)
+        if not args.quiet:
+            marker = "✓" if result.passed() else "✗"
+            print(f"  [{index:>{len(str(len(selected)))}}/{len(selected)}] {marker} {test.name}  ({result.elapsed_ms:.0f} ms)")
+
+    total_elapsed = (time.monotonic() - total_start) * 1000.0
+    show_detail = args.verbose and not args.quiet
+    print_summary(results, total_elapsed, show_detail, sys.stdout)
+    failed = [result for result in results if not result.passed()]
+    if failed:
+        log_path = ROOT_DIR / "build" / "test_failures_bootstrap" / f"{toolchain.name}.log"
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(log_path, "w", encoding="utf-8") as log:
+            log.write(f"Test run at {time.strftime('%Y-%m-%d %H:%M:%S')}\n\n")
+            print_summary(results, total_elapsed, show_detail=True, out=log)
+        print(f"\nFailure details written to {log_path}")
+
+    return 0 if not failed else 1
+
+
+def run_suite(suite: str, args: argparse.Namespace, toolchain: Toolchain) -> int:
     """Run one suite and return its exit code."""
-    global SUITE_NAME, SOURCE_DIR, OUTPUT_DIR, INPUT_DIR
-    SUITE_NAME = suite
-    SOURCE_DIR = TESTS_DIR / suite
-    OUTPUT_DIR = TESTS_DIR / "output" / suite
-    INPUT_DIR = TESTS_DIR / "input" / suite
+    global _suite_name, _source_dir, _output_dir, _input_dir
+    if suite == "bootstrap":
+        return __run_bootstrap_suite(args, toolchain)
+
+    _suite_name = suite
+    _source_dir = TESTS_DIR / suite
+    _output_dir = TESTS_DIR / "output" / suite
+    _input_dir = TESTS_DIR / "input" / suite
 
     # Discover.
     all_tests = discover_tests()
@@ -913,7 +999,7 @@ def run_suite(suite: str, args: argparse.Namespace) -> int:
             print(f"No tests match filter '{args.filter_str}'.")
             return 1
 
-    print(f"Running {len(all_tests)} test(s) in suite '{suite}'…\n")
+    print(f"Running {len(all_tests)} test(s) in suite '{suite}' [{toolchain.name}]…\n")
 
     # Run.
     results: list[TestResult] = []
@@ -922,6 +1008,7 @@ def run_suite(suite: str, args: argparse.Namespace) -> int:
     for i, test in enumerate(all_tests, 1):
         result = run_test(
             test,
+            toolchain,
             dump=args.dump,
             run=not args.no_run,
             compile_only=args.no_run,
@@ -941,7 +1028,7 @@ def run_suite(suite: str, args: argparse.Namespace) -> int:
     # Write detailed failure log.
     failed = [r for r in results if not r.passed()]
     if failed:
-        log_path = ROOT_DIR / "build" / f"test_failures_{suite}.log"
+        log_path = ROOT_DIR / "build" / f"test_failures_{suite}_{toolchain.name}.log"
         log_path.parent.mkdir(parents=True, exist_ok=True)
         with open(log_path, "w", encoding="utf-8") as log:
             log.write(f"Test run at {time.strftime('%Y-%m-%d %H:%M:%S')}\n\n")
@@ -949,6 +1036,60 @@ def run_suite(suite: str, args: argparse.Namespace) -> int:
         print(f"\nFailure details written to {log_path}")
 
     return 0 if not failed else 1
+
+
+def __refresh_native(prefix: Path) -> bool:
+    """Rebuild and install the native toolchain before native execution."""
+    command = [
+        str(ROOT_DIR / "scripts" / "install.sh"),
+        "--prefix",
+        str(prefix),
+        "--python",
+        sys.executable,
+    ]
+    print(f"Refreshing installed native yianc/anx under {prefix}…")
+    process = subprocess.run(
+        command,
+        cwd=ROOT_DIR,
+        capture_output=True,
+        encoding="utf-8",
+        errors="replace",
+        check=False,
+    )
+    if process.stdout:
+        print(process.stdout, end="" if process.stdout.endswith("\n") else "\n")
+    if process.stderr:
+        print(process.stderr, file=sys.stderr, end="" if process.stderr.endswith("\n") else "\n")
+    return process.returncode == 0
+
+
+def __make_toolchain(name: str, native_bin: Path) -> Toolchain:
+    environment = os.environ.copy()
+    for variable in ("YIANC", "YIAN_ROOT", "YIAN_LIB"):
+        environment.pop(variable, None)
+
+    # Give both implementations the same explicit source and trust roots.
+    environment["YIAN_ROOT"] = str(ROOT_DIR)
+    environment["YIAN_LIB"] = str(LIB_DIR)
+
+    if name == "python":
+        return Toolchain(
+            name="python",
+            compiler=(sys.executable, "-m", "compiler.main"),
+            anx=(sys.executable, "-m", "anx.main"),
+            environment=environment,
+        )
+
+    compiler = native_bin / "yianc"
+    anx = native_bin / "anx"
+    environment["YIANC"] = str(compiler)
+    environment["PATH"] = str(native_bin) + os.pathsep + environment.get("PATH", "")
+    return Toolchain(
+        name="native",
+        compiler=(str(compiler),),
+        anx=(str(anx),),
+        environment=environment,
+    )
 
 
 def main(argv: list[str] | None = None, *, suite: str = "basic") -> int:
@@ -1003,6 +1144,18 @@ def main(argv: list[str] | None = None, *, suite: str = "basic") -> int:
         dest="run_all",
         help=f"Run every suite: {', '.join(SUITES)}.",
     )
+    parser.add_argument(
+        "--implementation",
+        choices=("both", "python", "native"),
+        default="both",
+        help="Implementation to test (default: both; native tests refresh through scripts/install.sh).",
+    )
+    parser.add_argument(
+        "--prefix",
+        type=Path,
+        default=Path(os.environ.get("YIAN_INSTALL_PREFIX", Path.home() / ".local")),
+        help="Native install prefix used when refreshing and testing the native implementation.",
+    )
     args = parser.parse_args(argv)
 
     if args.run_all:
@@ -1012,25 +1165,20 @@ def main(argv: list[str] | None = None, *, suite: str = "basic") -> int:
     else:
         suites = [suite]
 
-    needed = [COMPILER_COMMAND]
-    if "package" in suites:
-        needed.append(ANX_COMMAND)
-    missing = [tool for tool in needed if shutil.which(tool) is None]
-    if missing:
-        names = ", ".join(f"'{tool}'" for tool in missing)
-        print(
-            f"error: {names} not found on PATH.\n"
-            "       The suites invoke the installed tools; run scripts/install.sh first\n"
-            "       (an editable install points them at this checkout).",
-            file=sys.stderr,
-        )
+    implementations = ("python", "native") if args.implementation == "both" else (args.implementation,)
+    prefix = args.prefix.expanduser().resolve()
+    native_bin = prefix / "bin"
+    if "native" in implementations and not __refresh_native(prefix):
         return 1
 
     exit_code = 0
-    for name in suites:
-        if len(suites) > 1:
-            print(f"\n{'#' * 60}\n# suite: {name}\n{'#' * 60}")
-        exit_code |= run_suite(name, args)
+    for implementation in implementations:
+        toolchain = __make_toolchain(implementation, native_bin)
+        print(f"\n{'#' * 60}\n# implementation: {implementation}\n{'#' * 60}")
+        for suite_name in suites:
+            if len(suites) > 1:
+                print(f"\n{'#' * 60}\n# suite: {suite_name}\n{'#' * 60}")
+            exit_code |= run_suite(suite_name, args, toolchain)
     return exit_code
 
 

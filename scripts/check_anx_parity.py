@@ -8,10 +8,11 @@ import json
 import os
 import shutil
 import subprocess
+import sys
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TypeAlias
+from typing import TypeAlias, cast
 
 ROOT = Path(__file__).resolve().parents[1]
 Json: TypeAlias = None | bool | int | float | str | list["Json"] | dict[str, "Json"]
@@ -29,6 +30,14 @@ class Case:
     flexible_help: bool = False
     toml_message_flexible: bool = False
     stdin_crlf: bool = False
+
+
+class Arguments(argparse.Namespace):
+    reference: str
+    native: str
+    compiler: str | None
+    report: Path
+    filter: str
 
 
 def cases() -> list[Case]:
@@ -79,7 +88,7 @@ def diagnostic_shape(value: Json) -> Json:
     return value
 
 
-def tree_snapshot(directory: Path) -> dict[str, str]:
+def tree_snapshot(directory: Path) -> dict[str, Json]:
     return {
         path.relative_to(directory).as_posix(): path.read_text(encoding="utf-8")
         for path in sorted(directory.rglob("*"))
@@ -87,7 +96,7 @@ def tree_snapshot(directory: Path) -> dict[str, str]:
     }
 
 
-def run_case(binary: str, case: Case, temporary_root: Path, label: str, compiler: str) -> dict[str, Json]:
+def run_case(binary: list[str], case: Case, temporary_root: Path, label: str, compiler: str) -> dict[str, Json]:
     directory = temporary_root / label
     directory.mkdir()
     if case.fixture:
@@ -100,8 +109,14 @@ def run_case(binary: str, case: Case, temporary_root: Path, label: str, compiler
     if case.stdin_crlf:
         (directory / "tests/input/stdin.stdin").write_bytes(b"piped input\r\n")
 
-    command = [binary, *case.command]
+    command = [*binary, *case.command]
     environment = os.environ.copy()
+    environment["YIAN_ROOT"] = str(ROOT)
+    environment["YIAN_LIB"] = str(ROOT / "lib/src")
+    source_path = str(ROOT)
+    if environment.get("PYTHONPATH"):
+        source_path += os.pathsep + environment["PYTHONPATH"]
+    environment["PYTHONPATH"] = source_path
     if compiler:
         environment["YIANC"] = compiler
     else:
@@ -152,7 +167,13 @@ def run_case(binary: str, case: Case, temporary_root: Path, label: str, compiler
         else:
             observation["execution"] = "missing executable"
 
-    return {"command": command, "observation": observation, "raw_stdout": process.stdout, "raw_stderr": process.stderr}
+    result: dict[str, Json] = {
+        "command": cast(list[Json], command),
+        "observation": observation,
+        "raw_stdout": process.stdout,
+        "raw_stderr": process.stderr,
+    }
+    return result
 
 
 def equivalent(case: Case, reference: dict[str, Json], native: dict[str, Json]) -> bool:
@@ -179,18 +200,30 @@ def equivalent(case: Case, reference: dict[str, Json], native: dict[str, Json]) 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--reference", default="anx", help="Python anx executable (default: anx on PATH)")
+    parser.add_argument("--reference", default="python", help="Python module (default) or reference anx executable path.")
     parser.add_argument("--native", required=True, help="Native anx executable")
+    parser.add_argument("--compiler", help="Native yianc used by both anx implementations (default: sibling of --native).")
     parser.add_argument("--report", type=Path, required=True, help="Write the complete JSON report here")
     parser.add_argument("--filter", default="", help="Run only case names containing this text")
-    args = parser.parse_args()
+    args = parser.parse_args(namespace=Arguments())
 
-    reference = shutil.which(args.reference)
     native_path = Path(args.native).expanduser().resolve()
-    if reference is None or not native_path.is_file():
-        parser.error("both anx executables must exist")
-    reference_path = str(Path(reference).resolve())
-    compiler = shutil.which("yianc") or ""
+    if not native_path.is_file():
+        parser.error(f"native anx executable not found: {native_path}")
+    if args.reference == "python":
+        reference = [sys.executable, "-m", "anx.main"]
+        reference_label = "python -m anx.main"
+    else:
+        reference_path = shutil.which(args.reference)
+        if reference_path is None:
+            parser.error(f"reference anx executable not found: {args.reference}")
+        reference = [str(Path(reference_path).resolve())]
+        reference_label = reference[0]
+
+    compiler_path = Path(args.compiler).expanduser() if args.compiler else native_path.with_name("yianc")
+    if not compiler_path.is_file():
+        parser.error(f"native yianc executable not found: {compiler_path}")
+    compiler = str(compiler_path.resolve())
     selected = [case for case in cases() if args.filter in case.name]
 
     records: list[dict[str, Json]] = []
@@ -200,8 +233,8 @@ def main() -> int:
         for index, case in enumerate(selected):
             case_root = temporary_root / f"{index:03}-{case.name}"
             case_root.mkdir()
-            reference_result = run_case(reference_path, case, case_root, "python", compiler)
-            native_result = run_case(str(native_path), case, case_root, "native", compiler)
+            reference_result = run_case(reference, case, case_root, "python", compiler)
+            native_result = run_case([str(native_path)], case, case_root, "native", compiler)
             equal = equivalent(case, reference_result, native_result)
             failures += int(not equal)
             records.append(
@@ -218,7 +251,7 @@ def main() -> int:
     ).stdout.strip()
     report = {
         "revision": revision,
-        "reference": reference_path,
+        "reference": reference_label,
         "native": str(native_path),
         "compiler": compiler,
         "cases": records,

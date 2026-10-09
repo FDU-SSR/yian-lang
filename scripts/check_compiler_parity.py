@@ -10,6 +10,7 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
@@ -175,7 +176,13 @@ def __normalize(value: Json, directory: Path) -> Json:
     return value
 
 
-def __run(compiler: str, case: Case, directory: Path, raw: bool) -> dict[str, Json]:
+def __run(
+    compiler: list[str],
+    case: Case,
+    directory: Path,
+    raw: bool,
+    default_library: Path,
+) -> dict[str, Json]:
     sources: list[str] = []
     for path, contents in case.preexisting:
         destination = directory / path
@@ -223,13 +230,23 @@ def __run(compiler: str, case: Case, directory: Path, raw: bool) -> dict[str, Js
     if raw:
         arguments.append("--raw-pointers")
     if case.standard_library:
-        sources.insert(0, str(__ROOT / "lib/src"))
-    command = [compiler, *arguments, *(["--"] if case.separator else []), *sources]
+        environment_values = dict(case.environment)
+        library_root = __ROOT / "lib/src"
+        if environment_values.get("YIAN_LIB") == "" and environment_values.get("YIAN_ROOT") == "":
+            library_root = default_library
+        sources.insert(0, str(library_root))
+    command = [*compiler, *arguments, *(["--"] if case.separator else []), *sources]
     if case.interleave:
-        command = [compiler, sources[0], *arguments, *sources[1:]]
+        command = [*compiler, sources[0], *arguments, *sources[1:]]
     environment = os.environ.copy()
-    for name in ("YIAN_LIB", "YIAN_ROOT", "YIAN_LOG", "YIAN_LOG_FILE"):
+    for name in ("YIAN_LIB", "YIAN_ROOT", "YIAN_LOG", "YIAN_LOG_FILE", "YIANC"):
         environment.pop(name, None)
+    environment["YIAN_ROOT"] = str(__ROOT)
+    environment["YIAN_LIB"] = str(__ROOT / "lib/src")
+    source_path = str(__ROOT)
+    if environment.get("PYTHONPATH"):
+        source_path += os.pathsep + environment["PYTHONPATH"]
+    environment["PYTHONPATH"] = source_path
     environment.update(case.environment)
     process = subprocess.run(command, cwd=directory, env=environment, capture_output=True, text=True)
     stdout: Json = process.stdout
@@ -283,7 +300,7 @@ def __run(compiler: str, case: Case, directory: Path, raw: bool) -> dict[str, Js
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--reference", default="yianc")
+    parser.add_argument("--reference", default="python", help="Python module (default) or compiler executable path.")
     parser.add_argument("--bootstrap", required=True)
     parser.add_argument("--build-mode", choices=("fat", "raw", "unspecified"), default="unspecified")
     parser.add_argument("--groups", default="analyze,cli,frontend,format,native,observability")
@@ -293,10 +310,26 @@ def main() -> int:
     parser.add_argument("--full-analysis", action="store_true", help="also compare the existing basic suite's semantic JSON")
     parser.add_argument("--failed-from", type=Path, help="select cases that failed in a previous complete report")
     args = parser.parse_args(namespace=__Arguments())
-    compilers = [shutil.which(args.reference), shutil.which(args.bootstrap)]
-    if any(compiler is None for compiler in compilers):
-        parser.error("both compiler executables must exist")
-    reference, bootstrap = (str(Path(compiler).resolve()) for compiler in compilers if compiler is not None)
+    if args.reference == "python":
+        reference = [sys.executable, "-m", "compiler.main"]
+        reference_label = "python -m compiler.main"
+    else:
+        reference_path = shutil.which(args.reference)
+        if reference_path is None:
+            parser.error(f"reference compiler not found: {args.reference}")
+        reference = [str(Path(reference_path).resolve())]
+        reference_label = reference[0]
+
+    bootstrap_path = shutil.which(args.bootstrap)
+    if bootstrap_path is None:
+        parser.error(f"bootstrap compiler not found: {args.bootstrap}")
+    bootstrap = [str(Path(bootstrap_path).resolve())]
+    bootstrap_label = bootstrap[0]
+    bootstrap_executable = Path(bootstrap[0])
+    installed_root = bootstrap_executable.parent.parent / "share/yian"
+    bootstrap_library = installed_root / "lib/src"
+    if not bootstrap_library.is_dir():
+        bootstrap_library = __ROOT / "lib/src"
     groups = set(args.groups.split(","))
     available = __cases()
     if args.full_analysis:
@@ -326,7 +359,12 @@ def main() -> int:
         parser.error("no matching cases; an empty selection is not a parity check")
     revision = subprocess.run(["git", "rev-parse", "HEAD"], cwd=__ROOT, text=True, capture_output=True).stdout.strip()
     changes = subprocess.run(["git", "status", "--porcelain"], cwd=__ROOT, text=True, capture_output=True).stdout
-    compiler_hashes = [hashlib.sha256(Path(path).read_bytes()).hexdigest() for path in (reference, bootstrap)]
+    compiler_hashes = [
+        hashlib.sha256(Path(command[0]).read_bytes()).hexdigest()
+        if len(command) == 1 and Path(command[0]).is_file()
+        else None
+        for command in (reference, bootstrap)
+    ]
     # A dirty checkout needs a content identity in addition to its committed revision.
     paths = subprocess.run(["git", "ls-files", "-co", "--exclude-standard", "-z"], cwd=__ROOT, capture_output=True, check=True).stdout.decode().split("\0")
     source_hash = hashlib.sha256()
@@ -347,8 +385,8 @@ def main() -> int:
                 directories = [Path(temporary) / "reference", Path(temporary) / "bootstrap"]
                 for directory in directories:
                     directory.mkdir()
-                expected = __run(reference, case, directories[0], raw)
-                actual = __run(bootstrap, case, directories[1], raw)
+                expected = __run(reference, case, directories[0], raw, __ROOT / "lib/src")
+                actual = __run(bootstrap, case, directories[1], raw, bootstrap_library)
                 equal = expected["observation"] == actual["observation"]
                 if case.expected_error:
                     observations = [cast(dict[str, Json], item["observation"]) for item in (expected, actual)]
@@ -363,7 +401,7 @@ def main() -> int:
                 print(f"{'PASS' if equal else 'FAIL'} {case.name}@{'raw' if raw else 'fat'}", flush=True)
     report: dict[str, Json] = {
         "revision": revision, "source_sha256": source_hash.hexdigest(), "worktree_changes": changes, "build_mode": args.build_mode,
-        "reference": reference, "bootstrap": bootstrap,
+        "reference": reference_label, "bootstrap": bootstrap_label,
         "reference_sha256": compiler_hashes[0], "bootstrap_sha256": compiler_hashes[1],
         "total": len(records), "failures": failures, "cases": records,
     }
