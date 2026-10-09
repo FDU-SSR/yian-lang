@@ -150,8 +150,6 @@ _PREFIX_OPERATORS = frozenset(
 def format_tokens(text: str, tokens: Sequence[Token]) -> str:
     """Render *tokens* — which came from *text* — as canonical source."""
     real = [token for token in tokens if not _is_eof(token)]
-    if not real:
-        return ""
     return _Layout(text, real, gaps_in(text, real)).render()
 
 
@@ -299,6 +297,8 @@ class _Layout:
                 continue
             self.__token(token, index)
             index += 1
+        # The final gap owns comments after the last token, including comment-only files.
+        self.__comments(self.__gaps[-1])
         self.__end_line()
         rendered = "".join(self.__out)
         return rendered.rstrip("\n") + "\n" if rendered.strip() else ""

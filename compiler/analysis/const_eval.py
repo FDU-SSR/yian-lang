@@ -113,7 +113,8 @@ class ConstantExpressionEvaluator:
             right_ty = self.__type_ctx[right_type]
             valid = (
                 isinstance(left_ty, Type.BoolType) and isinstance(right_ty, Type.BoolType)
-                or isinstance(left_ty, Type.IntType) and isinstance(right_ty, Type.IntType)
+                or isinstance(left_ty, (Type.IntType, Type.IntLiteralType))
+                and isinstance(right_ty, (Type.IntType, Type.IntLiteralType))
                 or isinstance(left_ty, Type.FloatType) and isinstance(right_ty, Type.FloatType)
                 or isinstance(left_ty, Type.CharType) and isinstance(right_ty, Type.CharType)
             )
@@ -222,7 +223,7 @@ class ConstantExpressionEvaluator:
             elif isinstance(source, Type.CharType) and type(value) is str:
                 result = ord(value)
             elif isinstance(source, Type.BoolType) and type(value) is bool:
-                result = int(value)
+                self.__not_evaluable(expr, "cannot convert bool to an integer")
             else:
                 self.__not_evaluable(expr, "integer cast requires a numeric or char value")
             return self.__normalize_integer(result, target_type), target_type

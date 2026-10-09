@@ -193,7 +193,9 @@ impl Layout {
             previous = token.span.end;
             index += 1;
         }
-        // Python's layout currently drops the final gap. Preserve that behavior at this boundary.
+        let footer = gap(self.source.tail(previous), previous.column);
+        defer footer.drop();
+        self.comments(&footer);
         self.end_line();
         let output = self.output;
         self.output = String.new();
@@ -219,7 +221,6 @@ fn clean_comment(text: str) -> String {
 pub fn format_tokens(text: str, tokens: Vec<Token>&) -> String {
     let count = tokens.len();
     if count > 0 && tokens[count - 1].is_eof() { count -= 1; }
-    if count == 0 { return String.new(); }
     let layout = Layout.new(text, tokens, count);
     defer layout.drop();
     layout.render()

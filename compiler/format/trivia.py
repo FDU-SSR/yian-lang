@@ -55,9 +55,10 @@ def gaps_in(text: str, tokens: Sequence[Token]) -> tuple[Gap, ...]:
     The result has ``len(tokens) + 1`` entries: ``gaps[i]`` precedes
     ``tokens[i]``, and the last entry follows the final token.
     """
-    if not tokens:
-        return (Gap(),)
     lines = text.splitlines(keepends=True)
+    if not tokens:
+        path = Path("<formatter>")
+        return (__gap(lines, path, SrcPosition(0, 0, path), None),)
     path = tokens[0].span.path
     result: list[Gap] = []
     previous = SrcPosition(0, 0, path)

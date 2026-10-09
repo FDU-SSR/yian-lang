@@ -1,7 +1,7 @@
 from compiler.analysis.lowering.checker import ExprChecker;
 from compiler.analysis.ty.callable import signature, schedule, instance_substitutions;
 from compiler.analysis.ty.substitution import infer, substitute, has_generic;
-from compiler.analysis.ty.relations import compatible, default_type, is_numeric, has_literal;
+from compiler.analysis.ty.relations import compatible, default_type, is_numeric, is_integer, has_literal;
 from compiler.analysis.ty.validation import contains_ffi;
 from compiler.analysis.ty.model import NominalKind;
 from compiler.analysis.hir.node import HirKind, Invoke, Cast, Call as HirCall, MethodCall as HirMethodCall;
@@ -52,6 +52,10 @@ impl ExprChecker {
 
             let value = self.expression(args[0].data.value)?;
             let source = self.type_of(value);
+
+            if source == self.ctx.primitives.boolean && is_integer(self.ctx, type_id) {
+                return Result<HirId, AnalysisError>.Err(self.error(span, "cannot convert bool to an integer"));
+            }
 
             if !is_numeric(self.ctx, source) && source != self.ctx.primitives.character && source != self.ctx.primitives.boolean {
                 return Result<HirId, AnalysisError>.Err(self.error(span, "invalid scalar conversion"));

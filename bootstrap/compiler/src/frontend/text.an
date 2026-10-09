@@ -53,6 +53,11 @@ impl SourceText {
         if end < begin { return ""; }
         str.from_slice_unchecked(self.text.as_slice()[begin..end])
     }
+
+    // The returned suffix borrows the same source storage as slice().
+    pub fn tail(start: Position) -> str {
+        str.from_slice_unchecked(self.text.as_slice()[self.offset(start)..self.text.as_slice().len()])
+    }
 }
 
 impl Drop for SourceText {

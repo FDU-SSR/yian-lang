@@ -168,7 +168,7 @@ impl ConstantEvaluator {
         defer { if !right_transferred { right.drop(); } };
         if binary.op == BinaryOperator.Eq || binary.op == BinaryOperator.Neq {
             match self.types.require(self.hir.require(binary.left)?.type_id)? {
-                IntLiteral | FloatLiteral => {
+                FloatLiteral => {
                     let problem = failed(ConstEvalError.NotConstant, location);
                     return Result<ConstValue, AnalysisError>.Err(problem.with_message("comparison operands are not compile-time values"));
                 },
@@ -228,7 +228,7 @@ impl ConstantEvaluator {
                     Integer(v) => integer = cast_integer(*v, width, *signed),
                     LargeInteger(v) => integer = normalized(v.low_bits(), width, *signed),
                     Char(v) => integer = normalized(u64(*v), width, *signed),
-                    Bool(v) => integer = normalized(if *v { 1u64 } else { 0u64 }, width, *signed),
+                    Bool(_) => return Result<ConstValue, AnalysisError>.Err(not_constant(location, "cannot convert bool to an integer")),
                     Float(v) => integer = match float_integer(*v, width, *signed) {
                         Ok(value) => value,
                         Err(_) => return Result<ConstValue, AnalysisError>.Err(not_constant(location, "non-finite float cannot be cast to an integer"))

@@ -44,7 +44,7 @@ fn round_shift(value: u64, shift: u32) -> u64 {
     let quotient = value >> shift;
     let remainder = value & ((1u64 << shift) - 1);
     let half = 1u64 << (shift - 1);
-    quotient + u64(remainder > half || (remainder == half && (quotient & 1) != 0))
+    quotient + if remainder > half || (remainder == half && (quotient & 1) != 0) { 1u64 } else { 0u64 }
 }
 
 pub fn round_float(value: f64, width: u32) -> f64 {

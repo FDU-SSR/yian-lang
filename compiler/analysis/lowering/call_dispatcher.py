@@ -271,6 +271,11 @@ class CallDispatcher:
             raise AnalysisError("type casts accept exactly one argument", span)
 
         value = self.__expr.value(args[0].value)
+        source_type = self.__ctx.type_ctx[value.type_id]
+        target_type = self.__ctx.type_ctx[target_type_id]
+        if isinstance(source_type, Type.BoolType) and isinstance(target_type, (Type.IntType, Type.IntLiteralType)):
+            raise AnalysisError("cannot convert bool to an integer", span)
+
         return HIR.Cast(span=span, value=value, target_type=target_type_id, type_id=target_type_id, is_place=False)
 
     def __handle_instance_method_call(self, node: AST.MethodCall, receiver: HIR.Expr) -> HIR.Expr:
