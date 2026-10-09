@@ -73,14 +73,7 @@ class Toolchain:
     anx: tuple[str, ...]
     environment: dict[str, str]
 
-# ---------------------------------------------------------------------------
-# Multi-file test configuration
-# ---------------------------------------------------------------------------
-# Test source file (relative to _source_dir) → extra .an files to compile alongside.
-EXTRA_SOURCES: dict[str, list[str]] = {
-}
-
-# Directories (relative to _source_dir) whose .an files are compiled together.
+# Directories (relative to _source_dir) whose .an files form one test case.
 MULTI_FILE_DIRS: set[str] = {"try/cross_module", "trait/qualified_private", "type/alias/imported_scope"}
 
 
@@ -384,7 +377,6 @@ def discover_tests() -> list[TestCase]:
     if _suite_name == "package":
         return discover_package_tests()
 
-    helpers: set[str] = {h for v in EXTRA_SOURCES.values() for h in v}
     seen_multi: set[str] = set()
     tests: list[TestCase] = []
     orphaned: list[str] = []
@@ -393,10 +385,6 @@ def discover_tests() -> list[TestCase]:
         rel = an_file.relative_to(_source_dir)
 
         src_rel = str(rel)
-
-        # Skip known helper files (e.g. private/private.an).
-        if src_rel in helpers:
-            continue
 
         # --- Multi-file directory test ---
         parent_rel = str(rel.parent)
@@ -410,8 +398,7 @@ def discover_tests() -> list[TestCase]:
 
         # --- Standalone test ---
         else:
-            extra = EXTRA_SOURCES.get(src_rel, [])
-            source_files = [an_file] + [_source_dir / e for e in extra]
+            source_files = [an_file]
             name = src_rel
 
         # .err.an files (including those in multi-file dirs) are error tests.
