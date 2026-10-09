@@ -1,0 +1,121 @@
+from std.core.drop import Drop;
+from std.core.env import args, exit;
+from std.core.io import IoErrorKind, Stderr, Stdout;
+from std.core.process import Command, ExitStatus;
+from std.core.string import String;
+from std.core.vec import Vec;
+
+fn main() {
+    let arguments = args();
+    if arguments.len() > 1u64 && arguments[1].as_str() == "--emit-large-streams" {
+        let stderr_block = String.new();
+        let stdout_block = String.new();
+        for index in 0u64..65536u64 {
+            stderr_block.push('E');
+            stdout_block.push('O');
+        }
+
+        let stderr = Stderr.new();
+        let stdout = Stdout.new();
+        for repetition in 0u64..16u64 {
+            stderr.write_str(stderr_block.as_str()).unwrap();
+        }
+        for repetition in 0u64..16u64 {
+            stdout.write_str(stdout_block.as_str()).unwrap();
+        }
+
+        stderr_block.drop();
+        stdout_block.drop();
+        for argument in arguments { argument.drop(); }
+        arguments.drop();
+        exit(0i32);
+    }
+    if arguments.len() > 1u64 && arguments[1].as_str() == "--echo-argument" {
+        let stdout = Stdout.new();
+        stdout.write_str(arguments[2].as_str()).unwrap();
+        for argument in arguments { argument.drop(); }
+        arguments.drop();
+        exit(0i32);
+    }
+
+    let large_streams = Command.new(arguments[0].as_str());
+    large_streams.arg("--emit-large-streams");
+    let output = large_streams.output().unwrap();
+    assert output.status.success(): "child writing both streams exits successfully";
+    assert output.stderr.len() == 1048576u64: "large stderr is drained while stdout is pending";
+    assert output.stdout.len() == 1048576u64: "large stdout is drained after stderr";
+    assert output.stderr[0u64] == u8('E'): "stderr contents are preserved";
+    assert output.stdout[1048575u64] == u8('O'): "stdout contents are preserved";
+    output.drop();
+    large_streams.drop();
+
+    let spaced_argument = Command.new(arguments[0].as_str());
+    spaced_argument.arg("--echo-argument");
+    spaced_argument.arg("one argument with spaces");
+    let spaced_output = spaced_argument.output().unwrap();
+    let spaced_text = str.from_slice(spaced_output.stdout.as_slice()).unwrap();
+    assert *spaced_text == "one argument with spaces": "arguments are passed without shell splitting";
+    spaced_output.drop();
+    spaced_argument.drop();
+
+    let nonzero = Command.new("/bin/sh");
+    nonzero.arg("-c");
+    nonzero.arg("exit 7");
+    match nonzero.status().unwrap() {
+        ExitStatus.Exited(code) => assert *code == 7i32: "status preserves a nonzero child exit code",
+        ExitStatus.Signaled(_) => @panic("normal child exit was reported as a signal"),
+    };
+    nonzero.drop();
+
+    let missing = Command.new("/yian-test-command-that-does-not-exist");
+    match missing.output() {
+        Ok(output) => { output.drop(); @panic("missing command unexpectedly started"); },
+        Err(problem) => {
+            assert problem.kind() == IoErrorKind.NotFound: "missing command reports not found";
+            problem.drop();
+        },
+    }
+    missing.drop();
+
+    let interruptible = Command.new("/bin/sh");
+    interruptible.arg("-c");
+    interruptible.arg("kill -INT \"$PPID\"; exec sleep 2");
+    interruptible.interruptible(true);
+    match interruptible.status() {
+        Ok(status) => {
+            match status {
+                ExitStatus.Exited(_) => @panic("parent interruption did not stop the child"),
+                ExitStatus.Signaled(_) => @panic("interruption was not reported as an I/O error"),
+            }
+        },
+        Err(problem) => {
+            assert problem.kind() == IoErrorKind.Interrupted: "parent interruption is reported explicitly";
+            problem.drop();
+        },
+    }
+    interruptible.drop();
+
+    for argument in arguments { argument.drop(); }
+    arguments.drop();
+
+    let input = Vec<u8>.with_capacity(1048576u64);
+    for index in 0u64..1048576u64 {
+        input.push(u8(index % 251u64));
+    }
+
+    let cat = Command.new("/bin/cat");
+    cat.stdin_bytes(input.as_slice());
+    input.drop();
+    let echoed = cat.output().unwrap();
+    assert echoed.status.success(): "cat exits successfully";
+    assert echoed.stdout.len() == 1048576u64: "captured output spans multiple pipe buffers";
+    assert echoed.stderr.is_empty(): "stderr remains independently captured";
+    assert echoed.stdout[0u64] == 0u8: "input copy starts at the first byte";
+    assert echoed.stdout[1048575u64] == u8(1048575u64 % 251u64): "input copy preserves the last byte";
+
+    let early_exit = Command.new("/bin/true");
+    early_exit.stdin_bytes(echoed.stdout.as_slice());
+    echoed.drop();
+    let completed = early_exit.output().unwrap();
+    assert completed.status.success(): "early stdin close does not replace the child status";
+}

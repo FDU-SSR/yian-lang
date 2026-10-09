@@ -1,12 +1,9 @@
-from std.core.io import Stdin, BufReader;
+from std.core.io import Stdin;
 from std.core.drop import Drop;
+from std.core.string import String;
 
 fn main() {
-    let input = Stdin.new();
-    let reader = BufReader<Stdin>.new(&input);
-    defer reader.drop();
-    let owned = *reader.read_line().unwrap().unwrap();
-    defer owned.drop();
-    let line = owned.as_str().trim();
-    assert line == "piped input";
+    let content: String = *Stdin.new().read_to_string().unwrap();
+    defer content.drop();
+    assert content.as_str() == "piped input\n": "CRLF test input is normalized like Python text reads";
 }

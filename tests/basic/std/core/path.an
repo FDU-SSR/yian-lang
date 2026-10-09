@@ -1,4 +1,5 @@
 from std.core.path import Path, PathBuf;
+from std.core.fs import resolve;
 from std.core.drop import Drop;
 
 fn main() {
@@ -13,20 +14,33 @@ fn main() {
     assert *Path.new(".hidden.an").extension().unwrap() == "an": "dot file extension";
     assert *Path.new("file.").extension().unwrap() == "": "empty extension";
     assert Path.new("a/..").file_name().is_none(): "parent component is not file name";
-    let joined = Path.new("/a").join("b/../c"); defer joined.drop();
+    let joined = Path.new("/a").join("b/../c");
+    defer joined.drop();
     assert joined.as_str() == "/a/b/../c": "join preserves parent components";
-    let absolute = Path.new("/a").join("/b"); defer absolute.drop();
+    let absolute = Path.new("/a").join("/b");
+    defer absolute.drop();
     assert absolute.as_str() == "/b": "absolute operand replaces base";
-    let empty = Path.new("").join("b"); defer empty.drop();
+    let empty = Path.new("").join("b");
+    defer empty.drop();
     assert empty.as_str() == "b": "empty base";
-    let changed = Path.new("/a/中.an").with_extension("o"); defer changed.drop();
+    let changed = Path.new("/a/中.an").with_extension("o");
+    defer changed.drop();
     assert changed.as_str() == "/a/中.o": "replace extension";
-    let removed = Path.new("a.tar.gz").with_extension(""); defer removed.drop();
+    let removed = Path.new("a.tar.gz").with_extension("");
+    defer removed.drop();
     assert removed.as_str() == "a.tar": "remove final extension";
-    let hidden = Path.new(".hidden").with_extension("an"); defer hidden.drop();
+    let hidden = Path.new(".hidden").with_extension("an");
+    defer hidden.drop();
     assert hidden.as_str() == ".hidden.an": "add extension to dot file";
-    let owned = PathBuf.from("a"); defer owned.drop();
-    owned.push("b"); assert owned.as_str() == "a/b": "owned push";
-    let transfer = owned.into_string(); defer transfer.drop();
+    let owned = PathBuf.from("a");
+    defer owned.drop();
+    owned.push("b");
+    assert owned.as_str() == "a/b": "owned push";
+    let transfer = owned.into_string();
+    defer transfer.drop();
     assert owned.as_str() == "" && transfer.as_str() == "a/b": "owned string extraction";
+
+    let resolved = resolve("/tmp/../tmp/yian-resolve-missing/child").unwrap();
+    defer resolved.drop();
+    assert resolved.as_str() == "/tmp/yian-resolve-missing/child": "resolve normalizes a missing suffix";
 }
