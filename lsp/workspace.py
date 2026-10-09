@@ -262,6 +262,10 @@ class Workspace:
         """Capture editor-owned inputs before handing analysis to a worker."""
         return self.files(), tuple(self.__documents), self.__session
 
+    def syntax_session(self) -> AnalysisSession:
+        """Return the configured session without enumerating project inputs."""
+        return self.__session
+
     def accept(self, revision: int, files: tuple[Path, ...], payload: AnalysisPayload) -> Snapshot | None:
         """Accept a worker result only if its inputs are still current."""
         if revision != self.__revision:

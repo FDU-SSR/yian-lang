@@ -9,13 +9,18 @@ window never leaves an orphan behind.
 from __future__ import annotations
 
 import argparse
+import asyncio
 import logging
 import os
 import sys
+from threading import Event
 from collections.abc import Sequence
 from pathlib import Path
 
+from pygls.io_ import StdinAsyncReader, StdoutWriter, run_async
+
 from lsp.server import SERVER_NAME, SERVER_VERSION, create_server
+from lsp.trace import TraceWriter
 
 __all__ = ["main"]
 
@@ -80,8 +85,51 @@ def main(argv: Sequence[str] | None = None) -> int:
         handlers=handlers,
         force=True,
     )
-    server = create_server(compiler_root=args.compiler_root, raw_pointers=args.raw_pointers)
-    server.start_io()
+    trace: TraceWriter | None = None
+    trace_path = os.environ.get("YIAN_LSP_TRACE_FILE")
+    if trace_path:
+        try:
+            trace = TraceWriter(Path(trace_path))
+        except OSError as error:
+            print(f"{SERVER_NAME}: cannot open trace file {trace_path}: {error}", file=sys.stderr)
+            return 2
+    server = create_server(
+        compiler_root=args.compiler_root,
+        raw_pointers=args.raw_pointers,
+        event_sink=None if trace is None else trace.emit,
+    )
+
+    async def serve() -> None:
+        reader = StdinAsyncReader(sys.stdin.buffer, server.thread_pool)
+        server.protocol.set_writer(StdoutWriter(sys.stdout.buffer))
+        try:
+            await run_async(
+                stop_event=Event(),
+                reader=reader,
+                protocol=server.protocol,
+                logger=logging.getLogger("pygls.io"),
+                error_handler=server.report_server_error,
+            )
+        finally:
+            # pygls returns on stdin EOF. Finish the asynchronous exit handler's
+            # worker cleanup before asyncio.run cancels outstanding handler tasks.
+            try:
+                await server.close_worker()
+            except Exception:
+                logging.getLogger(__name__).exception(
+                    "could not clean up the analysis worker"
+                )
+
+    try:
+        asyncio.run(serve())
+    except BrokenPipeError:
+        logging.getLogger(__name__).error("connection to the client was lost")
+    except (KeyboardInterrupt, SystemExit):
+        pass
+    finally:
+        server.shutdown()
+        if trace is not None:
+            trace.close()
     return 0
 
 
