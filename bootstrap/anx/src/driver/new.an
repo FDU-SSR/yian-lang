@@ -1,0 +1,142 @@
+from std.core.drop import Drop;
+from std.core.fs import create_dir_all, current_dir, resolve, try_exists, write_string;
+from std.core.io import Stderr, Stdout;
+from std.core.option import Option;
+from std.core.path import Path, PathBuf;
+from std.core.string import String;
+from std.core.vec import Vec;
+
+fn write_stdout(text: str) -> bool {
+    match Stdout.new().write_str(text) {
+        Ok(_) => true,
+        Err(problem) => { problem.drop(); false },
+    }
+}
+
+fn write_stderr(text: str) {
+    match Stderr.new().write_str(text) {
+        Ok(_) => {},
+        Err(problem) => problem.drop(),
+    }
+}
+
+fn package_basename(name: str) -> String {
+    match Path.new(name).file_name() {
+        Some(value) => String.from(&value),
+        None => String.from(&name),
+    }
+}
+
+fn manifest_text(name: str, kind: str) -> String {
+    let text = String.from(&"[package]\nname = \"");
+    text.push_str(name);
+    text.push_str("\"\nkind = \"");
+    text.push_str(kind);
+    text.push_str("\"\nversion = \"0.1.0\"\n\n[dependencies]\n");
+    text
+}
+
+fn main_text(name: str) -> String {
+    let text = String.from(&"from std.core.io import print;\n\nfn main() {\n    print(\"Hello from ");
+    text.push_str(name);
+    text.push_str("!\\n\");\n}\n");
+    text
+}
+
+fn test_text() -> String {
+    String.from(&"// `anx test` runs every .an file under tests/ as its own program.\n// Expected output lives in tests/output/<name>.an.ans.\nfrom std.core.io import print;\n\nfn main() {\n    print(\"tests ok\\n\");\n}\n")
+}
+
+fn write_file(path: str, text: str) -> bool {
+    match write_string(path, text) {
+        Ok(_) => true,
+        Err(problem) => {
+            write_stderr("error: ");
+            write_stderr(problem.msg());
+            write_stderr("\n");
+            problem.drop();
+            false
+        },
+    }
+}
+
+pub fn scaffold(name: str, kind: str) -> i32 {
+    let current = match current_dir() {
+        Ok(value) => value,
+        Err(problem) => {
+            write_stderr("error: ");
+            write_stderr(problem.msg());
+            write_stderr("\n");
+            problem.drop();
+            return 1i32;
+        },
+    };
+    defer current.drop();
+    let unresolved = Path.new(current.as_str()).join(name);
+    defer unresolved.drop();
+    let package_dir = match resolve(unresolved.as_str()) {
+        Ok(value) => value,
+        Err(problem) => { write_stderr("error: "); write_stderr(problem.msg()); write_stderr("\n"); problem.drop(); return 1i32; },
+    };
+    defer package_dir.drop();
+    match try_exists(package_dir.as_str()) {
+        Ok(true) => {
+            write_stderr("error: Directory already exists: ");
+            write_stderr(package_dir.as_str());
+            write_stderr("\n");
+            return 1i32;
+        },
+        Err(problem) => { write_stderr("error: "); write_stderr(problem.msg()); write_stderr("\n"); problem.drop(); return 1i32; },
+        _ => {},
+    }
+
+    let source_dir = Path.new(package_dir.as_str()).join("src");
+    defer source_dir.drop();
+    let tests_dir = Path.new(package_dir.as_str()).join("tests/output");
+    defer tests_dir.drop();
+    for directory in [package_dir.as_str(), source_dir.as_str(), tests_dir.as_str()] {
+        match create_dir_all(*directory) {
+            Ok(_) => {},
+            Err(problem) => { write_stderr("error: "); write_stderr(problem.msg()); write_stderr("\n"); problem.drop(); return 1i32; },
+        }
+    }
+
+    let package_name = package_basename(name);
+    defer package_name.drop();
+    let manifest = manifest_text(package_name.as_str(), kind);
+    defer manifest.drop();
+    let manifest_path = Path.new(package_dir.as_str()).join("package.anx");
+    defer manifest_path.drop();
+    if !write_file(manifest_path.as_str(), manifest.as_str()) { return 1i32; }
+
+    if kind != "lib" {
+        let source = main_text(package_name.as_str());
+        defer source.drop();
+        let entry = Path.new(source_dir.as_str()).join("main.an");
+        defer entry.drop();
+        if !write_file(entry.as_str(), source.as_str()) { return 1i32; }
+    }
+
+    let test = test_text();
+    defer test.drop();
+    let test_path = Path.new(package_dir.as_str()).join("tests/smoke.an");
+    defer test_path.drop();
+    if !write_file(test_path.as_str(), test.as_str()) { return 1i32; }
+
+    let expected_path = Path.new(tests_dir.as_str()).join("smoke.an.ans");
+    defer expected_path.drop();
+    if !write_file(expected_path.as_str(), "tests ok\n") { return 1i32; }
+
+    let gitignore_path = Path.new(package_dir.as_str()).join(".gitignore");
+    defer gitignore_path.drop();
+    if !write_file(gitignore_path.as_str(), "# anx build artifacts\nbuild/\n") { return 1i32; }
+
+    let message = String.from(&"Created package '");
+    message.push_str(package_name.as_str());
+    message.push_str("' at ");
+    message.push_str(package_dir.as_str());
+    message.push('\n');
+    defer message.drop();
+    if !write_stdout(message.as_str()) { return 1i32; }
+    0i32
+}

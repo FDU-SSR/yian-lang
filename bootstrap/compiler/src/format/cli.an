@@ -1,8 +1,6 @@
-from compiler.config import CompilerConfig, FrontendPhase;
+from compiler.config import CompilerConfig;
 from compiler.frontend.source import collect_sources, read_source;
-from compiler.frontend.prepare import prepare_file;
-from compiler.common.ids import SourceId;
-from compiler.format.layout import format_tokens;
+from compiler.format.api import format_text;
 from std.core.drop import Drop;
 from std.core.fs import write;
 from std.core.io import Stdout, Stderr;
@@ -38,18 +36,20 @@ pub fn format_cli(config: CompilerConfig&, rewrite: bool, check: bool) -> i32 {
     for path in paths {
         let source = match read_source(path.as_str()) { Ok(value) => value, Err(problem) => { defer problem.drop(); stderr(problem.msg()); return 1; }, };
         defer source.drop();
-        let prepared = match prepare_file(SourceId(0), path.as_str(), source.as_str(), FrontendPhase.Ast) {
-            Ok(value) => value,
-            Err(problem) => {
-                problem.drop();
+        let formatted = match format_text(source.as_str(), path.as_str()) {
+            Ok(Some(value)) => value,
+            Ok(None) => {
                 stderr("skip ");
                 stderr(path.as_str());
                 stderr(": cannot be formatted\n");
                 continue;
             },
+            Err(problem) => {
+                defer problem.drop();
+                stderr("error: formatter failed\n");
+                return 1;
+            },
         };
-        defer prepared.drop();
-        let formatted = format_tokens(source.as_str(), &prepared.tokens);
         defer formatted.drop();
         if formatted.as_str() == source.as_str() { continue; }
         changed += 1;

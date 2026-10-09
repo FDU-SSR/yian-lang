@@ -2,9 +2,12 @@
 #define YIAN_PROCESS_H
 #include <stdint.h>
 
-/* Results own both captured byte buffers until yian_process_drop. Failures set -errno. */
-void *yian_process_output(const char *program, char *const *arguments,
-                          const char *directory, int32_t *error);
+/* Captured buffers remain owned by the result until yian_process_drop. */
+void *yian_process_execute(const char *program, char *const *arguments,
+                           const char *directory, const uint8_t *stdin_bytes,
+                           uint64_t stdin_length, int32_t stdin_mode,
+                           int32_t capture_output, int32_t interruptible,
+                           int32_t *error);
 uint64_t yian_process_length(const void *result, int32_t stream);
 int32_t yian_process_copy(const void *result, int32_t stream,
                          uint8_t *buffer, uint64_t capacity);

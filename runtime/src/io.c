@@ -143,6 +143,153 @@ int64_t yian_io_canonicalize(const char *path, uint8_t *buffer, uint64_t capacit
     free(resolved);
     return (int64_t)n;
 }
+
+static char *join_path(const char *base, const char *tail) {
+    size_t base_length = strlen(base);
+    size_t tail_length = strlen(tail);
+    int separator = base_length != 0 && base[base_length - 1] != '/';
+    if (base_length > SIZE_MAX - tail_length - (size_t)separator - 1) {
+        errno = ENAMETOOLONG;
+        return NULL;
+    }
+    char *joined = malloc(base_length + (size_t)separator + tail_length + 1);
+    if (joined == NULL) { errno = ENOMEM; return NULL; }
+    memcpy(joined, base, base_length);
+    size_t offset = base_length;
+    if (separator) joined[offset++] = '/';
+    memcpy(joined + offset, tail, tail_length + 1);
+    return joined;
+}
+
+static char *append_component(const char *base, const char *component) {
+    if (!strcmp(component, ".")) return strdup(base);
+    if (!strcmp(component, "..")) {
+        char *parent = strdup(base);
+        if (parent == NULL) { errno = ENOMEM; return NULL; }
+        size_t length = strlen(parent);
+        while (length > 1 && parent[length - 1] == '/') parent[--length] = '\0';
+        while (length > 1 && parent[length - 1] != '/') parent[--length] = '\0';
+        while (length > 1 && parent[length - 1] == '/') parent[--length] = '\0';
+        if (length == 1) parent[1] = '\0';
+        return parent;
+    }
+    return join_path(base, component);
+}
+
+static char *resolve_path_allow_missing(const char *path, unsigned depth, int *error) {
+    if (depth > 40) { *error = ELOOP; return NULL; }
+    char *absolute = NULL;
+    if (path[0] == '/') {
+        absolute = strdup(path);
+    } else {
+        char *cwd = getcwd(NULL, 0);
+        if (cwd == NULL) { *error = errno; return NULL; }
+        absolute = join_path(cwd, path);
+        free(cwd);
+    }
+    if (absolute == NULL) { *error = errno; return NULL; }
+
+    char *current = strdup("/");
+    if (current == NULL) { free(absolute); *error = ENOMEM; return NULL; }
+    int missing = 0;
+    char *cursor = absolute;
+    while (*cursor != '\0') {
+        while (*cursor == '/') ++cursor;
+        if (*cursor == '\0') break;
+        char *start = cursor;
+        while (*cursor != '\0' && *cursor != '/') ++cursor;
+        char saved = *cursor;
+        *cursor = '\0';
+        char *rest = saved == '\0' ? cursor : cursor + 1;
+
+        if (!strcmp(start, ".")) {
+            *cursor = saved;
+            if (saved != '\0') cursor = rest;
+            continue;
+        }
+        if (!strcmp(start, "..")) {
+            char *parent = append_component(current, start);
+            if (parent == NULL) { *error = errno; free(current); free(absolute); return NULL; }
+            free(current);
+            current = parent;
+            if (missing) {
+                char *resolved = realpath(current, NULL);
+                if (resolved != NULL) { free(current); current = resolved; missing = 0; }
+                else if (errno != ENOENT) { *error = errno; free(current); free(absolute); return NULL; }
+            }
+            *cursor = saved;
+            if (saved != '\0') cursor = rest;
+            continue;
+        }
+
+        if (missing) {
+            char *next = append_component(current, start);
+            if (next == NULL) { *error = errno; free(current); free(absolute); return NULL; }
+            free(current);
+            current = next;
+        } else {
+            char *candidate = join_path(current, start);
+            if (candidate == NULL) { *error = errno; free(current); free(absolute); return NULL; }
+            char *resolved = realpath(candidate, NULL);
+            if (resolved != NULL) {
+                free(current);
+                current = resolved;
+            } else {
+                int path_error = errno;
+                struct stat info;
+                int stat_status = lstat(candidate, &info);
+                if (stat_status == 0 && S_ISLNK(info.st_mode)) {
+                    char target[PATH_MAX + 1];
+                    ssize_t target_length = readlink(candidate, target, PATH_MAX);
+                    if (target_length < 0) {
+                        *error = errno; free(candidate); free(current); free(absolute); return NULL;
+                    }
+                    target[target_length] = '\0';
+                    char *target_path = target[0] == '/' ? strdup(target) : join_path(current, target);
+                    if (target_path == NULL) {
+                        *error = errno; free(candidate); free(current); free(absolute); return NULL;
+                    }
+                    char *combined = join_path(target_path, rest);
+                    free(target_path);
+                    free(candidate);
+                    free(current);
+                    free(absolute);
+                    if (combined == NULL) { *error = errno; return NULL; }
+                    char *resolved_target = resolve_path_allow_missing(combined, depth + 1, error);
+                    free(combined);
+                    return resolved_target;
+                }
+                int stat_error = errno;
+                free(candidate);
+                if (path_error != ENOENT || stat_status == 0 || stat_error != ENOENT) {
+                    *error = path_error != ENOENT ? path_error : stat_error;
+                    free(current); free(absolute); return NULL;
+                }
+                char *next = append_component(current, start);
+                if (next == NULL) { *error = errno; free(current); free(absolute); return NULL; }
+                free(current);
+                current = next;
+                missing = 1;
+            }
+        }
+
+        *cursor = saved;
+        if (saved != '\0') cursor = rest;
+    }
+    free(absolute);
+    return current;
+}
+
+int64_t yian_io_resolve(const char *path, uint8_t *buffer, uint64_t capacity) {
+    int error = 0;
+    char *resolved = resolve_path_allow_missing(path, 0, &error);
+    if (resolved == NULL) return -error;
+    size_t length = strlen(resolved);
+    if (length > capacity || length > INT64_MAX) { free(resolved); return -ERANGE; }
+    memcpy(buffer, resolved, length);
+    free(resolved);
+    return (int64_t)length;
+}
 void *yian_io_dir_open(const char *path, int32_t *error) {
     DIR *d = opendir(path);
     *error = d ? 0 : errno;

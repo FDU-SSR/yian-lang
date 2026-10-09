@@ -1,0 +1,693 @@
+from std.core.drop import Drop;
+from std.core.fs import create_dir_all, read_to_string, try_exists, write_string;
+from std.core.io import IoError, IoErrorKind, Stderr, Stdout;
+from std.core.option import Option;
+from std.core.path import Path, PathBuf;
+from std.core.process import Command, ExitStatus, ProcessOutput, env_var;
+from std.core.result import Result;
+from std.core.string import String;
+from std.core.vec import Vec;
+from compiler.frontend.source import collect_sources;
+from anx.manifest.model import PackageKind;
+from anx.project.model import Project;
+from anx.project.package_map import test_package_map_json;
+
+struct ProjectTest {
+    name: String,
+    source: PathBuf,
+    expect_error: bool,
+    expected_substring: String,
+    expected_output: String,
+    expected_exit_code: Option<i32>,
+    arguments: Vec<String>,
+    stdin: String,
+    load_error: String,
+}
+
+impl Drop for ProjectTest {
+    fn drop() {
+        self.name.drop();
+        self.source.drop();
+        self.expected_substring.drop();
+        self.expected_output.drop();
+        match self.expected_exit_code.take() { Some(_) => {}, None => {}, }
+        release_strings(&self.arguments);
+        self.stdin.drop();
+        self.load_error.drop();
+    }
+}
+
+struct TestFailure { name: String, detail: String }
+
+impl Drop for TestFailure {
+    fn drop() { self.name.drop(); self.detail.drop(); }
+}
+
+fn write_stdout(text: str) -> bool {
+    match Stdout.new().write_str(text) {
+        Ok(_) => true,
+        Err(problem) => { problem.drop(); false },
+    }
+}
+
+fn write_stderr(text: str) {
+    match Stderr.new().write_str(text) {
+        Ok(_) => {},
+        Err(problem) => problem.drop(),
+    }
+}
+
+fn release_strings(values: Vec<String>&) {
+    let index = 0u64;
+    while index < values.len() { values[index].drop(); index += 1u64; }
+    values.drop();
+}
+
+fn release_tests(values: Vec<ProjectTest>&) {
+    let index = 0u64;
+    while index < values.len() { values[index].drop(); index += 1u64; }
+    values.drop();
+}
+
+fn release_failures(values: Vec<TestFailure>&) {
+    let index = 0u64;
+    while index < values.len() { values[index].drop(); index += 1u64; }
+    values.drop();
+}
+
+fn source_name(path: str, root: str) -> String {
+    String.from(&str.from_slice_unchecked(path.as_slice()[(root.as_slice().len() + 1u64)..path.as_slice().len()]))
+}
+
+fn test_base(name: str) -> String {
+    let length = name.as_slice().len();
+    if name.ends_with(".err.an") {
+        String.from(&str.from_slice_unchecked(name.as_slice()[0u64.. (length - 7u64)]))
+    } elif name.ends_with(".an") {
+        String.from(&str.from_slice_unchecked(name.as_slice()[0u64.. (length - 3u64)]))
+    } else {
+        String.from(&name)
+    }
+}
+
+fn is_python_whitespace(value: char) -> bool {
+    let codepoint = u32(value);
+    (codepoint >= 0x09u32 && codepoint <= 0x0Du32) ||
+    (codepoint >= 0x1Cu32 && codepoint <= 0x20u32) ||
+    codepoint == 0x85u32 || codepoint == 0xA0u32 || codepoint == 0x1680u32 ||
+    (codepoint >= 0x2000u32 && codepoint <= 0x200Au32) ||
+    codepoint == 0x2028u32 || codepoint == 0x2029u32 || codepoint == 0x202Fu32 ||
+    codepoint == 0x205Fu32 || codepoint == 0x3000u32
+}
+
+fn parse_arguments(text: str) -> Vec<String> {
+    let arguments = Vec<String>.new();
+    let bytes = text.as_slice();
+    let start = 0u64;
+    let active = false;
+    for pair in text.char_indices() {
+        let index = pair[0];
+        if is_python_whitespace(pair[1]) {
+            if active {
+                arguments.push(String.from(&str.from_slice_unchecked(bytes[start..index])));
+                active = false;
+            }
+        } else {
+            if !active { start = index; active = true; }
+        }
+    }
+    if active { arguments.push(String.from(&str.from_slice_unchecked(bytes[start..bytes.len()]))); }
+    arguments
+}
+
+fn expected_file(output_root: str, name: str) -> PathBuf {
+    let base = test_base(name);
+    defer base.drop();
+    let relative = String.from(&base.as_str());
+    relative.push_str(".an.ans");
+    defer relative.drop();
+    Path.new(output_root).join(relative.as_str())
+}
+
+fn read_failure(path: str, operation: str, problem: IoError) -> String {
+    let detail = String.from(&operation);
+    detail.push_str(" '");
+    detail.push_str(path);
+    detail.push_str("': ");
+    detail.push_str(problem.msg());
+    problem.drop();
+    detail
+}
+
+// Match text-mode reads by normalizing CRLF and bare CR to LF.
+fn normalize_newlines(text: str) -> String {
+    let bytes = text.as_slice();
+    let output = String.new();
+    let start = 0u64;
+    let index = 0u64;
+    while index < bytes.len() {
+        if bytes[index] == b'\r' {
+            output.push_str(str.from_slice_unchecked(bytes[start..index]));
+            output.push('\n');
+            if index + 1u64 < bytes.len() && bytes[index + 1u64] == b'\n' {
+                index += 2u64;
+            } else {
+                index += 1u64;
+            }
+            start = index;
+        } else {
+            index += 1u64;
+        }
+    }
+    output.push_str(str.from_slice_unchecked(bytes[start..bytes.len()]));
+    output
+}
+
+fn read_expected(path: str, is_error: bool) -> Result<(String, String, Option<i32>), String> {
+    let file_text = match read_to_string(path) {
+        Ok(value) => value,
+        Err(problem) => {
+            if problem.kind() == IoErrorKind.NotFound {
+                problem.drop();
+                return Result<(String, String, Option<i32>), String>.Ok((String.new(), String.new(), Option<i32>.None));
+            }
+            return Result<(String, String, Option<i32>), String>.Err(read_failure(path, "could not read test expectation", problem));
+        },
+    };
+    defer file_text.drop();
+    let raw = normalize_newlines(file_text.as_str());
+    defer raw.drop();
+
+    while raw.as_slice().len() > 0u64 && raw.as_slice()[raw.as_slice().len() - 1u64] == b'\n' {
+        let removed = raw.pop();
+        match removed { Some(_) => {}, None => {}, }
+    }
+
+    if !raw.as_str().starts_with("Exit code ") {
+        if is_error { return Result<(String, String, Option<i32>), String>.Ok((raw.clone(), String.new(), Option<i32>.None)); }
+        return Result<(String, String, Option<i32>), String>.Ok((String.new(), raw.clone(), Option<i32>.None));
+    }
+
+    let line_end = match raw.as_str().find("\n") {
+        Some(value) => value,
+        None => raw.as_slice().len(),
+    };
+    let header = str.from_slice_unchecked(raw.as_slice()[10u64..line_end]);
+    let code = parse_exit_code(header);
+    let rest_start = if line_end < raw.as_slice().len() { line_end + 1u64 } else { line_end };
+    let rest = String.from(&str.from_slice_unchecked(raw.as_slice()[rest_start..raw.as_slice().len()]));
+    if is_error {
+        return Result<(String, String, Option<i32>), String>.Ok((rest, String.new(), Option<i32>.None));
+    } else {
+        return Result<(String, String, Option<i32>), String>.Ok((String.new(), rest, Option<i32>.Some(code)));
+    }
+}
+
+fn parse_exit_code(text: str) -> i32 {
+    let value = text.trim();
+    if value.as_slice().len() == 0u64 { return 0i32; }
+    let bytes = value.as_slice();
+    let negative = bytes[0] == b'-';
+    let positive = bytes[0] == b'+';
+    let start = if negative || positive { 1u64 } else { 0u64 };
+    if start == bytes.len() { return 0i32; }
+    let magnitude = 0u64;
+    let index = start;
+    while index < bytes.len() {
+        if bytes[index] < b'0' || bytes[index] > b'9' { return 0i32; }
+        let digit = u64(bytes[index] - b'0');
+        if magnitude > (2147483648u64 - digit) / 10u64 { return 0i32; }
+        magnitude = magnitude * 10u64 + digit;
+        index += 1u64;
+    }
+    if negative {
+        if magnitude == 2147483648u64 {
+            let lowest = -2147483647i32;
+            return lowest - 1i32;
+        }
+        if magnitude > 2147483648u64 { return 0i32; }
+        let signed = i32(magnitude);
+        return 0i32 - signed;
+    } else {
+        if magnitude > 2147483647u64 { return 0i32; }
+        return i32(magnitude);
+    }
+}
+
+fn read_optional(path: str, description: str) -> Result<String, String> {
+    match read_to_string(path) {
+        Ok(value) => {
+            let normalized = normalize_newlines(value.as_str());
+            value.drop();
+            Result<String, String>.Ok(normalized)
+        },
+        Err(problem) => {
+            if problem.kind() == IoErrorKind.NotFound {
+                problem.drop();
+                return Result<String, String>.Ok(String.new());
+            }
+            Result<String, String>.Err(read_failure(path, description, problem))
+        },
+    }
+}
+
+fn discover_tests(root: str) -> Vec<ProjectTest> {
+    let tests_root = Path.new(root).join("tests");
+    defer tests_root.drop();
+    let input = Vec<String>.new();
+    defer release_strings(&input);
+    input.push(String.from(&tests_root.as_str()));
+    let sources = match collect_sources(&input) {
+        Ok(value) => value,
+        Err(problem) => {
+            if problem.kind() == IoErrorKind.NotFound {
+                problem.drop();
+                return Vec<ProjectTest>.new();
+            }
+            write_stderr("error: could not discover tests: ");
+            write_stderr(problem.msg());
+            write_stderr("\n");
+            problem.drop();
+            return Vec<ProjectTest>.new();
+        },
+    };
+    defer release_strings(&sources);
+
+    let output_root = Path.new(tests_root.as_str()).join("output");
+    defer output_root.drop();
+    let input_root = Path.new(tests_root.as_str()).join("input");
+    defer input_root.drop();
+
+    let tests = Vec<ProjectTest>.new();
+    let index = 0u64;
+    while index < sources.len() {
+        let source = PathBuf.from(sources[index].as_str());
+        let name = source_name(source.as_str(), tests_root.as_str());
+        let is_error = name.as_str().ends_with(".err.an");
+
+        let expectation_path = expected_file(output_root.as_str(), name.as_str());
+        let load_error = String.new();
+        let expectation = match read_expected(expectation_path.as_str(), is_error) {
+            Ok(value) => value,
+            Err(problem) => {
+                load_error = problem;
+                (String.new(), String.new(), Option<i32>.None)
+            },
+        };
+        let(expected_substring, expected_output, expected_exit_code) = expectation;
+        expectation_path.drop();
+
+        let base = test_base(name.as_str());
+        let args_relative = String.from(&base.as_str());
+        args_relative.push_str(".args");
+        let args_path = Path.new(input_root.as_str()).join(args_relative.as_str());
+        defer { base.drop(); args_relative.drop(); args_path.drop(); };
+        let arguments_text = match read_optional(args_path.as_str(), "could not read test arguments") {
+            Ok(value) => value,
+            Err(problem) => {
+                if load_error.is_empty() { load_error = problem; } else { problem.drop(); }
+                String.new()
+            },
+        };
+        let arguments = parse_arguments(arguments_text.as_str());
+        arguments_text.drop();
+
+        let stdin_relative = String.from(&base.as_str());
+        stdin_relative.push_str(".stdin");
+        let stdin_path = Path.new(input_root.as_str()).join(stdin_relative.as_str());
+        let stdin = match read_optional(stdin_path.as_str(), "could not read test stdin") {
+            Ok(value) => value,
+            Err(problem) => {
+                if load_error.is_empty() { load_error = problem; } else { problem.drop(); }
+                String.new()
+            },
+        };
+        stdin_path.drop();
+
+        tests.push(ProjectTest(name=name, source=source, expect_error=is_error,
+            expected_substring=expected_substring, expected_output=expected_output, expected_exit_code=expected_exit_code,
+            arguments=arguments, stdin=stdin, load_error=load_error));
+        index += 1u64;
+    }
+    tests
+}
+
+fn process_text(bytes: u8[]) -> Option<String> {
+    match str.from_slice(bytes) {
+        Some(value) => Option<String>.Some(String.from(&value)),
+        None => Option<String>.None,
+    }
+}
+
+fn combine_output(output: ProcessOutput&) -> Option<String> {
+    let stdout = process_text(output.stdout.as_slice());
+    let stderr = process_text(output.stderr.as_slice());
+    match stdout {
+        Some(out) => match stderr {
+            Some(err) => {
+                let combined = String.from(&out.as_str());
+                combined.push_str(err.as_str());
+                out.drop();
+                err.drop();
+                Option<String>.Some(combined)
+            },
+            None => { out.drop(); Option<String>.None },
+        },
+        None => match stderr {
+            Some(err) => { err.drop(); Option<String>.None },
+            None => Option<String>.None,
+        },
+    }
+}
+
+fn status_code(status: ExitStatus) -> i32 {
+    match status { Exited(code) => code, Signaled(signal) => -signal }
+}
+
+fn executable_name(name: str) -> String {
+    let bytes = name.as_slice();
+    let end = if name.ends_with(".an") { bytes.len() - 3u64 } else { bytes.len() };
+    let output = String.new();
+    let index = 0u64;
+    let segment_start = 0u64;
+    while index < end {
+        if bytes[index] == b'/' {
+            output.push_str(str.from_slice_unchecked(bytes[segment_start..index]));
+            output.push('_');
+            segment_start = index + 1u64;
+        }
+        index += 1u64;
+    }
+    output.push_str(str.from_slice_unchecked(bytes[segment_start..end]));
+    output.push_str(".out");
+    output
+}
+
+fn compiler_program() -> Result<String, String> {
+    let configured = match env_var("YIANC") {
+        Ok(value) => value,
+        Err(problem) => {
+            let message = String.from(&"could not read YIANC: ");
+            message.push_str(problem.msg());
+            problem.drop();
+            return Result<String, String>.Err(msg=message);
+        },
+    };
+    match configured {
+        Some(value) => {
+            if !value.is_empty() { return Result<String, String>.Ok(val=value); }
+            value.drop();
+        },
+        None => {},
+    }
+    Result<String, String>.Ok(val=String.from(&"yianc"))
+}
+
+fn compiler_args(command: Command&, project: Project&, test: ProjectTest&, map_path: str,
+    executable: Option<PathBuf>, raw_pointers: bool, optimization: Option<u8>, release: bool) {
+    command.arg("--packages");
+    command.arg(map_path);
+    match optimization {
+        Some(level) => {
+            command.arg("-O");
+            let value = u64(level).to_string();
+            command.arg(value.as_str());
+            value.drop();
+        },
+        None => if release { command.arg("-O"); command.arg("3"); },
+    }
+    if raw_pointers { command.arg("--raw-pointers"); }
+    command.arg(test.source.as_str());
+    let index = 0u64;
+    while index < project.file_count() {
+        command.arg(project.file(index).path());
+        index += 1u64;
+    }
+    if test.expect_error {
+        command.arg("-t");
+        command.arg("none");
+    } else {
+        command.arg("-t");
+        command.arg("exe");
+        match executable {
+            Some(path) => { command.arg("-o"); command.arg(path.as_str()); path.drop(); },
+            None => {},
+        }
+    }
+}
+
+fn append_bin_root_hint(detail: String&, project: Project&, output: str) {
+    let root_index = match project.package_index(project.root_package()) {
+        Some(value) => value,
+        None => { return; },
+    };
+    let root = project.package(root_index);
+    if root.kind() != PackageKind.Bin { return; }
+    let diagnostic_prefix = String.from(&"error[E309]: package '");
+    diagnostic_prefix.push_str(root.name());
+    diagnostic_prefix.push_str("' is not a dependency of");
+    if !output.contains(diagnostic_prefix.as_str()) { diagnostic_prefix.drop(); return; }
+    diagnostic_prefix.drop();
+    detail.push_str("\nhint: package '");
+    detail.push_str(root.name());
+    detail.push_str("' has kind 'bin', so its modules are not visible to tests.\n      Declare kind = \"hybrid\" to expose a library interface, or move the\n      reusable code into a lib dependency.\n");
+}
+
+fn run_one(project: Project&, test: ProjectTest&, build_dir: str, map_path: str,
+    raw_pointers: bool, optimization: Option<u8>, release: bool) -> Option<String> {
+    if !test.load_error.is_empty() { return Option<String>.Some(String.from(&test.load_error.as_str())); }
+
+    let executable_leaf = executable_name(test.name.as_str());
+    defer executable_leaf.drop();
+    let executable = Path.new(build_dir).join(executable_leaf.as_str());
+    let root_index = match project.package_index(project.root_package()) {
+        Some(value) => value,
+        None => {
+            executable.drop();
+            return Option<String>.Some(String.from(&"project root package is missing"));
+        },
+    };
+    let test_root = Path.new(project.package(root_index).root()).join("tests");
+    let map = test_package_map_json(project, test_root.as_str(), test.source.as_str());
+    test_root.drop();
+    defer map.drop();
+    match write_string(map_path, map.as_str()) {
+        Ok(_) => {},
+        Err(problem) => {
+            let detail = String.from(&"could not write test package map: ");
+            detail.push_str(problem.msg());
+            problem.drop();
+            executable.drop();
+            return Option<String>.Some(detail);
+        },
+    }
+
+    let program = match compiler_program() {
+        Ok(value) => value,
+        Err(problem) => {
+            let detail = String.from(&"could not select YIAN compiler: ");
+            detail.push_str(problem.as_str());
+            problem.drop();
+            executable.drop();
+            return Option<String>.Some(detail);
+        },
+    };
+    defer program.drop();
+    let command = Command.new(program.as_str());
+    defer command.drop();
+    command.current_dir(project.package(root_index).root());
+    command.interruptible(true);
+    let output_path = if test.expect_error { Option<PathBuf>.None } else { Option<PathBuf>.Some(PathBuf.from(executable.as_str())) };
+    compiler_args(&command, project, test, map_path, output_path, raw_pointers, optimization, release);
+    let compiled = match command.output() {
+        Ok(value) => value,
+        Err(problem) => {
+            let detail = String.from(&"could not start YIAN compiler: ");
+            detail.push_str(problem.msg());
+            problem.drop();
+            executable.drop();
+            return Option<String>.Some(detail);
+        },
+    };
+    let compiler_output = combine_output(&compiled);
+    let compile_succeeded = compiled.status.success();
+    compiled.drop();
+    let output = match compiler_output {
+        Some(value) => value,
+        None => {
+            executable.drop();
+            return Option<String>.Some(String.from(&"compiler output was not valid UTF-8"));
+        },
+    };
+    defer output.drop();
+
+    if test.expect_error {
+        executable.drop();
+        if compile_succeeded { return Option<String>.Some(String.from(&"expected a compile error, but compilation succeeded")); }
+        if !test.expected_substring.is_empty() && !output.as_str().contains(test.expected_substring.as_str()) {
+            let detail = String.from(&"expected the diagnostic substring:\n  ");
+            detail.push_str(test.expected_substring.as_str());
+            detail.push_str("\ncompiler output:\n");
+            detail.push_str(output.as_str());
+            append_bin_root_hint(&detail, project, output.as_str());
+            return Option<String>.Some(detail);
+        }
+        return Option<String>.None;
+    }
+
+    if !compile_succeeded {
+        let detail = String.from(&"compilation failed:\n");
+        detail.push_str(output.as_str());
+        append_bin_root_hint(&detail, project, output.as_str());
+        executable.drop();
+        return Option<String>.Some(detail);
+    }
+
+    let runtime = Command.new(executable.as_str());
+    executable.drop();
+    defer runtime.drop();
+    let parent = match test.source.as_path().parent() {
+        Some(value) => value,
+        None => return Option<String>.Some(String.from(&"test source has no parent directory")),
+    };
+    runtime.current_dir(parent.as_str());
+    for argument in test.arguments { runtime.arg(argument.as_str()); }
+    if test.stdin.is_empty() { runtime.inherit_stdin(); } else { runtime.stdin_bytes(test.stdin.as_slice()); }
+    runtime.interruptible(true);
+    let executed = match runtime.output() {
+        Ok(value) => value,
+        Err(problem) => {
+            let detail = String.from(&"could not start test executable: ");
+            detail.push_str(problem.msg());
+            problem.drop();
+            return Option<String>.Some(detail);
+        },
+    };
+    let actual = match combine_output(&executed) {
+        Some(value) => value,
+        None => { executed.drop(); return Option<String>.Some(String.from(&"program output was not valid UTF-8")); },
+    };
+    let code = status_code(executed.status);
+    executed.drop();
+
+    if !test.expected_output.is_empty() && actual.as_str().trim() != test.expected_output.as_str().trim() {
+        let detail = String.from(&"expected output:\n'");
+        detail.push_str(test.expected_output.as_str().trim());
+        detail.push_str("'\ngot:\n'");
+        detail.push_str(actual.as_str().trim());
+        detail.push('\'');
+        actual.drop();
+        return Option<String>.Some(detail);
+    }
+    actual.drop();
+    match test.expected_exit_code {
+        Some(expected) => {
+            if code != expected {
+                let expected_text = expected.to_string();
+                let actual_text = code.to_string();
+                let detail = String.from(&"expected exit code ");
+                detail.push_str(expected_text.as_str());
+                detail.push_str(", got ");
+                detail.push_str(actual_text.as_str());
+                expected_text.drop();
+                actual_text.drop();
+                return Option<String>.Some(detail);
+            }
+        },
+        None => {
+            if code != 0i32 {
+                let actual_text = code.to_string();
+                let detail = String.from(&"expected exit code 0, got ");
+                detail.push_str(actual_text.as_str());
+                detail.push('\n');
+                actual_text.drop();
+                return Option<String>.Some(detail);
+            }
+        },
+    }
+    Option<String>.None
+}
+
+pub fn run(project: Project&, raw_pointers: bool, optimization: Option<u8>, release: bool) -> i32 {
+    let root_index = match project.package_index(project.root_package()) {
+        Some(value) => value,
+        None => { write_stdout("error: project root package is missing\n"); return 1i32; },
+    };
+    let root = project.package(root_index).root();
+    let tests_root = Path.new(root).join("tests");
+    defer tests_root.drop();
+    let tests = discover_tests(root);
+    defer release_tests(&tests);
+    if tests.is_empty() {
+        write_stdout("No tests found under ");
+        write_stdout(tests_root.as_str());
+        write_stdout("\n");
+        return 1i32;
+    }
+    if project.package_index("__anx_test").is_some() {
+        write_stdout("error: the project already declares a package named '__anx_test', which `anx test` needs for its own test root\n");
+        return 1i32;
+    }
+
+    let build_dir = Path.new(root).join("build/test");
+    defer build_dir.drop();
+    match create_dir_all(build_dir.as_str()) {
+        Ok(_) => {},
+        Err(problem) => {
+            write_stdout("error: could not create test build directory: ");
+            write_stdout(problem.msg());
+            write_stdout("\n");
+            problem.drop();
+            return 1i32;
+        },
+    }
+    let map_path = Path.new(build_dir.as_str()).join("pkg.json");
+    defer map_path.drop();
+
+    let failures = Vec<TestFailure>.new();
+    let index = 0u64;
+    while index < tests.len() {
+        let test = &tests[index];
+        let detail = run_one(project, test, build_dir.as_str(), map_path.as_str(), raw_pointers, optimization, release);
+        match detail {
+            Some(problem) => {
+                write_stdout("  [FAIL] ");
+                write_stdout(test.name.as_str());
+                write_stdout("\n");
+                failures.push(TestFailure(name=String.from(&test.name.as_str()), detail=problem));
+            },
+            None => {
+                write_stdout("  [ok] ");
+                write_stdout(test.name.as_str());
+                write_stdout("\n");
+            },
+        }
+        index += 1u64;
+    }
+
+    let passed = tests.len() - failures.len();
+    let passed_text = passed.to_string();
+    let failed_text = failures.len().to_string();
+    let total_text = tests.len().to_string();
+    defer { passed_text.drop(); failed_text.drop(); total_text.drop(); };
+    write_stdout("\n");
+    write_stdout(passed_text.as_str());
+    write_stdout(" passed, ");
+    write_stdout(failed_text.as_str());
+    write_stdout(" failed, ");
+    write_stdout(total_text.as_str());
+    write_stdout(" total\n");
+
+    let failure_index = 0u64;
+    while failure_index < failures.len() {
+        write_stdout("\n--- ");
+        write_stdout(failures[failure_index].name.as_str());
+        write_stdout(" ---\n");
+        write_stdout(failures[failure_index].detail.as_str());
+        write_stdout("\n");
+        failure_index += 1u64;
+    }
+    let failed = failures.len() != 0u64;
+    release_failures(&failures);
+    if failed { 1i32 } else { 0i32 }
+}

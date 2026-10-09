@@ -1,0 +1,285 @@
+from std.core.drop import Drop;
+from std.core.fs import create_dir_all, read_to_string, resolve, write_string;
+from std.core.io import IoErrorKind, Stderr, Write;
+from std.core.option import Option;
+from std.core.path import Path, PathBuf;
+from std.core.process import Command, ExitStatus, env_var;
+from std.core.result import Result;
+from std.core.string import String;
+from std.core.vec import Vec;
+from anx.diagnostics.model import Diagnostic;
+from anx.project.load import discover, load;
+from anx.manifest.model import PackageKind;
+from anx.project.model import LoadReport, Project;
+from anx.project.package_map import package_map_json;
+from anx.project.paths import standard_library_root;
+
+fn release_paths(values: Vec<PathBuf>&) {
+    let index = 0u64;
+    while index < values.len() { values[index].drop(); index += 1u64; }
+    values.drop();
+}
+
+fn write_error(text: str) {
+    match Stderr.new().write_str(text) {
+        Ok(_) => {},
+        Err(problem) => problem.drop(),
+    }
+}
+
+fn write_diagnostic(item: Diagnostic&) {
+    write_error("error[");
+    write_error(item.code());
+    write_error("]: ");
+    match item.path() { Some(path) => { write_error(path); write_error(": "); }, None => {}, }
+    write_error(item.message());
+    write_error("\n");
+    match item.hint() {
+        Some(hint) => { write_error("  hint: "); write_error(hint); write_error("\n"); },
+        None => {},
+    }
+}
+
+fn report_diagnostics(report: LoadReport&) -> bool {
+    let diagnostics = report.diagnostics();
+    let index = 0u64;
+    while index < diagnostics.len() {
+        write_diagnostic(&diagnostics[index]);
+        index += 1u64;
+    }
+    diagnostics.len() != 0u64
+}
+
+fn compiler_program() -> Result<String, String> {
+    let configured = match env_var("YIANC") {
+        Ok(value) => value,
+        Err(problem) => {
+            let message = String.from(&"Could not read YIANC: ");
+            message.push_str(problem.msg());
+            problem.drop();
+            return Result<String, String>.Err(msg=message);
+        },
+    };
+    match configured {
+        Some(value) => {
+            if !value.is_empty() {
+                let result = String.from(&value.as_str());
+                value.drop();
+                return Result<String, String>.Ok(val=result);
+            }
+            value.drop();
+        },
+        None => {},
+    }
+    Result<String, String>.Ok(val=String.from(&"yianc"))
+}
+
+fn package_map_path(project: Project&) -> Result<PathBuf, String> {
+    let root_index = match project.package_index(project.root_package()) {
+        Some(value) => value,
+        None => return Result<PathBuf, String>.Err(msg=String.from(&"project root package is missing")),
+    };
+    let root = project.package(root_index).root();
+    let build = Path.new(root).join("build");
+    defer build.drop();
+    match create_dir_all(build.as_str()) {
+        Ok(_) => {},
+        Err(problem) => {
+            let message = String.from(&"Cannot create build directory: ");
+            message.push_str(problem.msg());
+            problem.drop();
+            return Result<PathBuf, String>.Err(msg=message);
+        },
+    }
+    let path = Path.new(build.as_str()).join("pkg.json");
+    let expected = package_map_json(project);
+    defer expected.drop();
+    let unchanged = match read_to_string(path.as_str()) {
+        Ok(actual) => {
+            defer actual.drop();
+            actual.as_str() == expected.as_str()
+        },
+        Err(problem) => {
+            if problem.kind() == IoErrorKind.NotFound {
+                problem.drop();
+                false
+            } else {
+                let message = String.from(&"Cannot read package map: ");
+                message.push_str(problem.msg());
+                problem.drop();
+                path.drop();
+                return Result<PathBuf, String>.Err(msg=message);
+            }
+        },
+    };
+    if !unchanged {
+        match write_string(path.as_str(), expected.as_str()) {
+            Ok(_) => {},
+            Err(problem) => {
+                let message = String.from(&"Cannot write package map: ");
+                message.push_str(problem.msg());
+                problem.drop();
+                path.drop();
+                return Result<PathBuf, String>.Err(msg=message);
+            },
+        }
+    }
+    Result<PathBuf, String>.Ok(val=path)
+}
+
+fn compiler_command(project: Project&, target: str, level: Option<u8>, release: bool,
+    raw_pointers: bool, map_path: str, executable: Option<PathBuf>) -> bool {
+    let program = match compiler_program() {
+        Ok(value) => value,
+        Err(message) => { write_error("error: "); write_error(message.as_str()); write_error("\n"); message.drop(); return false; },
+    };
+    defer program.drop();
+    let command = Command.new(program.as_str());
+    defer command.drop();
+    command.interruptible(true);
+    let root_index = match project.package_index(project.root_package()) {
+        Some(value) => value,
+        None => { write_error("error: project root package is missing\n"); return false; },
+    };
+    command.current_dir(project.package(root_index).root());
+    command.arg("--packages");
+    command.arg(map_path);
+    command.arg("-t");
+    command.arg(target);
+    match executable {
+        Some(path) => { command.arg("-o"); command.arg(path.as_str()); path.drop(); },
+        None => {},
+    }
+    match level {
+        Some(value) => {
+            command.arg("-O");
+            let text = u64(value).to_string();
+            command.arg(text.as_str());
+            text.drop();
+        },
+        None => if release { command.arg("-O"); command.arg("3"); },
+    }
+    if raw_pointers { command.arg("--raw-pointers"); }
+    let files = project.build_files();
+    defer release_paths(&files);
+    let index = 0u64;
+    while index < files.len() {
+        command.arg(files[index].as_str());
+        index += 1u64;
+    }
+    let status = match command.status() {
+        Ok(value) => value,
+        Err(problem) => {
+            write_error("error: could not start YIAN compiler: ");
+            write_error(problem.msg());
+            write_error("\n");
+            problem.drop();
+            return false;
+        },
+    };
+    status.success()
+}
+
+pub fn compile_project(start: str, target: str, level: Option<u8>, release: bool,
+    raw_pointers: bool, executable_out: Option<PathBuf>&) -> bool {
+    let std_root = match standard_library_root() {
+        Ok(value) => value,
+        Err(message) => {
+            write_error("error: ");
+            write_error(message.as_str());
+            write_error("\n");
+            message.drop();
+            return false;
+        },
+    };
+    defer std_root.drop();
+    let root = discover(start);
+    let root_path = match root {
+        Some(value) => value,
+        None => {
+            let resolved = match resolve(start) {
+                Ok(value) => value,
+                Err(problem) => { problem.drop(); PathBuf.from(start) },
+            };
+            let message = String.from(&"error[AX001]: no package.anx found in ");
+            message.push_str(resolved.as_str());
+            message.push_str(" or any parent directory\n");
+            write_error(message.as_str());
+            message.drop();
+            resolved.drop();
+            return false;
+        },
+    };
+    defer root_path.drop();
+    let report = load(root_path.as_str(), std_root.as_str());
+    defer report.drop();
+    if report_diagnostics(&report) { return false; }
+    let project = match report.take_project() {
+        Some(value) => value,
+        None => { write_error("error: could not load project\n"); return false; },
+    };
+    defer project.drop();
+
+    let root_index = match project.package_index(project.root_package()) {
+        Some(value) => value,
+        None => { write_error("error: project root package is missing\n"); return false; },
+    };
+    let root_package = project.package(root_index);
+    if root_package.kind() == PackageKind.Lib && target == "exe" {
+        write_error("error: 'anx build' is not supported for kind 'lib' packages: this stage produces no library artifact\n");
+        return false;
+    }
+    let map = match package_map_path(&project) {
+        Ok(value) => value,
+        Err(message) => { write_error("error: "); write_error(message.as_str()); write_error("\n"); message.drop(); return false; },
+    };
+    defer map.drop();
+    let output = if target == "exe" {
+        Option<PathBuf>.Some(Path.new(root_path.as_str()).join("build/app"))
+    } else { Option<PathBuf>.None };
+    let command_output = match &output {
+        Some(path) => Option<PathBuf>.Some(PathBuf.from(path.as_str())),
+        None => Option<PathBuf>.None,
+    };
+    let succeeded = compiler_command(&project, target, level, release, raw_pointers,
+        map.as_str(), command_output);
+    if !succeeded {
+        match output.take() { Some(path) => path.drop(), None => {}, }
+        return false;
+    }
+    match output.take() {
+        Some(path) => { *executable_out = Option<PathBuf>.Some(path); },
+        None => {},
+    }
+    true
+}
+
+pub fn run_executable(executable: PathBuf, arguments: Vec<String>&) -> i32 {
+    let command = Command.new(executable.as_str());
+    defer command.drop();
+    command.inherit_stdin();
+    command.interruptible(true);
+    let index = 0u64;
+    while index < arguments.len() {
+        command.arg(arguments[index].as_str());
+        index += 1u64;
+    }
+    let status = match command.status() {
+        Ok(value) => value,
+        Err(problem) => {
+            if problem.kind() == IoErrorKind.Interrupted {
+                problem.drop();
+                return 130i32;
+            }
+            write_error("error: could not start program: ");
+            write_error(problem.msg());
+            write_error("\n");
+            problem.drop();
+            return 1i32;
+        },
+    };
+    match status {
+        Exited(code) => code,
+        Signaled(signal) => -signal,
+    }
+}

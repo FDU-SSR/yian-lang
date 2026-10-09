@@ -94,6 +94,85 @@ struct CoverageChecker {
 }
 
 impl CoverageChecker {
+    // Reachability checks with no covering rows only need to know whether a value can exist.
+    // Recursive type cycles are treated as potentially inhabited to keep this conservative.
+    fn potentially_inhabited(type_id: TypeId, seen: HashSet<TypeId>&) -> Result<bool, AnalysisError> {
+        if seen.contains(&type_id) {
+            return Result<bool, AnalysisError>.Ok(true);
+        }
+
+        seen.insert(type_id);
+        defer seen.remove(&type_id);
+
+        match self.ctx.session.types.require(type_id)? {
+            Never => return Result<bool, AnalysisError>.Ok(false),
+            Reference(inner) => return self.potentially_inhabited(*inner, seen),
+            Tuple(elements) => {
+                for element in *elements {
+                    if !self.potentially_inhabited(*element, seen)? {
+                        return Result<bool, AnalysisError>.Ok(false);
+                    }
+                }
+
+                return Result<bool, AnalysisError>.Ok(true);
+            },
+            Array(element, count) => {
+                match self.ctx.session.types.require(*count)? {
+                    LiteralValue(bits, negative, _) => {
+                        if *negative {
+                            return Result<bool, AnalysisError>.Err(AnalysisError.internal("negative array length in coverage"));
+                        }
+                        if *bits == 0 {
+                            return Result<bool, AnalysisError>.Ok(true);
+                        }
+                        return self.potentially_inhabited(*element, seen);
+                    },
+                    _ => return Result<bool, AnalysisError>.Ok(true),
+                }
+            },
+            Nominal(definition, _) => {
+                let substitutions = instance_substitutions(self.ctx, type_id)?;
+                defer substitutions.drop();
+
+                match self.ctx.session.types.complete_definition(*definition)? {
+                    Struct(body) => {
+                        for field in body.fields {
+                            let field_type = substitute(&self.ctx.session.types, field.type_id, &substitutions)?;
+                            if !self.potentially_inhabited(field_type, seen)? {
+                                return Result<bool, AnalysisError>.Ok(false);
+                            }
+                        }
+
+                        return Result<bool, AnalysisError>.Ok(true);
+                    },
+                    Enum(body) => {
+                        for variant in body.variants {
+                            let fields = payload_fields(self.ctx, variant.payload)?;
+                            defer fields.drop();
+                            let variant_inhabited = true;
+
+                            for field in fields {
+                                let field_type = substitute(&self.ctx.session.types, field.type_id, &substitutions)?;
+                                if !self.potentially_inhabited(field_type, seen)? {
+                                    variant_inhabited = false;
+                                    break;
+                                }
+                            }
+
+                            if variant_inhabited {
+                                return Result<bool, AnalysisError>.Ok(true);
+                            }
+                        }
+
+                        return Result<bool, AnalysisError>.Ok(false);
+                    },
+                    _ => return Result<bool, AnalysisError>.Ok(true),
+                }
+            },
+            _ => return Result<bool, AnalysisError>.Ok(true),
+        }
+    }
+
     fn irrefutable(id: PatternId) -> Result<bool, AnalysisError> {
         let rows = Vec<Row>.new();
         defer release_rows(&rows);
@@ -595,6 +674,12 @@ impl CoverageChecker {
         }
 
         let head = self.peel(query.cells[0]);
+        if matrix.is_empty() && head.is_none() && witness.is_none() {
+            let inhabitable = HashSet<TypeId>.new();
+            defer inhabitable.drop();
+            return self.potentially_inhabited(types[0], &inhabitable);
+        }
+
         let inserted = matrix.is_empty() && head.is_none() && seen.insert(types[0]);
         defer { if inserted { seen.remove(&types[0]); } };
         // A wildcard row covers every column without expanding recursive nominal payloads.

@@ -1,0 +1,150 @@
+from std.core.option import Option;
+from std.core.string import String;
+from anx.manifest.model import PackageKind;
+from anx.project.model import Package, Project;
+from json.write import Writer;
+
+fn kind_name(kind: PackageKind) -> str {
+    match kind { Bin => "bin", Lib => "lib", Hybrid => "hybrid" }
+}
+
+fn write_names(writer: Writer&, package: Package&) {
+    writer.begin_array();
+    let index = 0u64;
+    while index < package.dependency_count() {
+        writer.write_string(package.dependency(index));
+        index += 1u64;
+    }
+    writer.end_array();
+}
+
+fn write_native(writer: Writer&, package: Package&) {
+    match package.native_llvm() {
+        None => writer.write_null(),
+        Some(native) => {
+            writer.begin_object();
+            writer.key("major");
+            writer.write_u64(native.major());
+            writer.key("components");
+            writer.begin_array();
+            let index = 0u64;
+            while index < native.components_len() {
+                writer.write_string(native.component(index));
+                index += 1u64;
+            }
+            writer.end_array();
+            writer.key("sources");
+            writer.begin_array();
+            index = 0u64;
+            while index < native.sources_len() {
+                let source = native.source(index);
+                let root = package.root();
+                let start = root.as_slice().len() + 1u64;
+                let relative = str.from_slice_unchecked(source.as_slice()[start..source.as_slice().len()]);
+                writer.write_string(relative);
+                index += 1u64;
+            }
+            writer.end_array();
+            writer.end_object();
+        },
+    }
+}
+
+fn write_package(writer: Writer&, package: Package&) {
+    writer.begin_object();
+    writer.key("sourceRoot");
+    writer.write_string(package.source_root());
+    writer.key("kind");
+    writer.write_string(kind_name(package.kind()));
+    writer.key("dependencies");
+    write_names(writer, package);
+    writer.key("ffi");
+    writer.write_bool(package.allows_ffi());
+    match package.entry() {
+        Some(entry) => { writer.key("entry"); writer.write_string(entry); },
+        None => {},
+    }
+    match package.native_llvm() {
+        Some(_) => { writer.key("nativeLLVM"); write_native(writer, package); },
+        None => {},
+    }
+    writer.end_object();
+}
+
+pub fn package_map_json(project: Project&) -> String {
+    let writer = Writer.new();
+    defer writer.drop();
+    writer.begin_object();
+    writer.key("format");
+    writer.write_u64(2u64);
+    writer.key("root");
+    writer.write_string(project.root_package());
+    writer.key("packages");
+    writer.begin_object();
+    let index = 0u64;
+    while index < project.package_count() {
+        let package = project.package(index);
+        writer.key(package.name());
+        write_package(&writer, package);
+        index += 1u64;
+    }
+    writer.end_object();
+    writer.end_object();
+    match writer.finish() {
+        Ok(text) => text,
+        Err(_) => String.new(),
+    }
+}
+
+pub fn test_package_map_json(project: Project&, test_root: str, test_entry: str) -> String {
+    let writer = Writer.new();
+    defer writer.drop();
+    writer.begin_object();
+    writer.key("format");
+    writer.write_u64(2u64);
+    writer.key("root");
+    writer.write_string("__anx_test");
+    writer.key("packages");
+    writer.begin_object();
+    let index = 0u64;
+    while index < project.package_count() {
+        let package = project.package(index);
+        writer.key(package.name());
+        write_package(&writer, package);
+        index += 1u64;
+    }
+
+    let root_index = project.package_index(project.root_package()).unwrap();
+    let root = project.package(*root_index);
+    writer.key("__anx_test");
+    writer.begin_object();
+    writer.key("sourceRoot");
+    writer.write_string(test_root);
+    writer.key("kind");
+    writer.write_string("bin");
+    writer.key("entry");
+    writer.write_string(test_entry);
+    writer.key("ffi");
+    writer.write_bool(root.allows_ffi());
+    writer.key("dependencies");
+    writer.begin_array();
+    if root.kind() != PackageKind.Bin { writer.write_string(root.name()); }
+    let dependency_index = 0u64;
+    while dependency_index < root.dependency_count() {
+        writer.write_string(root.dependency(dependency_index));
+        dependency_index += 1u64;
+    }
+    dependency_index = 0u64;
+    while dependency_index < root.dev_dependency_count() {
+        writer.write_string(root.dev_dependency(dependency_index));
+        dependency_index += 1u64;
+    }
+    writer.end_array();
+    writer.end_object();
+    writer.end_object();
+    writer.end_object();
+    match writer.finish() {
+        Ok(text) => text,
+        Err(_) => String.new(),
+    }
+}

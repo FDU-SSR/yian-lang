@@ -10,8 +10,10 @@ from std.core.vec import Vec;
 from std.ffi.c_string import c_string_bytes;
 
 extern "C" {
-    fn yian_process_output(program: cptr<c_char>, arguments: cptr<cptr<c_char>>,
-        directory: cptr<c_char>, error: cptr<i32>) -> cptr<u8>;
+    fn yian_process_execute(program: cptr<c_char>, arguments: cptr<cptr<c_char>>,
+        directory: cptr<c_char>, stdin_bytes: cptr<u8>, stdin_length: u64,
+        stdin_mode: i32, capture_output: i32, interruptible: i32,
+        error: cptr<i32>) -> cptr<u8>;
     fn yian_process_length(result: cptr<u8>, stream: i32) -> u64;
     fn yian_process_copy(result: cptr<u8>, stream: i32, buffer: cptr<u8>, capacity: u64) -> i32;
     fn yian_process_status(result: cptr<u8>, signaled: cptr<i32>) -> i32;
@@ -52,6 +54,9 @@ pub struct Command {
     program: String,
     arguments: Vec<String>,
     directory: Option<String>,
+    input: Vec<u8>,
+    input_mode: i32,
+    interruptible: bool,
 }
 
 fn terminated(value: str) -> Result<Vec<u8>, IoError> {
@@ -87,7 +92,9 @@ ffi fn captured(result: cptr<u8>, stream: i32) -> Result<Vec<u8>, IoError> {
 
 impl Command {
     static pub fn new(program: str) -> Self {
-        Self(String.from(&program), Vec<String>.new(), Option<String>.None)
+        Self(program=String.from(&program), arguments=Vec<String>.new(),
+            directory=Option<String>.None, input=Vec<u8>.new(), input_mode=0,
+            interruptible=false)
     }
 
     pub fn arg(value: str) {
@@ -102,8 +109,26 @@ impl Command {
         self.directory = Option<String>.Some(String.from(&path));
     }
 
+    // Input bytes are copied because the command may outlive the caller's buffer.
+    pub fn stdin_bytes(data: u8[]) {
+        self.input.drop();
+        self.input = Vec<u8>.with_capacity(data.len());
+        self.input.extend_from_slice(data);
+        self.input_mode = 2;
+    }
+
+    pub fn inherit_stdin() {
+        self.input.drop();
+        self.input = Vec<u8>.new();
+        self.input_mode = 1;
+    }
+
+    pub fn interruptible(enabled: bool) {
+        self.interruptible = enabled;
+    }
+
     // Native calls borrow terminated buffers only for this synchronous operation.
-    pub ffi fn output() -> Result<ProcessOutput, IoError> {
+    ffi fn execute(capture_output: bool) -> Result<ProcessOutput, IoError> {
         let buffers = Vec<Vec<u8>>.new();
         defer release_buffers(&buffers);
         buffers.push(terminated(self.program.as_str())?);
@@ -129,7 +154,10 @@ impl Command {
         }
         let arguments = @ffi_parts(pointers.as_slice())[0];
         let error = 0i32;
-        let result = yian_process_output(pointers[0], arguments, cwd, @ffi_addr(&error));
+        let input_data = @ffi_parts(self.input.as_slice())[0];
+        let result = yian_process_execute(pointers[0], arguments, cwd, input_data,
+            self.input.len(), self.input_mode, if capture_output { 1i32 } else { 0i32 },
+            if self.interruptible { 1i32 } else { 0i32 }, @ffi_addr(&error));
         if result == @ffi_null<u8>() {
             return Result<ProcessOutput, IoError>.Err(IoError.from_os_error(-error, "start process"));
         }
@@ -149,6 +177,18 @@ impl Command {
                 ExitStatus.Exited(code)
             }, stdout, stderr))
     }
+
+    pub ffi fn output() -> Result<ProcessOutput, IoError> {
+        self.execute(true)
+    }
+
+    // The child inherits stdout/stderr, so callers can use this for run-like commands.
+    pub ffi fn status() -> Result<ExitStatus, IoError> {
+        let output = self.execute(false)?;
+        let status = output.status;
+        output.drop();
+        Result<ExitStatus, IoError>.Ok(status)
+    }
 }
 
 impl Drop for Command {
@@ -156,6 +196,7 @@ impl Drop for Command {
         self.program.drop();
         for argument in self.arguments { argument.drop(); }
         self.arguments.drop();
+        self.input.drop();
         match &self.directory {
             Some(value) => value.drop(),
             None => {},

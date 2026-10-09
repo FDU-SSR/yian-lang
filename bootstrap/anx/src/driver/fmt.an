@@ -1,0 +1,152 @@
+from std.core.drop import Drop;
+from std.core.fs import resolve, write_string;
+from std.core.io import Stderr, Stdout;
+from std.core.option import Option;
+from std.core.path import PathBuf;
+from std.core.string import String;
+from std.core.vec import Vec;
+from anx.diagnostics.model import AX_NO_PROJECT_ROOT, Diagnostic;
+from anx.project.load import discover, load;
+from anx.project.model import LoadReport, Project;
+from anx.project.paths import standard_library_root;
+from compiler.format.api import format_text;
+from compiler.frontend.source import read_source;
+
+fn write_stdout(text: str) -> bool {
+    match Stdout.new().write_str(text) {
+        Ok(_) => true,
+        Err(problem) => { problem.drop(); false },
+    }
+}
+
+fn write_stderr(text: str) {
+    match Stderr.new().write_str(text) {
+        Ok(_) => {},
+        Err(problem) => problem.drop(),
+    }
+}
+
+fn print_diagnostic(item: Diagnostic&) {
+    write_stderr("error[");
+    write_stderr(item.code());
+    write_stderr("]: ");
+    match item.path() { Some(path) => { write_stderr(path); write_stderr(": "); }, None => {}, }
+    write_stderr(item.message());
+    write_stderr("\n");
+    match item.hint() { Some(hint) => { write_stderr("  hint: "); write_stderr(hint); write_stderr("\n"); }, None => {}, }
+}
+
+fn load_project(start: str) -> Option<Project> {
+    let std_root = match standard_library_root() {
+        Ok(value) => value,
+        Err(message) => { write_stderr("error: "); write_stderr(message.as_str()); write_stderr("\n"); message.drop(); return Option<Project>.None; },
+    };
+    defer std_root.drop();
+    let root = discover(start);
+    let root_path = match root {
+        Some(value) => value,
+        None => {
+            let path = match resolve(start) {
+                Ok(value) => value,
+                Err(problem) => { problem.drop(); PathBuf.from(start) },
+            };
+            let message = String.from(&"no package.anx found in ");
+            message.push_str(path.as_str());
+            message.push_str(" or any parent directory");
+            defer { message.drop(); path.drop(); };
+            let diagnostic = Diagnostic.new(AX_NO_PROJECT_ROOT, message.as_str(),
+                Option<str>.Some(path.as_str()), Option<str>.None);
+            print_diagnostic(&diagnostic);
+            diagnostic.drop();
+            return Option<Project>.None;
+        },
+    };
+    defer root_path.drop();
+    let report = load(root_path.as_str(), std_root.as_str());
+    defer report.drop();
+    let diagnostics = report.diagnostics();
+    let index = 0u64;
+    while index < diagnostics.len() { print_diagnostic(&diagnostics[index]); index += 1u64; }
+    if diagnostics.len() != 0u64 { return Option<Project>.None; }
+    report.take_project()
+}
+
+fn package_sources(project: Project&) -> Vec<u64> {
+    let indices = Vec<u64>.new();
+    let index = 0u64;
+    while index < project.file_count() {
+        if project.file(index).package() == project.root_package() { indices.push(index); }
+        index += 1u64;
+    }
+    indices
+}
+
+pub fn format_project(start: str, check: bool) -> i32 {
+    let project = match load_project(start) {
+        Some(value) => value,
+        None => return 1i32,
+    };
+    defer project.drop();
+    let files = package_sources(&project);
+    defer files.drop();
+    let changed = 0u64;
+    let index = 0u64;
+    while index < files.len() {
+        let file = project.file(files[index]);
+        let source = match read_source(file.path()) {
+            Ok(value) => value,
+            Err(problem) => {
+                write_stderr(problem.msg());
+                write_stderr("\n");
+                problem.drop();
+                return 1i32;
+            },
+        };
+        defer source.drop();
+        let formatted = match format_text(source.as_str(), file.path()) {
+            Ok(Some(value)) => value,
+            Ok(None) => {
+                write_stderr("skip ");
+                write_stderr(file.path());
+                write_stderr(": cannot be formatted\n");
+                index += 1u64;
+                continue;
+            },
+            Err(problem) => {
+                problem.drop();
+                write_stderr("error: formatter failed\n");
+                return 1i32;
+            },
+        };
+        defer formatted.drop();
+        if formatted.as_str() != source.as_str() {
+            changed += 1u64;
+            if check {
+                if !write_stdout(file.path()) || !write_stdout("\n") { return 1i32; }
+            } else {
+                match write_string(file.path(), formatted.as_str()) {
+                    Ok(_) => {},
+                    Err(problem) => {
+                        write_stderr(problem.msg());
+                        write_stderr("\n");
+                        problem.drop();
+                        return 1i32;
+                    },
+                }
+            }
+        }
+        index += 1u64;
+    }
+    let total = files.len().to_string();
+    defer total.drop();
+    let count = changed.to_string();
+    defer count.drop();
+    if check {
+        if !write_stdout(count.as_str()) || !write_stdout(" of ") || !write_stdout(total.as_str()) ||
+        !write_stdout(" file(s) need formatting\n") { return 1i32; }
+        return if changed > 0u64 { 1i32 } else { 0i32 };
+    }
+    if !write_stdout(total.as_str()) || !write_stdout(" file(s) checked, ") ||
+    !write_stdout(count.as_str()) || !write_stdout(" rewritten\n") { return 1i32; }
+    0i32
+}

@@ -1,0 +1,1252 @@
+from std.collections.arena import Arena;
+from std.collections.hash_map import HashMap;
+from std.core.drop import Drop;
+from std.core.iter import Iterator;
+from std.core.option import Option;
+from std.core.result import Result;
+from std.core.string import String;
+from std.core.vec import Vec;
+from std.num.f64 import from_bits;
+
+// IDs remain valid for the lifetime of their owning parsed document.
+pub struct NodeId { index: u64 }
+
+pub enum NodeKind {
+    String, Integer, Float, Boolean, OffsetDateTime, LocalDateTime,
+    LocalDate, LocalTime, Array, Table,
+}
+
+pub struct Integer { negative: bool, base: u32, digits: String }
+
+impl Integer {
+    pub fn is_negative() -> bool { self.negative }
+    pub fn base() -> u32 { self.base }
+    pub fn digits() -> str { self.digits.as_str() }
+
+    fn magnitude_u64() -> Option<u64> {
+        let value = 0u64;
+        for byte in self.digits.as_slice() {
+            let digit = u64(numeric_digit(*byte));
+            if value > (u64.max() - digit) / u64(self.base) { return Option<u64>.None; }
+            value = value * u64(self.base) + digit;
+        }
+        Option<u64>.Some(value)
+    }
+
+    pub fn as_u64() -> Option<u64> {
+        let magnitude = match self.magnitude_u64() {
+            Some(value) => value,
+            None => return Option<u64>.None,
+        };
+        if self.negative && magnitude != 0u64 { return Option<u64>.None; }
+        Option<u64>.Some(magnitude)
+    }
+
+    pub fn as_i64() -> Option<i64> {
+        let magnitude = match self.magnitude_u64() { Some(value) => value, None => return Option<i64>.None };
+        if self.negative {
+            if magnitude > 0x8000000000000000u64 { return Option<i64>.None; }
+            return Option<i64>.Some(i64(0u64 - magnitude));
+        }
+        if magnitude > 0x7FFFFFFFFFFFFFFFu64 { return Option<i64>.None; }
+        Option<i64>.Some(i64(magnitude))
+    }
+
+    // Convert an arbitrary-length base-N magnitude using decimal digit arithmetic.
+    pub fn to_decimal() -> String {
+        let decimal = Vec<u8>.new();
+        decimal.push(0u8);
+        for byte in self.digits.as_slice() {
+            let carry = u64(numeric_digit(*byte));
+            let index = 0u64;
+            let value = carry;
+            while index < decimal.len() {
+                value += u64(decimal[index]) * u64(self.base);
+                decimal[index] = u8(value % 10u64);
+                value /= 10u64;
+                index += 1u64;
+            }
+            while value > 0u64 {
+                decimal.push(u8(value % 10u64));
+                value /= 10u64;
+            }
+        }
+        let result = String.new();
+        let nonzero = !(decimal.len() == 1u64 && decimal[0] == 0u8);
+        if self.negative && nonzero { result.push('-'); }
+        let index = decimal.len();
+        while index > 0u64 { index -= 1u64; result.push(char(u32(decimal[index]) + u32('0'))); }
+        decimal.drop();
+        result
+    }
+}
+
+impl Drop for Integer { pub fn drop() { self.digits.drop(); } }
+
+fn numeric_digit(value: u8) -> u32 {
+    if value >= b'0' && value <= b'9' { return u32(value - b'0'); }
+    if value >= b'a' && value <= b'f' { return u32(value - b'a') + 10u32; }
+    u32(value - b'A') + 10u32
+}
+fn valid_date(year: u32, month: u32, day: u32) -> bool {
+    if year == 0u32 || month == 0u32 || month > 12u32 { return false; }
+    let days = match month {
+        2u32 => if year % 4u32 == 0u32 && (year % 100u32 != 0u32 || year % 400u32 == 0u32) { 29u32 } else { 28u32 },
+        4u32 | 6u32 | 9u32 | 11u32 => 30u32,
+        _ => 31u32,
+    };
+    day > 0u32 && day <= days
+}
+
+pub struct Date { year: u16, month: u8, day: u8 }
+pub struct Time { hour: u8, minute: u8, second: u8, microsecond: u32 }
+pub struct LocalDateTime { date: Date, time: Time }
+pub struct OffsetDateTime { date: Date, time: Time, offset_minutes: i32 }
+
+impl Date {
+    pub fn year() -> u16 { self.year }
+    pub fn month() -> u8 { self.month }
+    pub fn day() -> u8 { self.day }
+}
+impl Time {
+    pub fn hour() -> u8 { self.hour }
+    pub fn minute() -> u8 { self.minute }
+    pub fn second() -> u8 { self.second }
+    pub fn microsecond() -> u32 { self.microsecond }
+}
+impl LocalDateTime {
+    pub fn date() -> Date { self.date }
+    pub fn time() -> Time { self.time }
+}
+impl OffsetDateTime {
+    pub fn date() -> Date { self.date }
+    pub fn time() -> Time { self.time }
+    pub fn offset_minutes() -> i32 { self.offset_minutes }
+}
+
+struct Entry { key: String, value: NodeId }
+
+// The map stores borrowed key views into the stable String buffers owned by entries.
+pub struct TomlTable {
+    entries: Vec<Entry>,
+    indices: HashMap<str, u64>,
+    inline: bool,
+    closed: bool,
+}
+
+impl TomlTable {
+    static fn new(inline: bool) -> Self {
+        Self(Vec<Entry>.new(), HashMap<str, u64>.new(), inline, false)
+    }
+
+    pub fn len() -> u64 { self.entries.len() }
+
+    pub fn get(key: str) -> Option<NodeId> {
+        match self.indices.get(&key) {
+            Some(index) => Option<NodeId>.Some(self.entries[*index].value),
+            None => Option<NodeId>.None,
+        }
+    }
+
+    pub fn entries() -> TableIter { TableIter(table=self, index=0u64) }
+
+    fn insert(key: str, value: NodeId) -> bool {
+        if self.closed || self.indices.contains(&key) { return false; }
+        let index = self.entries.len();
+        let owned = String.from(&key);
+        self.indices.insert(owned.as_str(), index);
+        self.entries.push(Entry(key=owned, value=value));
+        true
+    }
+
+    fn close() { self.closed = true; }
+}
+
+impl Drop for TomlTable {
+    pub fn drop() {
+        for entry in self.entries { entry.key.drop(); }
+        self.entries.drop();
+        self.indices.drop();
+    }
+}
+
+pub struct TableIter { table: TomlTable&, index: u64 }
+impl Iterator<(str, NodeId)> for TableIter {
+    pub fn next() -> Option<(str, NodeId)> {
+        if self.index >= self.table.entries.len() { return Option<(str, NodeId)>.None; }
+        let entry = &self.table.entries[self.index];
+        self.index += 1u64;
+        Option<(str, NodeId)>.Some((entry.key.as_str(), entry.value))
+    }
+}
+
+pub struct TomlArray { values: Vec<NodeId>, tables: bool }
+
+impl TomlArray {
+    pub fn len() -> u64 { self.values.len() }
+    pub fn get(index: u64) -> Option<NodeId> {
+        if index >= self.values.len() { return Option<NodeId>.None; }
+        Option<NodeId>.Some(self.values[index])
+    }
+}
+
+impl Drop for TomlArray { pub fn drop() { self.values.drop(); } }
+
+enum Value {
+    String { value: String },
+    IntegerValue { value: Integer },
+    Float { value: f64 },
+    Boolean { value: bool },
+    OffsetDateTime { value: OffsetDateTime },
+    LocalDateTime { value: LocalDateTime },
+    LocalDate { value: Date },
+    LocalTime { value: Time },
+    Array { value: TomlArray },
+    Table { value: TomlTable },
+}
+
+pub struct Node { value: Value }
+
+impl Node {
+    pub fn kind() -> NodeKind {
+        match self.value {
+            String(_) => NodeKind.String,
+            IntegerValue(_) => NodeKind.Integer,
+            Float(_) => NodeKind.Float,
+            Boolean(_) => NodeKind.Boolean,
+            OffsetDateTime(_) => NodeKind.OffsetDateTime,
+            LocalDateTime(_) => NodeKind.LocalDateTime,
+            LocalDate(_) => NodeKind.LocalDate,
+            LocalTime(_) => NodeKind.LocalTime,
+            Array(_) => NodeKind.Array,
+            Table(_) => NodeKind.Table,
+        }
+    }
+
+    pub fn as_string() -> Option<str> {
+        match &self.value { String(value) => Option<str>.Some(value.as_str()), _ => Option<str>.None }
+    }
+    pub fn as_integer() -> Option<Integer&> {
+        match &self.value { IntegerValue(value) => Option<Integer&>.Some(value), _ => Option<Integer&>.None }
+    }
+    pub fn as_float() -> Option<f64> {
+        match &self.value { Float(value) => Option<f64>.Some(*value), _ => Option<f64>.None }
+    }
+    pub fn as_boolean() -> Option<bool> {
+        match &self.value { Boolean(value) => Option<bool>.Some(*value), _ => Option<bool>.None }
+    }
+    pub fn array_len() -> u64 {
+        match &self.value { Array(value) => value.values.len(), _ => 0u64 }
+    }
+    pub fn array_get(index: u64) -> Option<NodeId> {
+        match &self.value { Array(value) => value.get(index), _ => Option<NodeId>.None }
+    }
+    pub fn table_len() -> u64 {
+        match &self.value { Table(value) => value.entries.len(), _ => 0u64 }
+    }
+    pub fn table_get(key: str) -> Option<NodeId> {
+        match &self.value { Table(value) => value.get(key), _ => Option<NodeId>.None }
+    }
+    pub fn table_entries() -> Option<TableIter> {
+        match &self.value { Table(value) => Option<TableIter>.Some(value.entries()), _ => Option<TableIter>.None }
+    }
+    pub fn as_local_date() -> Option<Date> {
+        match self.value { LocalDate(value) => Option<Date>.Some(value), _ => Option<Date>.None }
+    }
+    pub fn as_local_time() -> Option<Time> {
+        match self.value { LocalTime(value) => Option<Time>.Some(value), _ => Option<Time>.None }
+    }
+    pub fn as_local_datetime() -> Option<LocalDateTime> {
+        match self.value { LocalDateTime(value) => Option<LocalDateTime>.Some(value), _ => Option<LocalDateTime>.None }
+    }
+    pub fn as_offset_datetime() -> Option<OffsetDateTime> {
+        match self.value { OffsetDateTime(value) => Option<OffsetDateTime>.Some(value), _ => Option<OffsetDateTime>.None }
+    }
+}
+
+impl Drop for Value {
+    pub fn drop() {
+        match self {
+            String(value) => value.drop(),
+            IntegerValue(value) => value.drop(),
+            Array(value) => value.drop(),
+            Table(value) => value.drop(),
+            _ => {},
+        };
+        *self = Value.Boolean(false);
+    }
+}
+
+pub struct Document { nodes: Arena<Node>, root: NodeId }
+
+impl Document {
+    static fn new() -> Self {
+        let nodes = Arena<Node>.new();
+        let root = NodeId(index=nodes.len());
+        nodes.alloc(Node(value=Value.Table(value=TomlTable.new(false))));
+        Self(nodes=nodes, root=root)
+    }
+
+    pub fn root() -> NodeId { self.root }
+    pub fn get(id: NodeId) -> Option<Node&> { self.nodes.get(id.index) }
+}
+
+impl Drop for Document {
+    pub fn drop() {
+        let index = 0u64;
+        while index < self.nodes.len() {
+            self.nodes.get(index).unwrap().value.drop();
+            index += 1u64;
+        }
+        self.nodes.drop();
+    }
+}
+
+// Free ID-based readers avoid retaining a node borrow between lookups.
+pub fn node_kind(document: Document&, id: NodeId) -> Option<NodeKind> {
+    match document.nodes.get(id.index) {
+        Some(node) => Option<NodeKind>.Some(node.kind()),
+        None => Option<NodeKind>.None,
+    }
+}
+
+pub fn table_len(document: Document&, id: NodeId) -> u64 {
+    match document.nodes.get(id.index) {
+        Some(node) => node.table_len(),
+        None => 0u64,
+    }
+}
+
+pub fn table_entry(document: Document&, id: NodeId, index: u64) -> Option<(String, NodeId)> {
+    match document.nodes.get(id.index) {
+        Some(node) => match &node.value {
+            Table(table) if index < table.entries.len() => {
+                Option<(String, NodeId)>.Some((String.from(&table.entries[index].key.as_str()), table.entries[index].value))
+            },
+            _ => Option<(String, NodeId)>.None,
+        },
+        None => Option<(String, NodeId)>.None,
+    }
+}
+
+pub fn array_len(document: Document&, id: NodeId) -> u64 {
+    match document.nodes.get(id.index) {
+        Some(node) => node.array_len(),
+        None => 0u64,
+    }
+}
+
+pub fn table_child(document: Document&, parent: NodeId, key: str) -> Option<NodeId> {
+    match document.nodes.get(parent.index) {
+        Some(node) => node.table_get(key),
+        None => Option<NodeId>.None,
+    }
+}
+
+pub fn array_child(document: Document&, parent: NodeId, index: u64) -> Option<NodeId> {
+    match document.nodes.get(parent.index) {
+        Some(node) => node.array_get(index),
+        None => Option<NodeId>.None,
+    }
+}
+
+pub fn string_value(document: Document&, id: NodeId) -> Option<String> {
+    match document.nodes.get(id.index) {
+        Some(node) => match node.as_string() {
+            Some(value) => Option<String>.Some(String.from(&value)),
+            None => Option<String>.None,
+        },
+        None => Option<String>.None,
+    }
+}
+
+pub fn integer_u64(document: Document&, id: NodeId) -> Option<u64> {
+    match document.nodes.get(id.index) {
+        Some(node) => match node.as_integer() {
+            Some(value) => value.as_u64(),
+            None => Option<u64>.None,
+        },
+        None => Option<u64>.None,
+    }
+}
+
+pub fn integer_i64(document: Document&, id: NodeId) -> Option<i64> {
+    match document.nodes.get(id.index) {
+        Some(node) => match node.as_integer() {
+            Some(value) => value.as_i64(),
+            None => Option<i64>.None,
+        },
+        None => Option<i64>.None,
+    }
+}
+
+pub fn integer_decimal(document: Document&, id: NodeId) -> Option<String> {
+    match document.nodes.get(id.index) {
+        Some(node) => match node.as_integer() {
+            Some(value) => Option<String>.Some(value.to_decimal()),
+            None => Option<String>.None,
+        },
+        None => Option<String>.None,
+    }
+}
+
+pub fn float_value(document: Document&, id: NodeId) -> Option<f64> {
+    match document.nodes.get(id.index) {
+        Some(node) => node.as_float(),
+        None => Option<f64>.None,
+    }
+}
+
+pub fn boolean_value(document: Document&, id: NodeId) -> Option<bool> {
+    match document.nodes.get(id.index) {
+        Some(node) => node.as_boolean(),
+        None => Option<bool>.None,
+    }
+}
+
+pub struct ParseError { message: String, offset: u64, row: u64, column: u64 }
+impl ParseError {
+    pub fn message() -> str { self.message.as_str() }
+    pub fn offset() -> u64 { self.offset }
+    pub fn row() -> u64 { self.row }
+    pub fn column() -> u64 { self.column }
+}
+impl Drop for ParseError { pub fn drop() { self.message.drop(); } }
+
+enum TableForm { Root, HeaderImplicit, Explicit, Dotted, Inline, ArrayElement, Other }
+
+struct ByteCursor { bytes: u8[], index: u64 }
+
+struct Parser {
+    source: str,
+    bytes: u8[],
+    index: u64,
+    row: u64,
+    column: u64,
+    document: Option<Document>,
+    forms: Vec<TableForm>,
+    current: NodeId,
+}
+
+fn digit(value: u8) -> bool { value >= b'0' && value <= b'9' }
+fn hex_digit(value: u8) -> bool {
+    digit(value) || (value >= b'a' && value <= b'f') || (value >= b'A' && value <= b'F')
+}
+fn bare_key_byte(value: u8) -> bool {
+    (value >= b'a' && value <= b'z') || (value >= b'A' && value <= b'Z') ||
+    digit(value) || value == b'_' || value == b'-'
+}
+fn drop_strings(values: Vec<String>&) {
+    let index = 0u64;
+    while index < values.len() { values[index].drop(); index += 1u64; }
+    values.drop();
+}
+
+impl Parser {
+    static fn new(source: str) -> Self {
+        let document = Document.new();
+        let forms = Vec<TableForm>.new();
+        forms.push(TableForm.Root);
+        Self(source=source, bytes=source.as_slice(), index=0u64, row=1u64, column=1u64,
+            document=Option<Document>.Some(document), forms=forms, current=NodeId(index=0u64))
+    }
+
+    fn error(message: str) -> ParseError {
+        ParseError(message=String.from(&message), offset=self.index, row=self.row, column=self.column)
+    }
+
+    fn eof() -> bool { self.index >= self.bytes.len() }
+    fn peek() -> Option<u8> {
+        if self.eof() { return Option<u8>.None; }
+        Option<u8>.Some(self.bytes[self.index])
+    }
+    fn peek_at(distance: u64) -> Option<u8> {
+        if distance >= self.bytes.len() - self.index { return Option<u8>.None; }
+        Option<u8>.Some(self.bytes[self.index + distance])
+    }
+    fn is(value: u8) -> bool {
+        match self.peek() { Some(found) => found == value, None => false }
+    }
+    fn is_at(distance: u64, value: u8) -> bool {
+        match self.peek_at(distance) { Some(found) => found == value, None => false }
+    }
+    fn next() -> Option<u8> {
+        if self.eof() { return Option<u8>.None; }
+        let value = self.bytes[self.index];
+        self.index += 1u64;
+        if value == b'\n' { self.row += 1u64; self.column = 1u64; } elif (value & 0xc0u8) != 0x80u8 { self.column += 1u64; }
+        Option<u8>.Some(value)
+    }
+    fn consume(value: u8) -> bool {
+        match self.peek() {
+            Some(found) if found == value => { self.next(); true },
+            _ => false,
+        }
+    }
+    fn expect(value: u8, message: str) -> Result<(), ParseError> {
+        if self.consume(value) { return Result<(), ParseError>.Ok(()); }
+        Result<(), ParseError>.Err(self.error(message))
+    }
+    fn horizontal_space() {
+        while let Some(value) = self.peek() {
+            if value != b' ' && value != b'\t' { break; }
+            self.next();
+        }
+    }
+    fn whitespace() {
+        loop {
+            match self.peek() {
+                Some(value) if value == b' ' || value == b'\t' || value == b'\r' || value == b'\n' => { self.next(); },
+                _ => { break; },
+            }
+        }
+    }
+    fn newline() -> bool {
+        if self.consume(b'\n') { return true; }
+        if self.consume(b'\r') { return self.consume(b'\n'); }
+        false
+    }
+    fn comment() {
+        if !self.consume(b'#') { return; }
+        while let Some(value) = self.peek() {
+            if value == b'\n' || value == b'\r' { break; }
+            self.next();
+        }
+    }
+
+    static fn codepoint_width(first: u8) -> u64 {
+        if first < 0x80u8 { return 1u64; }
+        if first < 0xe0u8 { return 2u64; }
+        if first < 0xf0u8 { return 3u64; }
+        4u64
+    }
+
+    static fn codepoint(bytes: u8[], start: u64) -> u32 {
+        let text = str.from_slice_unchecked(bytes[start..bytes.len()]);
+        u32(*text.chars().next().unwrap())
+    }
+
+    fn validate_source() -> Result<(), ParseError> {
+        let scan = 0u64;
+        let row = 1u64;
+        let column = 1u64;
+        while scan < self.bytes.len() {
+            let value = Self.codepoint(self.bytes, scan);
+            let width = Self.codepoint_width(self.bytes[scan]);
+            let invalid_control = (value < 0x20u32 && value != 9u32 && value != 10u32 && value != 13u32) ||
+            value == 0x7fu32;
+            let invalid_line_ending = value == 13u32 &&
+            (scan + width >= self.bytes.len() || self.bytes[scan + width] != b'\n');
+            if invalid_control || invalid_line_ending {
+                self.index = scan;
+                self.row = row;
+                self.column = column;
+                return Result<(), ParseError>.Err(self.error("invalid control character or line ending"));
+            }
+            if value == 10u32 {
+                row += 1u64;
+                column = 1u64;
+            } else {
+                column += 1u64;
+            }
+            scan += width;
+        }
+        Result<(), ParseError>.Ok(())
+    }
+
+    fn copy_codepoint(output: String&) {
+        let start = self.index;
+        let first = *self.next().unwrap();
+        let width = if first < 0x80u8 { 1u64 } elif first < 0xe0u8 { 2u64 } elif first < 0xf0u8 { 3u64 } else { 4u64 };
+        let end = if start + width > self.bytes.len() { self.bytes.len() } else { start + width };
+        while self.index < end { self.next(); }
+        output.push_str(str.from_slice_unchecked(self.bytes[start..self.index]));
+    }
+
+    static fn hex_value(value: u8) -> u32 {
+        if digit(value) { return u32(value - b'0'); }
+        if value >= b'a' { return u32(value - b'a') + 10u32; }
+        u32(value - b'A') + 10u32
+    }
+
+    static fn digit_for(value: u8, base: u32) -> bool {
+        if !hex_digit(value) { return false; }
+        numeric_digit(value) < base
+    }
+
+    fn digit_run(cursor: ByteCursor&, base: u32) -> Result<String, ParseError> {
+        if cursor.index >= cursor.bytes.len() || !Self.digit_for(cursor.bytes[cursor.index], base) {
+            return Result<String, ParseError>.Err(self.error("expected digits"));
+        }
+        let output = String.new();
+        defer output.drop();
+        let previous_digit = false;
+        while cursor.index < cursor.bytes.len() {
+            let current = cursor.bytes[cursor.index];
+            if Self.digit_for(current, base) {
+                output.push(char(current));
+                previous_digit = true;
+                cursor.index += 1u64;
+            } elif current == b'_' {
+                if !previous_digit || cursor.index + 1u64 >= cursor.bytes.len() || !Self.digit_for(cursor.bytes[cursor.index + 1u64], base) {
+                    return Result<String, ParseError>.Err(self.error("invalid numeric separator"));
+                }
+                previous_digit = false;
+                cursor.index += 1u64;
+            } else { break; }
+        }
+        let result = output;
+        output = String.new();
+        Result<String, ParseError>.Ok(result)
+    }
+
+    fn numeric(token: str) -> Result<Value, ParseError> {
+        let bytes = token.as_slice();
+        let cursor = ByteCursor(bytes, 0u64);
+        let negative = false;
+        let had_sign = false;
+        if cursor.index < bytes.len() && (bytes[cursor.index] == b'+' || bytes[cursor.index] == b'-') {
+            negative = bytes[cursor.index] == b'-';
+            had_sign = true;
+            cursor.index += 1u64;
+        }
+        let body = str.from_slice_unchecked(bytes[cursor.index..bytes.len()]);
+        if body == "inf" || body == "nan" {
+            let bits = if body == "inf" { 0x7ff0000000000000u64 } else { 0x7ff8000000000000u64 };
+            return Result<Value, ParseError>.Ok(Value.Float(value=from_bits(bits | if negative { 0x8000000000000000u64 } else { 0u64 })));
+        }
+
+        if cursor.index + 1u64 < bytes.len() && bytes[cursor.index] == b'0' &&
+        (bytes[cursor.index + 1u64] == b'x' || bytes[cursor.index + 1u64] == b'o' || bytes[cursor.index + 1u64] == b'b') {
+            if had_sign { return Result<Value, ParseError>.Err(self.error("a sign is not allowed on a non-decimal integer")); }
+            let base = if bytes[cursor.index + 1u64] == b'x' { 16u32 } elif bytes[cursor.index + 1u64] == b'o' { 8u32 } else { 2u32 };
+            cursor.index += 2u64;
+            let digits = self.digit_run(&cursor, base)?;
+            defer digits.drop();
+            if cursor.index != bytes.len() { return Result<Value, ParseError>.Err(self.error("invalid integer")); }
+            return Result<Value, ParseError>.Ok(Value.IntegerValue(value=Integer(negative=false, base=base, digits=String.from(&digits.as_str()))));
+        }
+
+        let integer_digits = self.digit_run(&cursor, 10u32)?;
+        defer integer_digits.drop();
+        if integer_digits.len() > 1u64 && integer_digits.as_slice()[0] == b'0' {
+            return Result<Value, ParseError>.Err(self.error("leading zero in decimal integer"));
+        }
+        let floating = false;
+        let clean = String.new();
+        defer clean.drop();
+        if negative { clean.push('-'); }
+        clean.push_str(integer_digits.as_str());
+        if cursor.index < bytes.len() && bytes[cursor.index] == b'.' {
+            floating = true;
+            clean.push('.');
+            cursor.index += 1u64;
+            let fraction = self.digit_run(&cursor, 10u32)?;
+            defer fraction.drop();
+            clean.push_str(fraction.as_str());
+        }
+        if cursor.index < bytes.len() && (bytes[cursor.index] == b'e' || bytes[cursor.index] == b'E') {
+            floating = true;
+            clean.push('e');
+            cursor.index += 1u64;
+            if cursor.index < bytes.len() && (bytes[cursor.index] == b'+' || bytes[cursor.index] == b'-') {
+                clean.push(char(bytes[cursor.index]));
+                cursor.index += 1u64;
+            }
+            let exponent = self.digit_run(&cursor, 10u32)?;
+            defer exponent.drop();
+            clean.push_str(exponent.as_str());
+        }
+        if cursor.index != bytes.len() { return Result<Value, ParseError>.Err(self.error("invalid number")); }
+        if floating {
+            let magnitude_text = if negative { str.from_slice_unchecked(clean.as_slice()[1u64..clean.len()]) } else { clean.as_str() };
+            let magnitude = match f64.parse(magnitude_text) {
+                Ok(value) => value,
+                Err(_) => from_bits(0x7ff0000000000000u64),
+            };
+            return Result<Value, ParseError>.Ok(Value.Float(value=if negative { -magnitude } else { magnitude }));
+        }
+        Result<Value, ParseError>.Ok(Value.IntegerValue(value=Integer(negative=negative, base=10u32, digits=String.from(&integer_digits.as_str()))))
+    }
+
+    static fn looks_like_date(token: str) -> bool {
+        let bytes = token.as_slice();
+        bytes.len() >= 5u64 && digit(bytes[0]) && digit(bytes[1]) && digit(bytes[2]) && digit(bytes[3]) && bytes[4] == b'-'
+    }
+
+    static fn looks_like_time(token: str) -> bool {
+        let bytes = token.as_slice();
+        bytes.len() >= 3u64 && digit(bytes[0]) && digit(bytes[1]) && bytes[2] == b':'
+    }
+
+    fn decimal_component(cursor: ByteCursor&, width: u64) -> Result<u32, ParseError> {
+        let value = 0u32;
+        let count = 0u64;
+        while count < width {
+            if cursor.index >= cursor.bytes.len() || !digit(cursor.bytes[cursor.index]) {
+                return Result<u32, ParseError>.Err(self.error("invalid date or time component"));
+            }
+            value = value * 10u32 + u32(cursor.bytes[cursor.index] - b'0');
+            cursor.index += 1u64;
+            count += 1u64;
+        }
+        Result<u32, ParseError>.Ok(value)
+    }
+
+    fn temporal_time(cursor: ByteCursor&, allow_offset: bool) -> Result<(Time, Option<i32>), ParseError> {
+        let hour = self.decimal_component(cursor, 2u64)?;
+        if cursor.index >= cursor.bytes.len() || cursor.bytes[cursor.index] != b':' { return Result<(Time, Option<i32>), ParseError>.Err(self.error("expected ':' in time")); }
+        cursor.index += 1u64;
+        let minute = self.decimal_component(cursor, 2u64)?;
+        if cursor.index >= cursor.bytes.len() || cursor.bytes[cursor.index] != b':' { return Result<(Time, Option<i32>), ParseError>.Err(self.error("expected seconds in time")); }
+        cursor.index += 1u64;
+        let second = self.decimal_component(cursor, 2u64)?;
+        if hour > 23u32 || minute > 59u32 || second > 59u32 {
+            return Result<(Time, Option<i32>), ParseError>.Err(self.error("time component is out of range"));
+        }
+
+        let microsecond = 0u32;
+        if cursor.index < cursor.bytes.len() && cursor.bytes[cursor.index] == b'.' {
+            cursor.index += 1u64;
+            let digits_start = cursor.index;
+            let count = 0u64;
+            while cursor.index < cursor.bytes.len() && digit(cursor.bytes[cursor.index]) {
+                if count < 6u64 { microsecond = microsecond * 10u32 + u32(cursor.bytes[cursor.index] - b'0'); }
+                count += 1u64;
+                cursor.index += 1u64;
+            }
+            if cursor.index == digits_start { return Result<(Time, Option<i32>), ParseError>.Err(self.error("fractional seconds require digits")); }
+            while count < 6u64 { microsecond *= 10u32; count += 1u64; }
+        }
+
+        let offset = Option<i32>.None;
+        if cursor.index < cursor.bytes.len() && (cursor.bytes[cursor.index] == b'Z' || cursor.bytes[cursor.index] == b'z') {
+            if !allow_offset { return Result<(Time, Option<i32>), ParseError>.Err(self.error("local time cannot have an offset")); }
+            cursor.index += 1u64;
+            offset = Option<i32>.Some(0i32);
+        } elif cursor.index < cursor.bytes.len() && (cursor.bytes[cursor.index] == b'+' || cursor.bytes[cursor.index] == b'-') {
+            if !allow_offset { return Result<(Time, Option<i32>), ParseError>.Err(self.error("local time cannot have an offset")); }
+            let negative = cursor.bytes[cursor.index] == b'-';
+            cursor.index += 1u64;
+            let offset_hour = self.decimal_component(cursor, 2u64)?;
+            if cursor.index >= cursor.bytes.len() || cursor.bytes[cursor.index] != b':' { return Result<(Time, Option<i32>), ParseError>.Err(self.error("expected ':' in UTC offset")); }
+            cursor.index += 1u64;
+            let offset_minute = self.decimal_component(cursor, 2u64)?;
+            if offset_hour > 23u32 || offset_minute > 59u32 {
+                return Result<(Time, Option<i32>), ParseError>.Err(self.error("UTC offset is out of range"));
+            }
+            let minutes = i32(offset_hour * 60u32 + offset_minute);
+            offset = Option<i32>.Some(if negative { -minutes } else { minutes });
+        }
+
+        Result<(Time, Option<i32>), ParseError>.Ok((Time(u8(hour), u8(minute), u8(second), microsecond), offset))
+    }
+
+    fn temporal(token: str) -> Result<Value, ParseError> {
+        let bytes = token.as_slice();
+        let cursor = ByteCursor(bytes, 0u64);
+        if Self.looks_like_time(token) {
+            let(time, offset) = self.temporal_time(&cursor, false)?;
+            if cursor.index != bytes.len() || offset.is_some() { return Result<Value, ParseError>.Err(self.error("invalid local time")); }
+            return Result<Value, ParseError>.Ok(Value.LocalTime(value=time));
+        }
+
+        let year = self.decimal_component(&cursor, 4u64)?;
+        if cursor.index >= bytes.len() || bytes[cursor.index] != b'-' { return Result<Value, ParseError>.Err(self.error("expected '-' in date")); }
+        cursor.index += 1u64;
+        let month = self.decimal_component(&cursor, 2u64)?;
+        if cursor.index >= bytes.len() || bytes[cursor.index] != b'-' { return Result<Value, ParseError>.Err(self.error("expected day in date")); }
+        cursor.index += 1u64;
+        let day = self.decimal_component(&cursor, 2u64)?;
+        if !valid_date(year, month, day) { return Result<Value, ParseError>.Err(self.error("date component is out of range")); }
+        let date = Date(u16(year), u8(month), u8(day));
+        if cursor.index == bytes.len() { return Result<Value, ParseError>.Ok(Value.LocalDate(value=date)); }
+
+        let separator = bytes[cursor.index];
+        if separator != b'T' && separator != b't' && separator != b' ' {
+            return Result<Value, ParseError>.Err(self.error("invalid date-time separator"));
+        }
+        cursor.index += 1u64;
+        let(time, offset) = self.temporal_time(&cursor, true)?;
+        if cursor.index != bytes.len() { return Result<Value, ParseError>.Err(self.error("invalid date-time")); }
+        match offset {
+            Some(minutes) => Result<Value, ParseError>.Ok(Value.OffsetDateTime(value=OffsetDateTime(date, time, minutes))),
+            None => Result<Value, ParseError>.Ok(Value.LocalDateTime(value=LocalDateTime(date, time))),
+        }
+    }
+    fn escaped_codepoint(width: u64) -> Result<u32, ParseError> {
+        let code = 0u32;
+        let count = 0u64;
+        while count < width {
+            let value = match self.next() {
+                Some(byte) if hex_digit(byte) => byte,
+                _ => return Result<u32, ParseError>.Err(self.error("invalid Unicode escape")),
+            };
+            code = code * 16u32 + Self.hex_value(value);
+            count += 1u64;
+        }
+        if code > 0x10ffffu32 || (code >= 0xd800u32 && code <= 0xdfffu32) {
+            return Result<u32, ParseError>.Err(self.error("invalid Unicode scalar value"));
+        }
+        Result<u32, ParseError>.Ok(code)
+    }
+
+    fn consume_multiline_continuation() -> bool {
+        let spaces = 0u64;
+        while self.is_at(spaces, b' ') || self.is_at(spaces, b'\t') { spaces += 1u64; }
+        let has_line_break = self.is_at(spaces, b'\n') ||
+        (self.is_at(spaces, b'\r') && self.is_at(spaces + 1u64, b'\n'));
+        if !has_line_break { return false; }
+
+        let skipped = 0u64;
+        while skipped < spaces { self.next(); skipped += 1u64; }
+        self.newline();
+        loop {
+            match self.peek() {
+                Some(value) if value == b' ' || value == b'\t' || value == b'\r' || value == b'\n' => { self.next(); },
+                _ => { break; },
+            }
+        }
+        true
+    }
+
+    fn string() -> Result<String, ParseError> {
+        let quote = match self.next() {
+            Some(value) if value == b'"' || value == b'\'' => value,
+            _ => return Result<String, ParseError>.Err(self.error("expected a string")),
+        };
+        let basic = quote == b'"';
+        let multiline = self.is(quote) && self.is_at(1u64, quote);
+        if multiline { self.next(); self.next(); }
+        if multiline && self.is(b'\r') && self.is_at(1u64, b'\n') {
+            self.next();
+            self.next();
+        } elif multiline && self.is(b'\n') { self.next(); }
+
+        let output = String.new();
+        defer output.drop();
+        loop {
+            if self.eof() { return Result<String, ParseError>.Err(self.error("unterminated string")); }
+
+            if self.is(quote) {
+                if !multiline { self.next(); let result = output; output = String.new(); return Result<String, ParseError>.Ok(result); }
+                let count = 0u64;
+                while self.is_at(count, quote) { count += 1u64; }
+                if count >= 3u64 {
+                    if count > 5u64 { return Result<String, ParseError>.Err(self.error("too many quotes at multiline string delimiter")); }
+                    let content_quotes = count - 3u64;
+                    let quote_index = 0u64;
+                    while quote_index < content_quotes { output.push(char(quote)); quote_index += 1u64; }
+                    self.next();
+                    self.next();
+                    self.next();
+                    let excess = count - 3u64;
+                    let excess_index = 0u64;
+                    while excess_index < excess { self.next(); excess_index += 1u64; }
+                    let result = output;
+                    output = String.new();
+                    return Result<String, ParseError>.Ok(result);
+                }
+                let run_index = 0u64;
+                while run_index < count { self.next(); output.push(char(quote)); run_index += 1u64; }
+                continue;
+            }
+
+            let value = *self.peek().unwrap();
+            if value == b'\\' && basic {
+                self.next();
+                if multiline && self.consume_multiline_continuation() { continue; }
+                let escaped = match self.next() {
+                    Some(byte) => byte,
+                    None => return Result<String, ParseError>.Err(self.error("unterminated escape")),
+                };
+                match escaped {
+                    b'b' => output.push(char(8u32)),
+                    b't' => output.push('\t'),
+                    b'n' => output.push('\n'),
+                    b'f' => output.push(char(12u32)),
+                    b'r' => output.push('\r'),
+                    b'"' => output.push('"'),
+                    b'\\' => output.push('\\'),
+                    b'u' => output.push(char(self.escaped_codepoint(4u64)?)),
+                    b'U' => output.push(char(self.escaped_codepoint(8u64)?)),
+                    _ => return Result<String, ParseError>.Err(self.error("invalid string escape")),
+                };
+                continue;
+            }
+
+            if value < 0x20u8 && value != b'\t' {
+                if value != b'\n' && value != b'\r' { return Result<String, ParseError>.Err(self.error("control character in string")); }
+                if !multiline { return Result<String, ParseError>.Err(self.error("newline in single-line string")); }
+                if value == b'\r' {
+                    self.next();
+                    if !self.consume(b'\n') { return Result<String, ParseError>.Err(self.error("invalid line ending")); }
+                    output.push('\n');
+                } else { self.next(); output.push('\n'); }
+                continue;
+            }
+            if value == 0x7fu8 { return Result<String, ParseError>.Err(self.error("control character in string")); }
+            self.copy_codepoint(&output);
+        }
+    }
+
+    fn key() -> Result<String, ParseError> {
+        match self.peek() {
+            Some(value) if value == b'"' || value == b'\'' => {
+                let multiline = self.is_at(1u64, value) && self.is_at(2u64, value);
+                if multiline { return Result<String, ParseError>.Err(self.error("multiline string is not a key")); }
+                self.string()
+            },
+            _ => {
+                let start = self.index;
+                while let Some(value) = self.peek() {
+                    if !bare_key_byte(value) { break; }
+                    self.next();
+                }
+                if start == self.index { return Result<String, ParseError>.Err(self.error("expected a key")); }
+                Result<String, ParseError>.Ok(String.from(&str.from_slice_unchecked(self.bytes[start..self.index])))
+            },
+        }
+    }
+
+    fn key_path() -> Result<Vec<String>, ParseError> {
+        let keys = Vec<String>.new();
+        defer drop_strings(&keys);
+        keys.push(self.key()?);
+        loop {
+            self.horizontal_space();
+            if !self.consume(b'.') { break; }
+            self.horizontal_space();
+            keys.push(self.key()?);
+        }
+        let result = keys.take();
+        Result<Vec<String>, ParseError>.Ok(result)
+    }
+
+    fn new_node(value: Value, form: TableForm) -> NodeId {
+        let document = self.document.unwrap();
+        let id = NodeId(index=document.nodes.len());
+        document.nodes.alloc(Node(value=value));
+        self.forms.push(form);
+        id
+    }
+
+    fn node(id: NodeId) -> Node& {
+        *self.document.unwrap().nodes.get(id.index).unwrap()
+    }
+    fn node_mut(id: NodeId) -> Node& {
+        *self.document.unwrap().nodes.get(id.index).unwrap()
+    }
+    fn table_mut(id: NodeId) -> TomlTable& {
+        match &self.node_mut(id).value {
+            Table(table) => table,
+            _ => @panic("TOML parser expected a table node"),
+        }
+    }
+    fn table_array_mut(id: NodeId) -> TomlArray& {
+        match &self.node_mut(id).value {
+            Array(array) if array.tables => array,
+            _ => @panic("TOML parser expected an array-of-tables node"),
+        }
+    }
+    fn child(parent: NodeId, key: str) -> Option<NodeId> { self.table_mut(parent).get(key) }
+    fn set_child(parent: NodeId, key: str, child: NodeId) -> bool { self.table_mut(parent).insert(key, child) }
+
+    // Dotted assignments cannot extend an explicitly opened table or an array-table element.
+    fn assignment_table_child(parent: NodeId, key: str) -> Result<NodeId, ParseError> {
+        match self.child(parent, key) {
+            Some(child) => {
+                match &self.node(child).value {
+                    Table(_) => {
+                        let explicit = match self.forms[child.index] { Explicit => true, _ => false };
+                        if explicit {
+                            Result<NodeId, ParseError>.Err(self.error("dotted key cannot extend an explicitly defined table"))
+                        } else {
+                            self.table_child(parent, key, TableForm.Dotted)
+                        }
+                    },
+                    Array(array) if array.tables =>
+                    Result<NodeId, ParseError>.Err(self.error("dotted key cannot extend an array of tables")),
+                    _ => self.table_child(parent, key, TableForm.Dotted),
+                }
+            },
+            None => self.table_child(parent, key, TableForm.Dotted),
+        }
+    }
+
+    fn table_child(parent: NodeId, key: str, create_form: TableForm) -> Result<NodeId, ParseError> {
+        match self.child(parent, key) {
+            Some(child) => {
+                match self.node(child).value {
+                    Table(table) => {
+                        let form = &self.forms[child.index];
+                        let valid_form = match form {
+                            Root | Explicit | HeaderImplicit | ArrayElement => true,
+                            Dotted => true,
+                            Inline | Other => false,
+                        };
+                        if !valid_form || table.closed { return Result<NodeId, ParseError>.Err(self.error("table path conflicts with an existing value")); }
+                        Result<NodeId, ParseError>.Ok(child)
+                    },
+                    Array(array) if array.tables && array.values.len() > 0u64 => {
+                        Result<NodeId, ParseError>.Ok(array.values[array.values.len() - 1u64])
+                    },
+                    _ => Result<NodeId, ParseError>.Err(self.error("table path conflicts with an existing value")),
+                }
+            },
+            None => {
+                let child = self.new_node(Value.Table(value=TomlTable.new(false)), create_form);
+                if !self.set_child(parent, key, child) { return Result<NodeId, ParseError>.Err(self.error("duplicate key")); }
+                Result<NodeId, ParseError>.Ok(child)
+            },
+        }
+    }
+
+    fn assign_path(parent: NodeId, keys: Vec<String>, value: NodeId) -> Result<(), ParseError> {
+        if keys.is_empty() { return Result<(), ParseError>.Err(self.error("empty key path")); }
+        let table = parent;
+        let index = 0u64;
+        while index + 1u64 < keys.len() {
+            table = self.assignment_table_child(table, keys[index].as_str())?;
+            index += 1u64;
+        }
+        if !self.set_child(table, keys[keys.len() - 1u64].as_str(), value) {
+            return Result<(), ParseError>.Err(self.error("duplicate key or closed inline table"));
+        }
+        Result<(), ParseError>.Ok(())
+    }
+
+    fn parse_header(array_header: bool) -> Result<NodeId, ParseError> {
+        if array_header { self.next(); self.next(); } else { self.next(); }
+        self.horizontal_space();
+        let keys = self.key_path()?;
+        defer drop_strings(&keys);
+        self.horizontal_space();
+        if array_header {
+            self.expect(b']', "expected ']]' after table header")?;
+            self.expect(b']', "expected ']]' after table header")?;
+        } else { self.expect(b']', "expected ']' after table header")?; }
+
+        let root = self.document.unwrap().root;
+        let table = root;
+        let index = 0u64;
+        while index + 1u64 < keys.len() {
+            table = self.table_child(table, keys[index].as_str(), TableForm.HeaderImplicit)?;
+            index += 1u64;
+        }
+        let final_key = keys[keys.len() - 1u64].as_str();
+        if array_header {
+            let array_id = match self.child(table, final_key) {
+                Some(id) => {
+                    match self.node(id).value {
+                        Array(array) if array.tables => id,
+                        _ => return Result<NodeId, ParseError>.Err(self.error("array-of-tables conflicts with an existing value")),
+                    }
+                },
+                None => {
+                    let id = self.new_node(Value.Array(value=TomlArray(values=Vec<NodeId>.new(), tables=true)), TableForm.Other);
+                    if !self.set_child(table, final_key, id) { return Result<NodeId, ParseError>.Err(self.error("duplicate table")); }
+                    id
+                },
+            };
+            let node = self.new_node(Value.Table(value=TomlTable.new(false)), TableForm.ArrayElement);
+            self.table_array_mut(array_id).values.push(node);
+            Result<NodeId, ParseError>.Ok(node)
+        } else {
+            match self.child(table, final_key) {
+                Some(id) => {
+                    let implicit = match self.forms[id.index] { HeaderImplicit => true, _ => false };
+                    match self.node(id).value {
+                        Table(_) if implicit => {
+                            self.forms[id.index] = TableForm.Explicit;
+                            Result<NodeId, ParseError>.Ok(id)
+                        },
+                        _ => Result<NodeId, ParseError>.Err(self.error("table is already defined")),
+                    }
+                },
+                None => {
+                    let id = self.new_node(Value.Table(value=TomlTable.new(false)), TableForm.Explicit);
+                    if !self.set_child(table, final_key, id) { return Result<NodeId, ParseError>.Err(self.error("duplicate table")); }
+                    Result<NodeId, ParseError>.Ok(id)
+                },
+            }
+        }
+    }
+
+    fn parse_array() -> Result<NodeId, ParseError> {
+        self.next();
+        let values = Vec<NodeId>.new();
+        defer values.drop();
+        self.array_whitespace()?;
+        if self.consume(b']') {
+            return Result<NodeId, ParseError>.Ok(self.new_node(Value.Array(value=TomlArray(values=values.take(), tables=false)), TableForm.Other));
+        }
+        loop {
+            values.push(self.parse_value()?);
+            self.array_whitespace()?;
+            if self.consume(b']') { break; }
+            self.expect(b',', "expected ',' or ']' in array")?;
+            self.array_whitespace()?;
+            if self.consume(b']') { break; }
+        }
+        Result<NodeId, ParseError>.Ok(self.new_node(Value.Array(value=TomlArray(values=values.take(), tables=false)), TableForm.Other))
+    }
+
+    fn parse_inline_table() -> Result<NodeId, ParseError> {
+        self.next();
+        let table_id = self.new_node(Value.Table(value=TomlTable.new(true)), TableForm.Inline);
+        self.horizontal_space();
+        if self.consume(b'}') { self.table_mut(table_id).close(); return Result<NodeId, ParseError>.Ok(table_id); }
+        loop {
+            let keys = self.key_path()?;
+            defer drop_strings(&keys);
+            self.horizontal_space();
+            self.expect(b'=', "expected '=' in inline table")?;
+            self.horizontal_space();
+            let value = self.parse_value()?;
+            self.assign_path(table_id, keys, value)?;
+            self.horizontal_space();
+            if self.consume(b'}') { break; }
+            self.expect(b',', "expected ',' or '}' in inline table")?;
+            self.horizontal_space();
+            if self.is(b'}') { return Result<NodeId, ParseError>.Err(self.error("trailing comma in inline table")); }
+        }
+        self.table_mut(table_id).close();
+        Result<NodeId, ParseError>.Ok(table_id)
+    }
+
+    fn parse_value() -> Result<NodeId, ParseError> {
+        self.horizontal_space();
+        match self.peek() {
+            Some(value) if value == b'"' || value == b'\'' => {
+                let string = self.string()?;
+                Result<NodeId, ParseError>.Ok(self.new_node(Value.String(value=string), TableForm.Other))
+            },
+            Some(b'[') => self.parse_array(),
+            Some(b'{') => self.parse_inline_table(),
+            _ => self.parse_atom(),
+        }
+    }
+
+    fn parse_atom() -> Result<NodeId, ParseError> {
+        let start = self.index;
+        while let Some(value) = self.peek() {
+            if value == b' ' || value == b'\t' || value == b'\r' || value == b'\n' ||
+            value == b',' || value == b']' || value == b'}' || value == b'#' { break; }
+            self.next();
+        }
+        if start == self.index { return Result<NodeId, ParseError>.Err(self.error("expected a value")); }
+        let token = str.from_slice_unchecked(self.bytes[start..self.index]);
+        if token == "true" { return Result<NodeId, ParseError>.Ok(self.new_node(Value.Boolean(value=true), TableForm.Other)); }
+        if token == "false" { return Result<NodeId, ParseError>.Ok(self.new_node(Value.Boolean(value=false), TableForm.Other)); }
+        if Self.looks_like_date(token) || Self.looks_like_time(token) {
+            let temporal = String.from(&token);
+            defer temporal.drop();
+            if Self.looks_like_date(token) && self.space_time_follows() {
+                self.next();
+                temporal.push('T');
+                let time_start = self.index;
+                while let Some(value) = self.peek() {
+                    if value == b' ' || value == b'\t' || value == b'\r' || value == b'\n' ||
+                    value == b',' || value == b']' || value == b'}' || value == b'#' { break; }
+                    self.next();
+                }
+                temporal.push_str(str.from_slice_unchecked(self.bytes[time_start..self.index]));
+            }
+            let value = self.temporal(temporal.as_str())?;
+            return Result<NodeId, ParseError>.Ok(self.new_node(value, TableForm.Other));
+        }
+        let value = self.numeric(token)?;
+        Result<NodeId, ParseError>.Ok(self.new_node(value, TableForm.Other))
+    }
+
+    fn space_time_follows() -> bool {
+        if !self.is(b' ') || self.index + 3u64 >= self.bytes.len() { return false; }
+        digit(self.bytes[self.index + 1u64]) && digit(self.bytes[self.index + 2u64]) && self.bytes[self.index + 3u64] == b':'
+    }
+
+    fn array_whitespace() -> Result<(), ParseError> {
+        loop {
+            self.horizontal_space();
+            if self.is(b'#') {
+                self.comment();
+                continue;
+            }
+            if self.is(b'\n') { self.next(); continue; }
+            if self.is(b'\r') {
+                self.next();
+                if !self.consume(b'\n') { return Result<(), ParseError>.Err(self.error("invalid line ending in array")); }
+                continue;
+            }
+            break;
+        }
+        Result<(), ParseError>.Ok(())
+    }
+
+    fn statement_end() -> Result<(), ParseError> {
+        self.horizontal_space();
+        if self.is(b'#') { self.comment(); }
+        self.horizontal_space();
+        if self.eof() || self.is(b'\n') {
+            self.newline();
+            return Result<(), ParseError>.Ok(());
+        }
+        if self.is(b'\r') {
+            if !self.newline() { return Result<(), ParseError>.Err(self.error("invalid line ending")); }
+            return Result<(), ParseError>.Ok(());
+        }
+        Result<(), ParseError>.Err(self.error("unexpected text after statement"))
+    }
+
+    fn run() -> Result<(), ParseError> {
+        self.validate_source()?;
+        loop {
+            self.horizontal_space();
+            if self.eof() { break; }
+            if self.is(b'\n') || self.is(b'\r') {
+                if !self.newline() { return Result<(), ParseError>.Err(self.error("invalid line ending")); }
+                continue;
+            }
+            if self.is(b'#') { self.comment(); self.newline(); continue; }
+
+            if self.is(b'[') {
+                let array_header = self.is_at(1u64, b'[');
+                self.current = self.parse_header(array_header)?;
+            } else {
+                let keys = self.key_path()?;
+                defer drop_strings(&keys);
+                self.horizontal_space();
+                self.expect(b'=', "expected '=' after key")?;
+                let value = self.parse_value()?;
+                self.assign_path(self.current, keys, value)?;
+            }
+            self.statement_end()?;
+        }
+        Result<(), ParseError>.Ok(())
+    }
+
+    fn take_document() -> Document { *self.document.take().unwrap() }
+}
+
+impl Drop for Parser {
+    pub fn drop() {
+        match self.document { Some(document) => document.drop(), None => {} }
+        self.forms.drop();
+    }
+}
+
+pub fn parse(source: str) -> Result<Document, ParseError> {
+    let valid_source = match str.from_slice(source.as_slice()) {
+        Some(value) => value,
+        None => {
+            return Result<Document, ParseError>.Err(ParseError(
+                message=String.from(&"input is not valid UTF-8"), offset=0u64, row=1u64, column=1u64));
+        },
+    };
+    let parser = Parser.new(valid_source);
+    defer parser.drop();
+    match parser.run() {
+        Ok(_) => Result<Document, ParseError>.Ok(parser.take_document()),
+        Err(error) => Result<Document, ParseError>.Err(error),
+    }
+}

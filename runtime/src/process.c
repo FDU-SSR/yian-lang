@@ -4,12 +4,14 @@
 #include <fcntl.h>
 #include <limits.h>
 #include <poll.h>
+#include <pthread.h>
 #include <signal.h>
 #include <spawn.h>
 #include <stddef.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 #include <sys/wait.h>
 #include <unistd.h>
 
@@ -63,6 +65,33 @@ static int capture_pipe(int fds[2]) {
     return 0;
 }
 
+static int input_pipe(int fds[2]) {
+    if (pipe2(fds, O_CLOEXEC) < 0) return errno;
+    fds[0] = above_stdio(fds[0]);
+    if (fds[0] < 0) {
+        int error = errno;
+        close(fds[1]);
+        fds[1] = -1;
+        return error;
+    }
+    fds[1] = above_stdio(fds[1]);
+    if (fds[1] < 0) {
+        int error = errno;
+        close(fds[0]);
+        fds[0] = -1;
+        return error;
+    }
+    int flags = fcntl(fds[1], F_GETFL);
+    if (flags < 0 || fcntl(fds[1], F_SETFL, flags | O_NONBLOCK) < 0) {
+        int error = errno;
+        close(fds[0]);
+        close(fds[1]);
+        fds[0] = fds[1] = -1;
+        return error;
+    }
+    return 0;
+}
+
 static int append_bytes(struct captured_bytes *bytes, const uint8_t *data, size_t length) {
     if (length > SIZE_MAX - bytes->length) return EOVERFLOW;
     size_t needed = bytes->length + length;
@@ -85,76 +114,233 @@ static int append_bytes(struct captured_bytes *bytes, const uint8_t *data, size_
     return 0;
 }
 
-/* Drain both streams before waiting; a child can fill either pipe independently. */
-static int collect_output(struct process_output *result, int out_fd, int err_fd) {
-    struct pollfd pipes[2] = {{out_fd, POLLIN, 0}, {err_fd, POLLIN, 0}};
-    int remaining = 2;
+static volatile sig_atomic_t process_interrupted;
+
+static void record_interrupt(int signal_number) {
+    (void)signal_number;
+    process_interrupted = 1;
+}
+
+static int64_t monotonic_millis(void) {
+    struct timespec now;
+    if (clock_gettime(CLOCK_MONOTONIC, &now) < 0) return -1;
+    return (int64_t)now.tv_sec * 1000 + now.tv_nsec / 1000000;
+}
+
+/* Write stdin and drain both output streams together to avoid pipe backpressure deadlocks. */
+static int collect_process(struct process_output *result, int output_fds[2],
+                           int *input_fd, const uint8_t *input, size_t input_length,
+                           pid_t *child, int interruptible, int *was_interrupted) {
+    size_t input_offset = 0;
+    int reaped = 0;
+    int wait_status = 0;
+    int interrupt_sent = 0;
+    int64_t escalation_deadline = 0;
     uint8_t buffer[8192];
-    while (remaining != 0) {
+    while (output_fds[0] >= 0 || output_fds[1] >= 0 || *input_fd >= 0 || !reaped) {
+        if (interruptible && process_interrupted && !interrupt_sent) {
+            interrupt_sent = 1;
+            *was_interrupted = 1;
+            if (!reaped) {
+                kill(*child, SIGINT);
+                int64_t now = monotonic_millis();
+                escalation_deadline = now < 0 ? 1 : now + 250;
+            }
+        }
+
+        if (!reaped) {
+            pid_t waited = waitpid(*child, &wait_status, WNOHANG);
+            if (waited == *child) {
+                *child = -1;
+                reaped = 1;
+            } else if (waited < 0 && errno != EINTR) {
+                return errno;
+            }
+        }
+
+        if (interrupt_sent && !reaped && escalation_deadline != 0) {
+            int64_t now = monotonic_millis();
+            if (now >= escalation_deadline) {
+                kill(*child, SIGKILL);
+                escalation_deadline = 0;
+            }
+        }
+
+        if (reaped && output_fds[0] < 0 && output_fds[1] < 0 && *input_fd < 0) break;
+
+        struct pollfd pipes[3] = {
+            {output_fds[0], POLLIN, 0},
+            {output_fds[1], POLLIN, 0},
+            {*input_fd, POLLOUT, 0},
+        };
+        int no_descriptors = output_fds[0] < 0 && output_fds[1] < 0 && *input_fd < 0;
+        int timeout = interruptible || no_descriptors ? 50 : -1;
+        if (interrupt_sent && escalation_deadline != 0) {
+            int64_t remaining = escalation_deadline - monotonic_millis();
+            if (remaining < timeout || timeout < 0) timeout = remaining > 0 ? (int)remaining : 0;
+        }
         int ready;
-        do { ready = poll(pipes, 2, -1); } while (ready < 0 && errno == EINTR);
+        ready = poll(pipes, 3, timeout);
+        if (ready < 0 && errno == EINTR) continue;
         if (ready < 0) return errno;
         for (int index = 0; index < 2; ++index) {
             if (pipes[index].fd < 0 || pipes[index].revents == 0) continue;
             if (pipes[index].revents & POLLNVAL) return EBADF;
             ssize_t count;
-            do { count = read(pipes[index].fd, buffer, sizeof(buffer)); }
-            while (count < 0 && errno == EINTR);
+            do { count = read(pipes[index].fd, buffer, sizeof(buffer)); } while (count < 0 && errno == EINTR && !process_interrupted);
+            if (count < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) continue;
             if (count < 0) return errno;
             if (count == 0) {
-                pipes[index].fd = -1;
-                --remaining;
+                close(output_fds[index]);
+                output_fds[index] = -1;
             } else {
                 int error = append_bytes(&result->streams[index], buffer, (size_t)count);
                 if (error != 0) return error;
             }
         }
+
+        if (*input_fd >= 0 && input_offset < input_length && pipes[2].revents != 0) {
+            if (pipes[2].revents & POLLNVAL) return EBADF;
+            ssize_t count = write(*input_fd, input + input_offset,
+                                  input_length - input_offset > sizeof(buffer) ? sizeof(buffer) : input_length - input_offset);
+            if (count > 0) {
+                input_offset += (size_t)count;
+            } else if (count < 0 && errno == EINTR) {
+                if (process_interrupted) continue;
+            } else if (count < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
+                continue;
+            } else if (count < 0 && errno == EPIPE) {
+                close(*input_fd);
+                *input_fd = -1;
+            } else if (count < 0) {
+                return errno;
+            }
+        }
+
+        if (*input_fd >= 0 && input_offset == input_length) {
+            close(*input_fd);
+            *input_fd = -1;
+        }
     }
+    result->status = wait_status;
+    if (interrupt_sent) return EINTR;
     return 0;
 }
 
-void *yian_process_output(const char *program, char *const *arguments,
-                          const char *directory, int32_t *reported_error) {
+void *yian_process_execute(const char *program, char *const *arguments,
+                           const char *directory, const uint8_t *stdin_bytes,
+                           uint64_t stdin_length, int32_t stdin_mode,
+                           int32_t capture_output, int32_t interruptible,
+                           int32_t *reported_error) {
     int pipes[2][2] = {{-1, -1}, {-1, -1}};
     int input = -1;
+    int input_pipe_fds[2] = {-1, -1};
     int error = 0;
     int actions_initialized = 0;
+    int attributes_initialized = 0;
+    int signal_installed = 0;
+    int sigpipe_blocked = 0;
+    int sigpipe_was_pending = 0;
+    struct sigaction old_interrupt_action;
+    sigset_t pipe_set, old_mask, pending_set;
     pid_t child = -1;
     posix_spawn_file_actions_t actions;
+    posix_spawnattr_t attributes;
     struct process_output *result = calloc(1, sizeof(*result));
+    if (stdin_mode < 0 || stdin_mode > 2 || (stdin_mode == 2 && stdin_length != 0 && stdin_bytes == NULL)) {
+        error = EINVAL;
+        goto done;
+    }
     if (result == NULL) { error = ENOMEM; goto done; }
-    error = capture_pipe(pipes[0]);
-    if (error != 0) goto done;
-    error = capture_pipe(pipes[1]);
-    if (error != 0) goto done;
-    input = open("/dev/null", O_RDONLY | O_CLOEXEC);
-    if (input < 0) { error = errno; goto done; }
-    input = above_stdio(input);
-    if (input < 0) { error = errno; goto done; }
+    if (capture_output) {
+        error = capture_pipe(pipes[0]);
+        if (error != 0) goto done;
+        error = capture_pipe(pipes[1]);
+        if (error != 0) goto done;
+    }
+    if (stdin_mode == 0) {
+        input = open("/dev/null", O_RDONLY | O_CLOEXEC);
+        if (input < 0) { error = errno; goto done; }
+        input = above_stdio(input);
+        if (input < 0) { error = errno; goto done; }
+    } else if (stdin_mode == 2) {
+        error = input_pipe(input_pipe_fds);
+        if (error != 0) goto done;
+    }
+
+    if (interruptible) {
+        struct sigaction action;
+        memset(&action, 0, sizeof(action));
+        action.sa_handler = record_interrupt;
+        sigemptyset(&action.sa_mask);
+        process_interrupted = 0;
+        if (sigaction(SIGINT, &action, &old_interrupt_action) < 0) { error = errno; goto done; }
+        signal_installed = 1;
+    }
+
+    sigemptyset(&pipe_set);
+    sigaddset(&pipe_set, SIGPIPE);
+    int mask_error = pthread_sigmask(SIG_BLOCK, &pipe_set, &old_mask);
+    if (mask_error != 0) { error = mask_error; goto done; }
+    sigpipe_blocked = 1;
+    if (sigpending(&pending_set) == 0) sigpipe_was_pending = sigismember(&pending_set, SIGPIPE) == 1;
+
     error = posix_spawn_file_actions_init(&actions);
     if (error != 0) goto done;
     actions_initialized = 1;
-    error = posix_spawn_file_actions_adddup2(&actions, input, STDIN_FILENO);
+    error = posix_spawnattr_init(&attributes);
     if (error != 0) goto done;
-    error = posix_spawn_file_actions_adddup2(&actions, pipes[0][1], STDOUT_FILENO);
+    attributes_initialized = 1;
+    error = posix_spawnattr_setsigmask(&attributes, &old_mask);
     if (error != 0) goto done;
-    error = posix_spawn_file_actions_adddup2(&actions, pipes[1][1], STDERR_FILENO);
+    error = posix_spawnattr_setflags(&attributes, POSIX_SPAWN_SETSIGMASK);
     if (error != 0) goto done;
+    if (stdin_mode == 0) {
+        error = posix_spawn_file_actions_adddup2(&actions, input, STDIN_FILENO);
+        if (error != 0) goto done;
+        error = posix_spawn_file_actions_addclose(&actions, input);
+        if (error != 0) goto done;
+    } else if (stdin_mode == 2) {
+        error = posix_spawn_file_actions_adddup2(&actions, input_pipe_fds[0], STDIN_FILENO);
+        if (error != 0) goto done;
+        for (int end = 0; end < 2; ++end) {
+            error = posix_spawn_file_actions_addclose(&actions, input_pipe_fds[end]);
+            if (error != 0) goto done;
+        }
+    }
+    if (capture_output) {
+        error = posix_spawn_file_actions_adddup2(&actions, pipes[0][1], STDOUT_FILENO);
+        if (error != 0) goto done;
+        error = posix_spawn_file_actions_adddup2(&actions, pipes[1][1], STDERR_FILENO);
+        if (error != 0) goto done;
+        for (int stream = 0; stream < 2; ++stream) {
+            for (int end = 0; end < 2; ++end) {
+                error = posix_spawn_file_actions_addclose(&actions, pipes[stream][end]);
+                if (error != 0) goto done;
+            }
+        }
+    }
     if (directory != NULL) {
         error = posix_spawn_file_actions_addchdir_np(&actions, directory);
         if (error != 0) goto done;
     }
-    error = posix_spawnp(&child, program, &actions, NULL, arguments, environ);
+    error = posix_spawnp(&child, program, &actions, &attributes, arguments, environ);
     if (error != 0) { child = -1; goto done; }
-    close(pipes[0][1]); pipes[0][1] = -1;
-    close(pipes[1][1]); pipes[1][1] = -1;
-    error = collect_output(result, pipes[0][0], pipes[1][0]);
-    if (error != 0) kill(child, SIGKILL);
-    pid_t waited;
-    do { waited = waitpid(child, &result->status, 0); }
-    while (waited < 0 && errno == EINTR);
-    if (waited < 0 && error == 0) error = errno;
-    child = -1;
+    if (stdin_mode == 0) { close(input); input = -1; }
+    if (stdin_mode == 2) { close(input_pipe_fds[0]); input_pipe_fds[0] = -1; input = input_pipe_fds[1]; input_pipe_fds[1] = -1; }
+    if (capture_output) {
+        close(pipes[0][1]); pipes[0][1] = -1;
+        close(pipes[1][1]); pipes[1][1] = -1;
+    }
+    int output_fds[2] = {pipes[0][0], pipes[1][0]};
+    pipes[0][0] = pipes[1][0] = -1;
+    int was_interrupted = 0;
+    error = collect_process(result, output_fds, &input, stdin_bytes,
+                            (size_t)stdin_length, &child, interruptible,
+                            &was_interrupted);
+    for (int stream = 0; stream < 2; ++stream) {
+        if (output_fds[stream] >= 0) close(output_fds[stream]);
+    }
 
 done:
     if (child > 0) {
@@ -162,12 +348,24 @@ done:
         while (waitpid(child, NULL, 0) < 0 && errno == EINTR) {}
     }
     if (actions_initialized) posix_spawn_file_actions_destroy(&actions);
+    if (attributes_initialized) posix_spawnattr_destroy(&attributes);
     if (input >= 0) close(input);
+    for (int end = 0; end < 2; ++end) {
+        if (input_pipe_fds[end] >= 0) close(input_pipe_fds[end]);
+    }
     for (int stream = 0; stream < 2; ++stream) {
         for (int end = 0; end < 2; ++end) {
             if (pipes[stream][end] >= 0) close(pipes[stream][end]);
         }
     }
+    if (sigpipe_blocked) {
+        if (!sigpipe_was_pending) {
+            struct timespec zero = {0, 0};
+            while (sigtimedwait(&pipe_set, NULL, &zero) < 0 && errno == EINTR) {}
+        }
+        pthread_sigmask(SIG_SETMASK, &old_mask, NULL);
+    }
+    if (signal_installed) sigaction(SIGINT, &old_interrupt_action, NULL);
     *reported_error = -error;
     if (error != 0) { yian_process_drop(result); return NULL; }
     return result;

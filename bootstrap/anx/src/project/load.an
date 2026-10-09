@@ -1,0 +1,924 @@
+from std.collections.sort import sort_by;
+from std.core.drop import Drop;
+from std.core.fs import Directory, DirEntryKind, canonicalize, metadata, resolve, try_exists;
+from std.core.io import IoError;
+from std.core.option import Option;
+from std.core.path import Path, PathBuf;
+from std.core.result import Result;
+from std.core.string import String;
+from std.core.vec import Vec;
+from compiler.frontend.source import collect_sources;
+from anx.diagnostics.model import AX_BAD_MANIFEST, AX_BIN_AS_DEPENDENCY;
+from anx.diagnostics.model import AX_DEPENDENCY_CYCLE, AX_DEPENDENCY_MANIFEST_MISSING;
+from anx.diagnostics.model import AX_DEPENDENCY_NAME_MISMATCH, AX_DEPENDENCY_PATH_MISSING;
+from anx.diagnostics.model import AX_DUPLICATE_PACKAGE, AX_ENTRY_MISMATCH;
+from anx.diagnostics.model import AX_NESTED_SOURCE_ROOTS, AX_NO_PROJECT_ROOT;
+from anx.diagnostics.model import AX_RESERVED_PACKAGE_NAME, Diagnostic, release_diagnostics;
+from anx.manifest.load import read_manifest;
+from anx.manifest.model import Manifest, NativeLLVM, PackageKind;
+from anx.project.model import LoadReport, Package, Project, SourceFile;
+
+const MANIFEST_NAME: str = "package.anx";
+const STD_PACKAGE: str = "std";
+const DEFAULT_ENTRY: str = "src/main.an";
+
+struct PackageRecord {
+    manifest: Manifest,
+    root: PathBuf,
+    dependencies: Vec<String>,
+    dev_dependencies: Vec<String>,
+    state: u8,
+}
+
+impl PackageRecord {
+    static fn new(manifest: Manifest, root: PathBuf) -> Self {
+        Self(manifest=manifest, root=root, dependencies=Vec<String>.new(),
+            dev_dependencies=Vec<String>.new(), state=0u8)
+    }
+}
+
+impl Drop for PackageRecord {
+    fn drop() {
+        self.manifest.drop();
+        self.root.drop();
+        release_strings(&self.dependencies);
+        release_strings(&self.dev_dependencies);
+    }
+}
+
+struct PackageLayout { source_root: PathBuf, entry: Option<PathBuf> }
+
+impl Drop for PackageLayout {
+    fn drop() {
+        self.source_root.drop();
+        match self.entry.take() { Some(value) => value.drop(), None => {}, }
+    }
+}
+
+struct IndexedPath { path: String, source_package: u64 }
+
+impl IndexedPath {
+    static fn new(path: str, source_package: u64) -> Self {
+        Self(path=String.from(&path), source_package=source_package)
+    }
+}
+
+impl Drop for IndexedPath { fn drop() { self.path.drop(); } }
+
+fn release_strings(values: Vec<String>&) {
+    let index = 0u64;
+    while index < values.len() { values[index].drop(); index += 1u64; }
+    values.drop();
+}
+
+fn release_paths(values: Vec<PathBuf>&) {
+    let index = 0u64;
+    while index < values.len() { values[index].drop(); index += 1u64; }
+    values.drop();
+}
+
+fn release_records(values: Vec<PackageRecord>&) {
+    let index = 0u64;
+    while index < values.len() { values[index].drop(); index += 1u64; }
+    values.drop();
+}
+
+fn less_text(left: str, right: str) -> bool {
+    let a = left.as_slice();
+    let b = right.as_slice();
+    let limit = if a.len() < b.len() { a.len() } else { b.len() };
+    let index = 0u64;
+    while index < limit {
+        if a[index] != b[index] { return a[index] < b[index]; }
+        index += 1u64;
+    }
+    a.len() < b.len()
+}
+
+fn less_owned_string(left: String&, right: String&) -> bool {
+    less_text(left.as_str(), right.as_str())
+}
+
+fn diagnostic_less(left: Diagnostic&, right: Diagnostic&) -> bool {
+    let left_path = left.path();
+    let right_path = right.path();
+    match left_path {
+        None => return right_path.is_some(),
+        Some(a) => match right_path {
+            None => return false,
+            Some(b) => if a != b { return less_text(a, b); },
+        },
+    }
+    if left.code() != right.code() { return less_text(left.code(), right.code()); }
+    less_text(left.message(), right.message())
+}
+
+fn sort_diagnostics(items: Vec<Diagnostic>&) {
+    sort_by(items.as_slice(), diagnostic_less);
+}
+
+fn add_diagnostic(items: Vec<Diagnostic>&, code: str, message: str, path: Option<str>, hint: Option<str>) {
+    items.push(Diagnostic.new(code, message, path, hint));
+}
+
+fn append_diagnostics(target: Vec<Diagnostic>&, source: Vec<Diagnostic>&) {
+    let index = 0u64;
+    while index < source.len() {
+        target.push(source[index]);
+        index += 1u64;
+    }
+    source.drop();
+}
+
+fn find_record(records: Vec<PackageRecord>&, name: str) -> Option<u64> {
+    let index = 0u64;
+    while index < records.len() {
+        if records[index].manifest.name() == name { return Option<u64>.Some(index); }
+        index += 1u64;
+    }
+    Option<u64>.None
+}
+
+fn contains_name(items: Vec<String>&, name: str) -> bool {
+    let index = 0u64;
+    while index < items.len() {
+        if items[index].as_str() == name { return true; }
+        index += 1u64;
+    }
+    false
+}
+
+fn push_unique(items: Vec<String>&, name: str) {
+    if !contains_name(items, name) { items.push(String.from(&name)); }
+}
+
+fn sort_unique_names(items: Vec<String>&) {
+    sort_by(items.as_slice(), less_owned_string);
+    let index = 1u64;
+    while index < items.len() {
+        if items[index - 1u64].as_str() == items[index].as_str() {
+            let duplicate = items.remove(index);
+            duplicate.drop();
+        } else {
+            index += 1u64;
+        }
+    }
+}
+
+fn merge_dependency_list(target: Vec<String>&, source: Vec<String>&) {
+    let index = 0u64;
+    while index < source.len() {
+        push_unique(target, source[index].as_str());
+        index += 1u64;
+    }
+    sort_unique_names(target);
+    release_strings(source);
+}
+
+fn visit_manifest(manifest: Manifest, root: PathBuf, dependency_key: Option<str>,
+    records: Vec<PackageRecord>&, cycle_order: Vec<String>&, diagnostics: Vec<Diagnostic>&) -> Option<String> {
+    let name = String.from(&manifest.name());
+    if name.as_str() == "std" {
+        manifest.drop();
+        root.drop();
+        name.drop();
+        return Option<String>.None;
+    }
+
+    match dependency_key {
+        Some(key) => {
+            if key != name.as_str() {
+                let message = String.from(&"Dependency key '");
+                message.push_str(key);
+                message.push_str("' does not match the package name '");
+                message.push_str(name.as_str());
+                message.push('\'');
+                defer message.drop();
+                let hint = String.from(&"Rename the key to \"");
+                hint.push_str(name.as_str());
+                hint.push_str("\", or rename the package to \"");
+                hint.push_str(key);
+                hint.push_str("\".");
+                defer hint.drop();
+                let dependency_manifest_path = manifest_path_for(root.as_str());
+                defer dependency_manifest_path.drop();
+                add_diagnostic(diagnostics, AX_DEPENDENCY_NAME_MISMATCH, message.as_str(),
+                    Option<str>.Some(dependency_manifest_path.as_str()), Option<str>.Some(hint.as_str()));
+            }
+        },
+        None => {},
+    }
+
+    match find_record(records, name.as_str()) {
+        Some(existing) => {
+            if records[existing].root.as_str() != root.as_str() {
+                let message = String.from(&"Package '");
+                message.push_str(name.as_str());
+                message.push_str("' is already resolved to ");
+                message.push_str(records[existing].root.as_str());
+                message.push_str(", but ");
+                message.push('\'');
+                match dependency_key { Some(key) => message.push_str(key), None => message.push_str(name.as_str()), }
+                message.push('\'');
+                message.push_str(" points at ");
+                message.push_str(root.as_str());
+                defer message.drop();
+                let manifest_path = manifest_path_for(root.as_str());
+                defer manifest_path.drop();
+                add_diagnostic(diagnostics, AX_DUPLICATE_PACKAGE, message.as_str(),
+                    Option<str>.Some(manifest_path.as_str()), Option<str>.None);
+                manifest.drop();
+                root.drop();
+                name.drop();
+                return Option<String>.None;
+            }
+            manifest.drop();
+            root.drop();
+            return Option<String>.Some(name);
+        },
+        None => {},
+    }
+
+    match dependency_key {
+        Some(_) => {
+            if manifest.kind() == PackageKind.Bin {
+                let message = String.from(&"Dependency '");
+                message.push_str(name.as_str());
+                message.push_str("' has kind 'bin' and cannot be used as a dependency");
+                defer message.drop();
+                let hint = String.from(&"Declare the package as kind \"lib\" or \"hybrid\" to expose a library interface.");
+                defer hint.drop();
+                let manifest_path = manifest_path_for(root.as_str());
+                defer manifest_path.drop();
+                add_diagnostic(diagnostics, AX_BIN_AS_DEPENDENCY, message.as_str(),
+                    Option<str>.Some(manifest_path.as_str()), Option<str>.Some(hint.as_str()));
+                manifest.drop();
+                root.drop();
+                name.drop();
+                return Option<String>.None;
+            }
+        },
+        None => {},
+    }
+
+    let index = records.len();
+    records.push(PackageRecord.new(manifest, PathBuf.from(root.as_str())));
+    root.drop();
+
+    let normal = Vec<String>.new();
+    let dependency_index = 0u64;
+    while dependency_index < records[index].manifest.dependency_count() {
+        let key = String.from(&records[index].manifest.dependency(dependency_index).key());
+        let path = PathBuf.from(records[index].manifest.dependency(dependency_index).path());
+        let parent = manifest_path_for(records[index].root.as_str());
+        let child = visit_dependency(key.as_str(), path, parent.as_str(), records, cycle_order, diagnostics);
+        match child { Some(value) => { push_unique(&normal, value.as_str()); value.drop(); }, None => {}, }
+        key.drop();
+        parent.drop();
+        dependency_index += 1u64;
+    }
+    sort_unique_names(&normal);
+    records[index].dependencies = normal;
+
+    cycle_order.push(String.from(&records[index].manifest.name()));
+
+    let development = Vec<String>.new();
+    let development_index = 0u64;
+    while development_index < records[index].manifest.dev_dependency_count() {
+        let key = String.from(&records[index].manifest.dev_dependency(development_index).key());
+        let path = PathBuf.from(records[index].manifest.dev_dependency(development_index).path());
+        let parent = manifest_path_for(records[index].root.as_str());
+        let child = visit_dependency(key.as_str(), path, parent.as_str(), records, cycle_order, diagnostics);
+        match child { Some(value) => { push_unique(&development, value.as_str()); value.drop(); }, None => {}, }
+        key.drop();
+        parent.drop();
+        development_index += 1u64;
+    }
+    sort_unique_names(&development);
+    records[index].dev_dependencies = development;
+    records[index].state = 2u8;
+    Option<String>.Some(name)
+}
+
+fn visit_dependency(key: str, root: PathBuf, parent_manifest: str,
+    records: Vec<PackageRecord>&, cycle_order: Vec<String>&, diagnostics: Vec<Diagnostic>&) -> Option<String> {
+    let directory = match metadata(root.as_str()) {
+        Ok(value) => value.is_dir(),
+        Err(problem) => { problem.drop(); false },
+    };
+    if !directory {
+        let message = String.from(&"Dependency '");
+        message.push_str(key);
+        message.push_str("': path ");
+        message.push_str(root.as_str());
+        message.push_str(" does not exist");
+        defer message.drop();
+        add_diagnostic(diagnostics, AX_DEPENDENCY_PATH_MISSING, message.as_str(),
+            Option<str>.Some(parent_manifest), Option<str>.None);
+        root.drop();
+        return Option<String>.None;
+    }
+
+    let manifest_path = manifest_path_for(root.as_str());
+    let exists = match metadata(manifest_path.as_str()) {
+        Ok(value) => value.is_file(),
+        Err(problem) => { problem.drop(); false },
+    };
+    if !exists {
+        let message = String.from(&"Dependency '");
+        message.push_str(key);
+        message.push_str("': no package.anx in ");
+        message.push_str(root.as_str());
+        defer message.drop();
+        add_diagnostic(diagnostics, AX_DEPENDENCY_MANIFEST_MISSING, message.as_str(),
+            Option<str>.Some(root.as_str()), Option<str>.None);
+        manifest_path.drop();
+        root.drop();
+        return Option<String>.None;
+    }
+
+    let report = read_manifest(manifest_path.as_str());
+    let collected = report.take_diagnostics();
+    append_diagnostics(diagnostics, &collected);
+    let manifest = report.take_manifest();
+    report.drop();
+    manifest_path.drop();
+    let loaded = match manifest {
+        Some(value) => value,
+        None => { root.drop(); return Option<String>.None; },
+    };
+    visit_manifest(loaded, root, Option<str>.Some(key), records, cycle_order, diagnostics)
+}
+
+fn manifest_path_for(root: str) -> String {
+    Path.new(root).join(MANIFEST_NAME).into_string()
+}
+
+fn find_cycle_from(index: u64, records: Vec<PackageRecord>&, colors: Vec<u8>&,
+    stack: Vec<String>&) -> Option<String> {
+    colors[index] = 1u8;
+    stack.push(String.from(&records[index].manifest.name()));
+    let edges = Vec<String>.new();
+    for name in records[index].dependencies { push_unique(&edges, name.as_str()); }
+    for name in records[index].dev_dependencies { push_unique(&edges, name.as_str()); }
+    sort_unique_names(&edges);
+
+    let edge_index = 0u64;
+    while edge_index < edges.len() {
+        let target_name = edges[edge_index].as_str();
+        match find_record(records, target_name) {
+            Some(target) => {
+                if colors[target] == 1u8 {
+                    let cycle = String.from(&"Circular dependency: ");
+                    let start = 0u64;
+                    while start < stack.len() && stack[start].as_str() != target_name { start += 1u64; }
+                    while start < stack.len() {
+                        if start > 0u64 && cycle.as_str() != "Circular dependency: " { cycle.push_str(" → "); }
+                        cycle.push_str(stack[start].as_str());
+                        start += 1u64;
+                    }
+                    cycle.push_str(" → ");
+                    cycle.push_str(target_name);
+                    release_strings(&edges);
+                    let popped = stack.pop();
+                    match popped { Some(value) => value.drop(), None => {}, }
+                    colors[index] = 2u8;
+                    return Option<String>.Some(cycle);
+                }
+                if colors[target] == 0u8 {
+                    match find_cycle_from(target, records, colors, stack) {
+                        Some(cycle) => {
+                            release_strings(&edges);
+                            let popped = stack.pop();
+                            match popped { Some(value) => value.drop(), None => {}, }
+                            colors[index] = 2u8;
+                            return Option<String>.Some(cycle);
+                        },
+                        None => {},
+                    }
+                }
+            },
+            None => {},
+        }
+        edge_index += 1u64;
+    }
+
+    release_strings(&edges);
+    let popped = stack.pop();
+    match popped { Some(value) => value.drop(), None => {}, }
+    colors[index] = 2u8;
+    Option<String>.None
+}
+
+fn find_cycle(records: Vec<PackageRecord>&, order: Vec<String>&) -> Option<String> {
+    let colors = Vec<u8>.new();
+    let index = 0u64;
+    while index < records.len() { colors.push(0u8); index += 1u64; }
+    defer colors.drop();
+    let stack = Vec<String>.new();
+    defer release_strings(&stack);
+    let root = 0u64;
+    while root < order.len() {
+        let root_index = match find_record(records, order[root].as_str()) {
+            Some(value) => value,
+            None => { root += 1u64; continue; },
+        };
+        if colors[root_index] == 0u8 {
+            match find_cycle_from(root_index, records, &colors, &stack) {
+                Some(value) => return Option<String>.Some(value),
+                None => {},
+            }
+        }
+        root += 1u64;
+    }
+    Option<String>.None
+}
+
+fn within_directory(root: str, path: str) -> bool {
+    if path == root { return true; }
+    if !path.starts_with(root) { return false; }
+    let root_bytes = root.as_slice();
+    let path_bytes = path.as_slice();
+    if root_bytes.len() == 0u64 || path_bytes.len() <= root_bytes.len() { return false; }
+    root_bytes[root_bytes.len() - 1u64] == b'/' || path_bytes[root_bytes.len()] == b'/'
+}
+
+fn build_layout(record: PackageRecord&, diagnostics: Vec<Diagnostic>&) -> Option<PackageLayout> {
+    let manifest_path = manifest_path_for(record.root.as_str());
+    defer manifest_path.drop();
+    let unresolved_source = Path.new(record.root.as_str()).join("src");
+    defer unresolved_source.drop();
+    let source_is_dir = match metadata(unresolved_source.as_str()) {
+        Ok(info) => info.is_dir(),
+        Err(problem) => { problem.drop(); false },
+    };
+    if !source_is_dir {
+        let message = String.from(&"Package '");
+        message.push_str(record.manifest.name());
+        message.push_str("' has no source root at ");
+        message.push_str(unresolved_source.as_str());
+        defer message.drop();
+        let hint = String.from(&"Create it and move the package sources into \"src/\".");
+        defer hint.drop();
+        add_diagnostic(diagnostics, AX_ENTRY_MISMATCH, message.as_str(),
+            Option<str>.Some(manifest_path.as_str()), Option<str>.Some(hint.as_str()));
+        return Option<PackageLayout>.None;
+    }
+    let source_root = match canonicalize(unresolved_source.as_str()) {
+        Ok(value) => value,
+        Err(problem) => { problem.drop(); return Option<PackageLayout>.None; },
+    };
+
+    let entry = Option<PathBuf>.None;
+    let valid = true;
+    if record.manifest.kind() == PackageKind.Lib {
+        match record.manifest.entry() {
+            Some(_) => {
+                valid = false;
+                let message = String.from(&"Package '");
+                message.push_str(record.manifest.name());
+                message.push_str("' has kind 'lib' and must not declare 'entry'");
+                defer message.drop();
+                let hint = String.from(&"Remove \"entry\", or switch to kind \"hybrid\" if it also needs an executable.");
+                defer hint.drop();
+                add_diagnostic(diagnostics, AX_ENTRY_MISMATCH, message.as_str(),
+                    Option<str>.Some(manifest_path.as_str()), Option<str>.Some(hint.as_str()));
+            },
+            None => {},
+        }
+        let default_entry = Path.new(source_root.as_str()).join("main.an");
+        let has_main = match metadata(default_entry.as_str()) {
+            Ok(info) => info.is_file(),
+            Err(problem) => { problem.drop(); false },
+        };
+        if has_main {
+            valid = false;
+            let message = String.from(&"Package '");
+            message.push_str(record.manifest.name());
+            message.push_str("' has kind 'lib' but contains ");
+            message.push_str(default_entry.as_str());
+            defer message.drop();
+            let hint = String.from(&"Move or remove src/main.an, or switch to kind \"hybrid\".");
+            defer hint.drop();
+            add_diagnostic(diagnostics, AX_ENTRY_MISMATCH, message.as_str(),
+                Option<str>.Some(default_entry.as_str()), Option<str>.Some(hint.as_str()));
+        }
+        default_entry.drop();
+    } else {
+        let raw_entry = match record.manifest.entry() { Some(value) => value, None => DEFAULT_ENTRY };
+        let unresolved_entry = Path.new(record.root.as_str()).join(raw_entry);
+        let candidate = match resolve(unresolved_entry.as_str()) {
+            Ok(value) => value,
+            Err(problem) => { problem.drop(); unresolved_entry.drop(); source_root.drop(); return Option<PackageLayout>.None; },
+        };
+        unresolved_entry.drop();
+        let candidate_is_file = match metadata(candidate.as_str()) {
+            Ok(info) => info.is_file(),
+            Err(problem) => { problem.drop(); false },
+        };
+        if !candidate_is_file {
+            valid = false;
+            let message = String.from(&"Package '");
+            message.push_str(record.manifest.name());
+            message.push_str("': entry file ");
+            message.push_str(candidate.as_str());
+            message.push_str(" does not exist");
+            defer message.drop();
+            let hint = String.from(&"Create it, or point \"entry\" at an existing .an file under ");
+            hint.push_str(source_root.as_str());
+            hint.push('.');
+            defer hint.drop();
+            add_diagnostic(diagnostics, AX_ENTRY_MISMATCH, message.as_str(),
+                Option<str>.Some(manifest_path.as_str()), Option<str>.Some(hint.as_str()));
+        } elif !candidate.as_str().ends_with(".an") {
+            valid = false;
+            let message = String.from(&"Package '");
+            message.push_str(record.manifest.name());
+            message.push_str("': entry ");
+            message.push_str(candidate.as_str());
+            message.push_str(" is not a .an file");
+            defer message.drop();
+            add_diagnostic(diagnostics, AX_ENTRY_MISMATCH, message.as_str(),
+                Option<str>.Some(manifest_path.as_str()), Option<str>.None);
+        } elif !within_directory(source_root.as_str(), candidate.as_str()) {
+            valid = false;
+            let message = String.from(&"Package '");
+            message.push_str(record.manifest.name());
+            message.push_str("': entry ");
+            message.push_str(candidate.as_str());
+            message.push_str(" is outside the source root ");
+            message.push_str(source_root.as_str());
+            defer message.drop();
+            add_diagnostic(diagnostics, AX_ENTRY_MISMATCH, message.as_str(),
+                Option<str>.Some(manifest_path.as_str()), Option<str>.None);
+        } else {
+            entry = Option<PathBuf>.Some(candidate);
+        }
+        if entry.is_none() { candidate.drop(); }
+    }
+
+    if !valid {
+        source_root.drop();
+        match entry.take() { Some(value) => value.drop(), None => {}, }
+        return Option<PackageLayout>.None;
+    }
+    Option<PackageLayout>.Some(PackageLayout(source_root=source_root, entry=entry))
+}
+
+fn record_index(records: Vec<PackageRecord>&, name: str) -> Option<u64> { find_record(records, name) }
+
+fn package_from_record(record: PackageRecord&, layout: PackageLayout&, records: Vec<PackageRecord>&,
+    layouts: Vec<Option<PackageLayout>>&, root_index: u64) -> Package {
+    let dependencies = Vec<String>.new();
+    let index = 0u64;
+    while index < record.dependencies.len() {
+        match record_index(records, record.dependencies[index].as_str()) {
+            Some(dependency_index) => {
+                if layouts[dependency_index].is_some() {
+                    dependencies.push(String.from(&record.dependencies[index].as_str()));
+                }
+            },
+            None => {},
+        }
+        index += 1u64;
+    }
+    let dev_dependencies = Vec<String>.new();
+    index = 0u64;
+    while index < record.dev_dependencies.len() {
+        match record_index(records, record.dev_dependencies[index].as_str()) {
+            Some(dependency_index) => {
+                if layouts[dependency_index].is_some() {
+                    dev_dependencies.push(String.from(&record.dev_dependencies[index].as_str()));
+                }
+            },
+            None => {},
+        }
+        index += 1u64;
+    }
+    let native = match record.manifest.native_llvm() {
+        Some(value) => Option<NativeLLVM>.Some(value.clone_native()),
+        None => Option<NativeLLVM>.None,
+    };
+    let entry = match &layout.entry {
+        Some(value) => Option<PathBuf>.Some(PathBuf.from(value.as_str())),
+        None => Option<PathBuf>.None,
+    };
+    let manifest_text = manifest_path_for(record.root.as_str());
+    let manifest_path = PathBuf.from(manifest_text.as_str());
+    manifest_text.drop();
+    let package = Package.new(record.manifest.name(), record.manifest.kind(), record.manifest.version(),
+        PathBuf.from(record.root.as_str()), manifest_path,
+        PathBuf.from(layout.source_root.as_str()), entry, dependencies, dev_dependencies,
+        record.manifest.allows_ffi(), native);
+    package
+}
+
+fn index_package_files(packages: Vec<Package>&, paths: Vec<IndexedPath>&) -> Vec<SourceFile> {
+    let files = Vec<SourceFile>.new();
+    let path_index = 0u64;
+    while path_index < paths.len() {
+        let path = paths[path_index].path.as_str();
+        let owner = 0u64;
+        let best_length = 0u64;
+        let package_index = 0u64;
+        while package_index < packages.len() {
+            let source_root = packages[package_index].source_root();
+            if within_directory(source_root, path) && source_root.as_slice().len() > best_length {
+                owner = package_index;
+                best_length = source_root.as_slice().len();
+            }
+            package_index += 1u64;
+        }
+        let root = packages[owner].source_root();
+        if owner == paths[path_index].source_package && within_directory(root, path) {
+            let bytes = path.as_slice();
+            let begin = root.as_slice().len() + 1u64;
+            let end = bytes.len() - 3u64;
+            let module_path = str.from_slice_unchecked(bytes[begin..end]);
+            let module = Vec<String>.new();
+            let segment_start = 0u64;
+            let offset = 0u64;
+            while offset <= module_path.as_slice().len() {
+                if offset == module_path.as_slice().len() || module_path.as_slice()[offset] == b'/' {
+                    module.push(String.from(&str.from_slice_unchecked(module_path.as_slice()[segment_start..offset])));
+                    segment_start = offset + 1u64;
+                }
+                offset += 1u64;
+            }
+            files.push(SourceFile.new(PathBuf.from(path), packages[owner].name(), module));
+        }
+        path_index += 1u64;
+    }
+    files
+}
+
+pub fn discover(start: str) -> Option<PathBuf> {
+    let resolved = match resolve(start) {
+        Ok(value) => value,
+        Err(problem) => { problem.drop(); return Option<PathBuf>.None; },
+    };
+    let initial_is_file = match metadata(resolved.as_str()) {
+        Ok(info) => info.is_file(),
+        Err(problem) => { problem.drop(); false },
+    };
+    let current = if initial_is_file {
+        match Path.new(resolved.as_str()).parent() {
+            Some(parent) => PathBuf.from(parent.as_str()),
+            None => PathBuf.from(resolved.as_str()),
+        }
+    } else {
+        PathBuf.from(resolved.as_str())
+    };
+    resolved.drop();
+    loop {
+        let manifest_path = manifest_path_for(current.as_str());
+        let found = match metadata(manifest_path.as_str()) {
+            Ok(info) => { manifest_path.drop(); Result<bool, IoError>.Ok(val=info.is_file()) },
+            Err(problem) => { manifest_path.drop(); problem.drop(); Result<bool, IoError>.Ok(val=false) },
+        };
+        match found {
+            Ok(true) => return Option<PathBuf>.Some(current),
+            _ => {},
+        }
+        let parent = match Path.new(current.as_str()).parent() {
+            Some(value) => value,
+            None => { current.drop(); return Option<PathBuf>.None; },
+        };
+        if parent.as_str() == current.as_str() {
+            current.drop();
+            return Option<PathBuf>.None;
+        }
+        current = PathBuf.from(parent.as_str());
+        if current.as_str() == "/" {
+            let root_manifest = manifest_path_for(current.as_str());
+            let root_found = match metadata(root_manifest.as_str()) {
+                Ok(info) => { root_manifest.drop(); Result<bool, IoError>.Ok(val=info.is_file()) },
+                Err(problem) => { root_manifest.drop(); problem.drop(); Result<bool, IoError>.Ok(val=false) },
+            };
+            return match root_found {
+                Ok(true) => Option<PathBuf>.Some(current),
+                _ => { current.drop(); Option<PathBuf>.None },
+            };
+        }
+    }
+}
+
+pub fn load(root: str, std_root: str) -> LoadReport {
+    let diagnostics = Vec<Diagnostic>.new();
+    let root_path = match canonicalize(root) {
+        Ok(value) => value,
+        Err(problem) => {
+            let resolved = match resolve(root) {
+                Ok(value) => value,
+                Err(error) => { error.drop(); PathBuf.from(root) },
+            };
+            let message = String.from(&"No package.anx found in ");
+            message.push_str(resolved.as_str());
+            message.push_str(" or any parent directory");
+            defer { message.drop(); resolved.drop(); problem.drop(); };
+            add_diagnostic(&diagnostics, AX_NO_PROJECT_ROOT, message.as_str(),
+                Option<str>.Some(resolved.as_str()), Option<str>.None);
+            return LoadReport.new(Option<Project>.None, diagnostics);
+        },
+    };
+    let std_path = match canonicalize(std_root) {
+        Ok(value) => value,
+        Err(problem) => {
+            problem.drop();
+            let message = String.from(&"Standard library source root does not exist: ");
+            message.push_str(std_root);
+            defer message.drop();
+            add_diagnostic(&diagnostics, AX_BAD_MANIFEST, message.as_str(), Option<str>.Some(std_root), Option<str>.None);
+            root_path.drop();
+            return LoadReport.new(Option<Project>.None, diagnostics);
+        },
+    };
+
+    let root_manifest_path = manifest_path_for(root_path.as_str());
+    let root_exists = match metadata(root_manifest_path.as_str()) {
+        Ok(info) => info.is_file(),
+        Err(problem) => { problem.drop(); false },
+    };
+    if !root_exists {
+        let message = String.from(&"No package.anx found in ");
+        message.push_str(root_path.as_str());
+        message.push_str(" or any parent directory");
+        defer message.drop();
+        add_diagnostic(&diagnostics, AX_NO_PROJECT_ROOT, message.as_str(),
+            Option<str>.Some(root_path.as_str()), Option<str>.None);
+        root_manifest_path.drop();
+        root_path.drop();
+        std_path.drop();
+        return LoadReport.new(Option<Project>.None, diagnostics);
+    }
+
+    let report = read_manifest(root_manifest_path.as_str());
+    let root_diagnostics = report.take_diagnostics();
+    append_diagnostics(&diagnostics, &root_diagnostics);
+    let root_manifest = report.take_manifest();
+    report.drop();
+    let manifest = match root_manifest {
+        Some(value) => value,
+        None => {
+            root_manifest_path.drop();
+            root_path.drop();
+            std_path.drop();
+            sort_diagnostics(&diagnostics);
+            return LoadReport.new(Option<Project>.None, diagnostics);
+        },
+    };
+    if manifest.name() == "std" {
+        manifest.drop();
+        root_manifest_path.drop();
+        root_path.drop();
+        std_path.drop();
+        sort_diagnostics(&diagnostics);
+        return LoadReport.new(Option<Project>.None, diagnostics);
+    }
+
+    let records = Vec<PackageRecord>.new();
+    let root_name = String.from(&manifest.name());
+    let cycle_order = Vec<String>.new();
+    let accepted = visit_manifest(manifest, PathBuf.from(root_path.as_str()), Option<str>.None,
+        &records, &cycle_order, &diagnostics);
+    match accepted { Some(name) => name.drop(), None => {}, }
+    root_manifest_path.drop();
+
+    match find_cycle(&records, &cycle_order) {
+        Some(cycle) => {
+            release_diagnostics(&diagnostics);
+            let cycle_diagnostics = Vec<Diagnostic>.new();
+            let hint = String.from(&"Remove one of the dependency edges in the cycle, or extract the shared code into a third package.");
+            let cycle_path = manifest_path_for(root_path.as_str());
+            defer { hint.drop(); cycle.drop(); cycle_path.drop(); };
+            add_diagnostic(&cycle_diagnostics, AX_DEPENDENCY_CYCLE, cycle.as_str(),
+                Option<str>.Some(cycle_path.as_str()), Option<str>.Some(hint.as_str()));
+            release_records(&records);
+            release_strings(&cycle_order);
+            root_path.drop();
+            std_path.drop();
+            return LoadReport.new(Option<Project>.None, cycle_diagnostics);
+        },
+        None => {},
+    }
+    release_strings(&cycle_order);
+
+    let layouts = Vec<Option<PackageLayout>>.new();
+    let record_index = 0u64;
+    while record_index < records.len() {
+        layouts.push(build_layout(&records[record_index], &diagnostics));
+        record_index += 1u64;
+    }
+    if layouts[0].is_none() {
+        release_layouts(&layouts);
+        release_records(&records);
+        root_name.drop();
+        root_path.drop();
+        std_path.drop();
+        sort_diagnostics(&diagnostics);
+        return LoadReport.new(Option<Project>.None, diagnostics);
+    }
+
+    let packages = Vec<Package>.new();
+    record_index = 0u64;
+    while record_index < records.len() {
+        match &layouts[record_index] {
+            Some(layout) => packages.push(package_from_record(&records[record_index], layout,
+                &records, &layouts, 0u64)),
+            None => {},
+        }
+        record_index += 1u64;
+    }
+    let std_manifest = Path.new(std_path.as_str()).parent();
+    let std_package_root = match std_manifest {
+        Some(value) => PathBuf.from(value.as_str()),
+        None => PathBuf.from("."),
+    };
+    let std_manifest_path = manifest_path_for(std_package_root.as_str());
+    packages.push(Package.new(STD_PACKAGE, PackageKind.Lib, "", std_package_root,
+        PathBuf.from(std_manifest_path.as_str()), PathBuf.from(std_path.as_str()),
+        Option<PathBuf>.None, Vec<String>.new(), Vec<String>.new(), true,
+        Option<NativeLLVM>.None));
+    std_manifest_path.drop();
+
+    add_nested_source_diagnostics(&packages, &diagnostics);
+    let file_paths = Vec<IndexedPath>.new();
+    let package_index = 0u64;
+    while package_index < packages.len() {
+        let input = Vec<String>.new();
+        input.push(String.from(&packages[package_index].source_root()));
+        let collected = match collect_sources(&input) {
+            Ok(value) => value,
+            Err(problem) => {
+                let message = String.from(&"Could not index sources: ");
+                message.push_str(problem.msg());
+                defer message.drop();
+                let path = String.from(&packages[package_index].source_root());
+                defer path.drop();
+                add_diagnostic(&diagnostics, AX_BAD_MANIFEST, message.as_str(),
+                    Option<str>.Some(path.as_str()), Option<str>.None);
+                problem.drop();
+                Vec<String>.new()
+            },
+        };
+        let path_index = 0u64;
+        while path_index < collected.len() {
+            file_paths.push(IndexedPath.new(collected[path_index].as_str(), package_index));
+            path_index += 1u64;
+        }
+        release_strings(&collected);
+        release_strings(&input);
+        package_index += 1u64;
+    }
+    let files = index_package_files(&packages, &file_paths);
+    let file_index = 0u64;
+    while file_index < file_paths.len() { file_paths[file_index].drop(); file_index += 1u64; }
+    file_paths.drop();
+
+    let project = Project.new(root_name.as_str(), packages, files, STD_PACKAGE);
+    release_layouts(&layouts);
+    release_records(&records);
+    root_name.drop();
+    root_path.drop();
+    std_path.drop();
+    sort_diagnostics(&diagnostics);
+    LoadReport.new(Option<Project>.Some(project), diagnostics)
+}
+
+fn release_layouts(layouts: Vec<Option<PackageLayout>>&) {
+    let index = 0u64;
+    while index < layouts.len() {
+        match layouts[index].take() { Some(value) => value.drop(), None => {}, }
+        index += 1u64;
+    }
+    layouts.drop();
+}
+
+fn add_nested_source_diagnostics(packages: Vec<Package>&, diagnostics: Vec<Diagnostic>&) {
+    let outer = 0u64;
+    while outer < packages.len() {
+        if packages[outer].name() == STD_PACKAGE { outer += 1u64; continue; }
+        let inner = 0u64;
+        while inner < packages.len() {
+            if outer == inner || packages[inner].name() == STD_PACKAGE { inner += 1u64; continue; }
+            if packages[outer].source_root() != packages[inner].source_root() &&
+            within_directory(packages[outer].source_root(), packages[inner].source_root()) {
+                let message = String.from(&"Package '");
+                message.push_str(packages[inner].name());
+                message.push_str("' source root ");
+                message.push_str(packages[inner].source_root());
+                message.push_str(" is nested inside package '");
+                message.push_str(packages[outer].name());
+                message.push_str("' source root ");
+                message.push_str(packages[outer].source_root());
+                defer message.drop();
+                let hint = String.from(&"Dependencies must live outside the depending package's src/ directory.");
+                defer hint.drop();
+                add_diagnostic(diagnostics, AX_NESTED_SOURCE_ROOTS, message.as_str(),
+                    Option<str>.Some(packages[inner].source_root()), Option<str>.Some(hint.as_str()));
+            }
+            inner += 1u64;
+        }
+        outer += 1u64;
+    }
+}

@@ -1,0 +1,575 @@
+from std.core.drop import Drop;
+from std.core.option import Option;
+from std.core.path import Path, PathBuf;
+from std.core.result import Result;
+from std.core.string import String;
+from std.core.vec import Vec;
+from std.core.fs import metadata, read_to_string, resolve;
+from std.core.io import IoError;
+from std.core.fmt import ToString;
+from toml.parse import Document, NodeId, NodeKind, ParseError, parse, array_len;
+from toml.parse import array_child, boolean_value, integer_u64, node_kind, string_value, table_child, table_entry, table_len;
+from anx.diagnostics.model import AX_BAD_MANIFEST, AX_RESERVED_PACKAGE_NAME, Diagnostic;
+from anx.diagnostics.model import release_diagnostics;
+from anx.manifest.model import DependencySpec, Manifest, ManifestReport, NativeLLVM, PackageKind;
+
+const MANIFEST_NAME: str = "package.anx";
+const DEFAULT_VERSION: str = "0.1.0";
+const DEFAULT_ENTRY: str = "src/main.an";
+
+fn alphanumeric(byte: u8) -> bool {
+    (byte >= b'a' && byte <= b'z') || (byte >= b'A' && byte <= b'Z') ||
+    (byte >= b'0' && byte <= b'9')
+}
+
+fn llvm_component(value: str) -> bool {
+    let bytes = value.as_slice();
+    if bytes.len() == 0u64 || !((bytes[0] >= b'a' && bytes[0] <= b'z') ||
+        (bytes[0] >= b'A' && bytes[0] <= b'Z')) { return false; }
+    let index = 1u64;
+    while index < bytes.len() {
+        if !alphanumeric(bytes[index]) { return false; }
+        index += 1u64;
+    }
+    true
+}
+
+fn has_parent_component(value: str) -> bool {
+    let bytes = value.as_slice();
+    let start = 0u64;
+    let index = 0u64;
+    while index <= bytes.len() {
+        if index == bytes.len() || bytes[index] == b'/' {
+            if index - start == 2u64 && bytes[start] == b'.' && bytes[start + 1u64] == b'.' {
+                return true;
+            }
+            start = index + 1u64;
+        }
+        index += 1u64;
+    }
+    false
+}
+
+fn within_directory(root: str, path: str) -> bool {
+    if path == root { return true; }
+    if !path.starts_with(root) { return false; }
+    let root_bytes = root.as_slice();
+    if root_bytes.len() == 0u64 { return false; }
+    if root_bytes[root_bytes.len() - 1u64] == b'/' { return true; }
+    let path_bytes = path.as_slice();
+    path_bytes.len() > root_bytes.len() && path_bytes[root_bytes.len()] == b'/'
+}
+
+fn is_array(document: Document&, id: NodeId) -> bool {
+    match node_kind(document, id) {
+        Some(NodeKind.Array) => true,
+        _ => false,
+    }
+}
+
+fn read_native_llvm(document: Document&, root: NodeId, package_root: str, manifest_path: str,
+    ffi_allowed: bool, diagnostics: Vec<Diagnostic>&) -> Option<NativeLLVM> {
+    let native_id = match table_child(document, root, "native") {
+        Some(id) => id,
+        None => return Option<NativeLLVM>.None,
+    };
+    match node_kind(document, native_id) {
+        Some(NodeKind.Table) => {},
+        _ => {
+            diagnostic(diagnostics, AX_BAD_MANIFEST, "[native] must be a table", manifest_path, Option<str>.None);
+            return Option<NativeLLVM>.None;
+        },
+    }
+
+    let index = 0u64;
+    while index < table_len(document, native_id) {
+        let(key, _) = match table_entry(document, native_id, index) {
+            Some(value) => value,
+            None => { index += 1u64; continue; },
+        };
+        let supported = key.as_str() == "llvm";
+        key.drop();
+        if !supported {
+            diagnostic(diagnostics, AX_BAD_MANIFEST, "Only [native.llvm] is supported", manifest_path, Option<str>.None);
+            return Option<NativeLLVM>.None;
+        }
+        index += 1u64;
+    }
+
+    let llvm_id = match table_child(document, native_id, "llvm") {
+        Some(id) => id,
+        None => return Option<NativeLLVM>.None,
+    };
+    match node_kind(document, llvm_id) {
+        Some(NodeKind.Table) => {},
+        _ => {
+            diagnostic(diagnostics, AX_BAD_MANIFEST, "[native.llvm] must be a table", manifest_path, Option<str>.None);
+            return Option<NativeLLVM>.None;
+        },
+    }
+
+    let unknown_field = false;
+    let field_index = 0u64;
+    while field_index < table_len(document, llvm_id) {
+        let(key, _) = match table_entry(document, llvm_id, field_index) {
+            Some(value) => value,
+            None => { field_index += 1u64; continue; },
+        };
+        if key.as_str() != "major" && key.as_str() != "components" && key.as_str() != "sources" {
+            unknown_field = true;
+        }
+        key.drop();
+        field_index += 1u64;
+    }
+    if unknown_field {
+        diagnostic(diagnostics, AX_BAD_MANIFEST, "Unknown [native.llvm] field", manifest_path, Option<str>.None);
+    }
+
+    if !ffi_allowed {
+        diagnostic(diagnostics, AX_BAD_MANIFEST, "[native.llvm] requires [package].ffi = true", manifest_path, Option<str>.None);
+    }
+
+    let major = match table_child(document, llvm_id, "major") {
+        Some(id) => match integer_u64(document, id) { Some(value) => value, None => 0u64 },
+        None => 0u64,
+    };
+    let valid_major = major == 22u64;
+
+    let components = Vec<String>.new();
+    let components_ok = match table_child(document, llvm_id, "components") {
+        Some(array_id) => {
+            if !is_array(document, array_id) { false } else {
+                let count = array_len(document, array_id);
+                let valid = count > 0u64;
+                let item = 0u64;
+                while item < count {
+                    let value_id = match array_child(document, array_id, item) {
+                        Some(value) => value,
+                        None => { valid = false; item += 1u64; continue; },
+                    };
+                    match string_value(document, value_id) {
+                        Some(value) => {
+                            if !llvm_component(value.as_str()) { valid = false; }
+                            components.push(value);
+                        },
+                        None => { valid = false; },
+                    }
+                    item += 1u64;
+                }
+                valid
+            }
+        },
+        None => false,
+    };
+
+    let sources = Vec<PathBuf>.new();
+    let sources_ok = match table_child(document, llvm_id, "sources") {
+        Some(array_id) => {
+            if !is_array(document, array_id) { false } else {
+                let count = array_len(document, array_id);
+                let valid = true;
+                let item = 0u64;
+                while item < count {
+                    let value_id = match array_child(document, array_id, item) {
+                        Some(value) => value,
+                        None => { valid = false; item += 1u64; continue; },
+                    };
+                    match string_value(document, value_id) {
+                        Some(value) => {
+                            let source_path = value.as_str();
+                            if !source_path.ends_with(".c") || Path.new(source_path).is_absolute() ||
+                            has_parent_component(source_path) {
+                                valid = false;
+                                value.drop();
+                            } else {
+                                let root_path = Path.new(package_root);
+                                let unresolved = root_path.join(source_path);
+                                let resolved = match resolve(unresolved.as_str()) {
+                                    Ok(path) => path,
+                                    Err(problem) => { problem.drop(); valid = false; unresolved.drop(); item += 1u64; continue; },
+                                };
+                                unresolved.drop();
+                                let in_package = within_directory(package_root, resolved.as_str());
+                                let is_file = match metadata(resolved.as_str()) {
+                                    Ok(info) => info.is_file(),
+                                    Err(problem) => { problem.drop(); false },
+                                };
+                                if !in_package || !is_file {
+                                    valid = false;
+                                    resolved.drop();
+                                } else {
+                                    sources.push(resolved);
+                                }
+                                value.drop();
+                            }
+                        },
+                        None => { valid = false; },
+                    }
+                    item += 1u64;
+                }
+                valid
+            }
+        },
+        None => true,
+    };
+
+    if !valid_major || !components_ok || !sources_ok {
+        diagnostic(diagnostics, AX_BAD_MANIFEST,
+            "[native.llvm] requires major = 22, component names, and in-package .c sources",
+            manifest_path, Option<str>.None);
+        release_strings(&components);
+        release_paths(&sources);
+        return Option<NativeLLVM>.None;
+    }
+
+    Option<NativeLLVM>.Some(NativeLLVM.new(major, components, sources))
+}
+
+fn release_strings(values: Vec<String>&) {
+    let index = 0u64;
+    while index < values.len() { values[index].drop(); index += 1u64; }
+    values.drop();
+}
+
+fn release_paths(values: Vec<PathBuf>&) {
+    let index = 0u64;
+    while index < values.len() { values[index].drop(); index += 1u64; }
+    values.drop();
+}
+
+fn diagnostic(items: Vec<Diagnostic>&, code: str, message: str, path: str, hint: Option<str>) {
+    items.push(Diagnostic.new(code, message, Option<str>.Some(path), hint));
+}
+
+fn identifier(value: str) -> bool {
+    let bytes = value.as_slice();
+    if bytes.len() == 0u64 { return false; }
+    let first = bytes[0];
+    if !((first >= b'a' && first <= b'z') || (first >= b'A' && first <= b'Z') || first == b'_') {
+        return false;
+    }
+    let index = 1u64;
+    while index < bytes.len() {
+        let byte = bytes[index];
+        if !((byte >= b'a' && byte <= b'z') || (byte >= b'A' && byte <= b'Z') ||
+            (byte >= b'0' && byte <= b'9') || byte == b'_') { return false; }
+        index += 1u64;
+    }
+    true
+}
+
+fn version_string(value: str) -> bool {
+    let bytes = value.as_slice();
+    if bytes.len() == 0u64 { return false; }
+    let index = 0u64;
+    let segment_digits = false;
+    while index < bytes.len() {
+        let byte = bytes[index];
+        if byte >= b'0' && byte <= b'9' {
+            segment_digits = true;
+            index += 1u64;
+            continue;
+        }
+        if byte == b'.' {
+            if !segment_digits { return false; }
+            segment_digits = false;
+            index += 1u64;
+            continue;
+        }
+        break;
+    }
+    if !segment_digits { return false; }
+    if index == bytes.len() { return true; }
+    if bytes[index] != b'-' && bytes[index] != b'+' { return false; }
+    index += 1u64;
+    if index == bytes.len() { return false; }
+    while index < bytes.len() {
+        let byte = bytes[index];
+        let valid = (byte >= b'0' && byte <= b'9') || (byte >= b'a' && byte <= b'z') ||
+        (byte >= b'A' && byte <= b'Z') || byte == b'.' || byte == b'-';
+        if !valid { return false; }
+        index += 1u64;
+    }
+    true
+}
+
+fn read_dependencies(document: Document&, root: NodeId, table_name: str, manifest_path: str,
+    diagnostics: Vec<Diagnostic>&) -> Vec<DependencySpec> {
+    let dependencies = Vec<DependencySpec>.new();
+    let table_id = match table_child(document, root, table_name) {
+        Some(id) => id,
+        None => return dependencies,
+    };
+    match node_kind(document, table_id) {
+        Some(NodeKind.Table) => {},
+        _ => {
+            let message = String.from(&"[");
+            message.push_str(table_name);
+            message.push_str("] must be a table");
+            defer message.drop();
+            diagnostic(diagnostics, AX_BAD_MANIFEST, message.as_str(), manifest_path, Option<str>.None);
+            return dependencies;
+        },
+    }
+
+    let index = 0u64;
+    while index < table_len(document, table_id) {
+        let(key, value_id) = match table_entry(document, table_id, index) {
+            Some(entry) => entry,
+            None => { index += 1u64; continue; },
+        };
+        defer key.drop();
+
+        if !identifier(key.as_str()) {
+            let message = String.from(&"'");
+            message.push_str(key.as_str());
+            message.push_str("' is not a valid dependency name");
+            defer message.drop();
+            diagnostic(diagnostics, AX_BAD_MANIFEST, message.as_str(), manifest_path, Option<str>.None);
+            index += 1u64;
+            continue;
+        }
+
+        let dependency_table = match node_kind(document, value_id) {
+            Some(NodeKind.Table) => table_child(document, value_id, "path"),
+            _ => Option<NodeId>.None,
+        };
+        let path_id = match dependency_table {
+            Some(id) => id,
+            None => {
+                let message = String.from(&"Dependency '");
+                message.push_str(key.as_str());
+                message.push_str("' in [");
+                message.push_str(table_name);
+                message.push_str("] must set a non-empty string 'path'");
+                defer message.drop();
+                diagnostic(diagnostics, AX_BAD_MANIFEST, message.as_str(), manifest_path, Option<str>.None);
+                index += 1u64;
+                continue;
+            },
+        };
+        let dependency_path = match string_value(document, path_id) {
+            Some(path) => path,
+            None => {
+                let message = String.from(&"Dependency '");
+                message.push_str(key.as_str());
+                message.push_str("' in [");
+                message.push_str(table_name);
+                message.push_str("] must set a non-empty string 'path'");
+                defer message.drop();
+                diagnostic(diagnostics, AX_BAD_MANIFEST, message.as_str(), manifest_path, Option<str>.None);
+                index += 1u64;
+                continue;
+            },
+        };
+        defer dependency_path.drop();
+        if dependency_path.as_str() == "" {
+            let message = String.from(&"Dependency '");
+            message.push_str(key.as_str());
+            message.push_str("' in [");
+            message.push_str(table_name);
+            message.push_str("] must set a non-empty string 'path'");
+            defer message.drop();
+            diagnostic(diagnostics, AX_BAD_MANIFEST, message.as_str(), manifest_path, Option<str>.None);
+            index += 1u64;
+            continue;
+        }
+
+        let parent = match Path.new(manifest_path).parent() {
+            Some(value) => value,
+            None => Path.new("."),
+        };
+        let unresolved = parent.join(dependency_path.as_str());
+        let resolved = match resolve(unresolved.as_str()) {
+            Ok(value) => value,
+            Err(problem) => {
+                problem.drop();
+                let message = String.from(&"Could not resolve dependency path '");
+                message.push_str(dependency_path.as_str());
+                message.push('\'');
+                defer message.drop();
+                diagnostic(diagnostics, AX_BAD_MANIFEST, message.as_str(), manifest_path, Option<str>.None);
+                unresolved.drop();
+                index += 1u64;
+                continue;
+            },
+        };
+        unresolved.drop();
+        dependencies.push(DependencySpec.new(key.as_str(), resolved));
+        index += 1u64;
+    }
+    dependencies
+}
+
+fn read_failure(path: str, problem: IoError) -> ManifestReport {
+    let diagnostics = Vec<Diagnostic>.new();
+    let message = String.from(&"Could not read manifest: ");
+    message.push_str(problem.msg());
+    defer message.drop();
+    problem.drop();
+    diagnostic(&diagnostics, AX_BAD_MANIFEST, message.as_str(), path, Option<str>.None);
+    ManifestReport.new(Option<Manifest>.None, diagnostics)
+}
+
+fn parse_failure(path: str, problem: ParseError) -> ManifestReport {
+    let diagnostics = Vec<Diagnostic>.new();
+    let message = String.from(&"Could not parse manifest at line ");
+    let row = problem.row().to_string();
+    let column = problem.column().to_string();
+    defer { message.drop(); row.drop(); column.drop(); };
+    message.push_str(row.as_str());
+    message.push_str(", column ");
+    message.push_str(column.as_str());
+    message.push_str(": ");
+    message.push_str(problem.message());
+    problem.drop();
+    diagnostic(&diagnostics, AX_BAD_MANIFEST, message.as_str(), path, Option<str>.None);
+    ManifestReport.new(Option<Manifest>.None, diagnostics)
+}
+
+pub fn read_manifest(path: str) -> ManifestReport {
+    let text = match read_to_string(path) {
+        Ok(value) => value,
+        Err(problem) => return read_failure(path, problem),
+    };
+    defer text.drop();
+    let document = match parse(text.as_str()) {
+        Ok(value) => value,
+        Err(problem) => return parse_failure(path, problem),
+    };
+    defer document.drop();
+
+    let diagnostics = Vec<Diagnostic>.new();
+    let root = document.root();
+    let package_id = match table_child(&document, root, "package") {
+        Some(id) => id,
+        None => {
+            diagnostic(&diagnostics, AX_BAD_MANIFEST, "Missing [package] table", path, Option<str>.None);
+            return ManifestReport.new(Option<Manifest>.None, diagnostics);
+        },
+    };
+    let package_is_table = match node_kind(&document, package_id) {
+        Some(NodeKind.Table) => true,
+        _ => false,
+    };
+    if !package_is_table {
+        diagnostic(&diagnostics, AX_BAD_MANIFEST, "Missing [package] table", path, Option<str>.None);
+        return ManifestReport.new(Option<Manifest>.None, diagnostics);
+    }
+
+    let name = match table_child(&document, package_id, "name") {
+        Some(id) => match string_value(&document, id) { Some(value) => value, None => String.new() },
+        None => String.new(),
+    };
+    let name_ok = name.as_str() != "" && identifier(name.as_str());
+    if name.as_str() == "" {
+        diagnostic(&diagnostics, AX_BAD_MANIFEST, "Missing or empty [package].name", path, Option<str>.None);
+    } elif !identifier(name.as_str()) {
+        let message = String.from(&"'");
+        message.push_str(name.as_str());
+        message.push_str("' is not a valid package name");
+        defer message.drop();
+        diagnostic(&diagnostics, AX_BAD_MANIFEST, message.as_str(), path, Option<str>.None);
+    } elif name.as_str() == "std" {
+        diagnostic(&diagnostics, AX_RESERVED_PACKAGE_NAME,
+            "Package name 'std' is reserved by the standard library", path,
+            Option<str>.Some("Pick another name; 'std' always refers to the bundled standard library."));
+    }
+
+    let kind_value = match table_child(&document, package_id, "kind") {
+        Some(id) => match string_value(&document, id) { Some(value) => value, None => String.new() },
+        None => String.from(&"bin"),
+    };
+    let kind = match kind_value.as_str() {
+        "bin" => Option<PackageKind>.Some(PackageKind.Bin),
+        "lib" => Option<PackageKind>.Some(PackageKind.Lib),
+        "hybrid" => Option<PackageKind>.Some(PackageKind.Hybrid),
+        _ => Option<PackageKind>.None,
+    };
+    let kind_ok = kind.is_some();
+    if !kind_ok {
+        diagnostic(&diagnostics, AX_BAD_MANIFEST,
+            "[package].kind must be one of 'bin', 'lib', 'hybrid'", path, Option<str>.None);
+    }
+
+    let entry = match table_child(&document, package_id, "entry") {
+        Some(id) => match string_value(&document, id) {
+            Some(value) => {
+                if value.as_str() == "" {
+                    value.drop();
+                    diagnostic(&diagnostics, AX_BAD_MANIFEST, "[package].entry must be a non-empty string", path, Option<str>.None);
+                    Option<String>.None
+                } else { Option<String>.Some(value) }
+            },
+            None => {
+                diagnostic(&diagnostics, AX_BAD_MANIFEST, "[package].entry must be a non-empty string", path, Option<str>.None);
+                Option<String>.None
+            },
+        },
+        None => Option<String>.None,
+    };
+
+    let version = match table_child(&document, package_id, "version") {
+        Some(id) => match string_value(&document, id) {
+            Some(value) => {
+                if version_string(value.as_str()) {
+                    value
+                } else {
+                    value.drop();
+                    diagnostic(&diagnostics, AX_BAD_MANIFEST,
+                        "[package].version must be a version string such as \"0.1.0\"", path, Option<str>.None);
+                    String.from(&DEFAULT_VERSION)
+                }
+            },
+            None => {
+                diagnostic(&diagnostics, AX_BAD_MANIFEST,
+                    "[package].version must be a version string such as \"0.1.0\"", path, Option<str>.None);
+                String.from(&DEFAULT_VERSION)
+            },
+        },
+        None => String.from(&DEFAULT_VERSION),
+    };
+
+    let dependencies = read_dependencies(&document, root, "dependencies", path, &diagnostics);
+    let dev_dependencies = read_dependencies(&document, root, "dev-dependencies", path, &diagnostics);
+    let ffi_allowed = match table_child(&document, package_id, "ffi") {
+        Some(id) => match boolean_value(&document, id) {
+            Some(value) => value,
+            None => {
+                diagnostic(&diagnostics, AX_BAD_MANIFEST, "[package].ffi must be a boolean", path, Option<str>.None);
+                false
+            },
+        },
+        None => false,
+    };
+
+    let package_root = match Path.new(path).parent() {
+        Some(value) => value,
+        None => Path.new("."),
+    };
+    let native_llvm = read_native_llvm(&document, root, package_root.as_str(), path,
+        ffi_allowed, &diagnostics);
+
+    if !name_ok || !kind_ok {
+        name.drop();
+        kind_value.drop();
+        version.drop();
+        match entry { Some(value) => value.drop(), None => {}, }
+        release_dependency_specs(&dependencies);
+        release_dependency_specs(&dev_dependencies);
+        return ManifestReport.new(Option<Manifest>.None, diagnostics);
+    }
+
+    let manifest = Manifest.new(name.as_str(), *kind.unwrap(), entry, version.as_str(),
+        dependencies, dev_dependencies, ffi_allowed, native_llvm);
+    name.drop();
+    kind_value.drop();
+    version.drop();
+    ManifestReport.new(Option<Manifest>.Some(manifest), diagnostics)
+}
+
+fn release_dependency_specs(items: Vec<DependencySpec>&) {
+    let index = 0u64;
+    while index < items.len() { items[index].drop(); index += 1u64; }
+    items.drop();
+}

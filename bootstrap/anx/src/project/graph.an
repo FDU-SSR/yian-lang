@@ -1,0 +1,236 @@
+from std.core.option import Option;
+from std.core.string import String;
+from std.core.vec import Vec;
+from anx.diagnostics.model import Diagnostic;
+from anx.manifest.model import PackageKind;
+from anx.project.model import LoadReport, Package, Project;
+from json.write import Writer;
+
+fn kind_name(kind: PackageKind) -> str {
+    match kind {
+        Bin => "bin",
+        Lib => "lib",
+        Hybrid => "hybrid",
+    }
+}
+
+fn write_names(writer: Writer&, package: Package&, development: bool) {
+    writer.begin_array();
+    let count = if development { package.dev_dependency_count() } else { package.dependency_count() };
+    let index = 0u64;
+    while index < count {
+        writer.write_string(if development { package.dev_dependency(index) } else { package.dependency(index) });
+        index += 1u64;
+    }
+    writer.end_array();
+}
+
+fn write_diagnostics(writer: Writer&, diagnostics: Vec<Diagnostic>&) {
+    writer.begin_array();
+    let index = 0u64;
+    while index < diagnostics.len() {
+        let item = &diagnostics[index];
+        writer.begin_object();
+        writer.key("code");
+        writer.write_string(item.code());
+        writer.key("message");
+        writer.write_string(item.message());
+        writer.key("path");
+        match item.path() { Some(path) => writer.write_string(path), None => writer.write_null(), }
+        writer.key("span");
+        writer.write_null();
+        writer.key("hint");
+        match item.hint() { Some(hint) => writer.write_string(hint), None => writer.write_null(), }
+        writer.end_object();
+        index += 1u64;
+    }
+    writer.end_array();
+}
+
+fn write_empty_graph(writer: Writer&, diagnostics: Vec<Diagnostic>&) {
+    writer.begin_object();
+    writer.key("root");
+    writer.write_null();
+    writer.key("std");
+    writer.write_null();
+    writer.key("packages");
+    writer.begin_object();
+    writer.end_object();
+    writer.key("files");
+    writer.begin_array();
+    writer.end_array();
+    writer.key("dependencies");
+    writer.begin_object();
+    writer.end_object();
+    writer.key("devDependencies");
+    writer.begin_object();
+    writer.end_object();
+    writer.key("diagnostics");
+    write_diagnostics(writer, diagnostics);
+    writer.end_object();
+}
+
+fn write_project_graph(writer: Writer&, project: Project&, diagnostics: Vec<Diagnostic>&) {
+    writer.begin_object();
+    writer.key("root");
+    writer.write_string(project.root_package());
+    writer.key("std");
+    writer.write_string(project.std_package());
+
+    writer.key("packages");
+    writer.begin_object();
+    let index = 0u64;
+    while index < project.package_count() {
+        let package = project.package(index);
+        writer.key(package.name());
+        writer.begin_object();
+        writer.key("kind");
+        writer.write_string(kind_name(package.kind()));
+        writer.key("root");
+        writer.write_string(package.root());
+        writer.key("manifest");
+        writer.write_string(package.manifest_path());
+        writer.key("sourceRoot");
+        writer.write_string(package.source_root());
+        writer.key("entry");
+        match package.entry() { Some(path) => writer.write_string(path), None => writer.write_null(), }
+        writer.key("dependencies");
+        write_names(writer, package, false);
+        writer.key("devDependencies");
+        write_names(writer, package, true);
+        writer.end_object();
+        index += 1u64;
+    }
+    writer.end_object();
+
+    writer.key("files");
+    writer.begin_array();
+    let file_index = 0u64;
+    while file_index < project.file_count() {
+        let file = project.file(file_index);
+        writer.begin_object();
+        writer.key("path");
+        writer.write_string(file.path());
+        writer.key("package");
+        writer.write_string(file.package());
+        writer.key("module");
+        writer.begin_array();
+        let module_index = 0u64;
+        while module_index < file.module_len() {
+            writer.write_string(file.module_segment(module_index));
+            module_index += 1u64;
+        }
+        writer.end_array();
+        writer.end_object();
+        file_index += 1u64;
+    }
+    writer.end_array();
+
+    writer.key("dependencies");
+    writer.begin_object();
+    index = 0u64;
+    while index < project.package_count() {
+        let package = project.package(index);
+        writer.key(package.name());
+        write_names(writer, package, false);
+        index += 1u64;
+    }
+    writer.end_object();
+
+    writer.key("devDependencies");
+    writer.begin_object();
+    index = 0u64;
+    while index < project.package_count() {
+        let package = project.package(index);
+        writer.key(package.name());
+        write_names(writer, package, true);
+        index += 1u64;
+    }
+    writer.end_object();
+    writer.key("diagnostics");
+    write_diagnostics(writer, diagnostics);
+    writer.end_object();
+}
+
+pub fn graph_json(report: LoadReport&) -> String {
+    let writer = Writer.new();
+    defer writer.drop();
+    match report.project() {
+        Some(project) => write_project_graph(&writer, project, report.diagnostics()),
+        None => write_empty_graph(&writer, report.diagnostics()),
+    }
+    match writer.finish() {
+        Ok(text) => text,
+        Err(_) => String.new(),
+    }
+}
+
+pub fn graph_text(report: LoadReport&) -> String {
+    let output = String.new();
+    match report.project() {
+        Some(project) => {
+            output.push_str("project: ");
+            output.push_str(project.root_package());
+            output.push('\n');
+            let index = 0u64;
+            while index < project.package_count() {
+                let package = project.package(index);
+                output.push_str("  ");
+                output.push_str(package.name());
+                output.push_str("  ");
+                output.push_str(kind_name(package.kind()));
+                output.push_str("  ");
+                output.push_str(package.source_root());
+                match package.entry() {
+                    Some(entry) => { output.push_str("  entry="); output.push_str(entry); },
+                    None => {},
+                }
+                output.push_str("  deps=[");
+                let dep_index = 0u64;
+                while dep_index < package.dependency_count() {
+                    if dep_index > 0u64 { output.push_str(", "); }
+                    output.push('\'');
+                    output.push_str(package.dependency(dep_index));
+                    output.push('\'');
+                    dep_index += 1u64;
+                }
+                output.push(']');
+                if package.dev_dependency_count() > 0u64 {
+                    output.push_str("  dev=[");
+                    let dev_index = 0u64;
+                    while dev_index < package.dev_dependency_count() {
+                        if dev_index > 0u64 { output.push_str(", "); }
+                        output.push('\'');
+                        output.push_str(package.dev_dependency(dev_index));
+                        output.push('\'');
+                        dev_index += 1u64;
+                    }
+                    output.push(']');
+                }
+                output.push('\n');
+                index += 1u64;
+            }
+            output.push_str("files: ");
+            output.push_str(project.file_count().to_string().as_str());
+            output.push('\n');
+        },
+        None => output.push_str("project: None\nfiles: 0\n"),
+    }
+    let diagnostics = report.diagnostics();
+    if diagnostics.len() > 0u64 {
+        output.push_str("diagnostics:\n");
+        let index = 0u64;
+        while index < diagnostics.len() {
+            let item = &diagnostics[index];
+            output.push_str("  error[");
+            output.push_str(item.code());
+            output.push_str("]: ");
+            match item.path() { Some(path) => output.push_str(path), None => output.push_str("None"), }
+            output.push_str(": ");
+            output.push_str(item.message());
+            output.push('\n');
+            index += 1u64;
+        }
+    }
+    output
+}
