@@ -44,7 +44,10 @@ conda run --no-capture-output -n yian-env python -m pip install -e '.[lsp]'
 - Preserve unrelated local changes. Inspect the worktree before editing or committing.
 - Complete the requested implementation and relevant existing checks within the authorized scope. Do not silently report success for unsupported semantics or replace a required operation with a placeholder.
 - Use `apply_patch` for local file edits when practical.
-- Do not add tests, assertions, expected outputs, or test runners unless the user explicitly requests them.
+- Tests, assertions, expected outputs and test tooling may be added or updated as needed for the requested work.
+- Prefer adding test items or assertions to an existing relevant test file or fixture. Reuse its setup and compilation unit where practical; separate test files increase compilation overhead and total suite time.
+- Create a new test file when extending an existing test is unsuitable, such as incompatible success/failure expectations, distinct diagnostic cases, or independent fixture/setup requirements. Do not combine cases in ways that mask failures or weaken coverage.
+- Test additions and modifications must form test-only commits, separate from production code, documentation and all other changes. This includes test sources, fixtures, expected outputs, test inputs and dedicated test runners or validation tools. Do not mix test and non-test changes in one commit; the explicit-authorization requirement for committing still applies.
 - When adding tests, if a test exposes a bug, do not weaken or alter its intended assertion just to make it pass; report the bug instead.
 - The bootstrap compiler needs the core compilation functionality, not strict behavioral equivalence with the Python compiler. Presentation details such as token and AST output or diagnostic formatting may differ.
 - Commit only when explicitly requested. Review tracked and untracked changes, run `git diff --check` and `git diff --cached --check`, stage only the requested scope, and report the commit plus remaining worktree changes. Do not push without authorization.
