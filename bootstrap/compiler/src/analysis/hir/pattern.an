@@ -27,6 +27,10 @@ pub struct LiteralPattern {
     pub condition_symbol: Option<SymbolId>,
 }
 
+impl Drop for LiteralPattern {
+    pub fn drop() { self.value.drop(); }
+}
+
 pub struct RangePattern {
     pub lower: Boundary,
     pub upper: Boundary,
@@ -132,6 +136,7 @@ impl Drop for PatternNode {
     pub fn drop() {
         match &self.kind {
             EnumPattern(value) => value.drop(),
+            LiteralPattern(value) => value.drop(),
             OrPattern(value) => value.drop(),
             StructPattern(value) => value.drop(),
             TuplePattern(value) => value.drop(),

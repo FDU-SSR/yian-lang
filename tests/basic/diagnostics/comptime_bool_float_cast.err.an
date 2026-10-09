@@ -1,0 +1,3 @@
+fn main() {
+    let value = comptime if f64(true) > 0.0f64 { 1 } else { 0 };
+}

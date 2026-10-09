@@ -53,6 +53,36 @@ impl Drop for PreparedFile {
     }
 }
 
+impl PreparedFile {
+    // Parsing borrows tokens and transfers the completed tree into this owner only on success.
+    pub fn parse() -> Result<(), PreparationError> {
+        let parser = Parser.new(&self.tokens);
+        defer parser.drop();
+        let tree = match parse_program(&parser) {
+            Ok(value) => value,
+            Err(error) => {
+                defer error.drop();
+                return Result<(), PreparationError>.Err(PreparationError(PreparationStage.Parse,
+                    parse_code(error.message()), String.from(&error.message()), error.span()));
+            },
+        };
+        self.tree = Option<AstTree>.Some(tree);
+        Result<(), PreparationError>.Ok(())
+    }
+
+    pub fn desugar(path: str) -> Result<(), PreparationError> {
+        // Mutate the owned tree; an arena shallow copy would retain stale allocation metadata.
+        match desugar(self.tree.unwrap(), path) {
+            Ok(_) => Result<(), PreparationError>.Ok(()),
+            Err(error) => {
+                defer error.drop();
+                Result<(), PreparationError>.Err(PreparationError(PreparationStage.Desugar,
+                    parse_code(error.message()), String.from(&error.message()), error.span()))
+            },
+        }
+    }
+}
+
 pub fn prepare_file(id: SourceId, path: str, source: str, phase: FrontendPhase) -> Result<PreparedFile, PreparationError> {
     let tokens = match Lexer.new(source).run() {
         Ok(value) => value,
@@ -75,29 +105,10 @@ pub fn prepare_file(id: SourceId, path: str, source: str, phase: FrontendPhase) 
         return Result<PreparedFile, PreparationError>.Ok(prepared);
     }
 
-    let parser = Parser.new(&prepared.tokens);
-    defer parser.drop();
-    let tree = match parse_program(&parser) {
-        Ok(value) => value,
-        Err(error) => {
-            defer error.drop();
-            return Result<PreparedFile, PreparationError>.Err(PreparationError(PreparationStage.Parse, parse_code(error.message()), String.from(&error.message()), error.span()));
-        },
-    };
-
-    prepared.tree = Option<AstTree>.Some(tree);
+    prepared.parse()?;
 
     if phase == FrontendPhase.Desugared {
-        // Desugaring allocates nodes, so mutate the tree held by the resource owner.
-        // A shallow copy would retain stale arena lengths and chunk-buffer pointers.
-        let owned_tree = prepared.tree.unwrap();
-        match desugar(owned_tree, path) {
-            Ok(_) => {},
-            Err(error) => {
-                defer error.drop();
-                return Result<PreparedFile, PreparationError>.Err(PreparationError(PreparationStage.Desugar, parse_code(error.message()), String.from(&error.message()), error.span()));
-            },
-        }
+        prepared.desugar(path)?;
     }
 
     transferred = true;

@@ -23,7 +23,7 @@ impl ExprChecker {
         let initializer = match &self.ctx.session.hir.require(value)?.kind {
             Ty => {
                 if !is_zst(self.ctx, element_type)? {
-                    return Result<HirId, AnalysisError>.Err(self.error(span, "uninitialized heap allocation is written '@alloc<T>(n)'"));
+                    return Result<HirId, AnalysisError>.Err(self.error(span, "uninitialized heap allocation is written '@alloc<T>(n)' and is only allowed in the standard library; otherwise initialize every element with 'dyn[n] <value>' (or use Vec/standard containers)"));
                 }
 
                 Option<HirId>.None
@@ -106,6 +106,7 @@ impl ExprChecker {
         let count_id = self.expression(count)?;
         let evaluator = ConstantEvaluator.new(&self.ctx.session.types, &self.ctx.session.hir, self.sizes);
         let constant = evaluator.evaluate(count_id)?;
+        defer constant.drop();
         let length = match &constant.value {
             Integer(value) => {
                 if value.is_negative() {
@@ -113,6 +114,15 @@ impl ExprChecker {
                 }
 
                 value.raw_bits()
+            },
+            LargeInteger(value) => {
+                if value.is_negative() {
+                    return Result<HirId, AnalysisError>.Err(self.error(span, "array length must be a non-negative integer"));
+                }
+                match value.small_magnitude() {
+                    Some(length) => length,
+                    None => return Result<HirId, AnalysisError>.Err(self.error(span, "array length exceeds its integer representation")),
+                }
             },
             _ => return Result<HirId, AnalysisError>.Err(self.error(span, "array length requires an integer constant")),
         };

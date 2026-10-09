@@ -1,4 +1,5 @@
 from compiler.analysis.session.session import AnalysisSession;
+from compiler.analysis.session.prepare import PreparationObserver;
 from compiler.analysis.session.output import AnalysisOutput;
 from compiler.analysis.hir.node import HirNode;
 from compiler.analysis.hir.pattern import PatternNode;
@@ -9,8 +10,7 @@ from compiler.codegen.error import CodegenError;
 from compiler.common.ids import UnitId, HirId, PatternId;
 from compiler.common.traversal import WalkControl;
 from compiler.diagnostics.model import AnalysisError;
-from compiler.config import FrontendPhase;
-from compiler.frontend.prepare import prepare_file;
+from compiler.frontend.prepare import PreparationStage;
 from compiler.frontend.observe import append_token_file;
 from compiler.frontend.ast.format import AstFormatter;
 from json.write import Writer;
@@ -35,37 +35,51 @@ fn save(output: Writer&, path: str) -> Result<(), AnalysisError> {
     }
 }
 
-pub fn frontend_dump(session: AnalysisSession&) -> Result<(), AnalysisError> {
+pub struct StageDumps { pub enabled: bool }
+
+impl PreparationObserver for StageDumps {
+    pub fn stage_complete(stage: PreparationStage, session: AnalysisSession&) -> Result<(), AnalysisError> {
+        if !self.enabled { return Result<(), AnalysisError>.Ok(()); }
+        match stage {
+            Lex => tokens_dump(session),
+            Desugar => ast_dump(session),
+            Parse => Result<(), AnalysisError>.Ok(()),
+        }
+    }
+}
+
+fn tokens_dump(session: AnalysisSession&) -> Result<(), AnalysisError> {
     match create_dir_all("build") {
         Ok(_) => {},
         Err(problem) => { defer problem.drop(); return Result<(), AnalysisError>.Err(AnalysisError.internal(problem.msg())); },
     }
     let tokens = Writer.with_max_depth(512u64);
     defer tokens.drop();
-    let ast = Writer.with_max_depth(512u64);
-    defer ast.drop();
     tokens.begin_array();
-    ast.begin_array();
     for index in 0u64..session.len() {
         let unit = session.unit(UnitId(index)).unwrap();
         let source = session.source(unit.source).unwrap();
         append_token_file(&tokens, source.path(), &unit.prepared.tokens);
-        // Original syntax is reparsed only for observation; the checked tree stays desugared.
-        let prepared = match prepare_file(unit.source, source.path(), source.text(), FrontendPhase.Ast) {
-            Ok(value) => value,
-            Err(problem) => { defer problem.drop(); return Result<(), AnalysisError>.Err(AnalysisError.internal(problem.message.as_str())); },
-        };
-        defer prepared.drop();
+    }
+    tokens.end_array();
+    save(&tokens, "build/tokens.txt")
+}
+
+fn ast_dump(session: AnalysisSession&) -> Result<(), AnalysisError> {
+    let ast = Writer.with_max_depth(512u64);
+    defer ast.drop();
+    ast.begin_array();
+    for index in 0u64..session.len() {
+        let unit = session.unit(UnitId(index)).unwrap();
+        let source = session.source(unit.source).unwrap();
         ast.begin_object();
         ast.key("path");
         ast.write_string(source.path());
         ast.key("ast");
-        AstFormatter.new(&ast).append_program(prepared.tree.unwrap().root);
+        AstFormatter.new(&ast).append_program(unit.prepared.tree.unwrap().root);
         ast.end_object();
     }
-    tokens.end_array();
     ast.end_array();
-    save(&tokens, "build/tokens.txt")?;
     save(&ast, "build/ast.txt")
 }
 

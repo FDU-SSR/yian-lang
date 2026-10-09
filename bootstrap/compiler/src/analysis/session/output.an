@@ -1,6 +1,7 @@
 from compiler.common.ids import DefId, TypeId, SymbolId, HirId, UnitId, NameId;
 from compiler.analysis.constant.evaluate import TypeSizeProvider;
-from compiler.diagnostics.model import Diagnostic;
+from compiler.driver.trace import CompilerTrace;
+from compiler.diagnostics.model import Diagnostic, Severity, AnalysisStage;
 from std.core.drop import Drop;
 from std.core.iter import Iterator, IntoIterator;
 from std.core.option import Option;
@@ -8,13 +9,16 @@ from std.core.vec import Vec;
 
 pub struct AnalysisOptions {
     pub require_entry: bool,
+    pub entry_optional: bool,
+    pub recover: bool,
     // The caller keeps this provider alive for the entire synchronous analysis call.
     pub sizes: Option<TypeSizeProvider&>,
+    pub trace: Option<CompilerTrace&>,
 }
 
 impl AnalysisOptions {
     static pub fn new() -> Self {
-        Self(false, Option<TypeSizeProvider&>.None)
+        Self(false, true, false, Option<TypeSizeProvider&>.None, Option<CompilerTrace&>.None)
     }
 }
 
@@ -61,5 +65,29 @@ impl Drop for AnalysisOutput {
         self.checked.drop();
         self.procedures.drop();
         self.warnings.drop();
+    }
+}
+
+// Diagnostics remain renderable with the owning session; only a clean run exports HIR.
+pub struct AnalysisReport {
+    pub output: Option<AnalysisOutput>,
+    pub diagnostics: Vec<Diagnostic>,
+    pub failed_stage: Option<AnalysisStage>,
+}
+
+impl AnalysisReport {
+    static pub fn new() -> Self { Self(Option<AnalysisOutput>.None, Vec<Diagnostic>.new(), Option<AnalysisStage>.None) }
+
+    pub fn ok() -> bool {
+        for diagnostic in self.diagnostics { if diagnostic.severity == Severity.Error { return false; } }
+        true
+    }
+}
+
+impl Drop for AnalysisReport {
+    pub fn drop() {
+        match &self.output { Some(value) => value.drop(), None => {}, }
+        for diagnostic in self.diagnostics { diagnostic.drop(); }
+        self.diagnostics.drop();
     }
 }

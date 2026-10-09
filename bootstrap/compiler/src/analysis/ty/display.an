@@ -42,7 +42,6 @@ fn append(ctx: ResolutionContext&, id: TypeId, text: String&, depth: u64) {
                 append(ctx, *element, text, depth + 1);
                 index += 1;
             }
-            if elements.len() == 1 { text.push_str(","); }
             text.push_str(")");
         },
         FunctionPointer(parameters, result) => {
@@ -103,12 +102,34 @@ fn append(ctx: ResolutionContext&, id: TypeId, text: String&, depth: u64) {
             defer number.drop();
             text.push_str(number.as_str());
         },
-        Bool => text.push_str("bool"), Char => text.push_str("char"), Str => text.push_str("str"), Void => text.push_str("void"), Never => text.push_str("!"), IntLiteral => text.push_str("integer literal"), FloatLiteral => text.push_str("float literal"),
+        Bool => text.push_str("bool"), Char => text.push_str("char"), Str => text.push_str("str"), Void => text.push_str("void"), Never => text.push_str("!"), IntLiteral => text.push_str("IntLiteralType"), FloatLiteral => text.push_str("FloatLiteralType"),
         TraitObject(inner) => {
             append(ctx, *inner, text, depth + 1);
             text.push_str("&");
         },
         SelfType(_) => text.push_str("Self"),
+        Closure(captures, parameters, result, _, _, _) => {
+            text.push_str("|");
+            let index = 0u64;
+            for capture in *captures {
+                if index != 0 { text.push_str(", "); }
+                text.push_str(ctx.session.names.text(capture.name));
+                text.push_str(": ");
+                append(ctx, capture.type_id, text, depth + 1);
+                index += 1;
+            }
+            text.push_str("| (");
+            index = 0;
+            for parameter in *parameters {
+                if index != 0 { text.push_str(", "); }
+                text.push_str(ctx.session.names.text(parameter.name));
+                text.push_str(": ");
+                append(ctx, parameter.type_id, text, depth + 1);
+                index += 1;
+            }
+            text.push_str(") -> ");
+            append(ctx, *result, text, depth + 1);
+        },
         _ => text.push_str("composite type"),
     }
 }

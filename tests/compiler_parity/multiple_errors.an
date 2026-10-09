@@ -1,0 +1,3 @@
+fn first() { missing_first; }
+fn second() { missing_second; }
+fn main() {}

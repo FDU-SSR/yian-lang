@@ -393,8 +393,14 @@ pub fn lookup_method_with_generics(ctx: ResolutionContext&, target: TypeId, name
         Some(value) => Result<TypeId, AnalysisError>.Ok(value),
         None => {
             if required.is_some() {
+                let message = String.from(&"No matching implementation of ");
+                defer message.drop();
+                message.push_str(description.as_str());
+                message.push_str(" for '");
+                message.push_str(ctx.session.names.text(name));
+                message.push_str("'");
                 let problem = AnalysisError.named(DiagnosticCode.Type,
-                    Option<SourceSpan>.Some(span), "No matching implementation of ", description.as_str(), "");
+                    Option<SourceSpan>.Some(span), "", message.as_str(), "");
                 problem.kind = AnalysisErrorKind.NoCandidate;
                 return Result<TypeId, AnalysisError>.Err(problem);
             }

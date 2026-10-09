@@ -521,11 +521,12 @@ impl Drop for TokenPayload {
 pub struct Token {
     payload: TokenPayload,
     pub span: Span,
+    pub raw: String,
 }
 
 impl Token {
     static pub fn new(payload: TokenPayload, span: Span) -> Self {
-        return Self(payload=payload, span=span);
+        return Self(payload=payload, span=span, raw=String.new());
     }
 
     pub fn kind() -> TokenPayload& { return &self.payload; }
@@ -615,6 +616,7 @@ impl Token {
 impl Drop for Token {
     pub fn drop() {
         self.payload.drop();
+        self.raw.drop();
     }
 }
 

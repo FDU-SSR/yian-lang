@@ -128,24 +128,24 @@ impl Drop for IdentifierData {
     pub fn drop() { self.name.drop(); }
 }
 
-pub struct IntLiteralData { pub value: u64, pub negative: bool, pub suffix: IntSuffix }
+pub struct IntLiteralData { pub value: u64, pub negative: bool, pub suffix: IntSuffix, pub raw: String }
 impl Drop for IntLiteralData {
-    pub fn drop() {}
+    pub fn drop() { self.raw.drop(); }
 }
 
-pub struct FloatLiteralData { pub value: f64, pub suffix: FloatSuffix }
+pub struct FloatLiteralData { pub value: f64, pub suffix: FloatSuffix, pub raw: String }
 impl Drop for FloatLiteralData {
-    pub fn drop() {}
+    pub fn drop() { self.raw.drop(); }
 }
 
-pub struct CharLiteralData { pub value: String }
+pub struct CharLiteralData { pub value: String, pub raw: String }
 impl Drop for CharLiteralData {
-    pub fn drop() { self.value.drop(); }
+    pub fn drop() { self.value.drop(); self.raw.drop(); }
 }
 
-pub struct StrLiteralData { pub value: String }
+pub struct StrLiteralData { pub value: String, pub raw: String }
 impl Drop for StrLiteralData {
-    pub fn drop() { self.value.drop(); }
+    pub fn drop() { self.value.drop(); self.raw.drop(); }
 }
 
 pub struct BoolLiteralData { pub value: bool }

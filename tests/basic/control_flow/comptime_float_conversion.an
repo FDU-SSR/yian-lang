@@ -1,0 +1,11 @@
+// Constant conversion truncates finite floats before fixed-width normalization.
+fn main() {
+    let finite = comptime if u8(258.75f64) == 2u8 { 1 } else { 0 };
+    assert finite == 1;
+    let negative = comptime if u64(-1.75f64) == 18446744073709551615u64 { 1 } else { 0 };
+    assert negative == 1;
+    let wide = comptime if u64(18446744073709551616.0f64) == 0u64 { 1 } else { 0 };
+    assert wide == 1;
+    let huge = comptime if u8(1.0e300f64) == 0u8 { 1 } else { 0 };
+    assert huge == 1;
+}

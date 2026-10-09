@@ -1,0 +1,9 @@
+enum Color { Red, Blue }
+
+fn main() {
+    let value = (true, Color.Blue);
+    match value {
+        (true, Color.Red) => 1,
+        (false, _) => 2,
+    };
+}

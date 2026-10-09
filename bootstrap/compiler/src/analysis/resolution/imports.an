@@ -159,10 +159,10 @@ pub fn resolve_imports(ctx: ResolutionContext&) -> Result<(), AnalysisError> {
                             None => target.data.name.as_str(),
                         };
 
-                        if !bind_import(ctx, unit, destination, target.data.name.as_str(), alias_name, item.span)? {
+                        if !bind_import(ctx, unit, destination, target.data.name.as_str(), alias_name, target.span)? {
                             if round == ctx.session.len() {
                                 return Result<(), AnalysisError>.Err(AnalysisError.named(DiagnosticCode.ImportNotFound,
-                                    Option<SourceSpan>.Some(ctx.span(unit, item.span)), "Symbol '", target.data.name.as_str(), "' is not found in the imported unit"));
+                                    Option<SourceSpan>.Some(ctx.span(unit, target.span)), "Symbol '", target.data.name.as_str(), "' is not found in the imported unit"));
                             }
 
                             missing = true;

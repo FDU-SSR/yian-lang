@@ -3,6 +3,7 @@ from compiler.analysis.ty.callable import signature, schedule, instance_substitu
 from compiler.analysis.ty.substitution import infer, substitute, has_generic;
 from compiler.analysis.ty.relations import compatible, default_type, is_numeric, has_literal;
 from compiler.analysis.ty.validation import contains_ffi;
+from compiler.analysis.ty.model import NominalKind;
 from compiler.analysis.hir.node import HirKind, Invoke, Cast, Call as HirCall, MethodCall as HirMethodCall;
 from compiler.common.ids import HirId, TypeId;
 from compiler.common.location import SourceSpan;
@@ -15,6 +16,7 @@ from std.core.iter import Iterator, IntoIterator;
 from std.core.option import Option;
 from std.core.result import Result;
 from std.core.vec import Vec;
+from std.core.string import String;
 
 impl ExprChecker {
     pub fn call(span: Span, callee: Expr&, args: Vec<Argument&>&) -> Result<HirId, AnalysisError> {
@@ -80,7 +82,7 @@ impl ExprChecker {
     fn invoke(span: Span, target: HirId, parameters: Vec<TypeId>&, result: TypeId, args: Vec<Argument&>&) -> Result<HirId, AnalysisError> {
         if parameters.len() != args.len() {
             return Result<HirId, AnalysisError>.Err(AnalysisError.arity(Option<SourceSpan>.Some(self.ctx.span(self.unit, span)),
-                "function pointer", parameters.len(), args.len(), false));
+                "callable", parameters.len(), args.len(), false));
         }
 
         let values = Vec<HirId>.new();
@@ -106,6 +108,24 @@ impl ExprChecker {
         Result<HirId, AnalysisError>.Ok(self.node(span, result, false, HirKind.Invoke(Invoke(target, values))))
     }
 
+    fn call_arity(span: Span, type_id: TypeId, expected: u64, actual: u64, receiver: bool) -> AnalysisError {
+        let subject = String.new();
+        defer subject.drop();
+        let definition = match *self.ctx.session.types.get(type_id).unwrap() {
+            Nominal(id, _) => *id,
+            _ => return AnalysisError.internal("arity requires a callable identity"),
+        };
+        let header = self.ctx.session.types.definition(definition).unwrap().header();
+        if header.kind == NominalKind.Method {
+            subject.push_str(if receiver { "method call" } else { "static method call" });
+        } else {
+            subject.push_str("function call '");
+            subject.push_str(self.ctx.session.names.text(header.name));
+            subject.push_str("'");
+        }
+        AnalysisError.arity(Option<SourceSpan>.Some(self.ctx.span(self.unit, span)), subject.as_str(), expected, actual, false)
+    }
+
     pub fn call_nominal(span: Span, type_id: TypeId, args: Vec<Argument&>&) -> Result<HirId, AnalysisError> {
         self.call_with_receiver(span, type_id, args, Option<HirId>.None)
     }
@@ -123,8 +143,7 @@ impl ExprChecker {
         };
 
         if args.len() != definition.parameters.len() {
-            return Result<HirId, AnalysisError>.Err(AnalysisError.arity(Option<SourceSpan>.Some(self.ctx.span(self.unit, span)),
-                self.ctx.session.names.text(self.ctx.session.types.definition(nominal).unwrap().header().name), definition.parameters.len(), args.len(), false));
+            return Result<HirId, AnalysisError>.Err(self.call_arity(span, type_id, definition.parameters.len(), args.len(), receiver.is_some()));
         }
 
         let values = Vec<HirId>.new();
@@ -161,8 +180,7 @@ impl ExprChecker {
         };
 
         if arguments.len() != definition.parameters.len() {
-            return Result<HirId, AnalysisError>.Err(AnalysisError.arity(Option<SourceSpan>.Some(self.ctx.span(self.unit, span)),
-                self.ctx.session.names.text(self.ctx.session.types.definition(nominal).unwrap().header().name), definition.parameters.len(), arguments.len(), false));
+            return Result<HirId, AnalysisError>.Err(self.call_arity(span, type_id, definition.parameters.len(), arguments.len(), receiver.is_some()));
         }
 
         if definition.ffi_only && !self.ffi_allowed {

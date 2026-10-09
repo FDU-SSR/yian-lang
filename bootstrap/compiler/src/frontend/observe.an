@@ -1,4 +1,6 @@
 from compiler.frontend.lex.token import Token;
+from compiler.frontend.lex.token import KeywordKind;
+from std.num.f64 import to_bits;
 from json.write import Writer;
 from std.core.drop import Drop;
 from std.core.fmt import ToString;
@@ -28,6 +30,9 @@ fn append_token(output: Writer&, token: Token&) {
     output.key("kind");
     output.write_string(token_kind(token));
 
+    output.key("raw");
+    output.write_string(token.raw.as_str());
+
     output.key("value");
     match token.kind() {
         Integer(_, _) => {
@@ -36,15 +41,18 @@ fn append_token(output: Writer&, token: Token&) {
             value.drop();
         },
         Float(_, _) => {
-            let value = token.float_value().to_string();
-            output.write_string(value.as_str());
-            value.drop();
+            output.write_string("");
         },
+        FStrExprBegin | FStrExprEnd | FStrEnd => output.write_string(""),
         _ => output.write_string(token.value()),
     }
 
     output.key("suffix");
     output.write_string(token.suffix());
+    output.key("bits");
+    let bits = match token.kind() { Float(_, _) => to_bits(token.float_value()), _ => 0u64, }.to_string();
+    defer bits.drop();
+    output.write_string(bits.as_str());
     token.span.write_json(output);
     output.end_object();
 }

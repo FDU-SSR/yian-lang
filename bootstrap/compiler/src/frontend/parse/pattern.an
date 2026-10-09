@@ -4,6 +4,8 @@ from compiler.frontend.parse.literal import parse_literal;
 from compiler.frontend.parse.state import Parser;
 from compiler.frontend.parse.type import parse_type;
 from std.core.drop import Drop;
+from std.core.convert import From;
+from std.core.string import String;
 from std.core.ops import Index;
 from std.core.option import Option;
 from std.core.vec import Vec;
@@ -20,6 +22,10 @@ fn pattern_literal(parser: Parser&) -> Option<Literal> {
         match &literal {
             Integer(value) => {
                 value.data.negative = true;
+                let raw = String.from(&"-");
+                raw.push_str(value.data.raw.as_str());
+                value.data.raw.drop();
+                value.data.raw = raw;
                 value.span = minus + value.span;
             },
             _ => {},
@@ -156,7 +162,11 @@ fn pattern_atom(parser: Parser&) -> Option<Pattern&> {
     if token.is_identifier() || parser.keyword_token() {
         return named_pattern(parser);
     }
-    parser.error("Unexpected token in pattern", span);
+    let message = String.from(&"Unexpected token '");
+    defer message.drop();
+    message.push_str(if token.is_eof() { token.value() } else { token.raw.as_str() });
+    message.push_str("' in pattern");
+    parser.error(message.as_str(), span);
     Option<Pattern&>.None
 }
 

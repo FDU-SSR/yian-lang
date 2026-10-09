@@ -103,7 +103,9 @@ impl TryLowerer {
 
     fn trait_call(span: Span, trait: str, self_type: TypeSource, trait_args: Vec<Option<TypeSource>>, method: str, value: Expr&) -> Expr& {
         let args = Vec<Argument&>.new();
-        args.push(argument(self.arena, value));
+        let arg = argument(self.arena, value);
+        arg.span = span;
+        args.push(arg);
         self.arena.alloc_expr(ExprData.TraitCall(
             trait_expr=name_expr(self.arena, identifier(self.arena, span, trait, true)),
             self_type=self_type, trait_args=trait_args,

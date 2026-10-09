@@ -87,6 +87,7 @@ impl ExprChecker {
         let converted = self.coerce(value, type_id)?;
         let evaluator = ConstantEvaluator.new(&self.ctx.session.types, &self.ctx.session.hir, self.sizes);
         let constant = evaluator.evaluate(converted)?;
+        defer constant.drop();
 
         match &constant.value {
             Integer(value) => match self.ctx.session.types.require(type_id)? {
@@ -116,7 +117,7 @@ impl ExprChecker {
                     };
 
                     if !direct_address {
-                        return Result<HirId, AnalysisError>.Err(self.error(binding.span, "Pointer values cannot be destructured; use the address of a place"));
+                        return Result<HirId, AnalysisError>.Err(self.error(binding.data.pattern.span, "Pointer values cannot be destructured; use '&place'"));
                     }
 
                     expected = self.ctx.session.types.reference(*inner);
@@ -131,7 +132,7 @@ impl ExprChecker {
                 let body = self.block(*branch)?;
 
                 if self.type_of(body) != self.ctx.primitives.never {
-                    return Result<HirId, AnalysisError>.Err(self.error(branch.span, "else block of a pattern declaration must diverge"));
+                    return Result<HirId, AnalysisError>.Err(self.error(branch.span, "The else block of a pattern declaration must diverge"));
                 }
 
                 Option<HirId>.Some(body)
@@ -235,7 +236,7 @@ impl ExprChecker {
                 } else {
                     expected
                 };
-                let symbol = self.bind(name.data.name.as_str(), type_id, span, SymbolKind.Variable)?;
+                let symbol = self.bind(name.data.name.as_str(), type_id, name.span, SymbolKind.Variable)?;
                 let inner = self.pattern_node(span, expected, PatternKind.WildcardPattern);
                 PatternKind.BindPattern(BindPattern(symbol, inner))
             },
@@ -246,7 +247,7 @@ impl ExprChecker {
                 } else {
                     expected
                 };
-                let symbol = self.bind(name.data.name.as_str(), type_id, span, SymbolKind.Variable)?;
+                let symbol = self.bind(name.data.name.as_str(), type_id, name.span, SymbolKind.Variable)?;
                 PatternKind.BindPattern(BindPattern(symbol, inner))
             },
             LiteralPattern(literal) => {
@@ -426,7 +427,7 @@ impl ExprChecker {
                                                 }
                                             }
 
-                                            self.check_field_access(definition, *field, span)?;
+                                            self.check_field_access(expected, *field, value.data.name.span)?;
                                             let type_id = substitute(&self.ctx.session.types, field.type_id, &substitutions)?;
                                             fields.push((field.index, self.pattern(value.data.pattern, type_id, borrowed)?));
                                             found = true;
@@ -494,7 +495,7 @@ impl ExprChecker {
                         }
                     } else {
                         if names.len() != first.len() {
-                            return Result<PatternId, AnalysisError>.Err(self.error(span, "OR alternatives must bind the same names"));
+                            return Result<PatternId, AnalysisError>.Err(self.error(alternative.span, "OR alternatives must bind the same names"));
                         }
 
                         let replacements = HashMap<SymbolId, SymbolId>.new();
@@ -503,11 +504,13 @@ impl ExprChecker {
                         for entry in names.entries() {
                             let original = match first.get(entry[0]) {
                                 Some(value) => *value,
-                                None => return Result<PatternId, AnalysisError>.Err(self.error(span, "OR alternatives must bind the same names")),
+                                None => return Result<PatternId, AnalysisError>.Err(self.error(alternative.span, "OR alternatives must bind the same names")),
                             };
 
                             if self.ctx.session.symbols.get(*entry[1]).unwrap().type_id != self.ctx.session.symbols.get(original).unwrap().type_id {
-                                return Result<PatternId, AnalysisError>.Err(self.error(span, "OR binding has a different type or mode"));
+                                let record = self.ctx.session.symbols.get(*entry[1]).unwrap();
+                                return Result<PatternId, AnalysisError>.Err(AnalysisError.named(DiagnosticCode.Type,
+                                    record.span, "OR binding '", self.ctx.session.names.text(record.name), "' has a different type or mode"));
                             }
 
                             replacements.insert(*entry[1], original);

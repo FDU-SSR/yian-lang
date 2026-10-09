@@ -1,0 +1,6 @@
+fn main() {
+    let value = 'x';
+    match value {
+        'a'..'z' => 1,
+    };
+}

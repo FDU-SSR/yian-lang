@@ -1,0 +1,72 @@
+from compiler.config import CompilerConfig, FrontendPhase;
+from compiler.frontend.source import collect_sources, read_source;
+from compiler.frontend.prepare import prepare_file;
+from compiler.common.ids import SourceId;
+from compiler.format.layout import format_tokens;
+from std.core.drop import Drop;
+from std.core.fs import write;
+from std.core.io import Stdout, Stderr;
+from std.core.iter import Iterator, IntoIterator;
+from std.core.fmt import ToString;
+from std.core.string import String;
+from std.core.vec import Vec;
+
+fn drop_paths(paths: Vec<String>&) {
+    for path in *paths { path.drop(); }
+    paths.drop();
+}
+
+fn stdout(text: str) -> bool {
+    match Stdout.new().write_str(text) { Ok(_) => true, Err(problem) => { problem.drop(); false }, }
+}
+
+fn stderr(text: str) {
+    match Stderr.new().write_str(text) { Ok(_) => {}, Err(problem) => problem.drop(), }
+}
+
+// Validate before rendering. A parse failure never writes a partially formatted source.
+pub fn format_cli(config: CompilerConfig&, rewrite: bool, check: bool) -> i32 {
+    let paths = match collect_sources(&config.inputs) {
+        Ok(value) => value,
+        Err(problem) => { defer problem.drop(); stderr(problem.msg()); return 1; },
+    };
+    defer drop_paths(&paths);
+    if paths.is_empty() { stderr("error: --format needs at least one source file\n"); return 1; }
+    if !rewrite && !check && paths.len() != 1 { stderr("error: --format prints one file; add -w or --check\n"); return 1; }
+
+    let changed = 0u64;
+    for path in paths {
+        let source = match read_source(path.as_str()) { Ok(value) => value, Err(problem) => { defer problem.drop(); stderr(problem.msg()); return 1; }, };
+        defer source.drop();
+        let prepared = match prepare_file(SourceId(0), path.as_str(), source.as_str(), FrontendPhase.Ast) {
+            Ok(value) => value,
+            Err(problem) => {
+                problem.drop();
+                stderr("skip ");
+                stderr(path.as_str());
+                stderr(": cannot be formatted\n");
+                continue;
+            },
+        };
+        defer prepared.drop();
+        let formatted = format_tokens(source.as_str(), &prepared.tokens);
+        defer formatted.drop();
+        if formatted.as_str() == source.as_str() { continue; }
+        changed += 1;
+        if check { if !stdout(path.as_str()) || !stdout("\n") { return 1; } } elif rewrite {
+            match write(path.as_str(), formatted.as_slice()) { Ok(_) => {}, Err(problem) => { defer problem.drop(); stderr(problem.msg()); return 1; }, }
+        } elif !stdout(formatted.as_str()) { return 1; }
+    }
+    let total = paths.len().to_string();
+    defer total.drop();
+    let count = changed.to_string();
+    defer count.drop();
+    if check {
+        if !stdout(count.as_str()) || !stdout(" of ") || !stdout(total.as_str()) || !stdout(" file(s) need formatting\n") { return 1; }
+        return if changed > 0 { 1 } else { 0 };
+    }
+    if rewrite {
+        if !stdout(total.as_str()) || !stdout(" file(s) checked, ") || !stdout(count.as_str()) || !stdout(" rewritten\n") { return 1; }
+    }
+    0
+}

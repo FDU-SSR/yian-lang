@@ -5,8 +5,10 @@ from compiler.analysis.session.output import AnalysisOptions;
 from compiler.analysis.constant.evaluate import TypeSizeProvider;
 from compiler.codegen.session import BackendSession, BackendOptions, EmitOptions;
 from compiler.driver.native import NativeDriver, DriverError;
-from compiler.driver.paths import source_roots;
-from compiler.driver.dump import frontend_dump, hir_dump, cfg_dump;
+from compiler.driver.paths import runtime_root;
+from compiler.driver.dump import hir_dump, cfg_dump;
+from compiler.driver.trace import CompilerTrace;
+from compiler.frontend.text import is_alphanumeric;
 from compiler.diagnostics.model import Diagnostic;
 from compiler.diagnostics.render import render;
 from compiler.frontend.source import SourceManager;
@@ -68,8 +70,24 @@ fn cleanup(directory: str, object: str, output: str) {
     match remove_dir(directory) { Ok(_) => {}, Err(error) => error.drop(), }
 }
 
+fn retain_object(object: str, output: str) {
+    let retained = Path.new(output).with_extension("o");
+    defer retained.drop();
+    match rename(object, retained.as_str()) { Ok(_) => {}, Err(problem) => problem.drop(), }
+}
+
 fn destination(config: CompilerConfig&, session: AnalysisSession&) -> String {
-    match &config.output { Some(value) => return String.from(&value.as_str()), None => {}, }
+    match &config.output {
+        Some(value) => {
+            if config.target == OutputKind.Ll || config.target == OutputKind.Bc || config.target == OutputKind.Asm {
+                let path = Path.new(value.as_str()).with_extension(config.target.extension());
+                defer path.drop();
+                return String.from(&path.as_str());
+            }
+            return String.from(&value.as_str());
+        },
+        None => {},
+    }
     if config.target == OutputKind.Exe { return String.from(&"build/a.out"); }
     let source = session.unit(UnitId(0u64)).unwrap().source;
     let file = session.source(source).unwrap().path();
@@ -83,17 +101,25 @@ fn destination(config: CompilerConfig&, session: AnalysisSession&) -> String {
 }
 
 pub fn compile_cli(config: CompilerConfig&) -> bool {
+    let trace = match CompilerTrace.new(config, false) { Ok(value) => value, Err(problem) => { defer problem.drop(); write_error(problem.as_str()); return false; }, };
+    defer trace.drop();
+    defer trace.report();
+    trace.event("main", 3, "compiling source inputs", Option<str>.None);
+    // Native option validation also applies to none/IR targets; analysis ignores link flags.
+    for library in config.link_libraries {
+        let valid = !library.is_empty() && !library.as_str().starts_with("-");
+        for current in library.as_str().chars() {
+            if !is_alphanumeric(current) && !"_+.-".contains_char(current) { valid = false; }
+        }
+        if !valid { write_error("error: invalid --link-lib name\n"); return false; }
+    }
+    let started = trace.start("main", "source preparation");
     let session = match prepare(config) {
         Ok(value) => value,
         Err(problem) => { defer problem.drop(); report(&problem.diagnostic, Option<AnalysisSession&>.None); return false; },
     };
     defer session.drop();
-    if config.dump {
-        match frontend_dump(&session) {
-            Ok(_) => {},
-            Err(problem) => { defer problem.drop(); report(&problem.diagnostic, Option<AnalysisSession&>.Some(&session)); return false; },
-        }
-    }
+    trace.finish("source preparation", started);
     let backend = match BackendSession.new(&session, BackendOptions(config.raw_pointers, config.optimization)) {
         Ok(value) => value,
         Err(problem) => { defer problem.drop(); report(&problem.diagnostic, Option<AnalysisSession&>.Some(&session)); return false; },
@@ -101,12 +127,16 @@ pub fn compile_cli(config: CompilerConfig&) -> bool {
     defer backend.drop();
     let options = AnalysisOptions.new();
     options.sizes = Option<TypeSizeProvider&>.Some(backend.size_provider());
-    options.require_entry = config.target == OutputKind.Exe || config.target == OutputKind.Obj;
+    options.require_entry = config.target != OutputKind.None;
+    options.entry_optional = false;
+    options.trace = Option<CompilerTrace&>.Some(&trace);
+    started = trace.start("main", "semantic analysis");
     let output = match session.analyze(options) {
         Ok(value) => value,
         Err(problem) => { defer problem.drop(); report(&problem.diagnostic, Option<AnalysisSession&>.Some(&session)); return false; },
     };
     defer output.drop();
+    trace.finish("semantic analysis", started);
     if config.dump {
         match hir_dump(&session, &output) {
             Ok(_) => {},
@@ -114,11 +144,13 @@ pub fn compile_cli(config: CompilerConfig&) -> bool {
         }
     }
     for warning in output.warnings { report(warning, Option<AnalysisSession&>.Some(&session)); }
+    started = trace.start("cfg", "HIR to CFG");
     let cfg = match backend.lower(&output) {
         Ok(value) => value,
         Err(problem) => { defer problem.drop(); report(&problem.diagnostic, Option<AnalysisSession&>.Some(&session)); return false; },
     };
     defer cfg.drop();
+    trace.finish("HIR to CFG", started);
     if config.dump {
         match cfg_dump(&cfg) {
             Ok(_) => {},
@@ -137,11 +169,13 @@ pub fn compile_cli(config: CompilerConfig&) -> bool {
             Err(problem) => { defer problem.drop(); write_error(problem.msg()); return false; },
         }
     }
+    started = trace.start("llvm", "LLVM lowering and emission");
     let emission = match backend.emit(&cfg, EmitOptions(config.target)) {
         Ok(value) => value,
         Err(problem) => { defer problem.drop(); report(&problem.diagnostic, Option<AnalysisSession&>.Some(&session)); return false; },
     };
     defer emission.drop();
+    trace.finish("LLVM lowering and emission", started);
     let path = destination(config, &session);
     defer path.drop();
     let parent = match Path.new(path.as_str()).parent() { Some(value) => if value.as_str() == "" { "." } else { value.as_str() }, None => ".", };
@@ -161,21 +195,53 @@ pub fn compile_cli(config: CompilerConfig&) -> bool {
         Err(problem) => { defer problem.drop(); write_error(problem.msg()); return false; },
     }
     if config.target == OutputKind.Exe || config.target == OutputKind.Obj {
-        let roots = match source_roots(config, session.package_map()) {
+        let root = match runtime_root(config) {
             Ok(value) => value,
             Err(problem) => { defer problem.drop(); report(&problem.diagnostic, Option<AnalysisSession&>.Some(&session)); return false; },
         };
-        defer roots.drop();
-        let driver = match NativeDriver.new(roots.checkout.as_str(), session.package_map()) {
+        defer root.drop();
+        let driver = match NativeDriver.new(root.as_str(), session.package_map()) {
             Ok(value) => value,
-            Err(problem) => { defer problem.drop(); driver_error(&problem); return false; },
+            Err(problem) => {
+                defer problem.drop();
+                retain_object(object.as_str(), path.as_str());
+                driver_error(&problem);
+                return false;
+            },
         };
         defer driver.drop();
-        match driver.link(object.as_str(), path.as_str(), config.optimization, config.target == OutputKind.Obj,
+        started = trace.start("main", "native linking");
+        let linked = match driver.link(object.as_str(), temporary.as_str(), config.optimization, config.target == OutputKind.Obj,
             &config.link_libraries, &config.link_searches) {
-            Ok(artifact) => { artifact.drop(); true },
-            Err(problem) => { defer problem.drop(); driver_error(&problem); false },
-        }
+            Ok(artifact) => {
+                artifact.drop();
+                if config.target == OutputKind.Obj {
+                    let intermediate = Path.new(path.as_str()).with_extension("o");
+                    defer intermediate.drop();
+                    if intermediate.as_str() != path.as_str() {
+                        match rename(object.as_str(), intermediate.as_str()) {
+                            Ok(_) => {},
+                            Err(problem) => { defer problem.drop(); write_error(problem.msg()); return false; },
+                        }
+                    }
+                }
+                // Publish only after both the native artifact and any required intermediate are complete.
+                match rename(temporary.as_str(), path.as_str()) {
+                    Ok(_) => true,
+                    Err(problem) => { defer problem.drop(); write_error(problem.msg()); false },
+                }
+            },
+            Err(problem) => {
+                defer problem.drop();
+                // The reference retains a complete user object when executable linking fails.
+                // It is an inspectable LLVM artifact; the failed executable is never published.
+                retain_object(object.as_str(), path.as_str());
+                driver_error(&problem);
+                false
+            },
+        };
+        trace.finish("native linking", started);
+        linked
     } else {
         match rename(object.as_str(), path.as_str()) {
             Ok(_) => true,

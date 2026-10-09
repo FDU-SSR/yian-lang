@@ -1,0 +1,59 @@
+from compiler.diagnostics.model import Diagnostic, DiagnosticLocation;
+from compiler.frontend.source import SourceManager, Span, Position;
+from std.collections.sort import sort_by;
+from std.core.drop import Drop;
+from std.core.iter import Iterator, IntoIterator;
+from std.core.ops import Index;
+from std.core.vec import Vec;
+
+fn path(diagnostic: Diagnostic&, sources: SourceManager&) -> str {
+    match &diagnostic.location {
+        Some(location) => match location {
+            Source(value) => sources.file(value.source.index).path(),
+            Detached(value, _) => value.as_str(),
+        },
+        None => "",
+    }
+}
+
+fn compare_text(left: str, right: str) -> i32 {
+    let a = left.as_slice();
+    let b = right.as_slice();
+    let index = 0u64;
+    while index < a.len() && index < b.len() {
+        if a[index] < b[index] { return -1; }
+        if a[index] > b[index] { return 1; }
+        index += 1;
+    }
+    if a.len() < b.len() { -1 } elif a.len() > b.len() { 1 } else { 0 }
+}
+
+fn location(diagnostic: Diagnostic&) -> Span {
+    match &diagnostic.location { Some(value) => value.span(), None => Span(Position(0, 0), Position(0, 0)), }
+}
+
+// Recovery presentation follows Python's stable path/position/code order. Strict errors are never reordered.
+// Sort an index permutation so diagnostics keep exactly one owner throughout the operation.
+pub fn order_diagnostics(diagnostics: Vec<Diagnostic>&, sources: SourceManager&) {
+    let order = Vec<u64>.new();
+    defer order.drop();
+    for index in 0u64..diagnostics.len() { order.push(index); }
+    sort_by(order.as_slice(), |records = diagnostics, manager=sources| (left: u64&, right: u64&) -> bool {
+            let a = &records[*left];
+            let b = &records[*right];
+            let paths = compare_text(path(a, manager), path(b, manager));
+            if paths != 0 { return paths < 0; }
+            let a_span = location(a);
+            let b_span = location(b);
+            if a_span.start.row != b_span.start.row { return a_span.start.row < b_span.start.row; }
+            if a_span.start.column != b_span.start.column { return a_span.start.column < b_span.start.column; }
+            let codes = compare_text(a.code.text(), b.code.text());
+            if codes != 0 { return codes < 0; }
+            return *left < *right;
+        });
+
+    let sorted = Vec<Diagnostic>.new();
+    for index in order { sorted.push(diagnostics[*index]); }
+    diagnostics.drop();
+    *diagnostics = sorted;
+}

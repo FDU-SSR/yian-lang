@@ -121,7 +121,7 @@ impl FunctionLowering {
             TraitObject(trait_type) => *trait_type,
             _ => return Result<IrValue, CodegenError>.Err(CodegenError.invalid("dynamic call has no trait identity")),
         };
-        let methods = store_object_methods(&self.owner.session.types, trait_type)?;
+        let methods = store_object_methods(&self.owner.session.types, &self.owner.session.names, trait_type)?;
         defer methods.drop();
         if slot >= methods.len() || methods[slot] != method {
             return Result<IrValue, CodegenError>.Err(CodegenError.invalid("dynamic call slot has an inconsistent signature"));

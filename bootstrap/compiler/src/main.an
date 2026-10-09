@@ -13,6 +13,7 @@ from compiler.frontend.source import SourceManager, collect_sources, Span;
 from json.write import Writer;
 from compiler.frontend.observe import append_token_file;
 from compiler.frontend.ast.format import AstFormatter;
+from compiler.format.cli import format_cli;
 
 fn release_paths(paths: Vec<String>&) {
     let index: u64 = 0u64;
@@ -65,39 +66,10 @@ fn diagnostic_end(writer: Writer&) {
     emit_json(writer);
 }
 
-// I/O diagnostics retain the message and include the raw system error code when available.
+// Frontend observations expose the message; errno remains part of the internal I/O error.
 fn io_error_fields(writer: Writer&, problem: IoError&) {
     writer.key("message");
     writer.write_string(problem.msg());
-
-    match problem.raw_os_error() {
-        Some(code) => {
-            writer.key("osError");
-            writer.write_i64(i64(code));
-        },
-        None => {},
-    }
-}
-
-// Path-collection failures have no file observations; output empty files and an I/O diagnostic.
-fn collection_diagnostic(problem: IoError&) {
-    let writer = Writer.new();
-    defer writer.drop();
-
-    writer.begin_object();
-    writer.key("version");
-    writer.write_u64(1);
-
-    writer.key("files");
-    writer.begin_array();
-    writer.end_array();
-
-    writer.key("diagnostic");
-    writer.begin_object();
-    writer.key("stage");
-    writer.write_string("io");
-    io_error_fields(&writer, problem);
-    diagnostic_end(&writer);
 }
 
 fn source_diagnostic(output: Writer&, stage: str, path: str, message: str, span: Span) {
@@ -158,7 +130,10 @@ fn frontend(phase: FrontendPhase, inputs: Vec<String>&) -> bool {
         Ok(value) => value,
         Err(problem) => {
             defer problem.drop();
-            collection_diagnostic(&problem);
+            // Input discovery precedes the observation response and reports CLI errors on stderr.
+            write_error("error: ");
+            write_error(problem.msg());
+            write_error("\n");
             return false;
         },
     };
@@ -237,6 +212,8 @@ fn main() {
                     1i32
                 },
                 Compile => if compile_cli(&config) { 0i32 } else { 1i32 },
+                Format(rewrite, check) => format_cli(&config, *rewrite, *check),
+                Invalid(message) => { write_error(message.as_str()); 1i32 },
             }
         },
         Err(message) => {

@@ -7,3 +7,8 @@ ffi = true
 [dependencies]
 json = { path = "../json" }
 llvm = { path = "../llvm" }
+
+[native.llvm]
+major = 22
+components = ["core"]
+sources = ["native/host.c"]

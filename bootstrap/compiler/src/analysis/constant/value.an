@@ -1,4 +1,7 @@
 from compiler.common.ids import NameId;
+from compiler.analysis.constant.big_integer import BigInteger;
+from std.core.clone import Clone;
+from std.core.drop import Drop;
 from std.core.result import Result;
 
 pub enum ConstEvalError {
@@ -127,6 +130,9 @@ pub enum ConstValue {
     Integer {
         value: IntegerValue
     },
+    LargeInteger {
+        value: BigInteger
+    },
     Float {
         value: f64
     },
@@ -139,4 +145,23 @@ pub enum ConstValue {
     String {
         name: NameId
     },
+}
+
+impl Clone for ConstValue {
+    pub fn clone() -> Self {
+        match self {
+            Integer(value) => Self.Integer(*value),
+            LargeInteger(value) => Self.LargeInteger(value.clone()),
+            Float(value) => Self.Float(*value),
+            Bool(value) => Self.Bool(*value),
+            Char(value) => Self.Char(*value),
+            String(value) => Self.String(*value),
+        }
+    }
+}
+
+impl Drop for ConstValue {
+    pub fn drop() {
+        match self { LargeInteger(value) => value.drop(), _ => {}, }
+    }
 }

@@ -21,7 +21,7 @@ impl Lowering {
         let node = self.session.hir.require(id)?;
         if self.current.is_none() {
             let type_id = match self.session.types.require(node.type_id)? {
-                IntLiteral => self.session.types.primitive(TypeData.Integer(64u32, true))?,
+                IntLiteral => self.session.types.primitive(TypeData.Integer(32u32, true))?,
                 FloatLiteral => self.session.types.primitive(TypeData.Float(64u32))?,
                 _ => node.type_id,
             };
@@ -38,7 +38,7 @@ impl Lowering {
         let result = match &node.kind {
             IntLiteral(value) => {
                 let type_id = match self.session.types.require(node.type_id)? {
-                    IntLiteral => self.session.types.primitive(TypeData.Integer(64u32, value.is_negative()))?,
+                    IntLiteral => self.session.types.primitive(TypeData.Integer(32u32, true))?,
                     _ => node.type_id,
                 };
                 self.function.add_value(type_id, ValueKind.Integer(
@@ -523,7 +523,13 @@ impl Lowering {
             }
             return self.emit(node.span, node.type_id, Operation.PointerOffset(left, right, value.op == BinaryOperator.Sub));
         }
-        self.emit(node.span, node.type_id, Operation.Binary(op, left, right))
+        // Mathematical literal types survive semantic checking; runtime CFG operands use their default type.
+        let type_id = match self.session.types.require(node.type_id)? {
+            IntLiteral => self.session.types.primitive(TypeData.Integer(32u32, true))?,
+            FloatLiteral => self.session.types.primitive(TypeData.Float(64u32))?,
+            _ => node.type_id,
+        };
+        self.emit(node.span, type_id, Operation.Binary(op, left, right))
     }
 
 }

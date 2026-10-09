@@ -2,6 +2,9 @@ from compiler.analysis.resolution.context import ResolutionContext;
 from compiler.analysis.ty.model import TypeData;
 from compiler.analysis.ty.callable import instance_substitutions;
 from compiler.analysis.ty.substitution import substitute;
+from compiler.analysis.ty.display import type_text;
+from compiler.analysis.ty.validation import validate_unsized;
+from compiler.analysis.ty.trait_object import object_methods;
 from compiler.common.ids import TypeId, DefId;
 from compiler.common.location import SourceSpan;
 from compiler.diagnostics.model import AnalysisError, DiagnosticCode;
@@ -11,6 +14,7 @@ from std.core.iter import Iterator, IntoIterator;
 from std.core.option import Option;
 from std.core.result import Result;
 from std.core.vec import Vec;
+from std.core.string import String;
 
 enum StorageVisit {
     Enter {
@@ -22,12 +26,15 @@ enum StorageVisit {
     LeaveDefinition {
         definition: DefId
     },
+    LeavePath,
 }
 
 // References and pointers terminate the by-value graph; nominal identities detect recursive storage.
 fn check_value(ctx: ResolutionContext&, type_id: TypeId, active_types: HashSet<TypeId>&, active_definitions: HashSet<DefId>&, expand: bool, location: SourceSpan) -> Result<(), AnalysisError> {
     let pending = Vec<StorageVisit>.new();
     defer pending.drop();
+    let path = Vec<TypeId>.new();
+    defer path.drop();
     pending.push(StorageVisit.Enter(type_id));
 
     while pending.len() != 0 {
@@ -35,12 +42,15 @@ fn check_value(ctx: ResolutionContext&, type_id: TypeId, active_types: HashSet<T
             Enter(value) => value,
             LeaveType(value) => {
                 active_types.remove(&value);
+                path.pop();
                 continue;
             },
             LeaveDefinition(value) => {
                 active_definitions.remove(&value);
+                path.pop();
                 continue;
             },
+            LeavePath => { path.pop(); continue; },
         };
 
         match ctx.session.types.require(current)? {
@@ -52,10 +62,22 @@ fn check_value(ctx: ResolutionContext&, type_id: TypeId, active_types: HashSet<T
                     active_definitions.contains(id)
                 };
                 if recursive {
-                    return Result<(), AnalysisError>.Err(AnalysisError.named(DiagnosticCode.RecursiveStorage,
-                        Option<SourceSpan>.Some(definition.header().span), "Self-referential type detected: ",
-                        ctx.session.names.text(definition.header().name), ""));
+                    let message = String.from(&"Self-referential type detected: ");
+                    defer message.drop();
+                    for ancestor in path {
+                        let name = type_text(ctx, *ancestor);
+                        defer name.drop();
+                        message.push_str(name.as_str());
+                        message.push_str(" -> ");
+                    }
+                    let name = type_text(ctx, current);
+                    defer name.drop();
+                    message.push_str(name.as_str());
+                    return Result<(), AnalysisError>.Err(AnalysisError.user(DiagnosticCode.RecursiveStorage,
+                        Option<SourceSpan>.None, message.as_str()));
                 }
+
+                path.push(current);
 
                 if expand {
                     active_types.insert(current);
@@ -70,7 +92,10 @@ fn check_value(ctx: ResolutionContext&, type_id: TypeId, active_types: HashSet<T
 
                 match definition.body()? {
                     Struct(value) => {
-                        for field in value.fields {
+                        let index = value.fields.len();
+                        while index != 0 {
+                            index -= 1;
+                            let field = &value.fields[index];
                             let field_type = if expand {
                                 substitute(&ctx.session.types, field.type_id, &substitutions)?
                             } else {
@@ -80,7 +105,10 @@ fn check_value(ctx: ResolutionContext&, type_id: TypeId, active_types: HashSet<T
                         }
                     },
                     Enum(value) => {
-                        for variant in value.variants {
+                        let index = value.variants.len();
+                        while index != 0 {
+                            index -= 1;
+                            let variant = &value.variants[index];
                             match &variant.payload {
                                 Some(payload) => {
                                     let payload_type = if expand {
@@ -97,18 +125,18 @@ fn check_value(ctx: ResolutionContext&, type_id: TypeId, active_types: HashSet<T
                 }
             },
             Tuple(elements) => {
-                for element in *elements {
-                    pending.push(StorageVisit.Enter(*element));
+                path.push(current);
+                pending.push(StorageVisit.LeavePath);
+                let index = elements.len();
+                while index != 0 {
+                    index -= 1;
+                    pending.push(StorageVisit.Enter((*elements)[index]));
                 }
             },
-            Array(element, length) => {
-                let empty = match ctx.session.types.require(*length)? {
-                    LiteralValue(bits, _, _) => *bits == 0, _ => false
-                };
-
-                if !empty {
-                    pending.push(StorageVisit.Enter(*element));
-                }
+            Array(element, _) => {
+                path.push(current);
+                pending.push(StorageVisit.LeavePath);
+                pending.push(StorageVisit.Enter(*element));
             },
             _ => {},
         }
@@ -133,5 +161,16 @@ pub fn finalize_types(ctx: ResolutionContext&) -> Result<(), AnalysisError> {
         index += 1;
     }
 
+    validate_unsized(ctx)?;
+    let count = ctx.session.types.len();
+    for type_index in 0u64..count {
+        match ctx.session.types.require(TypeId(type_index))? {
+            TraitObject(trait_id) => {
+                let methods = object_methods(ctx, *trait_id)?;
+                methods.drop();
+            },
+            _ => {},
+        }
+    }
     Result<(), AnalysisError>.Ok(())
 }

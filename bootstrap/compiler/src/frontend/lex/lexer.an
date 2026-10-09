@@ -1,5 +1,6 @@
 from compiler.frontend.lex.token import Token, TokenPayload, KeywordKind, PunctuatorKind, IntSuffix, FloatSuffix;
 from compiler.frontend.source import Position, Span;
+from compiler.frontend.text import SourceText;
 from std.core.convert import From;
 from std.core.drop import Drop;
 from std.core.iter import Iterator, IteratorExt, Peekable;
@@ -60,19 +61,10 @@ fn is_float_literal(raw: str) -> bool {
     return false;
 }
 
-// Signs may only follow exponent markers; hexadecimal e/E are digits rather than exponent markers.
-fn number_part(raw: str, code: u32) -> bool {
-    if code == u32('+') || code == u32('-') {
-        let bytes = raw.as_slice();
-        let last = bytes[bytes.len() - 1u64];
-        if last == b'p' || last == b'P' {
-            return true;
-        }
-
-        return (last == b'e' || last == b'E') && !hexadecimal_literal(raw);
-    }
-
-    return decimal_digit(code) || code == u32('_') || ascii_letter(code);
+// Match the reference lexer's numeric token boundary, including signs validated by numeric parsing.
+fn number_part(code: u32) -> bool {
+    if code > 127 { return false; }
+    return "0123456789_xXbBoOeEpP+-abcdefABCDEFiuf".contains_char(char(code));
 }
 
 fn integer_suffix(raw: str) -> IntSuffix {
@@ -179,6 +171,7 @@ fn simple_escape(code: char) -> Option<char> {
 }
 
 pub struct Lexer {
+    source: str,
     cursor: Peekable<CharIter, char>,
     row: u64,
     column: u64,
@@ -187,7 +180,7 @@ pub struct Lexer {
 
 impl Lexer {
     static pub fn new(source: str) -> Self {
-        return Self(cursor=source.chars().peekable(),
+        return Self(source=source, cursor=source.chars().peekable(),
             row=0u64, column=0u64, tokens=Vec<Token>.new());
     }
 
@@ -355,11 +348,30 @@ impl Lexer {
             return Result<char, LexError>.Ok(val=char(code));
         }
 
-        return Result<char, LexError>.Err(msg=self.fail("invalid escape sequence", start));
+        let message = String.from(&"Invalid escape sequence: \\");
+        defer message.drop();
+        message.push(next);
+        return Result<char, LexError>.Err(msg=self.fail(message.as_str(), start));
     }
 
     // Decode literals; character and string tokens receive storage, while byte literals receive only a numeric value.
     fn quoted(start: Position, quote: u32, byte_literal: bool) -> Result<Token, LexError> {
+        // Finish the literal before decoding, so malformed escapes identify the whole token.
+        let body = String.new();
+        defer body.drop();
+        while !self.at_end() && self.peek() != quote {
+            let code = self.advance();
+            body.push(char(code));
+            if code == u32('\\') && !self.at_end() { body.push(char(self.advance())); }
+        }
+        if self.at_end() {
+            return Result<Token, LexError>.Err(msg=self.fail(if quote == u32('"') {
+                    "Unterminated string literal"
+                } else { "Unterminated char literal" }, start));
+        }
+        self.advance();
+
+        let decoder = Lexer.new(body.as_str());
         let decoded = String.new();
         let transferred = false;
         defer {
@@ -370,20 +382,22 @@ impl Lexer {
 
         let count: u64 = 0u64;
 
-        while !self.at_end() && self.peek() != quote {
-            let code = self.advance();
+        while !decoder.at_end() {
+            let code = decoder.advance();
             if code == u32('\\') {
-                decoded.push(self.escape(start)?);
+                match decoder.escape(start) {
+                    Ok(value) => decoded.push(value),
+                    Err(error) => {
+                        error.span = Span(start, self.position());
+                        return Result<Token, LexError>.Err(error);
+                    },
+                }
             } else {
                 decoded.push(char(code));
             }
             count += 1u64;
         }
 
-        if self.at_end() {
-            return Result<Token, LexError>.Err(msg=self.fail("Unterminated literal", start));
-        }
-        self.advance();
         if quote == u32('"') {
             transferred = true;
             return Result<Token, LexError>.Ok(val=self.token(TokenPayload.StringLiteral(value=decoded), start));
@@ -554,7 +568,7 @@ impl Lexer {
         defer raw.drop();
         raw.push(char(code));
 
-        while !self.at_end() && number_part(raw.as_str(), self.peek()) {
+        while !self.at_end() && number_part(self.peek()) {
             raw.push(char(self.advance()));
         }
 
@@ -562,7 +576,7 @@ impl Lexer {
             raw.push(char(self.advance()));
             raw.push(char(self.advance()));
 
-            while !self.at_end() && number_part(raw.as_str(), self.peek()) {
+            while !self.at_end() && number_part(self.peek()) {
                 raw.push(char(self.advance()));
             }
         }
@@ -661,6 +675,19 @@ impl Lexer {
             let done = next.is_eof();
             self.tokens.push(next);
             if done {
+                // Preserve spelling before handing tokens to the parser. Marker spans can be empty.
+                let text = SourceText.new(self.source);
+                defer text.drop();
+                let index = 0u64;
+                while index < self.tokens.len() {
+                    let token = &self.tokens[index];
+                    let raw = match token.kind() {
+                        FStrStart => "f\"", FStrExprBegin => "{", FStrExprEnd => "}", FStrEnd => "\"",
+                        _ => text.slice(token.span),
+                    };
+                    token.raw = String.from(&raw);
+                    index += 1;
+                }
                 let output = self.tokens;
                 self.tokens = Vec<Token>.new();
                 return Result<Vec<Token>, LexError>.Ok(val=output);

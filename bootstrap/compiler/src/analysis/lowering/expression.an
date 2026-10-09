@@ -130,8 +130,8 @@ impl ExprChecker {
                             for argument in *arguments {
                                 if has_generic(&self.ctx.session.types, *argument) {
                                     return Result<HirId, AnalysisError>.Err(AnalysisError.named(DiagnosticCode.Type,
-                                        Option<SourceSpan>.Some(self.ctx.span(self.unit, span)), "cannot use generic function '",
-                                        self.ctx.session.names.text(header.name), "' as a value"));
+                                        Option<SourceSpan>.Some(self.ctx.span(self.unit, (*init.unwrap()).span)), "cannot use generic function '",
+                                        self.ctx.session.names.text(header.name), "' as a value; a function variable must bind a concrete function"));
                                 }
                             }
                         }
@@ -176,7 +176,7 @@ impl ExprChecker {
 
                 target = self.coerce(target, target_type)?;
                 match self.ctx.session.types.require(target_type)? {
-                    Pointer(_) => return Result<HirId, AnalysisError>.Err(self.error(span, "match does not accept pointer scrutinees")),
+                    Pointer(_) => return Result<HirId, AnalysisError>.Err(self.error((*value).span, "match does not accept pointer scrutinees; use '&value' or a reference")),
                     _ => {},
                 }
 
@@ -280,7 +280,12 @@ impl ExprChecker {
                     Err(problem) => {
                         if problem.kind == AnalysisErrorKind.NotConstant {
                             problem.kind = AnalysisErrorKind.User;
-                            return Result<HirId, AnalysisError>.Err(problem.with_message("comptime if condition is not compile-time evaluable: condition depends on runtime state or has side effects"));
+                            let message = String.from(&"comptime if condition is not compile-time evaluable: ");
+                            defer message.drop();
+                            message.push_str(if problem.diagnostic.message.as_str() == "expression is not compile-time evaluable" {
+                                    "condition depends on runtime state or has side effects"
+                                } else { problem.diagnostic.message.as_str() });
+                            return Result<HirId, AnalysisError>.Err(problem.with_message(message.as_str()));
                         }
                         if problem.diagnostic.code != DiagnosticCode.Constant {
                             return Result<HirId, AnalysisError>.Err(problem);
@@ -293,6 +298,7 @@ impl ExprChecker {
                     },
                 };
 
+                defer constant.drop();
                 match &constant.value {
                     Bool(value) => if *value {
                         self.block(*then_branch)

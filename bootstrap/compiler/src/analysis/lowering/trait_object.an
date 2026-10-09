@@ -14,6 +14,7 @@ from std.core.iter import Iterator, IntoIterator;
 from std.core.option import Option;
 from std.core.result import Result;
 from std.core.vec import Vec;
+from std.core.string import String;
 
 impl ExprChecker {
     pub fn make_trait_object(id: HirId, expected: TypeId, trait_id: TypeId) -> Result<HirId, AnalysisError> {
@@ -39,8 +40,15 @@ impl ExprChecker {
         if !implements(self.ctx, concrete, trait_id, node.span)? {
             let trait_name = type_text(self.ctx, trait_id);
             defer trait_name.drop();
-            return Result<HirId, AnalysisError>.Err(AnalysisError.named(DiagnosticCode.Type,
-                Option<SourceSpan>.Some(node.span), "concrete type does not implement '", trait_name.as_str(), "'"));
+            let concrete_name = type_text(self.ctx, concrete);
+            defer concrete_name.drop();
+            let message = String.from(&"type '");
+            defer message.drop();
+            message.push_str(concrete_name.as_str());
+            message.push_str("' does not implement '");
+            message.push_str(trait_name.as_str());
+            message.push_str("'");
+            return Result<HirId, AnalysisError>.Err(self.error(node.span.span, message.as_str()));
         }
 
         let implementations = Vec<TypeId>.new();

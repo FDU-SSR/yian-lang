@@ -1,0 +1,13 @@
+from std.core.io import print;
+from std.core.drop import Drop;
+
+// Observe the reference's runtime casts separately from its compile-time conversion.
+fn main() {
+    let value = true;
+    let integer = u64(value);
+    let floating = f64(value);
+    let constant = comptime if u64(true) == 1u64 { 1 } else { 0 };
+    let text = f"{integer}, {floating}, {constant}\n";
+    defer text.drop();
+    print(text.as_str());
+}

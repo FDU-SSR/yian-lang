@@ -2,9 +2,9 @@ from compiler.common.ids import SourceId;
 from compiler.common.location import SourceSpan;
 from compiler.analysis.session.session import AnalysisSession, SourcePermissions;
 from compiler.config import FrontendPhase;
-from compiler.diagnostics.model import DiagnosticCode, AnalysisError;
+from compiler.diagnostics.model import DiagnosticCode, AnalysisError, AnalysisStage;
 from compiler.diagnostics.render import detach;
-from compiler.frontend.prepare import PreparedFile, prepare_file;
+from compiler.frontend.prepare import PreparedFile, prepare_file, PreparationError, PreparationStage;
 from compiler.frontend.source import collect_sources;
 from compiler.package.model import PackageMap;
 from compiler.package.provenance import SourceTrust;
@@ -15,9 +15,18 @@ from std.core.result import Result;
 from std.core.string import String;
 from std.core.vec import Vec;
 
+// Observers borrow the partial session synchronously; preparation never retains them.
+pub trait PreparationObserver {
+    fn stage_complete(stage: PreparationStage, session: AnalysisSession&) -> Result<(), AnalysisError>;
+}
+
 impl AnalysisSession {
     // Failure releases the partial session after its diagnostic locations are detached.
     static pub fn prepare(inputs: Vec<String>&, trust: SourceTrust, packages: Option<PackageMap>, raw_pointers: bool, allow_ffi: bool) -> Result<Self, AnalysisError> {
+        Self.prepare_observed(inputs, trust, packages, raw_pointers, allow_ffi, Option<PreparationObserver&>.None)
+    }
+
+    static pub fn prepare_observed(inputs: Vec<String>&, trust: SourceTrust, packages: Option<PackageMap>, raw_pointers: bool, allow_ffi: bool, observer: Option<PreparationObserver&>) -> Result<Self, AnalysisError> {
         let session = Self.new(trust, packages, raw_pointers);
         let transferred = false;
         defer {
@@ -36,8 +45,12 @@ impl AnalysisSession {
 
         defer release_paths(&paths);
 
-        for path in paths {
-            let source = session.load_source(path.as_str())?;
+        // Load all sources before lexing, then complete each stage across all files in input order.
+        // Partial units remain owned by the session; a later-stage failure cannot leak earlier trees.
+        for path in paths { session.load_source(path.as_str())?; }
+        let index = 0u64;
+        while index < session.sources.len() {
+            let source = SourceId(index);
             let prepared = match session.prepare_source(source) {
                 Ok(value) => value,
                 Err(error) => {
@@ -56,7 +69,19 @@ impl AnalysisSession {
             let file = session.sources.file(source.index);
             let permissions = session.classify(file.canonical_path(), allow_ffi);
             session.accept(prepared, permissions);
+            index += 1;
         }
+        match observer { Some(value) => { value.stage_complete(PreparationStage.Lex, &session)?; }, None => {}, }
+
+        for unit in session.units {
+            session.finish_preparation(unit.prepared.parse(), unit.source)?;
+        }
+        match observer { Some(value) => { value.stage_complete(PreparationStage.Parse, &session)?; }, None => {}, }
+        for unit in session.units {
+            let file = session.sources.file(unit.source.index);
+            session.finish_preparation(unit.prepared.desugar(file.path()), unit.source)?;
+        }
+        match observer { Some(value) => { value.stage_complete(PreparationStage.Desugar, &session)?; }, None => {}, }
 
         transferred = true;
         Result<Self, AnalysisError>.Ok(session)
@@ -77,12 +102,29 @@ impl AnalysisSession {
     fn prepare_source(source: SourceId) -> Result<PreparedFile, AnalysisError> {
         let file = self.sources.file(source.index);
 
-        match prepare_file(source, file.path(), file.text(), FrontendPhase.Desugared) {
+        match prepare_file(source, file.path(), file.text(), FrontendPhase.Tokens) {
             Ok(value) => Result<PreparedFile, AnalysisError>.Ok(value),
             Err(error) => {
                 defer error.drop();
+                let stage = match error.stage { Lex => AnalysisStage.Lex, Parse => AnalysisStage.Parse, Desugar => AnalysisStage.Desugar, };
                 Result<PreparedFile, AnalysisError>.Err(AnalysisError.user(error.code,
-                    Option<SourceSpan>.Some(SourceSpan(source, error.span)), error.message.as_str()))
+                    Option<SourceSpan>.Some(SourceSpan(source, error.span)), error.message.as_str()).with_stage(stage))
+            },
+        }
+    }
+
+    fn finish_preparation(result: Result<(), PreparationError>, source: SourceId) -> Result<(), AnalysisError> {
+        match result {
+            Ok(_) => Result<(), AnalysisError>.Ok(()),
+            Err(error) => {
+                defer error.drop();
+                let stage = match error.stage { Lex => AnalysisStage.Lex, Parse => AnalysisStage.Parse, Desugar => AnalysisStage.Desugar, };
+                let problem = AnalysisError.user(error.code, Option<SourceSpan>.Some(SourceSpan(source, error.span)),
+                    error.message.as_str()).with_stage(stage);
+                match detach(&problem.diagnostic, &self.sources) {
+                    Ok(_) => Result<(), AnalysisError>.Err(problem),
+                    Err(detach_error) => { problem.drop(); Result<(), AnalysisError>.Err(detach_error) },
+                }
             },
         }
     }

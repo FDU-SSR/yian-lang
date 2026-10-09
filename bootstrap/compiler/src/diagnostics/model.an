@@ -105,6 +105,20 @@ pub enum Severity {
     Note,
 }
 
+pub enum AnalysisStage {
+    Lex, Parse, Desugar, Prelude, Restricted, Resolve, Finalize, TypeCheck, Coverage, Assignment, Codegen,
+}
+
+impl AnalysisStage {
+    pub fn name() -> str {
+        match self {
+            Lex => "lex", Parse => "parse", Desugar => "desugar", Prelude => "prelude",
+            Restricted => "restricted_ops", Resolve => "resolve", Finalize => "finalize",
+            TypeCheck => "type_check", Coverage => "match_coverage", Assignment => "definite_assignment", Codegen => "codegen",
+        }
+    }
+}
+
 pub enum AnalysisErrorKind {
     User,
     NotConstant,
@@ -160,6 +174,8 @@ pub struct Diagnostic {
     pub location: Option<DiagnosticLocation>,
     pub message: String,
     pub related: Vec<RelatedLocation>,
+    pub stage: Option<AnalysisStage>,
+    pub recovered: bool,
 }
 
 impl Diagnostic {
@@ -169,7 +185,7 @@ impl Diagnostic {
             None => Option<DiagnosticLocation>.None,
         };
 
-        Self(code, severity, primary, String.from(&message), Vec<RelatedLocation>.new())
+        Self(code, severity, primary, String.from(&message), Vec<RelatedLocation>.new(), Option<AnalysisStage>.None, false)
     }
 
     pub fn add_related(location: SourceSpan, message: str) {
@@ -199,6 +215,10 @@ pub struct AnalysisError {
 }
 
 impl AnalysisError {
+    pub fn with_stage(stage: AnalysisStage) -> Self {
+        self.diagnostic.stage = Option<AnalysisStage>.Some(stage);
+        *self
+    }
     // This transfers the same owned payload; an existing primary location remains authoritative.
     pub fn with_location(location: SourceSpan) -> Self {
         if self.diagnostic.location.is_none() {

@@ -1,11 +1,12 @@
 from compiler.analysis.lowering.checker import ExprChecker;
 from compiler.analysis.hir.node import HirKind, Binary, Unary, BitCast, Cast, Tuple, Array as HirArray, ArrayRepeat, Block, If, Match, MatchArm;
 from compiler.analysis.constant.value import IntegerWidth;
-from compiler.analysis.constant.integer import cast_integer, integer_fits;
+from compiler.analysis.constant.integer import cast_integer;
 from compiler.analysis.constant.floating import round_float, integer_float;
 from compiler.analysis.ty.substitution import infer, substitute;
 from compiler.analysis.ty.callable import signature, schedule, instance_substitutions;
 from compiler.analysis.ty.relations import compatible, default_type;
+from compiler.analysis.ty.display import type_text;
 from compiler.common.ids import HirId, TypeId;
 from compiler.frontend.ast.operator import UnaryOperator, BinaryOperator;
 from compiler.diagnostics.model import AnalysisError;
@@ -16,6 +17,7 @@ from std.core.iter import Iterator, IntoIterator;
 from std.core.option import Option;
 from std.core.result import Result;
 from std.core.vec import Vec;
+from std.core.string import String;
 
 impl ExprChecker {
     pub fn match_argument(expected: TypeId, actual: TypeId, substitutions: HashMap<TypeId, TypeId>&) -> bool {
@@ -47,9 +49,7 @@ impl ExprChecker {
                 if node.type_id == self.ctx.primitives.integer_literal {
                     match target {
                         Integer(bits, signed) | CScalar(bits, signed, _) => {
-                            if !integer_fits(*integer, *bits, *signed) {
-                                return Result<Option<HirId>, AnalysisError>.Err(self.error(node.span.span, "integer literal is out of range for its type"));
-                            }
+                            // The lexer checks magnitudes and explicit suffixes. Contextual typing normalizes bits.
                             let width = *IntegerWidth.from_bits(*bits).unwrap();
                             let value = cast_integer(*integer, width, *signed);
                             return Result<Option<HirId>, AnalysisError>.Ok(Option<HirId>.Some(self.node(node.span.span, expected, false, HirKind.IntLiteral(value))));
@@ -81,10 +81,7 @@ impl ExprChecker {
                 // occur at each operation rather than only at an outer cast.
                 if (node.type_id == self.ctx.primitives.integer_literal || node.type_id == self.ctx.primitives.float_literal) && compatible(self.ctx, node.type_id, expected) {
                     let left = self.coerce(binary.left, expected)?;
-                    let right_type = if binary.op == BinaryOperator.Shl || binary.op == BinaryOperator.Shr {
-                        default_type(self.ctx, self.type_of(binary.right))
-                    } else { expected };
-                    let right = self.coerce(binary.right, right_type)?;
+                    let right = self.coerce(binary.right, expected)?;
                     return Result<Option<HirId>, AnalysisError>.Ok(Option<HirId>.Some(self.node(node.span.span, expected, false, HirKind.Binary(Binary(binary.op, left, right)))));
                 }
                 // Pointer differences expose the same 64-bit pattern in either integer view.
@@ -187,7 +184,17 @@ impl ExprChecker {
                 Reference(value) => *inner == *value,
                 Slice(value) => {
                     if self.ctx.session.raw_pointers && *inner == *value {
-                        return Result<Option<HirId>, AnalysisError>.Err(self.error(node.span.span, "implicit pointer-to-slice conversion is not supported"));
+                        let source_name = type_text(self.ctx, node.type_id);
+                        defer source_name.drop();
+                        let target_name = type_text(self.ctx, expected);
+                        defer target_name.drop();
+                        let message = String.from(&"cannot coerce '");
+                        defer message.drop();
+                        message.push_str(source_name.as_str());
+                        message.push_str("' to '");
+                        message.push_str(target_name.as_str());
+                        message.push_str("' in raw pointer mode; implicit pointer-to-slice conversion is not supported");
+                        return Result<Option<HirId>, AnalysisError>.Err(self.error(node.span.span, message.as_str()));
                     }
                     !self.ctx.session.raw_pointers && *inner == *value
                 },

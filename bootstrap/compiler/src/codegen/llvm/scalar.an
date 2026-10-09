@@ -90,6 +90,15 @@ pub fn cast(builder: Builder&, types: BackendTypes&, module: Module&,
     if source == target { return Result<IrValue, CodegenError>.Ok(value); }
     let from = scalar(types, source)?;
     let to = scalar(types, target)?;
+    let source_bool = match types.semantic_store().require(source)? { Bool => true, _ => false, };
+    let source_char = match types.semantic_store().require(source)? { Char => true, _ => false, };
+    let target_char = match types.semantic_store().require(target)? { Char => true, _ => false, };
+    if (source_bool || source_char) && (match to { Float(_) => true, _ => false, }) {
+        return Result<IrValue, CodegenError>.Err(CodegenError.invalid("runtime cast to float requires an integer or float source"));
+    }
+    if target_char && (match from { Float(_) => true, _ => false, }) {
+        return Result<IrValue, CodegenError>.Err(CodegenError.invalid("runtime cast from float to char is not supported"));
+    }
     let native = types.value_type(target)?;
     let op = match &from {
         Integer(width, signed) => match &to {
@@ -99,7 +108,8 @@ pub fn cast(builder: Builder&, types: BackendTypes&, module: Module&,
                         module.const_int(types.value_type(source)?, 0u64), ""));
                 }
                 if *bits == *width { return Result<IrValue, CodegenError>.Ok(value); }
-                if *bits < *width { CastOp.Trunc } elif *signed { CastOp.Sext } else { CastOp.Zext }
+                // Preserve the reference's signed-i1 runtime cast, independently of constant conversion.
+                if *bits < *width { CastOp.Trunc } elif *signed || source_bool { CastOp.Sext } else { CastOp.Zext }
             },
             Float(_) => if *signed { CastOp.Sitofp } else { CastOp.Uitofp },
             Pointer => CastOp.Inttoptr,

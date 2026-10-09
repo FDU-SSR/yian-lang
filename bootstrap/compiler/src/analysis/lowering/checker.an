@@ -3,8 +3,7 @@ from compiler.analysis.ty.relations import compatible;
 from compiler.analysis.ty.display import type_text;
 from compiler.analysis.symbol.model import Symbol, SymbolKind;
 from compiler.analysis.hir.node import HirNode, HirKind, Block as HirBlock, Cast;
-from compiler.analysis.constant.evaluate import ConstantEvaluator, TypeSizeProvider;
-from compiler.analysis.constant.integer import integer_fits;
+from compiler.analysis.constant.evaluate import TypeSizeProvider;
 from compiler.common.ids import UnitId, ScopeId, HirId, SymbolId, TypeId, DefId;
 from compiler.common.location import SourceSpan;
 from compiler.frontend.ast.node import Block, Literal;
@@ -157,48 +156,8 @@ impl ExprChecker {
             return Result<HirId, AnalysisError>.Err(self.ctx.error(self.unit, node.span.span, DiagnosticCode.TypeMismatch, message.as_str()));
         }
 
-        if node.type_id == self.ctx.primitives.integer_literal && self.constant_shape(id)? {
-            match self.ctx.session.types.require(expected)? {
-                Integer(bits, signed) => {
-                    let evaluator = ConstantEvaluator.new(&self.ctx.session.types, &self.ctx.session.hir, self.sizes);
-                    let value = evaluator.evaluate(id)?;
-
-                    match &value.value {
-                        Integer(integer) => {
-                            if !integer_fits(*integer, *bits, *signed) {
-                                return Result<HirId, AnalysisError>.Err(self.error(node.span.span, "integer literal is out of range for its type"));
-                            }
-                        },
-                        _ => {},
-                    }
-                },
-                _ => {},
-            }
-        }
-
         // Literal conversion is represented explicitly so constants and code generation agree.
         Result<HirId, AnalysisError>.Ok(self.node(node.span.span, expected, false, HirKind.Cast(Cast(id, expected))))
-    }
-
-    fn constant_shape(id: HirId) -> Result<bool, AnalysisError> {
-        match &self.ctx.session.hir.require(id)?.kind {
-            IntLiteral(_) => Result<bool, AnalysisError>.Ok(true),
-            FloatLiteral(_) => Result<bool, AnalysisError>.Ok(true),
-            BoolLiteral(_) => Result<bool, AnalysisError>.Ok(true),
-            CharLiteral(_) => Result<bool, AnalysisError>.Ok(true),
-            StrLiteral(_) => Result<bool, AnalysisError>.Ok(true),
-            Unary(value) => self.constant_shape(value.operand),
-            Binary(value) => Result<bool, AnalysisError>.Ok(self.constant_shape(value.left)? && self.constant_shape(value.right)?),
-            Cast(value) => self.constant_shape(value.value),
-            Block(value) => {
-                if value.stmts.len() == 1 {
-                    self.constant_shape(value.stmts[0])
-                } else {
-                    Result<bool, AnalysisError>.Ok(false)
-                }
-            },
-            _ => Result<bool, AnalysisError>.Ok(false),
-        }
     }
 
     pub fn bind(name: str, type_id: TypeId, span: Span, kind: SymbolKind) -> Result<SymbolId, AnalysisError> {

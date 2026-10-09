@@ -18,12 +18,11 @@ pub enum WorkState {
 pub struct DefinitionWorklist {
     states: HashMap<TypeId, WorkState>,
     queue: Vec<TypeId>,
-    cursor: u64,
 }
 
 impl DefinitionWorklist {
     static pub fn new() -> Self {
-        Self(HashMap<TypeId, WorkState>.new(), Vec<TypeId>.new(), 0)
+        Self(HashMap<TypeId, WorkState>.new(), Vec<TypeId>.new())
     }
 
     pub fn enqueue(type_id: TypeId) -> bool {
@@ -37,12 +36,12 @@ impl DefinitionWorklist {
     }
 
     pub fn next() -> Option<TypeId> {
-        if self.cursor == self.queue.len() {
+        if self.queue.is_empty() {
             return Option<TypeId>.None;
         }
 
-        let type_id = self.queue[self.cursor];
-        self.cursor += 1;
+        // Depth-first scheduling matches the strict compiler's first-error order.
+        let type_id = *self.queue.pop().unwrap();
         let state = *self.states.get(&type_id).unwrap();
         *state = WorkState.Checking;
         Option<TypeId>.Some(type_id)

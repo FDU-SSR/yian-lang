@@ -4,11 +4,12 @@ from compiler.analysis.session.output import AnalysisOptions, AnalysisOutput, An
 from compiler.analysis.symbol.model import SymbolKind;
 from compiler.analysis.ty.model import NominalKind;
 from compiler.analysis.ty.callable import signature, schedule;
+from compiler.analysis.ty.substitution import has_generic;
 from compiler.analysis.ty.validation import validate_concrete_value;
-from compiler.analysis.constant.definitions import evaluate_constant;
+from compiler.analysis.passes.entry import select_entry;
 from compiler.common.ids import TypeId, SymbolId, NameId, ScopeId, UnitId;
 from compiler.common.location import SourceSpan;
-from compiler.diagnostics.model import AnalysisError, DiagnosticCode;
+from compiler.diagnostics.model import AnalysisError, AnalysisErrorKind, Diagnostic, DiagnosticCode;
 from std.core.drop import Drop;
 from std.core.iter import Iterator, IntoIterator;
 from std.core.option import Option;
@@ -29,7 +30,7 @@ fn root_unit(ctx: ResolutionContext&, unit: UnitId) -> bool {
     }
 }
 
-pub fn check_procedures(ctx: ResolutionContext&, options: AnalysisOptions&) -> Result<AnalysisOutput, AnalysisError> {
+pub fn check_procedures(ctx: ResolutionContext&, options: AnalysisOptions&, diagnostics: Vec<Diagnostic>&) -> Result<AnalysisOutput, AnalysisError> {
     let output = AnalysisOutput.new();
     let accepted = false;
     defer {
@@ -38,71 +39,24 @@ pub fn check_procedures(ctx: ResolutionContext&, options: AnalysisOptions&) -> R
         }
     };
 
-    let index = 0u64;
+    output.entry = select_entry(ctx, options)?;
 
-    while index < ctx.len() {
-        let declaration = ctx.declaration(index);
-
-        match &declaration.item.data {
-            ConstDef(_, _, _, _) => {
-                evaluate_constant(ctx, declaration.symbol, options.sizes)?;
-            },
-            FuncDef(_, name, generics, _, _, _) => {
-                let type_id = ctx.session.symbols.get(declaration.symbol).unwrap().type_id;
-                let unit = *ctx.session.unit(declaration.unit).unwrap();
-
-                if root_unit(ctx, declaration.unit) {
-                    if generics.len() == 0 {
-                        schedule(ctx, type_id)?;
-                    }
-
-                    if name.data.name.as_str() == "main" {
-                        if output.entry.is_some() {
-                            return Result<AnalysisOutput, AnalysisError>.Err(ctx.error(declaration.unit, name.span, DiagnosticCode.Duplicate, "multiple main functions"));
-                        }
-
-                        let signature = ctx.session.types.complete_definition(*declaration.definition.unwrap())?;
-
-                        match signature {
-                            Function(value) => {
-                                if generics.len() != 0 || value.parameters.len() != 0 || value.result != ctx.primitives.void {
-                                    return Result<AnalysisOutput, AnalysisError>.Err(ctx.error(declaration.unit, name.span, DiagnosticCode.Type, "main must have no parameters, be nongeneric, and return void"));
-                                }
-                            },
-                            _ => {},
-                        }
-
-                        output.entry = Option<TypeId>.Some(type_id);
-                    }
-                }
-            },
-            _ => {},
-        }
-
-        index += 1;
-    }
-
-    index = 0;
-
-    while index < ctx.session.definitions.len() {
+    // Match the reference worklist: entry and reachable calls first, then all concrete root definitions.
+    match output.entry { Some(entry) => { schedule(ctx, entry)?; }, None => {}, }
+    drain(ctx, options, &output, diagnostics)?;
+    let count = ctx.session.definitions.len();
+    for index in 0u64..count {
         let procedure = *ctx.session.definitions.at(index).unwrap();
-
-        if root_unit(ctx, procedure.unit) {
-            let header = *ctx.session.types.definition(procedure.definition).unwrap();
-
-            if header.generic_count() == 0 {
-                schedule(ctx, procedure.type_id)?;
-            }
+        if root_unit(ctx, procedure.unit) && !has_generic(&ctx.session.types, procedure.type_id) {
+            schedule(ctx, procedure.type_id)?;
         }
-
-        index += 1;
     }
+    drain(ctx, options, &output, diagnostics)?;
+    accepted = true;
+    Result<AnalysisOutput, AnalysisError>.Ok(output)
+}
 
-    if options.require_entry && output.entry.is_none() {
-        return Result<AnalysisOutput, AnalysisError>.Err(AnalysisError.user(DiagnosticCode.Undefined,
-            Option<SourceSpan>.None, "no main function found"));
-    }
-
+fn drain(ctx: ResolutionContext&, options: AnalysisOptions&, output: AnalysisOutput&, diagnostics: Vec<Diagnostic>&) -> Result<(), AnalysisError> {
     while true {
         let type_id = match ctx.session.worklist.next() {
             Some(value) => value,
@@ -118,108 +72,139 @@ pub fn check_procedures(ctx: ResolutionContext&, options: AnalysisOptions&) -> R
                 }
             }
         };
-        let procedure = match ctx.session.definitions.get(type_id) {
-            Some(value) => value,
-            None => return Result<AnalysisOutput, AnalysisError>.Err(AnalysisError.internal("scheduled function has no body")),
-        };
-        let parent = *ctx.callable_scopes.get(&procedure.definition).unwrap();
-        let scope = ctx.session.symbols.create_scope(Option<ScopeId>.Some(*parent))?;
-        let callable = signature(ctx, type_id)?;
-        defer callable.drop();
-        let location = ctx.span(procedure.unit, procedure.body.span);
-        validate_concrete_value(ctx, callable.result, location)?;
-        for parameter in callable.parameters {
-            validate_concrete_value(ctx, parameter.type_id, location)?;
-        }
-
-        let checker = ExprChecker.new(ctx, procedure.unit, scope, callable.result, options.sizes);
-        defer checker.drop();
-        checker.ffi_allowed = callable.is_ffi;
-        let parameters = Vec<SymbolId>.new();
-        let captures = Vec<(NameId, SymbolId)>.new();
-        let transferred = false;
-        defer {
-            if !transferred {
-                parameters.drop();
-                captures.drop();
-            }
-        };
-
-        match ctx.closure_captures.get(&procedure.definition) {
-            Some(symbols) => {
-                for symbol in *symbols {
-                    parameters.push(*symbol);
-                    captures.push((ctx.session.symbols.get(*symbol).unwrap().name, *symbol));
-                }
-            },
-            None => {},
-        }
-
-        match ctx.session.types.require(type_id)? {
-            Nominal(id, arguments) => {
-                let header = *ctx.session.types.definition(*id).unwrap();
-                let index = 0u64;
-
-                while index < arguments.len() {
-                    let generic = *header.generic(index).unwrap();
-                    let name = match ctx.session.types.require(generic)? {
-                        Generic(name) => *name,
-                        ConstGeneric(name, _) => *name,
-                        SelfType(_) => ctx.session.names.intern("Self"),
-                        _ => return Result<AnalysisOutput, AnalysisError>.Err(AnalysisError.internal("invalid generic identity")),
-                    };
-                    checker.bind(ctx.session.names.text(name), arguments[index], procedure.body.span, SymbolKind.Type)?;
-                    index += 1;
-                }
-            },
-            _ => {},
-        }
-
-        match &callable.receiver {
-            Some(receiver) => {
-                let name = ctx.session.names.intern("Self");
-
-                if ctx.session.symbols.scope(scope).unwrap().get(name).is_none() {
-                    checker.bind("Self", *receiver, procedure.body.span, SymbolKind.Type)?;
-                }
-
-                if !callable.is_static {
-                    let reference = ctx.session.types.reference(*receiver);
-                    parameters.push(checker.bind("self", reference, procedure.body.span, SymbolKind.Parameter)?);
-                }
-            },
-            None => {},
-        }
-
-        for parameter in callable.parameters {
-            parameters.push(checker.bind(ctx.session.names.text(parameter.name), parameter.type_id, procedure.body.span, SymbolKind.Parameter)?);
-        }
-
-        let root = match checker.block(procedure.body) {
+        let checked = match check_one(ctx, type_id, options) {
             Ok(value) => value,
-            Err(error) => {
-                return Result<AnalysisOutput, AnalysisError>.Err(error);
+            Err(problem) => {
+                if !options.recover || problem.kind == AnalysisErrorKind.Internal {
+                    return Result<(), AnalysisError>.Err(problem);
+                }
+                if duplicate(diagnostics, &problem.diagnostic) { problem.drop(); } else { diagnostics.push(problem.diagnostic); }
+                ctx.session.worklist.finish(type_id, true)?;
+                finished = true;
+                continue;
             },
         };
-        root = checker.coerce(root, callable.result)?;
-        transferred = true;
-        output.procedures.push(AnalyzedProcedure(procedure.definition, type_id, parameters, root, procedure.unit, captures));
+        let definition = checked.definition;
+        output.procedures.push(checked);
         let recorded = false;
 
         for id in output.checked {
-            if *id == procedure.definition {
+            if *id == definition {
                 recorded = true;
             }
         }
 
         if !recorded {
-            output.checked.push(procedure.definition);
+            output.checked.push(definition);
         }
 
         ctx.session.worklist.finish(type_id, false)?;
         finished = true;
     }
 
-    accepted = true;
-    Result<AnalysisOutput, AnalysisError>.Ok(output)
+    Result<(), AnalysisError>.Ok(())
+}
+
+// Local lists transfer only after the body and result conversion both succeed.
+fn check_one(ctx: ResolutionContext&, type_id: TypeId, options: AnalysisOptions&) -> Result<AnalyzedProcedure, AnalysisError> {
+    match options.trace { Some(trace) => trace.event("type_check", 5, "checking concrete procedure", Option<str>.None), None => {}, }
+    let procedure = match ctx.session.definitions.get(type_id) {
+        Some(value) => value,
+        None => return Result<AnalyzedProcedure, AnalysisError>.Err(AnalysisError.internal("scheduled function has no body")),
+    };
+    let parent = *ctx.callable_scopes.get(&procedure.definition).unwrap();
+    let scope = ctx.session.symbols.create_scope(Option<ScopeId>.Some(*parent))?;
+    let callable = signature(ctx, type_id)?;
+    defer callable.drop();
+    let location = ctx.span(procedure.unit, procedure.body.span);
+    validate_concrete_value(ctx, callable.result, location)?;
+    for parameter in callable.parameters {
+        validate_concrete_value(ctx, parameter.type_id, location)?;
+    }
+
+    let checker = ExprChecker.new(ctx, procedure.unit, scope, callable.result, options.sizes);
+    defer checker.drop();
+    checker.ffi_allowed = callable.is_ffi;
+    let parameters = Vec<SymbolId>.new();
+    let captures = Vec<(NameId, SymbolId)>.new();
+    let transferred = false;
+    defer {
+        if !transferred {
+            parameters.drop();
+            captures.drop();
+        }
+    };
+
+    match ctx.closure_captures.get(&procedure.definition) {
+        Some(symbols) => {
+            for symbol in *symbols {
+                parameters.push(*symbol);
+                captures.push((ctx.session.symbols.get(*symbol).unwrap().name, *symbol));
+            }
+        },
+        None => {},
+    }
+
+    match ctx.session.types.require(type_id)? {
+        Nominal(id, arguments) => {
+            let header = *ctx.session.types.definition(*id).unwrap();
+            let index = 0u64;
+
+            while index < arguments.len() {
+                let generic = *header.generic(index).unwrap();
+                let name = match ctx.session.types.require(generic)? {
+                    Generic(name) => *name,
+                    ConstGeneric(name, _) => *name,
+                    SelfType(_) => ctx.session.names.intern("Self"),
+                    _ => return Result<AnalyzedProcedure, AnalysisError>.Err(AnalysisError.internal("invalid generic identity")),
+                };
+                checker.bind(ctx.session.names.text(name), arguments[index], procedure.body.span, SymbolKind.Type)?;
+                index += 1;
+            }
+        },
+        _ => {},
+    }
+
+    match &callable.receiver {
+        Some(receiver) => {
+            let name = ctx.session.names.intern("Self");
+
+            if ctx.session.symbols.scope(scope).unwrap().get(name).is_none() {
+                checker.bind("Self", *receiver, procedure.body.span, SymbolKind.Type)?;
+            }
+
+            if !callable.is_static {
+                let reference = ctx.session.types.reference(*receiver);
+                parameters.push(checker.bind("self", reference, procedure.body.span, SymbolKind.Parameter)?);
+            }
+        },
+        None => {},
+    }
+
+    for parameter in callable.parameters {
+        parameters.push(checker.bind(ctx.session.names.text(parameter.name), parameter.type_id, procedure.body.span, SymbolKind.Parameter)?);
+    }
+
+    let root = match checker.block(procedure.body) {
+        Ok(value) => value,
+        Err(error) => {
+            return Result<AnalyzedProcedure, AnalysisError>.Err(error);
+        },
+    };
+    root = checker.coerce(root, callable.result)?;
+    transferred = true;
+    Result<AnalyzedProcedure, AnalysisError>.Ok(AnalyzedProcedure(procedure.definition, type_id, parameters, root, procedure.unit, captures))
+}
+
+fn duplicate(diagnostics: Vec<Diagnostic>&, candidate: Diagnostic&) -> bool {
+    for diagnostic in *diagnostics {
+        if diagnostic.code != candidate.code { continue; }
+        let existing = match &diagnostic.location { Some(value) => value, None => continue };
+        let incoming = match &candidate.location { Some(value) => value, None => continue };
+        let left = match existing { Source(value) => value, _ => continue };
+        let right = match incoming { Source(value) => value, _ => continue };
+        if left.source == right.source && left.span.start.row == right.span.start.row &&
+        left.span.start.column == right.span.start.column { return true; }
+    }
+    false
 }

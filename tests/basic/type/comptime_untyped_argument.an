@@ -1,0 +1,10 @@
+// Type-level arithmetic shares the precision rules of compile-time expressions.
+typedef Three = i32[((1 << 80) >> 80) + 2];
+typedef Recovered = i32[(18446744073709551615 + 3) - 18446744073709551615];
+
+fn main() {
+    let first: Three = [1, 2, 3];
+    let second: Recovered = [4, 5, 6];
+    assert first[2] == 3;
+    assert second[2] == 6;
+}

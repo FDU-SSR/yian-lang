@@ -64,7 +64,7 @@ impl AnalysisSession {
             ImplRegistry.new(), DiagnosticSink.new(), packages, trust, raw_pointers, AnalysisPhase.Prepared)
     }
 
-    // A prepared file transfers only after all fallible preparation has completed.
+    // A lexed file transfers here; later preparation stages mutate the session-owned payload.
     fn accept(prepared: PreparedFile, permissions: SourcePermissions) -> UnitId {
         let id = UnitId(self.units.len());
         self.units.alloc(CompilationUnit(id, prepared.source, prepared,

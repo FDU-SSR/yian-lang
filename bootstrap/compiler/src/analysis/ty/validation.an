@@ -6,6 +6,7 @@ from compiler.analysis.ty.substitution import has_generic;
 from std.collections.hash_set import HashSet;
 from compiler.analysis.ty.model import NominalKind, Parameter;
 from compiler.analysis.ty.trait_object import object_methods;
+from compiler.analysis.ty.display import type_text;
 from compiler.common.ids import TypeId;
 from compiler.common.location import SourceSpan;
 from compiler.diagnostics.model import AnalysisError, DiagnosticCode;
@@ -14,6 +15,112 @@ from std.core.iter import Iterator, IntoIterator;
 from std.core.option import Option;
 from std.core.result import Result;
 from std.core.vec import Vec;
+from std.core.string import String;
+
+fn contains_unsized(ctx: ResolutionContext&, type_id: TypeId, visited: HashSet<TypeId>&) -> Result<bool, AnalysisError> {
+    if !visited.insert(type_id) { return Result<bool, AnalysisError>.Ok(false); }
+    match ctx.session.types.require(type_id)? {
+        Nominal(id, arguments) => {
+            if ctx.session.types.definition(*id).unwrap().header().kind == NominalKind.Trait {
+                return Result<bool, AnalysisError>.Ok(true);
+            }
+            for argument in *arguments {
+                if contains_unsized(ctx, *argument, visited)? { return Result<bool, AnalysisError>.Ok(true); }
+            }
+        },
+        Pointer(inner) | Reference(inner) | Slice(inner) | Array(inner, _) => return contains_unsized(ctx, *inner, visited),
+        Tuple(elements) => {
+            for element in *elements {
+                if contains_unsized(ctx, *element, visited)? { return Result<bool, AnalysisError>.Ok(true); }
+            }
+        },
+        FunctionPointer(parameters, result) => {
+            for parameter in *parameters {
+                if contains_unsized(ctx, *parameter, visited)? { return Result<bool, AnalysisError>.Ok(true); }
+            }
+            return contains_unsized(ctx, *result, visited);
+        },
+        _ => {},
+    }
+    Result<bool, AnalysisError>.Ok(false)
+}
+
+fn sized_position(ctx: ResolutionContext&, type_id: TypeId, subject: str, suffix: str, span: Option<SourceSpan>) -> Result<(), AnalysisError> {
+    let visited = HashSet<TypeId>.new();
+    defer visited.drop();
+    if !contains_unsized(ctx, type_id, &visited)? { return Result<(), AnalysisError>.Ok(()); }
+
+    let message = String.from(&subject);
+    defer message.drop();
+    message.push_str(suffix);
+    message.push_str("; use 'Trait&'");
+    Result<(), AnalysisError>.Err(AnalysisError.user(DiagnosticCode.Type, span, message.as_str()))
+}
+
+// Run after cycle detection, before body checking, with the reference's declaration-specific locations.
+pub fn validate_unsized(ctx: ResolutionContext&) -> Result<(), AnalysisError> {
+    let count = ctx.session.types.len();
+    for index in 0u64..count {
+        let type_id = TypeId(index);
+        match ctx.session.types.require(type_id)? {
+            Pointer(_) | Reference(_) | Array(_, _) | Tuple(_) | FunctionPointer(_, _) => {
+                let name = type_text(ctx, type_id);
+                defer name.drop();
+                let subject = String.from(&"type '");
+                defer subject.drop();
+                subject.push_str(name.as_str());
+                subject.push_str("'");
+                sized_position(ctx, type_id, subject.as_str(), " contains an unsized trait value", Option<SourceSpan>.None)?;
+            },
+            Nominal(id, _) => {
+                let definition = ctx.session.types.definition(*id).unwrap();
+                let span = definition.header().span;
+                match definition.body()? {
+                    Struct(body) => {
+                        for field in body.fields {
+                            let subject = String.from(&"field '");
+                            defer subject.drop();
+                            subject.push_str(ctx.session.names.text(field.name));
+                            subject.push_str("'");
+                            sized_position(ctx, field.type_id, subject.as_str(), " has unsized trait type", field.span)?;
+                        }
+                    },
+                    Enum(body) => {
+                        for variant in body.variants {
+                            match variant.payload {
+                                Some(payload) => {
+                                    let subject = String.from(&"variant '");
+                                    defer subject.drop();
+                                    subject.push_str(ctx.session.names.text(variant.name));
+                                    subject.push_str("'");
+                                    sized_position(ctx, payload, subject.as_str(), " has unsized trait payload", variant.span)?;
+                                },
+                                None => {},
+                            }
+                        }
+                    },
+                    Function(body) | Method(body) => {
+                        for parameter in body.parameters {
+                            let subject = String.from(&"parameter '");
+                            defer subject.drop();
+                            subject.push_str(ctx.session.names.text(parameter.name));
+                            subject.push_str("'");
+                            sized_position(ctx, parameter.type_id, subject.as_str(), " has unsized trait type", parameter.span)?;
+                        }
+                        let subject = String.from(&"function '");
+                        defer subject.drop();
+                        subject.push_str(ctx.session.names.text(definition.header().name));
+                        subject.push_str("'");
+                        sized_position(ctx, body.result, subject.as_str(), " returns unsized trait type", Option<SourceSpan>.Some(span))?;
+                    },
+                    Trait(_) => {},
+                }
+            },
+            _ => {},
+        }
+    }
+    Result<(), AnalysisError>.Ok(())
+}
 
 // Opaque wrappers may hide C fields; these queries inspect exposed type syntax and arguments.
 pub fn contains_ffi(store: TypeStore&, type_id: TypeId, opaque_only: bool) -> bool {
@@ -94,7 +201,7 @@ fn validate_inner(ctx: ResolutionContext&, type_id: TypeId, span: SourceSpan, vi
     match ctx.session.types.require(type_id)? {
         Nominal(id, _) => {
             if ctx.session.types.definition(*id).unwrap().header().kind == NominalKind.Trait {
-                return Result<(), AnalysisError>.Err(AnalysisError.user(DiagnosticCode.Type, Option<SourceSpan>.Some(span), "trait types are unsized; an unsized trait type requires a trait reference"));
+                return Result<(), AnalysisError>.Err(AnalysisError.user(DiagnosticCode.Type, Option<SourceSpan>.Some(span), "trait types are unsized; use 'Trait&' for a trait object"));
             }
             let substitutions = instance_substitutions(ctx, type_id)?;
             defer substitutions.drop();

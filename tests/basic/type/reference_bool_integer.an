@@ -1,0 +1,9 @@
+// Preserve the reference's signed-i1 runtime convention separately from compile-time conversion.
+fn main() {
+    let value = true;
+    assert u64(value) == u64.max();
+    assert i32(value) == -1i32;
+
+    let constant = comptime if u64(true) == 1u64 { 1 } else { 0 };
+    assert constant == 1;
+}

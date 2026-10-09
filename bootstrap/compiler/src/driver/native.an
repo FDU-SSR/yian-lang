@@ -206,6 +206,33 @@ impl Drop for Artifact {
     pub fn drop() { self.path.drop(); }
 }
 
+fn select_compiler() -> Result<String, DriverError> {
+    match env_var("YIAN_CC") {
+        Ok(Some(value)) => {
+            if !value.is_empty() { return Result<String, DriverError>.Ok(value); }
+            value.drop();
+        },
+        Ok(None) => {},
+        Err(problem) => return Result<String, DriverError>.Err(io_error("environment", problem)),
+    }
+
+    let arguments = Vec<String>.new();
+    defer release_strings(&arguments);
+    arguments.push(String.from(&"--version"));
+    match execute("clang", &arguments) {
+        Ok(output) => { output.drop(); Result<String, DriverError>.Ok(String.from(&"clang")) },
+        Err(problem) => {
+            // Missing clang permits cc; a selected compiler's failure never selects another tool.
+            let missing = match problem.os_error { Some(code) => code == 2i32, None => false, };
+            if !missing { return Result<String, DriverError>.Err(problem); }
+            problem.drop();
+            let output = execute("cc", &arguments)?;
+            output.drop();
+            Result<String, DriverError>.Ok(String.from(&"cc"))
+        },
+    }
+}
+
 impl NativeDriver {
     static pub fn new(checkout: str, packages: Option<PackageMap&>) -> Result<Self, DriverError> {
         let root = match canonicalize(checkout) {
@@ -214,32 +241,7 @@ impl NativeDriver {
         };
         let accepted = false;
         defer { if !accepted { root.drop(); } };
-        let compiler = match env_var("YIAN_CC") {
-            Ok(Some(value)) => value,
-            Ok(None) => {
-                let arguments = Vec<String>.new();
-                defer release_strings(&arguments);
-                arguments.push(String.from(&"--version"));
-                match execute("clang", &arguments) {
-                    Ok(output) => { output.drop(); String.from(&"clang") },
-                    Err(problem) => {
-                        // A missing clang permits cc; a selected tool's compilation errors never select another tool.
-                        let missing = match problem.os_error {
-                            Some(code) => code == 2i32,
-                            None => false,
-                        };
-                        if !missing {
-                            return Result<Self, DriverError>.Err(problem);
-                        }
-                        problem.drop();
-                        let output = execute("cc", &arguments)?;
-                        output.drop();
-                        String.from(&"cc")
-                    },
-                }
-            },
-            Err(problem) => return Result<Self, DriverError>.Err(io_error("environment", problem)),
-        };
+        let compiler = select_compiler()?;
         accepted = true;
         let driver = Self(root, compiler, packages);
         let ready = false;

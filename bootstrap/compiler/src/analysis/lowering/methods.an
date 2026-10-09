@@ -61,7 +61,7 @@ impl ExprChecker {
                 Nominal(id, _) => match self.ctx.session.types.complete_definition(*id)? {
                     Trait(methods) => {
                         if generics.len() == 0 {
-                            return Result<HirId, AnalysisError>.Err(self.error(span, "trait static call requires an explicit Self type"));
+                            return Result<HirId, AnalysisError>.Err(self.error(span, "trait-qualified static call requires an explicit Self type"));
                         }
 
                         required = Option<TypeId>.Some(receiver_type);
@@ -190,7 +190,15 @@ impl ExprChecker {
         }
 
         if static_call {
-            return Result<HirId, AnalysisError>.Err(self.error(span, "trait-qualified calls require a static method"));
+            let message = String.from(&"cannot call instance method '");
+            defer message.drop();
+            message.push_str(spelling);
+            message.push_str("' as a static method on '");
+            let receiver_name = type_text(self.ctx, receiver_type);
+            defer receiver_name.drop();
+            message.push_str(receiver_name.as_str());
+            message.push_str("'; declare it 'static fn' or call it on an instance");
+            return Result<HirId, AnalysisError>.Err(self.error(span, message.as_str()));
         }
 
         receiver_id = self.receiver_place(span, receiver_id, &prefix)?;

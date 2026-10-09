@@ -26,7 +26,7 @@ impl ExprChecker {
 
             for arg in *args {
                 if arg.data.name.is_some() != named {
-                    return Result<HirId, AnalysisError>.Err(self.error(arg.span, "named and positional arguments cannot be mixed"));
+                    return Result<HirId, AnalysisError>.Err(self.error(span, "named and positional arguments cannot be mixed"));
                 }
             }
         }
@@ -85,7 +85,7 @@ impl ExprChecker {
                 }
             }
 
-            self.check_field_access(definition, field, span)?;
+            self.check_field_access(type_id, field, span)?;
             let value = self.expression(args[index].data.value)?;
             let expected = substitute(&self.ctx.session.types, field.type_id, &substitutions)?;
 
@@ -300,7 +300,7 @@ impl ExprChecker {
 
                         for field in body.fields {
                             if field.name == interned {
-                                self.check_field_access(*definition, *field, span)?;
+                                self.check_field_access(type_id, *field, span)?;
                                 let field_type = substitute(&self.ctx.session.types, field.type_id, &substitutions)?;
                                 let copy = StructField(field.name, field_type, field.access, field.index, field.span);
                                 return Result<HirId, AnalysisError>.Ok(self.node(span, field_type, self.ctx.session.hir.require(value)?.is_place, HirKind.FieldAccess(FieldAccess(value, copy))));
@@ -362,7 +362,11 @@ impl ExprChecker {
         Result<HirId, AnalysisError>.Err(self.error(span, "field access is only supported on struct instances and enum types"))
     }
 
-    pub fn check_field_access(definition: DefId, field: StructField, span: Span) -> Result<(), AnalysisError> {
+    pub fn check_field_access(type_id: TypeId, field: StructField, span: Span) -> Result<(), AnalysisError> {
+        let definition = match self.ctx.session.types.require(type_id)? {
+            Nominal(id, _) => *id,
+            _ => return Result<(), AnalysisError>.Err(AnalysisError.internal("field access requires a nominal type")),
+        };
         let header = self.ctx.session.types.definition(definition).unwrap().header();
 
         if field.access == AccessMode.Public || header.unit == self.unit {
@@ -387,8 +391,14 @@ impl ExprChecker {
         defer message.drop();
         message.push_str(self.ctx.session.names.text(field.name));
         message.push_str("' of struct '");
-        message.push_str(self.ctx.session.names.text(header.name));
-        message.push_str("' is private and cannot be accessed from unit");
+        let name = type_text(self.ctx, type_id);
+        defer name.drop();
+        message.push_str(name.as_str());
+        message.push_str("' is private and cannot be accessed from unit ");
+        let number = self.unit.index.to_string_radix(10);
+        defer number.drop();
+        message.push_str(number.as_str());
+        message.push_str(" unless inside an impl for that struct");
         Result<(), AnalysisError>.Err(self.ctx.error(self.unit, span, DiagnosticCode.Type, message.as_str()))
     }
 }

@@ -187,7 +187,6 @@ impl ExprChecker {
         } else {
             return Result<HirId, AnalysisError>.Err(self.error(span, "binary operands have incompatible types"));
         };
-        if comparison { common = default_type(self.ctx, common); }
         let boolean_bit = (op == BinaryOperator.BitAnd || op == BinaryOperator.BitOr || op == BinaryOperator.BitXor) && common == self.ctx.primitives.boolean;
 
         if !is_numeric(self.ctx, common) && !boolean_bit && !(comparison && (common == self.ctx.primitives.boolean || common == self.ctx.primitives.character)) {

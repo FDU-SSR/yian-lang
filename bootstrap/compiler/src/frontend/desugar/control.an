@@ -54,7 +54,7 @@ impl ControlLowerer {
                 arms.push(arm(self.arena, value.data.pattern, body, MatchArmOrigin.Condition));
                 let wildcard = self.arena.alloc_pattern(PatternData.WildcardPattern, span);
                 arms.push(arm(self.arena, wildcard, break_block(self.arena, span), MatchArmOrigin.Synthetic));
-                stmts.push(match_expr(self.arena, span, value.data.value, arms));
+                stmts.push(match_expr(self.arena, value.span, value.data.value, arms));
             },
             Expression(value) => {
                 let stop = Condition.Expression(value=unary_not(self.arena, value));
@@ -97,7 +97,10 @@ impl ControlLowerer {
     fn lower_assert(span: Span, cond: Expr&, message: Option<Expr&>) -> Expr& {
         let value = if message.is_some() { *message.unwrap() } else {
             let text = assertion_message(self.path, span);
-            let literal = self.arena.alloc_str_literal(StrLiteralData(value=text), span);
+            let raw = String.from(&"\"");
+            raw.push_str(text.as_str());
+            raw.push('"');
+            let literal = self.arena.alloc_str_literal(StrLiteralData(value=text, raw=raw), span);
             self.arena.alloc_expr(ExprData.Literal(literal=Literal.StringLiteral(value=literal)), span)
         };
 

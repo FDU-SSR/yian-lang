@@ -10,6 +10,7 @@ from std.core.result import Result;
 from std.core.string import String;
 from std.core.vec import Vec;
 from std.core.option import Option;
+from std.core.iter import Iterator, IntoIterator;
 from json.write import Writer;
 
 pub struct Position {
@@ -108,7 +109,7 @@ impl SourceManager {
 
     pub fn load(path: str) -> Result<u64, IoError> {
         let canonical = canonicalize(path)?;
-        let text = match read_to_string(path) {
+        let text = match read_source(path) {
             Ok(value) => value,
             Err(error) => {
                 canonical.drop();
@@ -120,6 +121,29 @@ impl SourceManager {
         self.files.alloc(SourceFile(path=String.from(&path), text=text, canonical=canonical));
         Result<u64, IoError>.Ok(val=id)
     }
+}
+
+// Match text-mode source loading: CRLF and bare CR become one LF before lexing or formatting.
+// The returned buffer has one owner; unchanged UTF-8 input is transferred without copying.
+pub fn read_source(path: str) -> Result<String, IoError> {
+    let raw = read_to_string(path)?;
+    if !raw.as_str().contains_char('\r') { return Result<String, IoError>.Ok(raw); }
+    defer raw.drop();
+
+    let result = String.new();
+    let bytes = raw.as_slice();
+    let begin = 0u64;
+    let index = 0u64;
+    while index < bytes.len() {
+        if bytes[index] != b'\r' { index += 1; continue; }
+        result.push_str(str.from_slice_unchecked(bytes[begin..index]));
+        result.push('\n');
+        index += 1;
+        if index < bytes.len() && bytes[index] == b'\n' { index += 1; }
+        begin = index;
+    }
+    result.push_str(str.from_slice_unchecked(bytes[begin..bytes.len()]));
+    Result<String, IoError>.Ok(result)
 }
 
 impl Drop for SourceManager {
@@ -163,7 +187,25 @@ fn sort_paths(paths: Vec<String>&, start: u64) {
     sort_by(paths.as_slice()[start..paths.len()], path_less);
 }
 
-fn path_less(left: String&, right: String&) -> bool { less(left.as_str(), right.as_str()) }
+fn path_less(left: String&, right: String&) -> bool {
+    // pathlib orders path components, so directory "cli" sorts before sibling "cli.an".
+    let a = left.as_slice();
+    let b = right.as_slice();
+    let begin_a = 0u64;
+    let begin_b = 0u64;
+    loop {
+        let end_a = begin_a;
+        let end_b = begin_b;
+        while end_a < a.len() && a[end_a] != b'/' { end_a += 1; }
+        while end_b < b.len() && b[end_b] != b'/' { end_b += 1; }
+        let component_a = str.from_slice_unchecked(a[begin_a..end_a]);
+        let component_b = str.from_slice_unchecked(b[begin_b..end_b]);
+        if component_a != component_b { return less(component_a, component_b); }
+        if end_a == a.len() || end_b == b.len() { return end_a == a.len() && end_b != b.len(); }
+        begin_a = end_a + 1;
+        begin_b = end_b + 1;
+    }
+}
 
 // Recurse into actual directories; collect symlinks only when they target source files, never recurse into linked directories.
 fn collect_dir(path: str, paths: Vec<String>&) -> Result<(), IoError> {

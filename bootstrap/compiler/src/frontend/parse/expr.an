@@ -374,8 +374,9 @@ fn postfix(parser: Parser&, initial: Expr&) -> Option<Expr&> {
             let span = expr.span + parser.take_punct(PunctuatorKind.Question);
             expr = parser.arena.alloc_expr(ExprData.TryExpr(operand=expr), span);
         } elif parser.at_punct(PunctuatorKind.LParen) {
+            let span = expr.span + parser.peek().span;
             let args = arguments(parser)?;
-            expr = parser.arena.alloc_expr(ExprData.Call(callee=expr, args=args), expr.span + parser.previous_span());
+            expr = parser.arena.alloc_expr(ExprData.Call(callee=expr, args=args), span);
         } elif parser.at_punct(PunctuatorKind.Dot) {
             expr = member_expr(parser, expr)?;
         } elif parser.at_punct(PunctuatorKind.LBracket) {
@@ -673,7 +674,7 @@ fn fstring(parser: Parser&) -> Option<Expr&> {
         let token = parser.peek();
         match token.kind() {
             FStrLiteral(_) => {
-                let literal = parser.arena.alloc_str_literal(StrLiteralData(value=String.from(&token.value())), token.span);
+                let literal = parser.arena.alloc_str_literal(StrLiteralData(value=String.from(&token.value()), raw=String.from(&token.value())), token.span);
                 segments.push(parser.arena.alloc_expr(ExprData.Literal(literal=Literal.StringLiteral(value=literal)), token.span));
                 parser.advance();
             },
