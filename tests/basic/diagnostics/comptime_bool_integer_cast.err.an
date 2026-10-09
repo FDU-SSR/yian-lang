@@ -1,0 +1,3 @@
+fn main() {
+    comptime if i32(true) == 1i32 {} else {}
+}

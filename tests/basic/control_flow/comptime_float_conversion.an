@@ -8,4 +8,12 @@ fn main() {
     assert wide == 1;
     let huge = comptime if u8(1.0e300f64) == 0u8 { 1 } else { 0 };
     assert huge == 1;
+
+    // Half precision rounds discarded bits upward and resolves halfway values to even.
+    let half_up = comptime if f32(1.0006f16) == 1.0009765625f32 { 1 } else { 0 };
+    assert half_up == 1;
+    let half_even = comptime if f32(1.00048828125f16) == 1.0f32 { 1 } else { 0 };
+    assert half_even == 1;
+    let half_odd = comptime if f32(1.00146484375f16) == 1.001953125f32 { 1 } else { 0 };
+    assert half_odd == 1;
 }

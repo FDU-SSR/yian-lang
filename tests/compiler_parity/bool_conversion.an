@@ -1,13 +1,15 @@
-from std.core.io import print;
-from std.core.drop import Drop;
-
-// Observe the reference's runtime casts separately from its compile-time conversion.
-fn main() {
-    let value = true;
-    let integer = u64(value);
-    let floating = f64(value);
-    let constant = comptime if u64(true) == 1u64 { 1 } else { 0 };
-    let text = f"{integer}, {floating}, {constant}\n";
-    defer text.drop();
-    print(text.as_str());
-}
+// Analysis recovery checks every target width, aliases, and C integer types independently.
+typedef IntegerAlias = i32;
+fn to_i8(value: bool) -> i8 { i8(value) }
+fn to_i16(value: bool) -> i16 { i16(value) }
+fn to_i32(value: bool) -> i32 { i32(value) }
+fn to_i64(value: bool) -> i64 { i64(value) }
+fn to_u8(value: bool) -> u8 { u8(value) }
+fn to_u16(value: bool) -> u16 { u16(value) }
+fn to_u32(value: bool) -> u32 { u32(value) }
+fn to_u64(value: bool) -> u64 { u64(value) }
+fn to_alias(value: bool) -> IntegerAlias { IntegerAlias(value) }
+ffi fn to_c_int(value: bool) -> c_int { c_int(value) }
+ffi fn to_c_size(value: bool) -> c_size { c_size(value) }
+fn constant_cast() -> i32 { comptime if i32(false) == 0i32 { 1 } else { 0 } }
+fn main() {}

@@ -35,6 +35,7 @@ class Case:
     package: bool = False
     observability: str = ""
     expected_error: str = ""
+    expected_error_count: int | None = None
     fixture: str = ""
     environment: tuple[tuple[str, str], ...] = ()
     newlines: str = ""
@@ -67,7 +68,8 @@ def __cases() -> list[Case]:
         Case("float-conversion", "analyze", ("tests/basic/control_flow/comptime_float_conversion.an",), ("--analyze", "--json"), json_output=True),
         Case("nonfinite-cast", "analyze", ("tests/basic/diagnostics/comptime_nonfinite_cast.err.an",), ("--analyze", "--json"), json_output=True),
         Case("bool-float-cast", "analyze", ("tests/basic/diagnostics/comptime_bool_float_cast.err.an",), ("--analyze", "--json"), json_output=True),
-        Case("untyped-equality-error", "analyze", ("tests/basic/diagnostics/comptime_untyped_equality.err.an",), ("--analyze", "--json"), json_output=True),
+        Case("bool-integer-constant-error", "analyze", ("tests/basic/diagnostics/comptime_bool_integer_cast.err.an",), ("--analyze", "--json"), json_output=True),
+        Case("bool-integer-casts", "analyze", ("tests/compiler_parity/bool_conversion.an",), ("--analyze", "--json", "--allow-ffi"), json_output=True, expected_error="cannot convert bool to an integer", expected_error_count=12),
         Case("division-by-zero", "analyze", ("tests/basic/error/comptime_if_div_zero.err.an",), ("--analyze", "--json"), json_output=True),
         Case("negative-shift", "analyze", ("tests/basic/error/comptime_if_negative_shift.err.an",), ("--analyze", "--json"), json_output=True),
         Case("multiple-errors", "analyze", ("tests/compiler_parity/multiple_errors.an",), ("--analyze", "--json"), json_output=True),
@@ -134,6 +136,9 @@ def __cases() -> list[Case]:
     for fixture in sorted((__ROOT / "compiler/format/fixtures").rglob("*.an")):
         if not fixture.name.endswith(".expected.an"):
             cases.append(Case("fixture-" + fixture.relative_to(__ROOT / "compiler/format/fixtures").as_posix(), "format", (fixture.relative_to(__ROOT).as_posix(),), ("--format",), standard_library=False))
+    for name in ("mixed", "only"):
+        for flag in ("--write", "--check"):
+            cases.append(Case(f"comments-{name}-{flag[2:]}", "format", (f"compiler/format/fixtures/comments/{name}.an",), ("--format", flag), standard_library=False))
     for target in ("none", "exe", "ll", "bc", "obj", "asm"):
         cases.append(Case("no-main-" + target, "cli", ("tests/compiler_parity/no_main.an",), ("-t", target, "-o", "result")))
         cases.append(Case("output-" + target, "native", ("tests/basic/type/sizeof_full.an",), ("-t", target, "-o", "result"), run=target == "exe"))
@@ -147,8 +152,8 @@ def __cases() -> list[Case]:
     cases.append(Case("integer-conversion-run", "native", ("tests/basic/control_flow/comptime_integer_conversion.an",), ("-O3", "-o", "result"), run=True))
     cases.append(Case("float-conversion-run", "native", ("tests/basic/control_flow/comptime_float_conversion.an",), ("-O3", "-o", "result"), run=True))
     cases.append(Case("untyped-runtime-comparison", "native", ("tests/basic/control_flow/assert.an",), ("-O3", "-o", "result"), run=True))
-    cases.append(Case("boolean-conversion", "native", ("tests/compiler_parity/bool_conversion.an",), ("-O0", "-o", "result"), run=True))
-    cases.append(Case("boolean-integer-conversion", "native", ("tests/basic/type/reference_bool_integer.an",), ("-O0", "-o", "result"), run=True))
+    cases.append(Case("boolean-conversion", "native", ("tests/compiler_parity/bool_conversion.an",), ("--allow-ffi", "-O0", "-o", "result"), expected_error="cannot convert bool to an integer"))
+    cases.append(Case("boolean-integer-conversion", "native", ("tests/basic/type/bool_integer_cast.err.an",), ("-O0", "-o", "result"), expected_error="cannot convert bool to an integer"))
     cases.append(Case("llvm-consumer", "native", ("tests/package/ffi_llvm/src/main.an",), ("-O2", "-o", "result"), run=True, fixture="tests/package/ffi_llvm"))
     # Dangling and out-of-bounds programs have defined failure behavior only in fat mode.
     for source in (
@@ -240,7 +245,14 @@ def __run(compiler: str, case: Case, directory: Path, raw: bool) -> dict[str, Js
     if case.preexisting:
         result["preserved"] = {path: (directory / path).read_text() == contents for path, contents in case.preexisting}
     if case.expected_error:
-        result["expected_error"] = process.returncode == 1 and case.expected_error in process.stderr
+        if case.json_output:
+            diagnostics = cast(list[dict[str, Json]], stdout.get("diagnostics", [])) if isinstance(stdout, dict) else []
+            errors = [item for item in diagnostics if item.get("severity") == "error"]
+            result["expected_error"] = process.returncode == 1 and bool(errors) and all(case.expected_error in cast(str, item.get("message", "")) for item in errors)
+            if case.expected_error_count is not None:
+                result["expected_error"] = result["expected_error"] is True and len(errors) == case.expected_error_count
+        else:
+            result["expected_error"] = process.returncode == 1 and case.expected_error in process.stderr
     if case.json_output or case.group == "format":
         result["stderr"] = stderr
     if case.group == "format":

@@ -1,5 +1,15 @@
 // Untyped intermediate values retain their mathematical precision until conversion.
 fn main() {
+    let equal = comptime if 1 == 1 && 1 != 2 { 1 } else { 0 };
+    assert equal == 1;
+
+    let wide_equal = comptime if (1 << 80) == (1 << 80) &&
+    (1 << 80) != (1 << 81) && (-1 << 80) == -(1 << 80) { 1 } else { 0 };
+    assert wide_equal == 1;
+
+    let distinct = comptime if 1 == 2 || (1 << 80) != (1 << 80) { 0 } else { 1 };
+    assert distinct == 1;
+
     let selected = comptime if (2147483647 + 1) > 0 { 1 } else { 0 };
     assert selected == 1;
 

@@ -1,0 +1,4 @@
+fn main() {
+    let value = true;
+    let integer = u64(value);
+}

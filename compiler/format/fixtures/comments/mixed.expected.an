@@ -9,3 +9,4 @@ fn main() { // Trailing comment.
     // Standalone comment after a blank line.
     let c: i32 = a + b;
 }
+// Final comment.

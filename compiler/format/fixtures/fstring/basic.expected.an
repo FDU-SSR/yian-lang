@@ -8,3 +8,6 @@ fn main() {
     print(message.as_str());
     print(spaced.as_str());
 }
+
+const MESSAGE: str = f"footer {1}"; // Inline comment after a formatted-string declaration.
+// Final comment after a formatted string.
