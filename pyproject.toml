@@ -14,8 +14,6 @@ dependencies = ["llvmlite>=0.49.0"]
 lsp = ["pygls>=2.1"]
 
 [project.scripts]
-yianc = "compiler.main:main"
-anx = "anx.main:main"
 yian-lsp = "lsp.main:main"
 
 [tool.setuptools.packages.find]

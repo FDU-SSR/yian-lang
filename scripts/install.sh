@@ -1,154 +1,215 @@
 #!/usr/bin/env bash
-#
-# Install the YIAN compiler (`yianc`), package manager (`anx`) and language
-# server (`yian-lsp`) into the active Python environment.
-#
-# The default install is editable: the commands point at this checkout, so edits
-# under compiler/, anx/ and lsp/ take effect without reinstalling. A regular
-# (non-editable) install is also supported; it does not carry the standard
-# library, so it needs YIAN_LIB (or YIAN_ROOT) at run time.
-#
-# Usage: scripts/install.sh [--regular] [--with-deps] [--user] [--python PATH]
+# Build native YIAN commands with the checkout's Python compiler and install them.
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PYTHON="${PYTHON:-}"
-WITH_DEPS=0
-USER_INSTALL=0
-REGULAR=0
+PREFIX="${PREFIX:-}"
 
 usage() {
     cat <<'EOF'
-Install yianc, anx and yian-lsp into the active Python environment.
+Build and install native yianc and anx binaries.
 
 Usage: scripts/install.sh [options]
 
 Options:
-  --regular      Copy the packages instead of linking them (pip install .).
-                 The installed commands then need YIAN_LIB or YIAN_ROOT to find
-                 the standard library; the script prints the exact export line.
-  --with-deps    Let pip resolve dependencies. Without it the environment is left
-                 untouched and llvmlite must already be importable (and pygls, for
-                 yian-lsp, which a plain install does not pull in).
-  --user         Install into the user site-packages instead of the environment.
-  --python PATH  Python interpreter to use (default: $PYTHON, then python3).
+  --prefix PATH  Installation prefix (default: $HOME/.local).
+  --python PATH  Python used to build and remove legacy launchers (default: python3).
   -h, --help     Show this help.
 
-Environment:
-  PYTHON         Same as --python.
-
-The default install is editable: the commands point at this checkout, so edits
-to compiler/, anx/ and lsp/ take effect immediately, including newly added
-modules.
-Only changes to [project.scripts], dependencies, or a new top-level package
-require reinstalling.
-
-A --regular install copies compiler/, anx/ and lsp/ into site-packages without
-lib/, so point the tools at a checkout first:
-
-  export YIAN_LIB="/path/to/yian/lib/src"     # the source root itself
-  export YIAN_ROOT="/path/to/yian"            # or a checkout root
+The install requires Python 3.12+, llvmlite 0.49+, LLVM 22, and a native C
+toolchain. Installed yianc and anx are native executables and do not use Python.
+The standard library and runtime are copied under PREFIX/share/yian so the
+commands continue to work after the source checkout is removed.
 EOF
 }
 
-die() { printf 'error: %s\n' "$*" >&2; exit 1; }
+die() {
+    printf 'error: %s\n' "$*" >&2
+    exit 1
+}
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
-        --regular)   REGULAR=1; shift ;;
-        --with-deps) WITH_DEPS=1; shift ;;
-        --user)      USER_INSTALL=1; shift ;;
+        --prefix)
+            [[ $# -ge 2 ]] || die "--prefix requires a path"
+            PREFIX="$2"
+            shift 2
+            ;;
         --python)
             [[ $# -ge 2 ]] || die "--python requires a path"
-            PYTHON="$2"; shift 2 ;;
-        -h|--help)   usage; exit 0 ;;
-        *)           die "unknown option: $1 (try --help)" ;;
+            PYTHON="$2"
+            shift 2
+            ;;
+        -h|--help)
+            usage
+            exit 0
+            ;;
+        *)
+            die "unknown option: $1 (try --help)"
+            ;;
     esac
 done
 
-# ---- locate and validate the interpreter ------------------------------------
 if [[ -z "$PYTHON" ]]; then
-    if command -v python3 >/dev/null 2>&1; then
-        PYTHON="python3"
-    elif command -v python >/dev/null 2>&1; then
-        PYTHON="python"
-    else
-        die "no python3 on PATH; pass --python PATH"
+    PYTHON="python3"
+fi
+command -v "$PYTHON" >/dev/null 2>&1 || die "Python was not found: $PYTHON"
+PYTHON="$(command -v "$PYTHON")"
+
+if ! "$PYTHON" -c 'import sys, llvmlite; raise SystemExit(0 if sys.version_info >= (3, 12) and tuple(map(int, llvmlite.__version__.split(".")[:2])) >= (0, 49) else 1)' >/dev/null 2>&1; then
+    die "the build Python must be 3.12+ and provide llvmlite 0.49+"
+fi
+
+if [[ -z "$PREFIX" ]]; then
+    [[ -n "${HOME:-}" ]] || die "HOME is unset; pass --prefix PATH"
+    PREFIX="$HOME/.local"
+fi
+if [[ "$PREFIX" != /* ]]; then
+    PREFIX="$PWD/$PREFIX"
+fi
+
+BIN_DIR="$PREFIX/bin"
+SHARE_DIR="$PREFIX/share"
+DATA_DIR="$SHARE_DIR/yian"
+MARKER="$DATA_DIR/.native-install"
+
+if [[ -e "$DATA_DIR" && ! -f "$MARKER" ]]; then
+    die "refusing to replace unmanaged resource directory: $DATA_DIR"
+fi
+if [[ -f "$MARKER" ]] && ! grep -Fxq 'yian-native-install-v1' "$MARKER"; then
+    die "unrecognized install marker: $MARKER"
+fi
+
+STAGE_DIR="$(mktemp -d "${TMPDIR:-/tmp}/yian-native-install.XXXXXX")"
+DATA_STAGE=""
+DATA_BACKUP=""
+cleanup() {
+    rm -rf -- "$STAGE_DIR"
+    if [[ -n "$DATA_STAGE" && -e "$DATA_STAGE" ]]; then
+        rm -rf -- "$DATA_STAGE"
     fi
-fi
-command -v "$PYTHON" >/dev/null 2>&1 || die "python not found: $PYTHON"
+    if [[ -n "$DATA_BACKUP" && -e "$DATA_BACKUP" && ! -e "$DATA_DIR" ]]; then
+        mv "$DATA_BACKUP" "$DATA_DIR"
+    fi
+}
+trap cleanup EXIT
+mkdir -p "$STAGE_DIR/bin" "$STAGE_DIR/share/yian/lib" "$STAGE_DIR/share/yian/runtime"
 
-"$PYTHON" -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 11) else 1)' \
-    || die "$("$PYTHON" -V 2>&1) is too old; YIAN needs Python >= 3.11 (tomllib)"
-"$PYTHON" -m pip --version >/dev/null 2>&1 || die "pip is unavailable for $PYTHON"
+PYTHON_COMPILER="$STAGE_DIR/yianc-python"
+PYTHON_SHELL_WORD="$(printf '%q' "$PYTHON")"
+cat >"$PYTHON_COMPILER" <<EOF
+#!/usr/bin/env bash
+exec $PYTHON_SHELL_WORD -m compiler.main "\$@"
+EOF
+chmod 0755 "$PYTHON_COMPILER"
 
-if [[ "$WITH_DEPS" -eq 0 ]] && ! "$PYTHON" -c 'import llvmlite' >/dev/null 2>&1; then
-    die "llvmlite is missing; re-run with --with-deps, or install requirements.txt first"
-fi
+run_source_anx() {
+    local compiler="$1"
+    shift
+    PYTHONPATH="$ROOT_DIR${PYTHONPATH:+:$PYTHONPATH}" \
+    YIAN_ROOT="$ROOT_DIR" \
+    YIAN_LIB="$ROOT_DIR/lib/src" \
+    YIANC="$compiler" \
+        "$PYTHON" -m anx.main "$@"
+}
 
-# ---- assemble pip arguments -------------------------------------------------
-if [[ "$REGULAR" -eq 1 ]]; then
-    PIP_ARGS=("$ROOT_DIR")
-else
-    PIP_ARGS=(--editable "$ROOT_DIR")
-fi
+printf 'Building native yianc with the checkout Python compiler...\n'
+run_source_anx "$PYTHON_COMPILER" build "$ROOT_DIR/bootstrap/compiler" -O2
+install -m 0755 "$ROOT_DIR/bootstrap/compiler/build/app" "$STAGE_DIR/bin/yianc"
 
-# Build against the installed setuptools when it is new enough, so installing
-# also works without network access.
-if "$PYTHON" -c '
-import sys
-try:
-    import setuptools
-    major, minor = (int(p) for p in setuptools.__version__.split(".")[:2])
-except Exception:
-    sys.exit(1)
-sys.exit(0 if (major, minor) >= (68, 0) else 1)
-' >/dev/null 2>&1; then
-    PIP_ARGS+=(--no-build-isolation)
-fi
+printf 'Building native anx with the new yianc binary...\n'
+run_source_anx "$STAGE_DIR/bin/yianc" build "$ROOT_DIR/bootstrap/anx" -O2
+install -m 0755 "$ROOT_DIR/bootstrap/anx/build/app" "$STAGE_DIR/bin/anx"
 
-[[ "$WITH_DEPS" -eq 0 ]] && PIP_ARGS+=(--no-deps)
-[[ "$USER_INSTALL" -eq 1 ]] && PIP_ARGS+=(--user)
+"$STAGE_DIR/bin/yianc" --help >/dev/null
+"$STAGE_DIR/bin/anx" --help >/dev/null
 
-# ---- install ----------------------------------------------------------------
-MODE="editable"
-[[ "$REGULAR" -eq 1 ]] && MODE="regular"
-printf 'Installing (%s) from %s with %s\n' \
-    "$MODE" "$ROOT_DIR" "$("$PYTHON" -c 'import sys; print(sys.executable)')"
-"$PYTHON" -m pip install "${PIP_ARGS[@]}"
+cp -a "$ROOT_DIR/lib/src" "$STAGE_DIR/share/yian/lib/src"
+cp -a "$ROOT_DIR/runtime/src" "$STAGE_DIR/share/yian/runtime/src"
+cp -a "$ROOT_DIR/runtime/include" "$STAGE_DIR/share/yian/runtime/include"
 
-# ---- verify entry points ----------------------------------------------------
-SCRIPTS_DIR="$("$PYTHON" -c 'import sysconfig; print(sysconfig.get_path("scripts"))')"
-MISSING=0
-printf '\nEntry points:\n'
-for cmd in yianc anx yian-lsp; do
-    if command -v "$cmd" >/dev/null 2>&1; then
-        printf '  %-8s -> %s\n' "$cmd" "$(command -v "$cmd")"
-    else
-        printf '  %-8s -> NOT on PATH\n' "$cmd"
-        MISSING=1
+mkdir -p "$BIN_DIR" "$SHARE_DIR"
+is_python_entrypoint() {
+    local path="$1"
+    local import_line="$2"
+    local shebang=""
+
+    [[ -f "$path" ]] || return 1
+    IFS= read -r shebang <"$path" || true
+    [[ "$shebang" == '#!'*python* ]] || return 1
+    grep -Fq -- "$import_line" "$path"
+}
+
+for command_name in yianc anx; do
+    target="$BIN_DIR/$command_name"
+    if [[ -e "$target" && ! -f "$MARKER" ]]; then
+        import_line='from compiler.main import main'
+        [[ "$command_name" == anx ]] && import_line='from anx.main import main'
+        if ! is_python_entrypoint "$target" "$import_line"; then
+            die "refusing to replace an unmanaged command: $target"
+        fi
     fi
 done
 
-if [[ "$MISSING" -eq 1 ]]; then
-    printf '\nwarning: %s is not on PATH. Add it, for example:\n' "$SCRIPTS_DIR"
-    printf '  export PATH="%s:$PATH"\n' "$SCRIPTS_DIR"
+PYTHON_SCRIPTS_DIR="$("$PYTHON" -c 'import sysconfig; print(sysconfig.get_path("scripts"))')"
+remove_python_entrypoint() {
+    local path="$1"
+    local import_line="$2"
+
+    # Leave non-Python commands with the same names untouched.
+    if is_python_entrypoint "$path" "$import_line"; then
+        rm -f -- "$path"
+        printf 'Removed legacy Python command %s\n' "$path"
+    fi
+}
+
+DATA_STAGE="$SHARE_DIR/.yian-native-stage.$$"
+if [[ -e "$DATA_STAGE" ]]; then
+    die "temporary resource path already exists: $DATA_STAGE"
+fi
+cp -a "$STAGE_DIR/share/yian" "$DATA_STAGE"
+{
+    printf 'yian-native-install-v1\n'
+    sha256sum "$STAGE_DIR/bin/yianc" | awk '{print "yianc=" $1}'
+    sha256sum "$STAGE_DIR/bin/anx" | awk '{print "anx=" $1}'
+} >"$DATA_STAGE/.native-install"
+
+DATA_BACKUP="$SHARE_DIR/.yian-native-backup.$$"
+if [[ -e "$DATA_DIR" ]]; then
+    mv "$DATA_DIR" "$DATA_BACKUP"
+fi
+if ! mv "$DATA_STAGE" "$DATA_DIR"; then
+    if [[ -e "$DATA_BACKUP" ]]; then
+        mv "$DATA_BACKUP" "$DATA_DIR"
+    fi
+    die "could not publish resources under $DATA_DIR"
 fi
 
-cat <<'EOF'
+install -m 0755 "$STAGE_DIR/bin/yianc" "$BIN_DIR/yianc"
+install -m 0755 "$STAGE_DIR/bin/anx" "$BIN_DIR/anx"
 
-Try it:
-  yianc lib path/to/main.an -o build/app
-  anx new myapp && cd myapp && anx run
-EOF
+remove_python_entrypoint "$PYTHON_SCRIPTS_DIR/yianc" 'from compiler.main import main'
+remove_python_entrypoint "$PYTHON_SCRIPTS_DIR/anx" 'from anx.main import main'
+remove_python_entrypoint "$BIN_DIR/yianc" 'from compiler.main import main'
+remove_python_entrypoint "$BIN_DIR/anx" 'from anx.main import main'
 
-if [[ "$REGULAR" -eq 1 ]]; then
-    cat <<EOF
-
-This was a regular (non-editable) install, which does not include lib/.
-Point the tools at a checkout before using them:
-
-  export YIAN_LIB="$ROOT_DIR/lib/src"
-  # or: export YIAN_ROOT="$ROOT_DIR"
-EOF
+if [[ -e "$DATA_BACKUP" ]]; then
+    rm -rf -- "$DATA_BACKUP"
 fi
+DATA_BACKUP=""
+DATA_STAGE=""
+
+printf '\nInstalled native commands:\n  %s\n  %s\n' "$BIN_DIR/yianc" "$BIN_DIR/anx"
+printf 'Installed resources:\n  %s\n' "$DATA_DIR"
+path_update_needed=0
+for command_name in yianc anx; do
+    resolved="$(command -v "$command_name" 2>/dev/null || true)"
+    if [[ "$resolved" != "$BIN_DIR/$command_name" ]]; then
+        path_update_needed=1
+    fi
+done
+if [[ "$path_update_needed" -eq 1 ]]; then
+    printf '\nPut the native command directory first on PATH:\n  export PATH="%s:$PATH"\n' "$BIN_DIR"
+fi
+printf '\nThese commands do not require Python at run time.\n'
