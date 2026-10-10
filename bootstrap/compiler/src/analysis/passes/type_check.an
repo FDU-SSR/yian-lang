@@ -182,7 +182,11 @@ fn check_one(ctx: ResolutionContext&, type_id: TypeId, options: AnalysisOptions&
     }
 
     for parameter in callable.parameters {
-        parameters.push(checker.bind(ctx.session.names.text(parameter.name), parameter.type_id, procedure.body.span, SymbolKind.Parameter)?);
+        let span = match parameter.span {
+            Some(location) => location.span,
+            None => procedure.body.span,
+        };
+        parameters.push(checker.bind(ctx.session.names.text(parameter.name), parameter.type_id, span, SymbolKind.Parameter)?);
     }
 
     let root = match checker.block(procedure.body) {

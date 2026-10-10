@@ -55,6 +55,7 @@ pub struct EditorFacts {
     names: Vec<ResolvedName>,
     by_position: HashMap<NamePosition, u64>,
     declarations: HashMap<NamePosition, SymbolId>,
+    parameter_declarations: HashMap<NamePosition, bool>,
     by_symbol: HashMap<SymbolId, Vec<u64>>,
     members: Vec<ResolvedMember>,
     member_positions: HashMap<NamePosition, u64>,
@@ -66,7 +67,8 @@ pub struct EditorFacts {
 impl EditorFacts {
     static pub fn new() -> Self {
         Self(Vec<ResolvedName>.new(), HashMap<NamePosition, u64>.new(),
-            HashMap<NamePosition, SymbolId>.new(), HashMap<SymbolId, Vec<u64>>.new(),
+            HashMap<NamePosition, SymbolId>.new(), HashMap<NamePosition, bool>.new(),
+            HashMap<SymbolId, Vec<u64>>.new(),
             Vec<ResolvedMember>.new(), HashMap<NamePosition, u64>.new(),
             HashMap<NamePosition, Vec<u64>>.new(), HashMap<DefId, SourceSpan>.new(),
             HashMap<SourceId, Vec<ScopeRegion>>.new())
@@ -119,6 +121,20 @@ impl EditorFacts {
             Some(symbol) => Option<SymbolId>.Some(*symbol),
             None => Option<SymbolId>.None,
         }
+    }
+
+    // Syntax owns the parameter category even when lowering adds a same-span binding.
+    pub fn record_parameter_declaration(location: SourceSpan) {
+        let column = location.span.start.column;
+        while column <= location.span.end.column {
+            self.parameter_declarations.insert(
+                NamePosition(location.source, location.span.start.row, column), true);
+            column += 1;
+        }
+    }
+
+    pub fn is_parameter_declaration(source: SourceId, row: u64, column: u64) -> bool {
+        self.parameter_declarations.contains(&NamePosition(source, row, column))
     }
 
     static fn member_key(location: SourceSpan) -> NamePosition {
@@ -310,6 +326,7 @@ impl Drop for EditorFacts {
         }
         self.scopes_by_source.drop();
         self.declarations.drop();
+        self.parameter_declarations.drop();
         self.by_position.drop();
         self.names.drop();
     }

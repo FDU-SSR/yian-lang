@@ -4,9 +4,10 @@ from compiler.analysis.ty.model import TypeData, DefinitionBody, Parameter, Stru
 from compiler.analysis.ty.callable import store_signature, store_substitutions;
 from compiler.analysis.ty.queries import struct_fields, enum_variants;
 from compiler.analysis.ty.display import stored_type_text;
-from compiler.analysis.symbol.model import SymbolKind;
+from compiler.analysis.symbol.model import Symbol, SymbolKind;
 from compiler.analysis.ty.substitution import infer, substitute;
 from compiler.diagnostics.model import AnalysisError;
+from compiler.frontend.ast.node import GenericParam, ItemData;
 from compiler.common.ids import SourceId, TypeId, UnitId, SymbolId, ImplId, NameId;
 from compiler.frontend.source import Position, Span;
 from compiler.frontend.lex.token import Token, TokenPayload, PunctuatorKind, KeywordKind;
@@ -314,6 +315,72 @@ fn completion_kind(snapshot: EditorSnapshot&, symbol_id: SymbolId) -> EditorComp
     }
 }
 
+fn source_text_for_span(snapshot: EditorSnapshot&, source: SourceId, span: Span) -> String {
+    let text = match snapshot.source_text(source) {
+        Some(value) => value,
+        None => return String.new(),
+    };
+    let index = LineIndex.new(text);
+    defer index.drop();
+    let start = index.byte_offset(TextPosition(row=span.start.row, column=span.start.column));
+    let end = index.byte_offset(TextPosition(row=span.end.row, column=span.end.column));
+    let bytes = text.as_slice();
+    String.from(&str.from_slice_unchecked(bytes[start..end]))
+}
+
+// Alias completion follows the declaration signature rather than exposing only its expanded type.
+fn alias_completion_detail(snapshot: EditorSnapshot&, symbol: Symbol&) -> String {
+    let fallback = stored_type_text(&snapshot.session().types, &snapshot.session().names, symbol.type_id);
+    let unit = match snapshot.session().unit(symbol.unit) {
+        Some(value) => value,
+        None => return fallback,
+    };
+    let tree = match &unit.prepared.tree {
+        Some(value) => value,
+        None => return fallback,
+    };
+    let alias_name = snapshot.session().names.text(symbol.name);
+
+    for item in tree.root.data.items {
+        match &item.data {
+            Alias(_, name, generics, _) if name.data.name.as_str() == alias_name => {
+                let detail = String.new();
+                detail.push_str("typedef ");
+                detail.push_str(alias_name);
+                if generics.len() != 0u64 {
+                    detail.push('<');
+                    let index = 0u64;
+                    for generic in generics {
+                        if index != 0u64 { detail.push_str(", "); }
+                        match generic {
+                            Type(value) => detail.push_str(value.data.name.data.name.as_str()),
+                            Constant(value) => {
+                                detail.push_str("const ");
+                                detail.push_str(value.data.name.data.name.as_str());
+                                detail.push_str(": ");
+                                let annotation = source_text_for_span(snapshot, unit.source,
+                                    value.data.const_type.span);
+                                detail.push_str(annotation.as_str());
+                                annotation.drop();
+                            },
+                        }
+                        index += 1u64;
+                    }
+                    detail.push('>');
+                }
+                detail.push_str(" = ");
+                detail.push_str(fallback.as_str());
+                detail.push(';');
+                fallback.drop();
+                return detail;
+            },
+            _ => {},
+        }
+    }
+
+    fallback
+}
+
 fn symbol_completion(
     snapshot: EditorSnapshot&,
     symbol_id: SymbolId,
@@ -330,24 +397,28 @@ fn symbol_completion(
 
     let kind = completion_kind(snapshot, symbol_id);
     let parameter_labels = Vec<String>.new();
-    let detail = match signature_for_type(snapshot, symbol.type_id, name, 0u64) {
-        Some(signature) => {
-            let value = String.from(&signature.label.as_str());
-            for parameter in signature.parameter_labels {
-                parameter_labels.push(String.from(&parameter.as_str()));
-            }
-            signature.drop();
-            match kind {
-                Function | Method => Option<String>.Some(value),
-                _ => {
-                    value.drop();
-                    Option<String>.Some(stored_type_text(&snapshot.session().types,
-                        &snapshot.session().names, symbol.type_id))
-                },
-            }
-        },
-        None => Option<String>.Some(stored_type_text(&snapshot.session().types,
-            &snapshot.session().names, symbol.type_id)),
+    let detail = if kind == EditorCompletionKind.Alias {
+        Option<String>.Some(alias_completion_detail(snapshot, symbol))
+    } else {
+        match signature_for_type(snapshot, symbol.type_id, name, 0u64) {
+            Some(signature) => {
+                let value = String.from(&signature.label.as_str());
+                for parameter in signature.parameter_labels {
+                    parameter_labels.push(String.from(&parameter.as_str()));
+                }
+                signature.drop();
+                match kind {
+                    Function | Method => Option<String>.Some(value),
+                    _ => {
+                        value.drop();
+                        Option<String>.Some(stored_type_text(&snapshot.session().types,
+                            &snapshot.session().names, symbol.type_id))
+                    },
+                }
+            },
+            None => Option<String>.Some(stored_type_text(&snapshot.session().types,
+                &snapshot.session().names, symbol.type_id)),
+        }
     };
 
     Option<EditorCompletionItem>.Some(EditorCompletionItem(
@@ -364,11 +435,11 @@ fn append_symbol_candidates(
     prefix: str,
     type_only: bool,
 ) -> Result<(), AnalysisError> {
-    let symbols = snapshot.visible_symbols_at(source, row, column)?;
+    let symbols = snapshot.visible_symbols_with_metadata_at(source, row, column)?;
     defer symbols.drop();
 
-    for symbol_id in symbols {
-        let symbol = match snapshot.session().symbols.get(*symbol_id) {
+    for visible in symbols {
+        let symbol = match snapshot.session().symbols.get(visible.id) {
             Some(value) => value,
             None => continue,
         };
@@ -376,8 +447,17 @@ fn append_symbol_candidates(
             continue;
         }
 
-        match symbol_completion(snapshot, *symbol_id, prefix) {
-            Some(item) => push_completion(items, item),
+        match symbol_completion(snapshot, visible.id, prefix) {
+            Some(item) => {
+                if visible.is_local {
+                    match &item.detail {
+                        Some(value) => value.drop(),
+                        None => {},
+                    }
+                    item.detail = Option<String>.None;
+                }
+                push_completion(items, item);
+            },
             None => {},
         }
     }

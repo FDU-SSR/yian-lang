@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Build native YIAN commands with the checkout's Python compiler and install them.
+# Build and install the native YIAN compiler, package manager, and language server.
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -8,7 +8,7 @@ PREFIX="${PREFIX:-}"
 
 usage() {
     cat <<'EOF'
-Build and install native yianc and anx binaries.
+Build and install native yianc, anx, and yian-lsp binaries.
 
 Usage: scripts/install.sh [options]
 
@@ -18,7 +18,7 @@ Options:
   -h, --help     Show this help.
 
 The install requires Python 3.12+, llvmlite 0.49+, LLVM 22, and a native C
-toolchain. Installed yianc and anx are native executables and do not use Python.
+toolchain. Installed commands are native executables and do not use Python.
 The standard library and runtime are copied under PREFIX/share/yian so the
 commands continue to work after the source checkout is removed.
 EOF
@@ -122,8 +122,17 @@ printf 'Building native anx with the new yianc binary...\n'
 run_source_anx "$STAGE_DIR/bin/yianc" build "$ROOT_DIR/bootstrap/anx" -O2
 install -m 0755 "$ROOT_DIR/bootstrap/anx/build/app" "$STAGE_DIR/bin/anx"
 
+printf 'Building native yian-lsp in raw host mode with the native anx and yianc binaries...\n'
+# Keep the long-lived editor host raw; fat metadata exhausts while analyzing compiler-sized workspaces.
+YIAN_ROOT="$ROOT_DIR" \
+YIAN_LIB="$ROOT_DIR/lib/src" \
+YIANC="$STAGE_DIR/bin/yianc" \
+    "$STAGE_DIR/bin/anx" build "$ROOT_DIR/bootstrap/lsp" -O2 --raw-pointers
+install -m 0755 "$ROOT_DIR/bootstrap/lsp/build/app" "$STAGE_DIR/bin/yian-lsp"
+
 "$STAGE_DIR/bin/yianc" --help >/dev/null
 "$STAGE_DIR/bin/anx" --help >/dev/null
+"$STAGE_DIR/bin/yian-lsp" --version >/dev/null
 
 cp -a "$ROOT_DIR/lib/src" "$STAGE_DIR/share/yian/lib/src"
 cp -a "$ROOT_DIR/runtime/src" "$STAGE_DIR/share/yian/runtime/src"
@@ -141,11 +150,14 @@ is_python_entrypoint() {
     grep -Fq -- "$import_line" "$path"
 }
 
-for command_name in yianc anx; do
+for command_name in yianc anx yian-lsp; do
     target="$BIN_DIR/$command_name"
     if [[ -e "$target" && ! -f "$MARKER" ]]; then
         import_line='from compiler.main import main'
-        [[ "$command_name" == anx ]] && import_line='from anx.main import main'
+        case "$command_name" in
+            anx) import_line='from anx.main import main' ;;
+            yian-lsp) import_line='from lsp.main import main' ;;
+        esac
         if ! is_python_entrypoint "$target" "$import_line"; then
             die "refusing to replace an unmanaged command: $target"
         fi
@@ -173,6 +185,7 @@ cp -a "$STAGE_DIR/share/yian" "$DATA_STAGE"
     printf 'yian-native-install-v1\n'
     sha256sum "$STAGE_DIR/bin/yianc" | awk '{print "yianc=" $1}'
     sha256sum "$STAGE_DIR/bin/anx" | awk '{print "anx=" $1}'
+    sha256sum "$STAGE_DIR/bin/yian-lsp" | awk '{print "yian-lsp=" $1}'
 } >"$DATA_STAGE/.native-install"
 
 DATA_BACKUP="$SHARE_DIR/.yian-native-backup.$$"
@@ -188,11 +201,14 @@ fi
 
 install -m 0755 "$STAGE_DIR/bin/yianc" "$BIN_DIR/yianc"
 install -m 0755 "$STAGE_DIR/bin/anx" "$BIN_DIR/anx"
+install -m 0755 "$STAGE_DIR/bin/yian-lsp" "$BIN_DIR/yian-lsp"
 
 remove_python_entrypoint "$PYTHON_SCRIPTS_DIR/yianc" 'from compiler.main import main'
 remove_python_entrypoint "$PYTHON_SCRIPTS_DIR/anx" 'from anx.main import main'
+remove_python_entrypoint "$PYTHON_SCRIPTS_DIR/yian-lsp" 'from lsp.main import main'
 remove_python_entrypoint "$BIN_DIR/yianc" 'from compiler.main import main'
 remove_python_entrypoint "$BIN_DIR/anx" 'from anx.main import main'
+remove_python_entrypoint "$BIN_DIR/yian-lsp" 'from lsp.main import main'
 
 if [[ -e "$DATA_BACKUP" ]]; then
     rm -rf -- "$DATA_BACKUP"
@@ -200,10 +216,10 @@ fi
 DATA_BACKUP=""
 DATA_STAGE=""
 
-printf '\nInstalled native commands:\n  %s\n  %s\n' "$BIN_DIR/yianc" "$BIN_DIR/anx"
+printf '\nInstalled native commands:\n  %s\n  %s\n  %s\n' "$BIN_DIR/yianc" "$BIN_DIR/anx" "$BIN_DIR/yian-lsp"
 printf 'Installed resources:\n  %s\n' "$DATA_DIR"
 path_update_needed=0
-for command_name in yianc anx; do
+for command_name in yianc anx yian-lsp; do
     resolved="$(command -v "$command_name" 2>/dev/null || true)"
     if [[ "$resolved" != "$BIN_DIR/$command_name" ]]; then
         path_update_needed=1

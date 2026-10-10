@@ -198,7 +198,15 @@ fn primary(parser: Parser&) -> Option<Expr&> {
     if parser.at_punct(PunctuatorKind.LBracket) {
         return array_expr(parser);
     }
-    parser.error(if token.is_eof() { "Unexpected end of file while parsing expression" } else { "Unexpected token while parsing expression" }, span);
+    if token.is_eof() {
+        parser.error("Unexpected end of file while parsing expression", span);
+    } else {
+        let message = String.from(&"Unexpected token '");
+        defer message.drop();
+        message.push_str(token.value());
+        message.push_str("' while parsing expression");
+        parser.error(message.as_str(), span);
+    }
     Option<Expr&>.None
 }
 

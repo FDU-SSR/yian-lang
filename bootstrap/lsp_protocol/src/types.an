@@ -47,9 +47,8 @@ pub struct SignatureHelpContext {
 pub struct SignatureHelpParams {
     pub text_document: TextDocumentIdentifier,
     pub position: Position,
-    pub context: SignatureHelpContext,
+    pub context: Option<SignatureHelpContext>,
 }
-
 pub fn decode_bool_field(object: Object&, key: str) -> Option<bool> {
     match object.get(key) {
         Some(value) => match value {
@@ -176,10 +175,6 @@ impl TextDocumentPositionParams {
     pub fn drop() { self.text_document.drop(); }
 }
 
-impl ReferenceParams {
-    pub fn drop() { self.text_document.drop(); }
-}
-
 impl TextDocumentIdentifier {
     static pub fn from_json(value: Value&) -> Option<Self> {
         let object = match value.as_object() { Some(object) => object, None => return Option<Self>.None };
@@ -278,6 +273,8 @@ impl ReferenceParams {
             position=position,
             context=ReferenceContext(include_declaration=include_declaration)))
     }
+
+    pub fn drop() { self.text_document.drop(); }
 }
 
 impl RenameParams {
@@ -385,7 +382,6 @@ impl CompletionParams {
         match &self.context { Some(value) => value.drop(), None => {}, }
     }
 }
-
 impl SignatureHelpContext {
     static pub fn from_json(value: Value&) -> Option<Self> {
         let object = match value.as_object() { Some(object) => object, None => return Option<Self>.None };
@@ -421,18 +417,17 @@ impl SignatureHelpParams {
             None => { base.text_document.drop(); return Option<Self>.None; },
         };
         let context_value = match object.get("context") {
-            Some(value) => value,
-            None => { base.text_document.drop(); return Option<Self>.None; },
+            Some(value) => match SignatureHelpContext.from_json(value) {
+                Some(context) => Option<SignatureHelpContext>.Some(context),
+                None => { base.text_document.drop(); return Option<Self>.None; },
+            },
+            None => Option<SignatureHelpContext>.None,
         };
-        let context = match SignatureHelpContext.from_json(context_value) {
-            Some(value) => value,
-            None => { base.text_document.drop(); return Option<Self>.None; },
-        };
-        Option<Self>.Some(Self(base.text_document, base.position, context))
+        Option<Self>.Some(Self(base.text_document, base.position, context_value))
     }
 
     pub fn drop() {
         self.text_document.drop();
-        self.context.drop();
+        match &self.context { Some(value) => value.drop(), None => {}, }
     }
 }

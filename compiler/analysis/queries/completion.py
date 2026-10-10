@@ -415,6 +415,20 @@ def __value_items(
     a label wins (deduplicate labels and respect local shadowing).
     """
     items: dict[str, Completion] = {}
+    for declaration in __visible_declarations_at(navigator, path, row, col):
+        items.setdefault(declaration.name, __from_declaration(declaration))
+    for symbol in navigator.view.symbols_in(path):
+        items.setdefault(symbol.name, __from_symbol(navigator.view, symbol))
+    for name in PRIMITIVE_TYPE_NAMES:
+        items.setdefault(name, Completion(label=name, kind=CompletionKind.PRIMITIVE, detail="type"))
+    return tuple(items.values())
+
+
+def __visible_declarations_at(
+    navigator: Navigator, path: Path, row: int, col: int
+) -> tuple[Declaration, ...]:
+    """Return source-local bindings visible at a cursor in declaration order."""
+    visible: list[Declaration] = []
     container = navigator.enclosing_definition_name(path, row, col)
     for declaration in navigator.declarations_in(path):
         if declaration.span is None:
@@ -428,12 +442,8 @@ def __value_items(
         # sibling block inside the same definition still is).
         if declaration.container != container:
             continue
-        items.setdefault(declaration.name, __from_declaration(declaration))
-    for symbol in navigator.view.symbols_in(path):
-        items.setdefault(symbol.name, __from_symbol(navigator.view, symbol))
-    for name in PRIMITIVE_TYPE_NAMES:
-        items.setdefault(name, Completion(label=name, kind=CompletionKind.PRIMITIVE, detail="type"))
-    return tuple(items.values())
+        visible.append(declaration)
+    return tuple(visible)
 
 
 def __type_items(navigator: Navigator, path: Path) -> tuple[Completion, ...]:

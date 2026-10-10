@@ -11,6 +11,7 @@ pub struct AnalysisOptions {
     pub require_entry: bool,
     pub entry_optional: bool,
     pub recover: bool,
+    pub verify_hir: bool,
     // The caller keeps this provider alive for the entire synchronous analysis call.
     pub sizes: Option<TypeSizeProvider&>,
     pub trace: Option<CompilerTrace&>,
@@ -18,7 +19,7 @@ pub struct AnalysisOptions {
 
 impl AnalysisOptions {
     static pub fn new() -> Self {
-        Self(false, true, false, Option<TypeSizeProvider&>.None, Option<CompilerTrace&>.None)
+        Self(false, true, false, true, Option<TypeSizeProvider&>.None, Option<CompilerTrace&>.None)
     }
 }
 

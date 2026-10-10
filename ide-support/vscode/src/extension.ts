@@ -61,8 +61,7 @@ function expandWorkspaceFolder(value: string): string {
  * Report which server answered, and whether it belongs to this extension.
  *
  * The extension and the server are released together from one repository, so a
- * mismatch means the interpreter that started the server has an older (or a
- * different) `yian` install — the usual cause is a second Python environment.
+ * mismatch means PATH selected an older (or different) native installation.
  * That is a warning with a fix, not an error: features supported by the running
  * server remain available.
  */
@@ -76,7 +75,7 @@ function checkServerVersion(
     if (info === undefined) {
         outputChannel.warn(
             `the language server did not report its version; expected ${expected}. ` +
-                `Update the server with: pip install -e '.[lsp]'`,
+                `Check that the native yian-lsp installed by scripts/install.sh is on PATH.`,
         );
         return;
     }
@@ -90,7 +89,7 @@ function checkServerVersion(
     );
     void vscode.window.showWarningMessage(
         `YIAN: language server ${info.version} does not match extension ${expected}. ` +
-            `Update the server in the interpreter that runs it: pip install -e '.[lsp]'`,
+            `Rebuild and install the native commands with scripts/install.sh, then restart VS Code.`,
     );
 }
 
@@ -101,8 +100,8 @@ function checkServerVersion(
  * error, which turns ordinary progress lines into `[error]` noise and buries the
  * real failures (the server writes all of its logging to stderr, because stdout
  * is the JSON-RPC channel). The server prefixes each record with its level, so
- * the level is read back from the line; continuation lines — a Python traceback,
- * for example — keep the level of the record they belong to.
+ * the level is read back from the line; continuation lines keep the level of
+ * the record they belong to.
  */
 function pipeServerLog(input: NodeJS.ReadableStream, outputChannel: vscode.LogOutputChannel): void {
     // Until the server logs a level of its own, stderr is not progress: it is a
@@ -118,8 +117,8 @@ function pipeServerLog(input: NodeJS.ReadableStream, outputChannel: vscode.LogOu
             if (match !== null && match[1] in LOG_LEVELS) {
                 level = match[1];
             } else if (line.startsWith('Traceback (most recent call last)')) {
-                // An uncaught exception: its frames and message follow and have
-                // no prefix of their own.
+                // Python reference servers may write an uncaught traceback;
+                // its frames and message follow without their own prefixes.
                 level = 'ERROR';
             }
             switch (LOG_LEVELS[level]) {
@@ -187,8 +186,8 @@ export function activate(context: vscode.ExtensionContext): void {
             outputChannel.error(`could not start '${command}': ${reason}`);
             void vscode.window.showErrorMessage(
                 `YIAN: could not start '${command}'. Install the language server ` +
-                    `(pip install '.[lsp]') or set "yian.languageServer.command" to the ` +
-                    `interpreter that has it, with "yian.languageServer.args": ["-m", "lsp"].`,
+                    `with scripts/install.sh and ensure its bin directory is on PATH, or set ` +
+                    `"yian.languageServer.command" to the installed binary's absolute path.`,
             );
         });
 }

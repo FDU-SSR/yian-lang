@@ -43,6 +43,13 @@ impl PollInterests {
 
 pub struct PollToken { slot: u64, generation: u64 }
 
+impl PollToken {
+    // Tokens compare both slot and generation so a recycled slot cannot match stale events.
+    pub fn same(other: PollToken) -> bool {
+        self.slot == other.slot && self.generation == other.generation
+    }
+}
+
 pub struct PollEvent {
     token: PollToken,
     readable: bool,
@@ -101,7 +108,7 @@ impl Poller {
             interests=interests.bits,
             generation=1u64,
             active=true,
-        ));
+            ));
         Result<PollToken, IoError>.Ok(PollToken(slot=self.registrations.len() - 1u64, generation=1u64))
     }
 
@@ -196,11 +203,11 @@ impl Poller {
             if flags == 0u32 { continue; }
             events.push(PollEvent(
                 token=active[index],
-                readable=(flags & 1u32) != 0u32,
-                writable=(flags & 2u32) != 0u32,
-                hangup=(flags & 4u32) != 0u32,
-                error=(flags & 8u32) != 0u32,
-            ));
+                readable= (flags & 1u32) != 0u32,
+                writable= (flags & 2u32) != 0u32,
+                hangup= (flags & 4u32) != 0u32,
+                error= (flags & 8u32) != 0u32,
+                ));
         }
         Result<Vec<PollEvent>, IoError>.Ok(events)
     }

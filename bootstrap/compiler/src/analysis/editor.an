@@ -5,6 +5,7 @@ from compiler.codegen.error import CodegenError;
 from compiler.analysis.constant.evaluate import TypeSizeProvider;
 from compiler.analysis.editor_facts import EditorMemberKind, ResolvedMember, ResolvedName;
 from compiler.analysis.symbol.model import Symbol, SymbolKind;
+from compiler.analysis.symbol.scope import VisibleSymbol;
 from compiler.analysis.ty.display import stored_type_text;
 from compiler.analysis.ty.model import StructField, EnumVariant, TypeData, DefinitionBody;
 from compiler.analysis.ty.queries import struct_fields, enum_variants;
@@ -12,7 +13,8 @@ from compiler.common.ids import SourceId, UnitId, SymbolId, ScopeId, DefId, Type
 from compiler.common.location import SourceSpan;
 from compiler.diagnostics.model import Diagnostic, DiagnosticLocation, AnalysisError, AnalysisErrorKind;
 from compiler.format.api import format_text;
-from compiler.frontend.ast.node import Item, ItemData, MethodDecl, MethodDef, TypeSyntax;
+from compiler.frontend.ast.node import Item, ItemData, MethodDecl, MethodDef, TypeSyntax, Identifier, Parameter, Pattern, PatternArguments, PatternLet, ExternFuncDecl, Expr;
+from compiler.frontend.ast.traversal import AstVisitor, walk_program;
 from compiler.frontend.source import SourceDocument, Position, Span;
 from compiler.frontend.lex.lexer import Lexer;
 from compiler.frontend.lex.token import Token, TokenPayload, KeywordKind, PunctuatorKind, drop_tokens;
@@ -977,6 +979,16 @@ impl EditorSnapshot {
     }
 
     // Candidate bindings are filtered at the cursor so later local declarations do not leak backward.
+    pub fn visible_symbols_with_metadata_at(source: SourceId, row: u64, column: u64)
+    -> Result<Vec<VisibleSymbol>, AnalysisError> {
+        let scope = match self.scope_at(source, row, column) {
+            Some(value) => value,
+            None => return Result<Vec<VisibleSymbol>, AnalysisError>.Ok(Vec<VisibleSymbol>.new()),
+        };
+        self.session.symbols.visible_symbols_with_metadata_at(scope, source, row, column)
+    }
+
+    // Keep the identity-only query surface stable for existing compiler clients.
     pub fn visible_symbols_at(source: SourceId, row: u64, column: u64)
     -> Result<Vec<SymbolId>, AnalysisError> {
         let scope = match self.scope_at(source, row, column) {
@@ -1548,13 +1560,167 @@ fn source_is_stdlib(session: AnalysisSession&, source: SourceId) -> bool {
     false
 }
 
+fn declaration_name_span(unit: CompilationUnit&, expected: Span) -> Option<Span> {
+    let tokens = &unit.prepared.tokens;
+    let lower = 0u64;
+    let upper = tokens.len();
+
+    // Tokens are in source order, so each declaration lookup is logarithmic.
+    while lower < upper {
+        let middle = lower + (upper - lower) / 2u64;
+        let token = &tokens.as_slice()[middle];
+        if token.span.start.row == expected.start.row &&
+        token.span.start.column == expected.start.column {
+            return match token.kind() {
+                Identifier(_) => Option<Span>.Some(token.span),
+                _ => Option<Span>.None,
+            };
+        }
+        if token.span.start.row < expected.start.row ||
+        (token.span.start.row == expected.start.row &&
+            token.span.start.column < expected.start.column) {
+            lower = middle + 1u64;
+        } else {
+            upper = middle;
+        }
+    }
+
+    Option<Span>.None
+}
+
+struct ParameterDeclarationIndexer { session: AnalysisSession&, source: SourceId }
+
+fn record_parameter_name(session: AnalysisSession&, source: SourceId, name: Identifier&) {
+    if !name.data.synthetic {
+        session.editor_facts.record_parameter_declaration(SourceSpan(source, name.span));
+    }
+}
+
+fn record_parameter_list(session: AnalysisSession&, source: SourceId, parameters: Vec<Parameter>&) {
+    for parameter in *parameters {
+        match parameter {
+            Named(value) => record_parameter_name(session, source, value.data.name),
+            Pattern(_) => {},
+        }
+    }
+}
+
+fn record_parameter_pattern(session: AnalysisSession&, source: SourceId, pattern: Pattern&) {
+    match &pattern.data {
+        NamePattern(name) => record_parameter_name(session, source, *name),
+        BindPattern(name, inner) => {
+            record_parameter_name(session, source, *name);
+            record_parameter_pattern(session, source, *inner);
+        },
+        OrPattern(alternatives) => {
+            if alternatives.len() > 0 {
+                record_parameter_pattern(session, source, alternatives[0]);
+            }
+        },
+        ConstructPattern(name, qualifier, arguments, rest) => match arguments {
+            Positional(values) => {
+                for value in *values { record_parameter_pattern(session, source, *value); }
+            },
+            Named(values) => {
+                for value in *values { record_parameter_pattern(session, source, value.data.pattern); }
+            },
+            None => {},
+        },
+        TuplePattern(elements) => {
+            for element in *elements { record_parameter_pattern(session, source, *element); }
+        },
+        SequencePattern(prefix, suffix, rest) => {
+            for element in *prefix { record_parameter_pattern(session, source, *element); }
+            for element in *suffix { record_parameter_pattern(session, source, *element); }
+        },
+        WildcardPattern | LiteralPattern(_) | RangePattern(_) => {},
+    }
+}
+
+impl AstVisitor for ParameterDeclarationIndexer {
+    pub fn enter_item(node: Item&) -> bool {
+        match &node.data {
+            FuncDef(_, _, _, parameters, _, _) =>
+            record_parameter_list(self.session, self.source, parameters),
+            _ => {},
+        }
+        true
+    }
+
+    pub fn enter_method_decl(node: MethodDecl&) -> bool {
+        record_parameter_list(self.session, self.source, &node.data.params);
+        true
+    }
+
+    pub fn enter_extern_func_decl(node: ExternFuncDecl&) -> bool {
+        for parameter in node.data.params {
+            record_parameter_name(self.session, self.source, parameter.data.name);
+        }
+        true
+    }
+
+    pub fn enter_expr(node: Expr&) -> bool {
+        match &node.data {
+            ClosureExpr(_, parameters, _, _) =>
+            record_parameter_list(self.session, self.source, parameters),
+            _ => {},
+        }
+        true
+    }
+
+    pub fn enter_pattern_let(node: PatternLet&) -> bool {
+        if node.data.is_parameter {
+            record_parameter_pattern(self.session, self.source, node.data.pattern);
+        }
+        true
+    }
+}
+
+fn index_parameter_declarations(session: AnalysisSession&) {
+    let index = 0u64;
+    while index < session.len() {
+        let unit = session.unit(UnitId(index)).unwrap();
+        match &unit.prepared.tree {
+            Some(tree) => {
+                let indexer = ParameterDeclarationIndexer(session, unit.source);
+                walk_program(tree.root, &indexer);
+            },
+            None => {},
+        }
+        index += 1u64;
+    }
+}
+
 fn index_declarations(session: AnalysisSession&) {
+    index_parameter_declarations(session);
+
     let index = 0u64;
     while index < session.symbols.symbol_count() {
         let symbol_id = SymbolId(index);
         let symbol = session.symbols.symbol_at(index).unwrap();
         match &symbol.span {
-            Some(location) => session.editor_facts.record_declaration(symbol_id, *location),
+            Some(location) => match session.unit(symbol.unit) {
+                Some(unit) => match declaration_name_span(unit, location.span) {
+                    Some(span) => {
+                        let existing = session.editor_facts.declaration_at(
+                            unit.source, span.start.row, span.start.column);
+                        let prefer_parameter = match existing {
+                            Some(existing_id) => match session.symbols.get(existing_id) {
+                                Some(existing_symbol) => symbol.kind == SymbolKind.Parameter &&
+                                existing_symbol.kind != SymbolKind.Parameter,
+                                None => true,
+                            },
+                            None => true,
+                        };
+                        if prefer_parameter {
+                            session.editor_facts.record_declaration(
+                                symbol_id, SourceSpan(unit.source, span));
+                        }
+                    },
+                    None => {},
+                },
+                None => {},
+            },
             None => {},
         }
         index += 1u64;
@@ -1571,6 +1737,8 @@ fn analyze_full(session: AnalysisSession&, raw_pointers: bool, options: Analysis
     defer backend.drop();
 
     options.recover = true;
+    // Editor queries use semantic facts directly and do not need the backend HIR audit.
+    options.verify_hir = false;
     options.sizes = Option<TypeSizeProvider&>.Some(backend.size_provider());
     match session.analyze_report(options) {
         Ok(report) => Result<AnalysisReport, EditorFailure>.Ok(report),

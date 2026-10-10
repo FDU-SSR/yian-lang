@@ -92,7 +92,7 @@ impl AnalysisSession {
             }
         };
         // A recovered callee failure leaves a partial call graph. It is never exported to the backend.
-        if report.ok() { verify_hir(&context, &output)?; }
+        if report.ok() && options.verify_hir { verify_hir(&context, &output)?; }
         started = start_stage(&options, AnalysisStage.Coverage);
         at_stage(check_coverage(&context, &output, options.recover, &report.diagnostics), AnalysisStage.Coverage, &options, started)?;
         for warning in output.warnings { report.diagnostics.push(*warning); }

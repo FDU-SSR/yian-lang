@@ -1,0 +1,467 @@
+from std.core.drop import Drop;
+from std.core.io import IoError, Read, Stdin, Stdout, Write;
+from std.core.fs import append;
+from std.core.option import Option;
+from std.core.process import env_var;
+from std.core.result import Result;
+from std.core.string import String;
+from std.core.time import Instant, monotonic_now;
+from std.core.vec import Vec;
+from json.value import Value, Number, Object;
+from json.write import stringify;
+from jsonrpc.frame import FrameDecoder, WriteQueue;
+from jsonrpc.message import Message, RequestId, RpcError, encode, parse;
+from lsp.config import Config, log, parse_config;
+from lsp.worker.service import WorkerState;
+
+fn frame_error() -> IoError {
+    IoError.other("invalid worker message frame")
+}
+
+fn encode_frame(message: Message&) -> Result<Vec<u8>, IoError> {
+    let encoded = match encode(message) {
+        Ok(value) => value,
+        Err(_) => return Result<Vec<u8>, IoError>.Err(frame_error()),
+    };
+    defer encoded.drop();
+
+    let queue = WriteQueue.new();
+    defer queue.drop();
+    match queue.enqueue(encoded.as_slice()) {
+        Ok(_) => {},
+        Err(_) => return Result<Vec<u8>, IoError>.Err(frame_error()),
+    }
+
+    let bytes = Vec<u8>.with_capacity(queue.pending_bytes());
+    bytes.extend_from_slice(queue.pending());
+    Result<Vec<u8>, IoError>.Ok(bytes)
+}
+
+fn send_message(output: Stdout&, message: Message&) -> Result<(), IoError> {
+    let bytes = encode_frame(message)?;
+    defer bytes.drop();
+    output.write_all(bytes.as_slice())
+}
+
+fn send_ready(output: Stdout&) -> Result<(), IoError> {
+    let method = String.from(&"worker/ready");
+    let message = Message.Notification(method, Option<Value>.None);
+    defer message.drop();
+    send_message(output, &message)
+}
+
+fn empty_object() -> Value { Value.Object(Object.new()) }
+
+fn byte_buffer(length: u64) -> Vec<u8> {
+    let result = Vec<u8>.with_capacity(length);
+    for _ in 0u64..length { result.push(0u8); }
+    result
+}
+
+fn drop_params(params: Option<Value>) {
+    if let Some(value) = params { value.drop(); }
+}
+
+fn trace_revision(params: Option<Value>&) -> u64 {
+    match params {
+        Some(value) => match value.as_object() {
+            Some(object) => match object.get("revision") {
+                Some(value) => match value.as_number() {
+                    Some(number) => match number {
+                        Unsigned(value) => *value,
+                        Signed(value) if *value >= 0i64 => u64(*value),
+                        _ => 0u64,
+                    },
+                    None => 0u64,
+                },
+                None => 0u64,
+            },
+            None => 0u64,
+        },
+        None => 0u64,
+    }
+}
+
+fn trace_method(params: Option<Value>&) -> Option<String> {
+    match params {
+        Some(value) => match value.as_object() {
+            Some(object) => match object.get("method") {
+                Some(value) => match value.as_string() {
+                    Some(method) => Option<String>.Some(String.from(&method)),
+                    None => Option<String>.None,
+                },
+                None => Option<String>.None,
+            },
+            None => Option<String>.None,
+        },
+        None => Option<String>.None,
+    }
+}
+
+fn write_trace(config: Config&, event: str, operation: str, method: Option<String>&,
+    revision: u64, timestamp_ns: i64, elapsed_ns: Option<i64>, cache_hit: i32,
+    full_analysis: bool, phase_timings: Option<Object&>) {
+    let path = match &config.trace_file {
+        Some(value) => value.as_str(),
+        None => { return; },
+    };
+
+    let fields = Object.new();
+    fields.insert("event", Value.String(String.from(&event)));
+    fields.insert("operation", Value.String(String.from(&operation)));
+    fields.insert("monotonic_ns", Value.Number(Number.Signed(timestamp_ns)));
+    fields.insert("revision", Value.Number(Number.Unsigned(revision)));
+    if let Some(value) = method {
+        fields.insert("method", Value.String(value.clone()));
+    }
+    if cache_hit >= 0i32 {
+        fields.insert("cache_hit", Value.Boolean(cache_hit != 0i32));
+    }
+    match elapsed_ns {
+        Some(value) => { fields.insert("duration_ns", Value.Number(Number.Signed(value))); },
+        None => {},
+    }
+    if full_analysis {
+        fields.insert("full", Value.Boolean(true));
+        let timings = Object.new();
+        match elapsed_ns {
+            Some(value) => {
+                timings.insert("analysis_total_ms", Value.Number(Number.Float(f64(value) / 1000000.0)));
+            },
+            None => {},
+        }
+        match phase_timings {
+            Some(source) => {
+                let iterator = source.iter();
+                while let Some((name, value)) = iterator.next() {
+                    timings.insert(name, value.clone());
+                }
+            },
+            None => {},
+        }
+        fields.insert("analysis_timings", Value.Object(timings));
+    }
+
+    let value = Value.Object(fields);
+    let encoded = match stringify(&value) {
+        Ok(text) => text,
+        Err(_) => {
+            value.drop();
+            log(config, "ERROR", "could not serialize LSP trace event");
+            return;
+        },
+    };
+    value.drop();
+    let line = String.from(&encoded.as_str());
+    line.push('\n');
+    encoded.drop();
+    match append(path, line.as_slice()) {
+        Ok(_) => {},
+        Err(problem) => {
+            log(config, "ERROR", problem.msg());
+            problem.drop();
+        },
+    }
+    line.drop();
+}
+
+fn trace_start(config: Config&, operation: str, method: Option<String>&,
+    revision: u64) -> i64 {
+    if config.trace_file.is_none() { return -1i64; }
+    let now = match monotonic_now() {
+        Ok(value) => value.nanoseconds(),
+        Err(problem) => { problem.drop(); return -1i64; },
+    };
+    write_trace(config, "worker_operation_started", operation, method,
+        revision, now, Option<i64>.None, -1i32, false, Option<Object&>.None);
+    now
+}
+
+fn trace_finish(config: Config&, operation: str, method: Option<String>&,
+    revision: u64, started_ns: i64, cache_hit: i32, full_analysis: bool) {
+    trace_finish_with_timings(config, operation, method, revision, started_ns,
+        cache_hit, full_analysis, Option<Object&>.None);
+}
+
+fn trace_finish_with_timings(config: Config&, operation: str, method: Option<String>&,
+    revision: u64, started_ns: i64, cache_hit: i32, full_analysis: bool,
+    phase_timings: Option<Object&>) {
+    if started_ns < 0i64 { return; }
+    let now = match monotonic_now() {
+        Ok(value) => value.nanoseconds(),
+        Err(problem) => { problem.drop(); return; },
+    };
+    let elapsed = now - started_ns;
+    write_trace(config, "worker_operation_finished", operation, method,
+        revision, now, Option<i64>.Some(elapsed), cache_hit, false, Option<Object&>.None);
+    if full_analysis {
+        write_trace(config, "analysis_completed", operation, method,
+            revision, now, Option<i64>.Some(elapsed), -1i32, true, phase_timings);
+    }
+}
+
+fn response_timings(value: Value&) -> Option<Object&> {
+    match value.as_object() {
+        Some(object) => match object.get("analysis_timings") {
+            Some(timings) => timings.as_object(),
+            None => Option<Object&>.None,
+        },
+        None => Option<Object&>.None,
+    }
+}
+
+fn response(output: Stdout&, id: RequestId, value: Value) -> Result<bool, IoError> {
+    let message = Message.SuccessResponse(id, value);
+    defer message.drop();
+    match send_message(output, &message) {
+        Ok(_) => Result<bool, IoError>.Ok(true),
+        Err(problem) => Result<bool, IoError>.Err(problem),
+    }
+}
+
+fn request_failed(output: Stdout&, id: RequestId, code: i64, message_text: str)
+-> Result<bool, IoError> {
+    let error = RpcError(code=code, message=String.from(&message_text), data=Option<Value>.None);
+    let message = Message.ErrorResponse(id, error);
+    defer message.drop();
+    match send_message(output, &message) {
+        Ok(_) => Result<bool, IoError>.Ok(true),
+        Err(problem) => Result<bool, IoError>.Err(problem),
+    }
+}
+
+fn handle_message(output: Stdout&, message: Message, state: WorkerState&, config: Config&)
+-> Result<bool, IoError> {
+    match message {
+        Request(id, method, params) => {
+            match method.as_str() {
+                "worker/initialize" => {
+                    method.drop();
+                    drop_params(params);
+                    response(output, id, empty_object())
+                },
+                "worker/sync" => {
+                    method.drop();
+                    let revision = trace_revision(&params);
+                    let trace_method = Option<String>.None;
+                    let started_ns = trace_start(config, "analysis", &trace_method, revision);
+                    match state.synchronize(params) {
+                        Ok(value) => {
+                            trace_finish_with_timings(config, "analysis", &trace_method,
+                                revision, started_ns, -1i32, true, response_timings(&value));
+                            response(output, id, value)
+                        },
+                        Err(problem) => {
+                            trace_finish(config, "analysis", &trace_method,
+                                revision, started_ns, -1i32, false);
+                            let text = problem.as_str();
+                            let sent = request_failed(output, id, -32603i64, text);
+                            problem.drop();
+                            sent
+                        },
+                    }
+                },
+                "worker/syntax" => {
+                    method.drop();
+                    let revision = trace_revision(&params);
+                    let trace_method = Option<String>.None;
+                    let started_ns = trace_start(config, "syntax", &trace_method, revision);
+                    match state.syntax(params) {
+                        Ok(value) => {
+                            trace_finish(config, "syntax", &trace_method,
+                                revision, started_ns, -1i32, false);
+                            response(output, id, value)
+                        },
+                        Err(problem) => {
+                            trace_finish(config, "syntax", &trace_method,
+                                revision, started_ns, -1i32, false);
+                            let sent = request_failed(output, id, -32603i64, problem.as_str());
+                            problem.drop();
+                            sent
+                        },
+                    }
+                },
+                "worker/query" => {
+                    method.drop();
+                    let revision = trace_revision(&params);
+                    let trace_method = trace_method(&params);
+                    defer { match &trace_method { Some(value) => value.drop(), None => {}, } };
+                    let started_ns = trace_start(config, "query", &trace_method, revision);
+                    match state.query(params) {
+                        Ok(value) => {
+                            trace_finish(config, "query", &trace_method,
+                                revision, started_ns, 0i32, false);
+                            response(output, id, value)
+                        },
+                        Err(problem) => {
+                            trace_finish(config, "query", &trace_method,
+                                revision, started_ns, 0i32, false);
+                            let code = problem.code;
+                            let text = problem.message.as_str();
+                            let sent = request_failed(output, id, code, text);
+                            problem.drop();
+                            sent
+                        },
+                    }
+                },
+                "worker/format" => {
+                    method.drop();
+                    let revision = trace_revision(&params);
+                    let trace_method = trace_method(&params);
+                    defer { match &trace_method { Some(value) => value.drop(), None => {}, } };
+                    let started_ns = trace_start(config, "format", &trace_method, revision);
+                    match state.format(params) {
+                        Ok(value) => {
+                            trace_finish(config, "format", &trace_method,
+                                revision, started_ns, 0i32, false);
+                            response(output, id, value)
+                        },
+                        Err(problem) => {
+                            trace_finish(config, "format", &trace_method,
+                                revision, started_ns, 0i32, false);
+                            let code = problem.code;
+                            let text = problem.message.as_str();
+                            let sent = request_failed(output, id, code, text);
+                            problem.drop();
+                            sent
+                        },
+                    }
+                },
+                "worker/close" => {
+                    method.drop();
+                    drop_params(params);
+                    response(output, id, Value.Null)
+                },
+                _ => {
+                    method.drop();
+                    drop_params(params);
+                    request_failed(output, id, -32601i64, "unknown worker operation")
+                },
+            }
+        },
+        Notification(method, params) => {
+            let close = method.as_str() == "worker/close";
+            method.drop();
+            drop_params(params);
+            Result<bool, IoError>.Ok(!close)
+        },
+        SuccessResponse(id, result) => {
+            id.drop();
+            result.drop();
+            Result<bool, IoError>.Ok(true)
+        },
+        ErrorResponse(id, error) => {
+            id.drop();
+            error.drop();
+            Result<bool, IoError>.Ok(true)
+        },
+    }
+}
+
+pub fn run_worker(arguments: Vec<String>&) -> i32 {
+    let config = match parse_config(arguments) {
+        Ok(value) => value,
+        Err(status) => return status,
+    };
+    defer config.drop();
+    log(&config, "INFO", "analysis worker starting");
+    if let Some(path) = &config.trace_file {
+        let empty = String.new();
+        match append(path.as_str(), empty.as_slice()) {
+            Ok(_) => {},
+            Err(problem) => {
+                log(&config, "ERROR", problem.msg());
+                problem.drop();
+                empty.drop();
+                return 1i32;
+            },
+        }
+        empty.drop();
+    }
+    let state = match WorkerState.new(&config) {
+        Ok(value) => value,
+        Err(problem) => {
+            log(&config, "ERROR", problem.as_str());
+            problem.drop();
+            return 1i32;
+        },
+    };
+    defer state.drop();
+    let input = Stdin.new();
+    let output = Stdout.new();
+    let decoder = FrameDecoder.new();
+
+    if send_ready(&output).is_err() {
+        log(&config, "ERROR", "could not send worker readiness message");
+        decoder.drop();
+        return 1i32;
+    }
+
+    loop {
+        let body = match decoder.next_body() {
+            Ok(Some(value)) => value,
+            Ok(None) => {
+                let buffer = byte_buffer(8192u64);
+                let count = match input.read(buffer.as_slice()) {
+                    Ok(value) => value,
+                    Err(problem) => {
+                        problem.drop();
+                        buffer.drop();
+                        decoder.drop();
+                        return 1i32;
+                    },
+                };
+                if count == 0u64 {
+                    let complete = decoder.finish().is_ok();
+                    log(&config, if complete { "INFO" } else { "ERROR" },
+                        if complete { "analysis worker stopped" } else { "incomplete IPC frame at EOF" });
+                    buffer.drop();
+                    decoder.drop();
+                    return if complete { 0i32 } else { 1i32 };
+                }
+                if decoder.feed(buffer.as_slice()[0u64..count]).is_err() {
+                    buffer.drop();
+                    decoder.drop();
+                    return 1i32;
+                }
+                buffer.drop();
+                continue;
+            },
+            Err(problem) => {
+                let _ = problem.kind;
+                decoder.drop();
+                return 1i32;
+            },
+        };
+
+        let text = match str.from_slice(body.as_slice()) {
+            Some(value) => String.from(&value),
+            None => {
+                body.drop();
+                decoder.drop();
+                return 1i32;
+            },
+        };
+        body.drop();
+        let message = match parse(text.as_str()) {
+            Ok(value) => value,
+            Err(problem) => {
+                let _ = problem.kind;
+                text.drop();
+                decoder.drop();
+                return 1i32;
+            },
+        };
+        text.drop();
+
+        match handle_message(&output, message, &state, &config) {
+            Ok(true) => {},
+            Ok(false) => { decoder.drop(); return 0i32; },
+            Err(problem) => {
+                problem.drop();
+                decoder.drop();
+                return 1i32;
+            },
+        }
+    }
+}

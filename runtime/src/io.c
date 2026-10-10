@@ -247,6 +247,7 @@ static char *resolve_path_allow_missing(const char *path, unsigned depth, int *e
             if (candidate == NULL) { *error = errno; free(current); free(absolute); return NULL; }
             char *resolved = realpath(candidate, NULL);
             if (resolved != NULL) {
+                free(candidate);
                 free(current);
                 current = resolved;
             } else {

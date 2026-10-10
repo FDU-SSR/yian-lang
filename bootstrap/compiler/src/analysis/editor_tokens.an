@@ -109,6 +109,12 @@ fn member_kind(kind: EditorMemberKind) -> EditorSemanticKind {
 
 fn classify_identifier(snapshot: EditorSnapshot&, source: SourceId, row: u64, column: u64,
     location: SourceSpan) -> Result<Option<EditorSemanticToken>, AnalysisError> {
+    if snapshot.session().editor_facts.is_parameter_declaration(source, row, column) {
+        return Result<Option<EditorSemanticToken>, AnalysisError>.Ok(
+            Option<EditorSemanticToken>.Some(EditorSemanticToken(
+            location, EditorSemanticKind.Parameter, true, stdlib_source(snapshot, source))));
+    }
+
     match snapshot.resolved_member_at(source, row, column) {
         Some(member) => return Result<Option<EditorSemanticToken>, AnalysisError>.Ok(
             Option<EditorSemanticToken>.Some(EditorSemanticToken(
@@ -117,7 +123,7 @@ fn classify_identifier(snapshot: EditorSnapshot&, source: SourceId, row: u64, co
         None => {},
     }
 
-    let declaration = snapshot.declaration_at(source, row, column);
+    let declaration = snapshot.session().editor_facts.declaration_at(source, row, column);
     let symbol_id = match declaration {
         Some(value) => value,
         None => match snapshot.resolved_name_at(source, row, column) {
@@ -127,14 +133,18 @@ fn classify_identifier(snapshot: EditorSnapshot&, source: SourceId, row: u64, co
         },
     };
 
-    let kind = match symbol_kind(snapshot, symbol_id)? {
+    let symbol_semantic_kind = match symbol_kind(snapshot, symbol_id)? {
         Some(value) => value,
         None => return Result<Option<EditorSemanticToken>, AnalysisError>.Ok(
             Option<EditorSemanticToken>.None),
     };
+    let token_kind = match (declaration, symbol_semantic_kind) {
+        (None, EditorSemanticKind.Parameter) => EditorSemanticKind.Variable,
+        _ => symbol_semantic_kind,
+    };
     let symbol = snapshot.symbol(symbol_id).unwrap();
     Result<Option<EditorSemanticToken>, AnalysisError>.Ok(Option<EditorSemanticToken>.Some(
-        EditorSemanticToken(location, kind, declaration.is_some(),
+        EditorSemanticToken(location, token_kind, declaration.is_some(),
         stdlib_source(snapshot, snapshot.session().unit(symbol.unit).unwrap().source))))
 }
 

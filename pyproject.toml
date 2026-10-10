@@ -13,9 +13,6 @@ dependencies = ["llvmlite>=0.49.0"]
 # The lsp extra provides pygls for yian-lsp; yianc and anx do not depend on it.
 lsp = ["pygls>=2.1"]
 
-[project.scripts]
-yian-lsp = "lsp.main:main"
-
 [tool.setuptools.packages.find]
 include = ["compiler*", "anx*", "lsp*"]
 namespaces = true

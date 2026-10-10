@@ -152,7 +152,14 @@ pub fn parse(body: str) -> Result<Message, ProtocolError> {
             Some(text) => String.from(&text),
             None => return Result<Message, ProtocolError>.Err(ProtocolError.new(ProtocolErrorKind.InvalidRequest)),
         };
-        let params = object.remove("params");
+        let raw_params = object.remove("params");
+        let params = match raw_params {
+            Some(value) => match value {
+                Null => Option<Value>.None,
+                _ => Option<Value>.Some(value),
+            },
+            None => Option<Value>.None,
+        };
         if !valid_params(&params) {
             method.drop();
             if let Some(value) = params { value.drop(); }

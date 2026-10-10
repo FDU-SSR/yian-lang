@@ -107,6 +107,7 @@ class EditorSnapshot:
 
     @property
     def semantic_complete(self) -> bool:
+        # Editor queries consume semantic facts and do not run a backend HIR audit.
         return (
             self.mode is EditorMode.FULL
             and self.result.type_ctx is not None

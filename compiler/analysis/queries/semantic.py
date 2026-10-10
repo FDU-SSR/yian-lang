@@ -111,6 +111,9 @@ def _classify_identifier(
     row, col = span.start.row, span.start.col
     declaration = navigator.declaration_starting_at(path, row, col)
     if declaration is not None:
+        # Only the declaration's identifier token receives the declaration modifier.
+        if declaration.span != span:
+            return None
         target = navigator.target_of_declaration(declaration, path)
         if target is None:
             return None

@@ -4,7 +4,6 @@ from std.collections.hash_set import HashSet;
 from compiler.diagnostics.model import AnalysisError;
 from std.collections.arena import Arena;
 from std.collections.hash_map import HashMap;
-from std.collections.sort import sort_by;
 from std.core.clone import Clone;
 from std.core.drop import Drop;
 from std.core.iter import Iterator, IntoIterator;
@@ -13,18 +12,15 @@ from std.core.option import Option;
 from std.core.result import Result;
 from std.core.vec import Vec;
 
-fn symbol_id_less(left: SymbolId&, right: SymbolId&) -> bool {
-    left.index < right.index
-}
-
 pub struct Scope {
     parent: Option<ScopeId>,
-    names: HashMap<NameId, SymbolId>
+    names: HashMap<NameId, SymbolId>,
+    ordered_names: Vec<NameId>
 }
 
 impl Scope {
     static fn new(parent: Option<ScopeId>) -> Self {
-        Self(parent, HashMap<NameId, SymbolId>.new())
+        Self(parent, HashMap<NameId, SymbolId>.new(), Vec<NameId>.new())
     }
 
     pub fn get(name: NameId) -> Option<SymbolId> {
@@ -40,18 +36,25 @@ impl Scope {
         }
 
         self.names.insert(name, symbol);
+        self.ordered_names.push(name);
         true
     }
 
     fn snapshot() -> Self {
-        Self(self.parent, self.names.clone())
+        Self(self.parent, self.names.clone(), self.ordered_names.clone())
     }
 }
 
 impl Drop for Scope {
     pub fn drop() {
         self.names.drop();
+        self.ordered_names.drop();
     }
+}
+
+pub struct VisibleSymbol {
+    pub id: SymbolId,
+    pub is_local: bool,
 }
 
 pub struct SymbolStore {
@@ -136,9 +139,10 @@ impl SymbolStore {
     }
 
     // Return only the innermost visible binding for each name at the cursor.
-    pub fn visible_symbols_at(scope: ScopeId, source: SourceId, row: u64, column: u64)
-    -> Result<Vec<SymbolId>, AnalysisError> {
-        let result = Vec<SymbolId>.new();
+    pub fn visible_symbols_with_metadata_at(scope: ScopeId, source: SourceId, row: u64, column: u64)
+    -> Result<Vec<VisibleSymbol>, AnalysisError> {
+        let locals = Vec<VisibleSymbol>.new();
+        let globals = Vec<VisibleSymbol>.new();
         let names = HashSet<NameId>.new();
         defer names.drop();
         let current = Option<ScopeId>.Some(scope);
@@ -147,38 +151,92 @@ impl SymbolStore {
         while current.is_some() {
             let id = *current.unwrap();
             if id.index >= self.scopes.len() || visited_scopes >= self.scopes.len() {
-                result.drop();
-                return Result<Vec<SymbolId>, AnalysisError>.Err(AnalysisError.internal("invalid scope chain"));
+                locals.drop();
+                globals.drop();
+                return Result<Vec<VisibleSymbol>, AnalysisError>.Err(AnalysisError.internal("invalid scope chain"));
             }
             visited_scopes += 1u64;
             let record = *self.scopes.get(id.index).unwrap();
 
-            for entry in record.names.entries() {
-                let symbol = match self.get(*entry[1]) {
+            for name in record.ordered_names {
+                let symbol_id = match record.get(*name) {
                     Some(value) => value,
                     None => continue,
                 };
-                let declared = match symbol.kind {
-                    SymbolKind.Variable | SymbolKind.Parameter => match &symbol.span {
+                let symbol = match self.get(symbol_id) {
+                    Some(value) => value,
+                    None => continue,
+                };
+                let local_value = record.parent.is_some() &&
+                (symbol.kind == SymbolKind.Variable || symbol.kind == SymbolKind.Parameter);
+                if record.parent.is_some() && !local_value {
+                    continue;
+                }
+                let declared = if local_value {
+                    match &symbol.span {
                         Some(location) => location.source == source && (
                             location.span.start.row < row ||
                             (location.span.start.row == row && location.span.start.column <= column)),
                         None => true,
-                    },
-                    _ => true,
+                    }
+                } else {
+                    true
                 };
-                if !declared || names.contains(entry[0]) {
+                if !declared || names.contains(name) {
                     continue;
                 }
 
-                names.insert(*entry[0]);
-                result.push(*entry[1]);
+                names.insert(*name);
+                let candidate = VisibleSymbol(id=symbol_id, is_local=local_value);
+                if local_value {
+                    let location = match &symbol.span {
+                        Some(value) if value.source == source => value,
+                        None => {
+                            locals.push(candidate);
+                            continue;
+                        },
+                        _ => { globals.push(candidate); continue; },
+                    };
+                    let insert_at = locals.len();
+                    let index = 0u64;
+                    while index < locals.len() {
+                        let existing = match self.get(locals[index].id) {
+                            Some(value) => value,
+                            None => { index += 1u64; continue; },
+                        };
+                        let existing_location = match &existing.span {
+                            Some(value) if value.source == source => value,
+                            _ => { index += 1u64; continue; },
+                        };
+                        if existing_location.span.start.row > location.span.start.row ||
+                        (existing_location.span.start.row == location.span.start.row &&
+                            existing_location.span.start.column > location.span.start.column) {
+                            insert_at = index;
+                            break;
+                        }
+                        index += 1u64;
+                    }
+                    locals.insert(insert_at, candidate);
+                } else {
+                    globals.push(candidate);
+                }
             }
 
             current = record.parent;
         }
 
-        sort_by(result.as_slice(), symbol_id_less);
+        locals.extend(&globals);
+        globals.drop();
+        Result<Vec<VisibleSymbol>, AnalysisError>.Ok(locals)
+    }
+
+    // Preserve the identity-only query surface for existing compiler callers.
+    pub fn visible_symbols_at(scope: ScopeId, source: SourceId, row: u64, column: u64)
+    -> Result<Vec<SymbolId>, AnalysisError> {
+        let visible = self.visible_symbols_with_metadata_at(scope, source, row, column)?;
+        defer visible.drop();
+        let result = Vec<SymbolId>.with_capacity(visible.len());
+        for candidate in visible { result.push(candidate.id); }
         Result<Vec<SymbolId>, AnalysisError>.Ok(result)
     }
 
@@ -191,16 +249,17 @@ impl SymbolStore {
         while current.is_some() {
             let scope = *self.scope(*current.unwrap()).unwrap();
 
-            for entry in scope.names.entries() {
-                if seen.contains(entry[0]) {
+            for name in scope.ordered_names {
+                if seen.contains(name) {
                     continue;
                 }
 
-                seen.insert(*entry[0]);
-                let symbol = *self.get(*entry[1]).unwrap();
+                seen.insert(*name);
+                let symbol_id = scope.get(*name).unwrap();
+                let symbol = *self.get(*symbol_id).unwrap();
 
                 if symbol.kind == SymbolKind.Type || symbol.kind == SymbolKind.Alias {
-                    self.bind(target, *entry[0], *entry[1])?;
+                    self.bind(target, *name, *symbol_id)?;
                 }
             }
 
