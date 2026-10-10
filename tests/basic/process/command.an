@@ -167,6 +167,7 @@ fn main() {
     let deadline = Instant.after_milliseconds(1000u64).unwrap();
     let events = poller.wait(Option<Instant>.Some(*deadline)).unwrap();
     assert !events.is_empty(): "poll reports data or hangup from a completed child";
+    assert events[0u64].token().same(*token): "poll events preserve registration identity";
     let received = Vec<u8>.with_capacity(64u64);
     for index in 0u64..64u64 { received.push(0u8); }
     let received_length = output_pipe.read(received.as_slice()).unwrap();

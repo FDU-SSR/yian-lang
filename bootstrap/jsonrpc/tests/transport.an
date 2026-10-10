@@ -54,6 +54,16 @@ fn main() {
     second_body.drop();
     assert decoder.finish().is_ok(): "complete frames pass EOF validation";
 
+    let null_params = parse("{\"jsonrpc\":\"2.0\",\"id\":4,\"method\":\"shutdown\",\"params\":null}").unwrap();
+    match null_params {
+        Request(id, method, params) => {
+            match id { Unsigned(value) => assert *value == 4u64: "null-params request id", _ => @panic("null-params request id kind") };
+            assert method.as_str() == "shutdown": "null-params request method";
+            assert params.is_none(): "explicit null params are treated as omitted";
+        }, _ => @panic("null-params request message kind")
+    };
+    null_params.drop();
+
     let response = parse("{\"jsonrpc\":\"2.0\",\"id\":0,\"result\":null}").unwrap();
     match response {
         SuccessResponse(id, result) => {

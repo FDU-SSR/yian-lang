@@ -98,10 +98,19 @@ fn main() {
 
     let signature_json = parse("{\"textDocument\":{\"uri\":\"file:///tmp/a.an\"},\"position\":{\"line\":1,\"character\":8},\"context\":{\"triggerKind\":1,\"isRetrigger\":false,\"activeSignatureHelp\":{\"activeSignature\":0}}}").unwrap();
     let signature = SignatureHelpParams.from_json(signature_json).unwrap();
-    assert signature.context.trigger_kind == 1u64 && !signature.context.is_retrigger:
+    let signature_context = match &signature.context {
+        Some(value) => value,
+        None => @panic("signature context should be present"),
+    };
+    assert signature_context.trigger_kind == 1u64 && !signature_context.is_retrigger:
     "signature-help trigger context is decoded";
-    assert signature.context.active_signature_help.is_some(): "active signature state is retained";
+    assert signature_context.active_signature_help.is_some(): "active signature state is retained";
     signature.drop();
+
+    let signature_without_context_json = parse("{\"textDocument\":{\"uri\":\"file:///tmp/a.an\"},\"position\":{\"line\":1,\"character\":8}}").unwrap();
+    let signature_without_context = SignatureHelpParams.from_json(signature_without_context_json).unwrap();
+    assert signature_without_context.context.is_none(): "signature-help context is optional";
+    signature_without_context.drop();
 
     let opened = parse("{\"uri\":\"file:///tmp/open.an\",\"languageId\":\"yian\",\"version\":7,\"text\":\"fn main() {}\"}").unwrap();
     let item = TextDocumentItem.from_json(opened).unwrap();

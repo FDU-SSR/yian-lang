@@ -273,7 +273,14 @@ class StdioSession:
                 return
             chunk = os.read(self.process.stdout.fileno(), 65536)
             if not chunk:
-                return
+                status = self.process.poll()
+                detail = bytes(self.stderr).decode("utf-8", errors="replace")[-12000:]
+                raise ProtocolError(
+                    "server closed stdout before the requested response\n"
+                    f"command: {self.command!r}\n"
+                    f"exit status: {status}\n"
+                    f"stderr: {detail}"
+                )
             self.buffer.extend(chunk)
 
     def __answer_server_request(self, message: dict[str, Json]) -> bool:
@@ -281,6 +288,12 @@ class StdioSession:
         request_id = message.get("id")
         if not isinstance(method, str) or not isinstance(request_id, (int, str)):
             return False
+        if isinstance(request_id, int) and not isinstance(request_id, bool):
+            if abs(request_id) > 2**53 - 1:
+                raise ProtocolError(
+                    "server emitted a JSON-RPC numeric request ID outside the "
+                    "exact integer range of JavaScript clients"
+                )
         self.__send({"jsonrpc": "2.0", "id": request_id, "result": None})
         return True
 
@@ -809,8 +822,16 @@ def __run_session(
             else None
         ),
         "profile_path": str(profile_path) if profile_path is not None and profile_path.exists() else None,
+        "profile_format": __profile_format(profile_path),
     }
     return record
+
+
+def __profile_format(path: Path | None) -> str | None:
+    if path is None or not path.exists():
+        return None
+    with path.open("rb") as stream:
+        return "native-operation-trace" if stream.read(1) == b"{" else "cprofile"
 
 
 def __read_trace(path: Path) -> list[Json]:
@@ -925,6 +946,7 @@ def __run_cache_probe(
     raw: bool,
     parent: Path,
     timeout: float,
+    query_cache_policy: str,
 ) -> dict[str, Json]:
     """Observe query-cache hit/miss behavior separately from formal timings."""
     scenario_dir = parent / "cache-probe"
@@ -989,6 +1011,7 @@ def __run_cache_probe(
         "exit_status": status,
         "shutdown_ms": client.shutdown_ms,
         "query_cache_disabled": query_cache_disabled,
+        "query_cache_policy": query_cache_policy,
         "hit_count": sum(
             1 for event in query_operations if event.get("cache_hit") is True
         ),
@@ -1257,6 +1280,7 @@ def __run_benchmark(
     *,
     candidate: bool,
     memory_samples: int,
+    query_cache_policy: str,
     profile: bool = False,
 ) -> dict[str, Json]:
     cold: list[float] = []
@@ -1341,6 +1365,7 @@ def __run_benchmark(
             raw,
             parent,
             timeout,
+            query_cache_policy,
         )
         if profile:
             profile_run = __run_session(
@@ -1430,6 +1455,7 @@ def __run_benchmark(
             "p95": __percentile(distinct_query_ms, 0.95),
         },
         "query_cache_observations": {
+            "policy": query_cache_policy if candidate else None,
             "hit_count": None if cache_probe is None else cache_probe["hit_count"],
             "miss_count": None if cache_probe is None else cache_probe["miss_count"],
             "query_operation_count": (
@@ -1558,6 +1584,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--analysis-samples", type=int, default=20)
     parser.add_argument("--query-samples", type=int, default=100)
     parser.add_argument("--memory-samples", type=int, default=100)
+    parser.add_argument(
+        "--candidate-cache-policy",
+        choices=("enabled", "disabled", "unavailable"),
+        default="enabled",
+        help="declare whether the candidate exposes query-cache hit telemetry",
+    )
     parser.add_argument("--timeout", type=float, default=120.0)
     parser.add_argument("--infrastructure-timeout", type=float, default=1800.0)
     parser.add_argument("--report", type=Path, default=ROOT / "build/lsp/report.json")
@@ -1641,6 +1673,7 @@ def main(argv: list[str] | None = None) -> int:
                                 args.query_samples,
                                 candidate=role == "candidate",
                                 memory_samples=args.memory_samples,
+                                query_cache_policy=args.candidate_cache_policy,
                                 profile=args.mode == "profile" and role == "candidate",
                             )
                         compared[role] = cast(Json, record)
@@ -1674,10 +1707,17 @@ def main(argv: list[str] | None = None) -> int:
                                     hits = cache_probe.get("hit_count")
                                     misses = cache_probe.get("miss_count")
                                     cache_disabled = cache_probe.get("query_cache_disabled") is True
+                                    cache_policy = cache_probe.get("query_cache_policy")
+                                    hits_valid = (
+                                        hits == 0 if cache_disabled or cache_policy == "disabled"
+                                        else True if cache_policy == "unavailable"
+                                        else hits >= 1 if isinstance(hits, int)
+                                        else False
+                                    )
                                     if (
                                         cache_probe.get("exit_status") != 0
                                         or not isinstance(hits, int)
-                                        or (hits != 0 if cache_disabled else hits < 1)
+                                        or not hits_valid
                                         or not isinstance(misses, int)
                                         or misses < 1
                                     ):
@@ -1690,14 +1730,22 @@ def main(argv: list[str] | None = None) -> int:
                                         for method_report in measured_methods.values():
                                             method = method_report.get("method") if isinstance(method_report, dict) else None
                                             method_cache = method_counts.get(method) if isinstance(method, str) else None
+                                            method_hits = (
+                                                method_cache.get("hit_count")
+                                                if isinstance(method_cache, dict)
+                                                else None
+                                            )
+                                            method_hits_valid = (
+                                                method_hits == 0
+                                                if cache_disabled or cache_policy == "disabled"
+                                                else True
+                                                if cache_policy == "unavailable"
+                                                else isinstance(method_hits, int) and method_hits >= 1
+                                            )
                                             if (
                                                 not isinstance(method_cache, dict)
-                                                or not isinstance(method_cache.get("hit_count"), int)
-                                                or (
-                                                    method_cache["hit_count"] != 0
-                                                    if cache_disabled
-                                                    else method_cache["hit_count"] < 1
-                                                )
+                                                or not isinstance(method_hits, int)
+                                                or not method_hits_valid
                                                 or not isinstance(method_cache.get("miss_count"), int)
                                                 or method_cache["miss_count"] < 1
                                             ):
