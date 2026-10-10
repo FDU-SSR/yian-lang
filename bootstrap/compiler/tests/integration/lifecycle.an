@@ -6,12 +6,27 @@ from compiler.frontend.desugar import desugar;
 from compiler.frontend.ast.format import AstFormatter;
 from compiler.frontend.ast.node import Identifier;
 from compiler.frontend.ast.traversal import AstVisitor, walk_program;
+from compiler.frontend.source import collect_sources, read_source;
 from json.write import Writer;
 from json.parse import parse;
 from std.core.string import String;
 from std.core.convert import From;
 from std.core.drop import Drop;
 from std.core.ops import Index;
+from std.core.fs import create_dir_all, write_string, remove_file, remove_dir;
+from compiler.analysis.editor import EditorEngine, EditorMode, EditorDocumentSymbol,
+EditorDocumentSymbolKind, editor_options, FrozenInputs;
+from compiler.analysis.editor_facts import EditorMemberKind;
+from compiler.analysis.editor_tokens import EditorSemanticKind, EditorSemanticToken, semantic_tokens;
+from compiler.analysis.editor_queries import EditorCompletionKind, completion_at, signature_help_at;
+from compiler.analysis.names import NameInterner;
+from compiler.analysis.symbol.scope import SymbolStore;
+from compiler.common.ids import SourceId, SymbolId;
+from compiler.package.provenance import SourceTrust;
+from compiler.diagnostics.model import AnalysisStage;
+from compiler.package.model import PackageMap;
+from std.core.option import Option;
+from std.core.vec import Vec;
 
 struct Counter { owned_names: u64 }
 impl AstVisitor for Counter {
@@ -25,20 +40,28 @@ fn success() {
     let tokens = *Lexer.new(source.as_str()).run().unwrap();
     source.drop();
     assert tokens[1].value() == "owned": "tokens own identifier after source release";
-    let parser = Parser.new(&tokens); defer parser.drop();
-    let tree = *parse_program(&parser).unwrap(); defer tree.drop();
+    let parser = Parser.new(&tokens);
+    defer parser.drop();
+    let tree = *parse_program(&parser).unwrap();
+    defer tree.drop();
     drop_tokens(&tokens);
-    let counter = Counter(0u64); walk_program(tree.root, &counter);
+    let counter = Counter(0u64);
+    walk_program(tree.root, &counter);
     assert counter.owned_names == 1: "AST names survive token release";
     desugar(&tree, "owned.an").unwrap();
-    let writer = Writer.with_max_depth(512u64); defer writer.drop();
-    let formatter = AstFormatter.new(&writer); formatter.append_program(tree.root);
-    let text = *writer.finish().unwrap(); defer text.drop();
-    let json = *parse(text.as_str()).unwrap(); json.drop();
+    let writer = Writer.with_max_depth(512u64);
+    defer writer.drop();
+    let formatter = AstFormatter.new(&writer);
+    formatter.append_program(tree.root);
+    let text = *writer.finish().unwrap();
+    defer text.drop();
+    let json = *parse(text.as_str()).unwrap();
+    json.drop();
 }
 fn lex_failure() {
     let source = String.from(&"let name = \"owned\"; \"unterminated");
-    let result = Lexer.new(source.as_str()).run(); source.drop();
+    let result = Lexer.new(source.as_str()).run();
+    source.drop();
     match result {
         Err(error) => { assert error.message().contains("Unterminated"): "lex error survives source release"; error.drop(); },
         Ok(tokens) => { drop_tokens(&tokens); @panic("lex failure accepted"); },
@@ -46,9 +69,12 @@ fn lex_failure() {
 }
 fn parse_failure() {
     let source = String.from(&"struct Owned { field: str } fn broken() { let text = \"owned\"; call(");
-    let tokens = *Lexer.new(source.as_str()).run().unwrap(); source.drop();
-    let parser = Parser.new(&tokens); defer parser.drop();
-    let result = parse_program(&parser); drop_tokens(&tokens);
+    let tokens = *Lexer.new(source.as_str()).run().unwrap();
+    source.drop();
+    let parser = Parser.new(&tokens);
+    defer parser.drop();
+    let result = parse_program(&parser);
+    drop_tokens(&tokens);
     match result {
         Err(error) => { assert error.message().as_slice().len() != 0: "parse error survives token release"; error.drop(); },
         Ok(tree) => { tree.drop(); @panic("parse failure accepted"); },
@@ -56,11 +82,14 @@ fn parse_failure() {
 }
 fn desugar_failure() {
     let source = String.from(&"const VALUE: i32 = source()?;");
-    let tokens = *Lexer.new(source.as_str()).run().unwrap(); source.drop();
-    let parser = Parser.new(&tokens); defer parser.drop();
+    let tokens = *Lexer.new(source.as_str()).run().unwrap();
+    source.drop();
+    let parser = Parser.new(&tokens);
+    defer parser.drop();
     let tree = *parse_program(&parser).unwrap();
     drop_tokens(&tokens);
-    let result = desugar(&tree, "owned.an"); tree.drop();
+    let result = desugar(&tree, "owned.an");
+    tree.drop();
     match result {
         Err(error) => {
             assert error.message().contains("only allowed inside"): "desugar error owns message";
@@ -71,12 +100,661 @@ fn desugar_failure() {
     }
 }
 fn unfinished_parser() {
-    let tokens = *Lexer.new("name").run().unwrap(); defer drop_tokens(&tokens);
-    let parser = Parser.new(&tokens); defer parser.drop();
+    let tokens = *Lexer.new("name").run().unwrap();
+    defer drop_tokens(&tokens);
+    let parser = Parser.new(&tokens);
+    defer parser.drop();
     parser.identifier().unwrap();
     parser.error("owned error", tokens[0].span);
 }
+fn source_trust() -> SourceTrust {
+    match SourceTrust.new("../../../../lib/src") {
+        Ok(value) => value,
+        Err(error) => { error.drop(); @panic("could not create source trust"); },
+    }
+}
+
+fn drop_source_paths(paths: Vec<String>&) {
+    for path in *paths { path.drop(); }
+}
+
+fn append_standard_library(inputs: FrozenInputs&) {
+    let roots = Vec<String>.new();
+    roots.push(String.from(&"../../../../lib/src"));
+    let sources = *collect_sources(&roots).unwrap();
+    defer {
+        drop_source_paths(&sources);
+        sources.drop();
+        roots.drop();
+    };
+
+    for path in sources {
+        let text = *read_source(path.as_str()).unwrap();
+        inputs.add(path.as_str(), text.as_str(), Option<i64>.None);
+        text.drop();
+    }
+}
+
+fn candidate_name_count(names: NameInterner&, symbols: SymbolStore&, candidates: Vec<SymbolId>&, name: str) -> u64 {
+    let matches = 0u64;
+    for candidate in *candidates {
+        match symbols.get(*candidate) {
+            Some(symbol) => {
+                if names.text(symbol.name) == name { matches += 1u64; }
+            },
+            None => {},
+        }
+    }
+    matches
+}
+
+fn has_semantic_token(tokens: Vec<EditorSemanticToken>&, row: u64, column: u64,
+    expected: EditorSemanticKind, declaration: bool) -> bool {
+    for token in *tokens {
+        if token.location.span.start.row == row && token.location.span.start.column == column &&
+        token.kind == expected && token.declaration == declaration {
+            return true;
+        }
+    }
+    false
+}
+
+fn has_document_symbol(
+    symbols: Vec<EditorDocumentSymbol>&,
+    name: str,
+    kind: EditorDocumentSymbolKind,
+    container: str,
+) -> bool {
+    for symbol in *symbols {
+        let current_container = match &symbol.container {
+            Some(value) => value.as_str(),
+            None => "",
+        };
+        if symbol.name.as_str() == name && symbol.kind == kind && current_container == container {
+            return true;
+        }
+    }
+    false
+}
+
+fn editor_scope_queries() {
+    let inputs = FrozenInputs.new(31u64, 7u64, "fat:scope-query");
+    inputs.add("/tmp/yian-editor-scopes.an",
+        "fn scope_probe(value: i32) {\n    let visible = value;\n    {\n        let value = visible;\n        value;\n    }\n    let later = 1;\n}\n",
+        Option<i64>.Some(1i64));
+    let trust = source_trust();
+    let options = editor_options(trust, Option<PackageMap>.None, EditorMode.Full);
+    let snapshot = EditorEngine.analyze(&inputs, options).unwrap();
+    assert snapshot.semantic_complete(): "scope query input is fully analyzed";
+
+    let inner_scope = snapshot.scope_at(SourceId(0u64), 4u64, 9u64);
+    assert inner_scope.is_some(): "scope lookup works at whitespace-independent cursor positions";
+    let visible = snapshot.visible_symbols_at(SourceId(0u64), 4u64, 9u64).unwrap();
+    assert candidate_name_count(&snapshot.session().names, &snapshot.session().symbols, visible, "value") == 1u64:
+    "the inner binding shadows its outer parameter";
+    assert candidate_name_count(&snapshot.session().names, &snapshot.session().symbols, visible, "visible") == 1u64:
+    "outer locals remain visible inside nested blocks";
+    assert candidate_name_count(&snapshot.session().names, &snapshot.session().symbols, visible, "later") == 0u64:
+    "a later declaration is not offered before its declaration point";
+    visible.drop();
+
+    let before_declaration = snapshot.visible_symbols_at(SourceId(0u64), 1u64, 4u64).unwrap();
+    assert candidate_name_count(&snapshot.session().names, &snapshot.session().symbols, before_declaration, "visible") == 0u64:
+    "a local is not visible before its binding point";
+    assert candidate_name_count(&snapshot.session().names, &snapshot.session().symbols, before_declaration, "value") == 1u64:
+    "parameters are visible from the body start";
+    before_declaration.drop();
+
+    snapshot.drop();
+    inputs.drop();
+}
+
+fn editor_signature_help() {
+    let inputs = FrozenInputs.new(34u64, 7u64, "fat:signature-help");
+    inputs.add("/tmp/yian-editor-signature.an",
+        "fn helper(value: i32, other: i32) -> i32 { value + other }\nfn main() { helper(1, 2); }\n",
+        Option<i64>.Some(1i64));
+    let trust = source_trust();
+    let options = editor_options(trust, Option<PackageMap>.None, EditorMode.Full);
+    let snapshot = EditorEngine.analyze(&inputs, options).unwrap();
+    assert snapshot.semantic_complete(): "signature help requires a complete analysis snapshot";
+
+    let help = signature_help_at(snapshot, SourceId(0u64), 1u64, 22u64).unwrap();
+    assert help.label.as_str() == "fn helper(value: i32, other: i32) -> i32":
+    "signature help renders the resolved function declaration";
+    assert help.active_parameter == 1u64: "signature help counts arguments at the cursor";
+    assert help.parameter_labels.len() == 2u64: "signature help exposes parameter labels";
+    assert help.parameter_labels[0u64].as_str() == "value" && help.parameter_labels[1u64].as_str() == "other":
+    "signature help preserves the declared parameter order";
+    help.drop();
+
+    let declaration = snapshot.declaration_at(SourceId(0u64), 0u64, 3u64).unwrap();
+    let call_reference = snapshot.resolved_name_at(SourceId(0u64), 1u64, 12u64).unwrap();
+    assert call_reference.symbol.index == declaration.index:
+    "call query resolves to the declared function identity";
+
+    let definition = snapshot.definition_at(SourceId(0u64), 1u64, 12u64).unwrap();
+    assert definition.span.start.row == 0u64 && definition.span.start.column == 3u64:
+    "definition query returns the shared fixture declaration";
+    definition.drop();
+
+    let renamed = snapshot.rename_at(SourceId(0u64), 0u64, 3u64, "renamed_helper");
+    assert renamed.ok() && renamed.edits.len() == 2u64:
+    "rename edits both occurrences of the resolved declaration";
+    assert renamed.edits[0].location.span.start.row == 0u64 &&
+    renamed.edits[0].location.span.start.column == 3u64:
+    "rename edits the declaration first";
+    assert renamed.edits[1].location.span.start.row == 1u64 &&
+    renamed.edits[1].location.span.start.column == 12u64:
+    "rename edits the resolved call site";
+    renamed.drop();
+
+    let prepared = snapshot.prepare_rename(SourceId(0u64), 1u64, 12u64);
+    assert prepared.ok() && prepared.placeholder.unwrap().as_str() == "helper":
+    "prepare rename returns the shared declaration spelling";
+    prepared.drop();
+
+    let completion = completion_at(snapshot, SourceId(0u64), 1u64, 12u64).unwrap();
+    let found_helper = false;
+    for item in completion.items {
+        if item.label.as_str() == "helper" && item.kind == EditorCompletionKind.Function {
+            found_helper = item.parameter_labels.len() == 2u64 &&
+            item.parameter_labels[0u64].as_str() == "value" &&
+            item.parameter_labels[1u64].as_str() == "other";
+        }
+    }
+    assert found_helper: "completion returns the same function signature as the Python query case";
+    completion.drop();
+
+    snapshot.drop();
+    inputs.drop();
+}
+
+fn editor_completion_queries() {
+    let inputs = FrozenInputs.new(35u64, 7u64, "fat:completion-query");
+    inputs.add("/tmp/yian-editor-completion.an",
+        "struct Point { pub x: i32 }\nimpl Point { pub fn shift(amount: i32) {} }\nfn helper(value: i32, other: i32) -> i32 { value + other }\nfn main() { let point: Point = Point(1); let answer = helper(1, 2); point.x; }\n",
+        Option<i64>.Some(1i64));
+    let trust = source_trust();
+    let options = editor_options(trust, Option<PackageMap>.None, EditorMode.Full);
+    let snapshot = EditorEngine.analyze(&inputs, options).unwrap();
+    assert snapshot.semantic_complete(): "completion queries use complete semantic facts";
+
+    let values = completion_at(snapshot, SourceId(0u64), 3u64, 57u64).unwrap();
+    let found_helper = false;
+    for item in values.items {
+        if item.label.as_str() == "helper" && item.kind == EditorCompletionKind.Function {
+            found_helper = item.parameter_labels.len() == 2u64 &&
+            item.parameter_labels[0u64].as_str() == "value" &&
+            item.parameter_labels[1u64].as_str() == "other";
+        }
+    }
+    assert found_helper: "value completion returns the resolved function and insertion parameters";
+    values.drop();
+
+    let types = completion_at(snapshot, SourceId(0u64), 3u64, 26u64).unwrap();
+    let found_point_type = false;
+    for item in types.items {
+        if item.label.as_str() == "Point" && item.kind == EditorCompletionKind.Struct {
+            found_point_type = true;
+        }
+    }
+    assert found_point_type: "type completion returns visible nominal declarations";
+    types.drop();
+
+    let members = completion_at(snapshot, SourceId(0u64), 3u64, 74u64).unwrap();
+    let found_field = false;
+    let found_method = false;
+    for item in members.items {
+        if item.label.as_str() == "x" && item.kind == EditorCompletionKind.Field {
+            found_field = true;
+        }
+        if item.label.as_str() == "shift" && item.kind == EditorCompletionKind.Method {
+            found_method = true;
+        }
+    }
+    assert found_field && found_method: "member completion returns fields and applicable methods";
+    members.drop();
+
+    snapshot.drop();
+    inputs.drop();
+}
+
+fn editor_rename_queries() {
+    let inputs = FrozenInputs.new(32u64, 7u64, "fat:rename-query");
+    inputs.add("/tmp/yian-editor-rename.an", "fn f() { let x = 1; x; }\n", Option<i64>.Some(1i64));
+    let trust = source_trust();
+    let options = editor_options(trust, Option<PackageMap>.None, EditorMode.Full);
+    let snapshot = EditorEngine.analyze(&inputs, options).unwrap();
+    assert snapshot.semantic_complete(): "rename requires a complete semantic snapshot";
+
+    let prepared = snapshot.prepare_rename(SourceId(0u64), 0u64, 13u64);
+    assert prepared.ok(): "prepare rename accepts a complete, locally resolved symbol";
+    let prepared_range_matches = match &prepared.location {
+        Some(location) => location.span.start.column == 13u64,
+        None => false,
+    };
+    assert prepared_range_matches: "prepare rename returns the declaration name range";
+    let prepared_name_matches = match &prepared.placeholder {
+        Some(value) => value.as_str() == "x",
+        None => false,
+    };
+    assert prepared_name_matches: "prepare rename returns the original spelling as its placeholder";
+    prepared.drop();
+
+    let renamed = snapshot.rename_at(SourceId(0u64), 0u64, 13u64, "renamed");
+    assert renamed.ok() && renamed.edits.len() == 2u64: "rename includes the local declaration and its resolved use";
+    assert renamed.edits[0].location.span.start.column == 13u64:
+    "rename edits are ordered by source location";
+    assert renamed.edits[1].location.span.start.column == 20u64:
+    "rename preserves the second resolved use range";
+    assert renamed.edits[0].new_text.as_str() == "renamed": "each edit owns the replacement text";
+    renamed.drop();
+
+    let invalid = snapshot.rename_at(SourceId(0u64), 0u64, 13u64, "fn");
+    assert !invalid.ok() && invalid.refusal.is_some(): "reserved words are refused as replacement identifiers";
+    invalid.drop();
+    snapshot.drop();
+    inputs.drop();
+
+    let generic_inputs = FrozenInputs.new(33u64, 7u64, "fat:rename-unchecked-generic");
+    generic_inputs.add("/tmp/yian-editor-unchecked-generic.an",
+        "fn target() {}\nfn unused<T>(value: T) { target(); }\n", Option<i64>.Some(1i64));
+    let generic_trust = source_trust();
+    let generic_options = editor_options(generic_trust, Option<PackageMap>.None, EditorMode.Full);
+    let generic_snapshot = EditorEngine.analyze(&generic_inputs, generic_options).unwrap();
+    assert generic_snapshot.semantic_complete(): "unchecked generic rename case is otherwise valid";
+    let unsafe_rename = generic_snapshot.rename_at(SourceId(0u64), 0u64, 3u64, "renamed");
+    assert !unsafe_rename.ok() && unsafe_rename.refusal.is_some():
+    "rename refuses when an uninstantiated generic body may contain an unresolved same-spelled use";
+    unsafe_rename.drop();
+    let unsafe_prepare = generic_snapshot.prepare_rename(SourceId(0u64), 0u64, 3u64);
+    assert !unsafe_prepare.ok() && unsafe_prepare.refusal.is_some():
+    "prepare rename refuses when an unchecked generic body may contain a matching name";
+    unsafe_prepare.drop();
+    generic_snapshot.drop();
+    generic_inputs.drop();
+}
+
+fn editor_member_queries() {
+    let inputs = FrozenInputs.new(36u64, 7u64, "fat:member-query");
+    append_standard_library(&inputs);
+    inputs.add("/tmp/yian-editor-members.an",
+        "struct Point { pub x: i32 }\nenum Choice { Empty, Value { field: i32 } }\nimpl Point { pub fn editor_member_step(amount: i32) {} }\nfn main() {\n let point: Point = Point(1);\n point.x;\n point.editor_member_step(1);\n let choice: Choice = Choice.Value(field=2);\n match choice {\n Choice.Value(field=value) => value,\n Choice.Empty => 0,\n };\n}\n",
+        Option<i64>.Some(1i64));
+    let trust = source_trust();
+    let options = editor_options(trust, Option<PackageMap>.None, EditorMode.Full);
+    let snapshot = match EditorEngine.analyze(&inputs, options) {
+        Ok(value) => value,
+        Err(error) => { error.drop(); @panic("member editor analysis failed"); },
+    };
+    assert snapshot.semantic_complete(): "member queries require complete declaration and body facts";
+    let member_source_option = Option<SourceId>.None;
+    let source_index = 0u64;
+    while source_index < snapshot.session().source_manager().len() {
+        match snapshot.session().source(SourceId(source_index)) {
+            Some(source) => {
+                if source.path() == "/tmp/yian-editor-members.an" {
+                    member_source_option = Option<SourceId>.Some(SourceId(source_index));
+                    break;
+                }
+            },
+            None => @panic("snapshot source index is invalid"),
+        }
+        source_index += 1u64;
+    }
+    let member_source = match member_source_option {
+        Some(value) => value,
+        None => @panic("editor source is missing from the snapshot"),
+    };
+
+    let field = match snapshot.resolved_member_at(member_source, 5u64, 7u64) {
+        Some(value) => value,
+        None => @panic("field access has no resolved member"),
+    };
+    assert field.kind == EditorMemberKind.Field && snapshot.session().names.text(field.name) == "x":
+    "field access resolves to the field declaration identity";
+    let field_hover = match snapshot.hover_at(member_source, 5u64, 7u64) {
+        Some(value) => value,
+        None => @panic("field hover is missing"),
+    };
+    let field_info = match &field_hover.member {
+        Some(value) => value,
+        None => @panic("field hover did not return member data"),
+    };
+    assert field_info.name.as_str() == "x" && field_info.type_text.as_str() == "i32":
+    "field hover data owns its display name and substituted type";
+    field_hover.drop();
+    let field_definition = match snapshot.definition_at(member_source, 5u64, 7u64) {
+        Some(value) => value,
+        None => @panic("field definition is missing"),
+    };
+    assert field_definition.span.start.row == 0u64 && field_definition.span.start.column == 19u64:
+    "field definition points at the exact declaration name";
+    field_definition.drop();
+    let field_occurrences = snapshot.member_occurrences_at(member_source, 5u64, 7u64, true);
+    assert field_occurrences.len() == 2u64: "field references include declaration and access";
+    for location in field_occurrences { location.drop(); }
+    field_occurrences.drop();
+    let field_rename = snapshot.rename_at(member_source, 5u64, 7u64, "horizontal");
+    assert field_rename.ok() && field_rename.edits.len() == 2u64:
+    "field rename edits declaration and resolved access";
+    field_rename.drop();
+
+    let method = match snapshot.resolved_member_at(member_source, 6u64, 7u64) {
+        Some(value) => value,
+        None => @panic("method call has no resolved member"),
+    };
+    assert method.kind == EditorMemberKind.Method && snapshot.session().names.text(method.name) == "editor_member_step":
+    "method call resolves through the selected implementation";
+    let method_occurrences = snapshot.member_occurrences_at(member_source, 6u64, 7u64, true);
+    assert method_occurrences.len() == 2u64: "method references include declaration and call";
+    for location in method_occurrences { location.drop(); }
+    method_occurrences.drop();
+
+    let variant = match snapshot.resolved_member_at(member_source, 7u64, 29u64) {
+        Some(value) => value,
+        None => @panic("enum construction has no resolved variant"),
+    };
+    assert variant.kind == EditorMemberKind.Variant && snapshot.session().names.text(variant.name) == "Value":
+    "enum construction resolves to its variant declaration";
+    let variant_occurrences = snapshot.member_occurrences_at(member_source, 7u64, 29u64, true);
+    assert variant_occurrences.len() == 3u64: "variant references include declaration, construction, and pattern";
+    for location in variant_occurrences { location.drop(); }
+    variant_occurrences.drop();
+
+    let payload = match snapshot.resolved_member_at(member_source, 7u64, 35u64) {
+        Some(value) => value,
+        None => @panic("enum construction has no resolved payload field"),
+    };
+    assert payload.kind == EditorMemberKind.Field && snapshot.session().names.text(payload.name) == "field":
+    "enum payload construction resolves to its field declaration";
+    let payload_occurrences = snapshot.member_occurrences_at(member_source, 7u64, 35u64, true);
+    assert payload_occurrences.len() == 3u64: "payload field references include declaration, construction, and pattern";
+    for location in payload_occurrences { location.drop(); }
+    payload_occurrences.drop();
+
+    let classified = match semantic_tokens(&snapshot, member_source) {
+        Ok(value) => value,
+        Err(error) => { error.drop(); @panic("semantic token classification failed"); },
+    };
+    assert has_semantic_token(&classified, 0u64, 7u64, EditorSemanticKind.Struct, true):
+    "semantic classification distinguishes structure declarations";
+    assert has_semantic_token(&classified, 0u64, 19u64, EditorSemanticKind.Field, true):
+    "semantic classification marks field declarations";
+    assert has_semantic_token(&classified, 0u64, 22u64, EditorSemanticKind.Type, false):
+    "primitive type keywords receive type classification";
+    assert has_semantic_token(&classified, 5u64, 7u64, EditorSemanticKind.Field, false):
+    "semantic classification follows field resolution rather than spelling";
+    assert has_semantic_token(&classified, 6u64, 7u64, EditorSemanticKind.Method, false):
+    "semantic classification follows the resolved method implementation";
+    assert has_semantic_token(&classified, 7u64, 29u64, EditorSemanticKind.Variant, false):
+    "semantic classification covers enum construction references";
+    classified.drop();
+
+    snapshot.drop();
+    inputs.drop();
+}
+
+fn editor_snapshot() {
+    let inputs = FrozenInputs.new(12u64, 4u64, "fat:test-package-map");
+    inputs.add("/tmp/yian-editor-snapshot.an", "struct Record { field: i32 }\nfn helper(value: Record) -> Record { value }\nconst SIZE: u64 = @sizeof<i32>;\n", Option<i64>.Some(9i64));
+
+    let syntax_trust = source_trust();
+    let syntax_options = editor_options(syntax_trust, Option<PackageMap>.None, EditorMode.Syntax);
+    let syntax = EditorEngine.analyze(&inputs, syntax_options).unwrap();
+    assert syntax.revision == 12u64 && syntax.topology_revision == 4u64: "snapshot keeps input identity";
+    assert syntax.session().len() == 1u64: "unsaved input is retained by its session";
+    assert !syntax.semantic_complete(): "syntax snapshots expose no semantic result";
+    let source = syntax.session().source(SourceId(0u64)).unwrap();
+    assert source.path() == "/tmp/yian-editor-snapshot.an": "missing paths resolve without disk access";
+    assert source.text() == "struct Record { field: i32 }\nfn helper(value: Record) -> Record { value }\nconst SIZE: u64 = @sizeof<i32>;\n": "snapshot text is copied into the session";
+    syntax.drop();
+
+    let full_trust = source_trust();
+    let full_options = editor_options(full_trust, Option<PackageMap>.None, EditorMode.Full);
+    let full = EditorEngine.analyze(&inputs, full_options).unwrap();
+    assert full.configuration_identity.as_str() == "fat:test-package-map": "snapshot retains its configuration identity";
+    assert full.semantic_complete(): "full snapshots export only a clean analysis output";
+    let source_path = match full.source_path(SourceId(0u64)) { Some(value) => value, None => @panic("snapshot path missing") };
+    assert source_path == "/tmp/yian-editor-snapshot.an": "snapshot exposes the session-owned resolved path";
+    let source_text = match full.source_text(SourceId(0u64)) { Some(value) => value, None => @panic("snapshot text missing") };
+    assert source_text.contains("struct Record"): "snapshot exposes the frozen session text";
+    let source_version = match full.document_version(SourceId(0u64)) { Some(value) => value, None => @panic("snapshot version missing") };
+    assert source_version == 9i64: "snapshot retains the editor document version";
+    assert full.report().unwrap().ok(): "full snapshot retains its analysis report";
+    let formatted = match full.format_document(SourceId(0u64)).unwrap() {
+        Some(value) => value,
+        None => @panic("valid frozen source did not format"),
+    };
+    assert formatted.contains("fn helper"): "formatting reads the snapshot-owned unsaved text";
+    formatted.drop();
+    assert full.reference_count() == 3u64: "full analysis retains value and type references";
+    let type_reference = full.resolved_name_at(SourceId(0u64), 1u64, 17u64).unwrap();
+    let return_type_reference = full.resolved_name_at(SourceId(0u64), 1u64, 28u64).unwrap();
+    assert type_reference.symbol == return_type_reference.symbol: "type references share declaration identity";
+    let type_info_result = full.symbol_info(type_reference.symbol);
+    let owns_rendered_symbol_info = match &type_info_result {
+        Some(type_info) => {
+            let location_matches = match &type_info.location {
+                Some(location) => location.path.as_str() == "/tmp/yian-editor-snapshot.an" && location.span.start.row == 0u64,
+                None => false,
+            };
+            let matches = type_info.name.as_str() == "Record" && type_info.type_text.as_str() == "Record" && location_matches;
+            type_info.drop();
+            matches
+        },
+        None => false,
+    };
+    assert owns_rendered_symbol_info: "symbol info owns the display name and rendered type";
+    let type_declaration = match full.declaration_at(SourceId(0u64), 0u64, 7u64) { Some(value) => value, None => @panic("type declaration lookup missed") };
+    assert type_declaration.index == type_reference.symbol.index: "declarations resolve to the same identity as references";
+    let resolved_symbol = match full.symbol_at(SourceId(0u64), 1u64, 17u64) { Some(value) => value, None => @panic("symbol lookup missed") };
+    assert resolved_symbol.index == type_reference.symbol.index: "query lookup returns the resolved declaration identity";
+    let type_definition = match full.definition_at(SourceId(0u64), 1u64, 17u64) { Some(value) => value, None => @panic("definition lookup missed") };
+    assert type_definition.path.as_str() == "/tmp/yian-editor-snapshot.an" && type_definition.span.start.row == 0u64:
+    "definition locations own a path and retain source coordinates";
+    type_definition.drop();
+    let owned_occurrences = full.occurrences(type_reference.symbol, true);
+    assert owned_occurrences.len() == 3u64: "reference query returns owned locations including declaration";
+    for occurrence in owned_occurrences { occurrence.drop(); }
+    owned_occurrences.drop();
+    let highlighted = full.highlights(SourceId(0u64), type_reference.symbol);
+    assert highlighted.len() == 3u64: "document highlights filter the identity index by source";
+    for occurrence in highlighted { occurrence.drop(); }
+    highlighted.drop();
+    let value_reference = full.resolved_name_at(SourceId(0u64), 1u64, 37u64).unwrap();
+    let value_symbol = full.symbol(value_reference.symbol).unwrap();
+    let hover = full.hover_at(SourceId(0u64), 1u64, 37u64).unwrap();
+    let hover_type = match &hover.expression_type { Some(value) => value.as_str(), None => "" };
+    assert hover_type == "Record":
+    "hover reports the expression type from the recorded reference";
+    let hover_name = match &hover.symbol { Some(value) => value.name.as_str(), None => "" };
+    assert hover_name == "value":
+    "hover copies the referenced symbol display data";
+    hover.drop();
+    let value_location = match &value_symbol.span {
+        Some(location) => *location,
+        None => @panic("parameter symbol has no source declaration"),
+    };
+    let parameter_id = match full.declaration_at(value_location.source, value_location.span.start.row,
+        value_location.span.start.column) {
+        Some(value) => value,
+        None => @panic("parameter declaration lookup missed"),
+    };
+    assert parameter_id.index == value_reference.symbol.index: "local declaration lookup returns the referenced identity";
+    let type_references = full.references_to(type_reference.symbol);
+    assert type_references.len() == 2u64: "reverse type references are indexed by symbol identity";
+    type_references.drop();
+    let type_occurrences = full.references_with_declaration(type_reference.symbol);
+    assert type_occurrences.len() == 3u64: "reference results can include the declaration";
+    type_occurrences.drop();
+    let top_level = full.declared_symbols(SourceId(0u64));
+    assert top_level.len() == 3u64: "the editor snapshot lists source declarations without local bindings";
+    top_level.drop();
+    let symbols = full.document_symbols(SourceId(0u64)).unwrap();
+    assert symbols.len() == 3u64: "document-symbol queries return copied declaration data";
+    for symbol in symbols { symbol.drop(); }
+    symbols.drop();
+
+    let raw_trust = source_trust();
+    let raw_options = editor_options(raw_trust, Option<PackageMap>.None, EditorMode.Full);
+    raw_options.raw_pointers = true;
+    let raw = EditorEngine.analyze(&inputs, raw_options).unwrap();
+    assert raw.semantic_complete() && raw.report().unwrap().ok(): "editor analysis injects the raw target size provider";
+    raw.drop();
+
+    let reference = full.resolved_name_at(SourceId(0u64), 1u64, 37u64).unwrap();
+    assert full.symbol(reference.symbol).unwrap().type_id == reference.type_id: "query facts point to session symbols";
+    let references = full.references_to(reference.symbol);
+    assert references.len() == 1u64 && references[0].span.start.column == 37u64: "reverse references use symbol identity";
+    references.drop();
+    full.drop();
+    inputs.drop();
+}
+
+fn editor_frontend_recovery() {
+    let inputs = FrozenInputs.new(21u64, 5u64, "fat:frontend-recovery");
+    inputs.add("/tmp/yian-editor-valid.an", "fn valid() {}\n", Option<i64>.Some(1i64));
+    inputs.add("/tmp/yian-editor-broken.an", "fn broken( {\n", Option<i64>.Some(2i64));
+
+    let syntax_trust = source_trust();
+    let syntax_options = editor_options(syntax_trust, Option<PackageMap>.None, EditorMode.Syntax);
+    let syntax = EditorEngine.analyze(&inputs, syntax_options).unwrap();
+    assert syntax.diagnostic_count() == 1u64: "syntax snapshots retain recoverable parse diagnostics";
+    assert syntax.session().len() == 1u64: "valid units survive a neighboring syntax error";
+    assert syntax.session().source(SourceId(1u64)).unwrap().text().contains("broken"):
+    "failed documents remain available through the source manager";
+    let syntax_diagnostic = syntax.diagnostic(0u64).unwrap();
+    let has_parse_stage = match syntax_diagnostic.stage {
+        Some(stage) => stage == AnalysisStage.Parse,
+        None => false,
+    };
+    assert has_parse_stage:
+    "frontend diagnostics retain their stage";
+    syntax.drop();
+
+    let full_trust = source_trust();
+    let full_options = editor_options(full_trust, Option<PackageMap>.None, EditorMode.Full);
+    let full = EditorEngine.analyze(&inputs, full_options).unwrap();
+    assert !full.semantic_complete(): "syntax errors prevent incomplete semantic results from being exported";
+    assert full.diagnostic_count() == 1u64: "full snapshots retain preparation diagnostics";
+    full.drop();
+    inputs.drop();
+}
+
+fn editor_document_symbol_facts() {
+    let inputs = FrozenInputs.new(23u64, 6u64, "fat:document-symbols");
+    let source = String.from(&"pub struct OutlinePoint { pub x: i32 }\n");
+    source.push_str("enum OutlineChoice { Empty, Value { field: i32 } }\n");
+    source.push_str("impl OutlinePoint { pub fn outline_step(amount: i32) {} }\n");
+    source.push_str("trait OutlineTrait { fn outline_trait_method(value: i32); }\n");
+    source.push_str("fn outline_main() {}\n");
+    inputs.add("/tmp/yian-editor-document-symbols.an", source.as_str(), Option<i64>.Some(1i64));
+    let trust = source_trust();
+    let options = editor_options(trust, Option<PackageMap>.None, EditorMode.Full);
+    let snapshot = EditorEngine.analyze(&inputs, options).unwrap();
+    assert snapshot.semantic_complete(): "document-symbol declarations use a complete snapshot";
+
+    let symbols = snapshot.document_symbols(SourceId(0u64)).unwrap();
+    assert has_document_symbol(symbols, "OutlinePoint", EditorDocumentSymbolKind.Struct, ""):
+    "document symbols include top-level structures";
+    assert has_document_symbol(symbols, "x", EditorDocumentSymbolKind.Field, "OutlinePoint"):
+    "document symbols retain structure-field containers";
+    assert has_document_symbol(symbols, "OutlineChoice", EditorDocumentSymbolKind.Enum, ""):
+    "document symbols include top-level enumerations";
+    assert has_document_symbol(symbols, "Value", EditorDocumentSymbolKind.Variant, "OutlineChoice"):
+    "document symbols retain enumeration-variant containers";
+    assert has_document_symbol(symbols, "field", EditorDocumentSymbolKind.Field,
+        "OutlineChoice.Value"):
+    "document symbols retain variant-payload field containers";
+    assert has_document_symbol(symbols, "outline_step", EditorDocumentSymbolKind.Method,
+        "OutlinePoint"):
+    "in-file implementation methods can be nested under their type";
+    assert has_document_symbol(symbols, "outline_trait_method", EditorDocumentSymbolKind.Method,
+        "OutlineTrait"):
+    "trait methods retain their declaring trait container";
+    assert has_document_symbol(symbols, "outline_main", EditorDocumentSymbolKind.Function, ""):
+    "document symbols include top-level functions";
+
+    for symbol in symbols { symbol.drop(); }
+    symbols.drop();
+    snapshot.drop();
+    inputs.drop();
+    source.drop();
+}
+
+fn editor_import_quick_fixes() {
+    let root = String.from(&"/tmp/yian-editor-import-quickfix");
+    let main_path = String.from(&root.as_str());
+    main_path.push_str("/main.an");
+    let helper_path = String.from(&root.as_str());
+    helper_path.push_str("/helper.an");
+    create_dir_all(root.as_str()).unwrap();
+    write_string(main_path.as_str(), "from helper import Missing, Good;\nfn main() {}\n").unwrap();
+    write_string(helper_path.as_str(), "pub struct Good {}\n").unwrap();
+
+    let inputs = FrozenInputs.new(22u64, 6u64, "fat:import-quickfix");
+    inputs.add(main_path.as_str(), "from helper import Missing, Good;\nfn main() {}\n", Option<i64>.Some(1i64));
+    inputs.add(helper_path.as_str(), "pub struct Good {}\n", Option<i64>.Some(1i64));
+    let trust = source_trust();
+    let options = editor_options(trust, Option<PackageMap>.None, EditorMode.Full);
+    let snapshot = EditorEngine.analyze(&inputs, options).unwrap();
+    assert !snapshot.semantic_complete(): "an unresolved import keeps the snapshot incomplete";
+
+    let fixes = snapshot.import_quick_fixes(SourceId(0u64));
+    assert fixes.len() == 1u64: "an unresolved imported name produces one quick fix";
+    let fix = &fixes[0];
+    assert fix.diagnostic_code.as_str() == "E304": "the quick fix retains the compiler error code";
+    assert fix.diagnostic_location.span.start.column == 19u64:
+    "the diagnostic points at the unresolved imported name";
+    let edit_start = fix.edit_location.span.start.column.to_string_radix(10);
+    let edit_end = fix.edit_location.span.end.column.to_string_radix(10);
+    edit_start.drop();
+    edit_end.drop();
+    assert fix.edit_location.span.start.column == 19u64 && fix.edit_location.span.end.column == 28u64:
+    "the edit removes the invalid name and following separator while preserving the valid import";
+
+    let helper_completion = completion_at(snapshot, SourceId(1u64), 0u64, 14u64).unwrap();
+    let offers_helper_without_semantic_claims = false;
+    for item in helper_completion.items {
+        if item.label.as_str() == "Good" && item.kind == EditorCompletionKind.Text {
+            offers_helper_without_semantic_claims = true;
+        }
+    }
+    assert offers_helper_without_semantic_claims:
+    "an incomplete snapshot offers lexical completion without semantic claims";
+    helper_completion.drop();
+
+    for fix in fixes { fix.drop(); }
+    fixes.drop();
+    snapshot.drop();
+    inputs.drop();
+    remove_file(main_path.as_str()).unwrap();
+    remove_file(helper_path.as_str()).unwrap();
+    remove_dir(root.as_str()).unwrap();
+    root.drop();
+    main_path.drop();
+    helper_path.drop();
+}
+
 fn main() {
-    let round: u64 = 0;
-    while round < 100 { success(); lex_failure(); parse_failure(); desugar_failure(); unfinished_parser(); round += 1; }
+    editor_snapshot();
+    editor_frontend_recovery();
+    editor_import_quick_fixes();
+    editor_scope_queries();
+    editor_signature_help();
+    editor_completion_queries();
+    editor_rename_queries();
+    editor_member_queries();
+    editor_document_symbol_facts();
+    let round = 0u64;
+    while round < 100u64 {
+        success();
+        lex_failure();
+        parse_failure();
+        desugar_failure();
+        unfinished_parser();
+        round += 1u64;
+    }
 }

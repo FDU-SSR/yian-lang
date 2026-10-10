@@ -55,7 +55,13 @@ ROOT_DIR = Path(__file__).resolve().parent.parent
 TESTS_DIR = ROOT_DIR / "tests"
 
 SUITES = ("basic", "safety", "package", "bootstrap")
-BOOTSTRAP_PACKAGES = ("bootstrap/compiler", "bootstrap/json", "bootstrap/toml")
+BOOTSTRAP_PACKAGES = (
+    "bootstrap/compiler",
+    "bootstrap/json",
+    "bootstrap/toml",
+    "bootstrap/jsonrpc",
+    "bootstrap/lsp_protocol",
+)
 _suite_name = "basic"
 _source_dir = TESTS_DIR / _suite_name
 _output_dir = TESTS_DIR / "output" / _suite_name

@@ -8,8 +8,35 @@
 // 🤣🤣🤣🤣🤣🤣🤣🤣🤣
 
 from std.core.io import print;
+from std.core.text import LineIndex, TextPosition;
 
 fn main() {
+    let source = "a😀é\r\nz\n";
+    let positions = LineIndex.new(source);
+    assert positions.line_count() == 3u64: "trailing newline creates an empty line";
+    let first_line = positions.byte_range(0u64);
+    assert first_line[0] == 0u64 && first_line[1] == 8u64: "CRLF is excluded from line text";
+    assert positions.byte_offset(TextPosition(row=0u64, column=2u64)) == 5u64: "scalar column maps to UTF-8 byte offset";
+    assert positions.byte_offset_utf16(TextPosition(row=0u64, column=2u64)) == 5u64: "UTF-16 surrogate midpoint clamps after the character";
+    assert positions.byte_offset_utf16(TextPosition(row=0u64, column=4u64)) == 6u64: "UTF-16 columns map past combining marks";
+    assert positions.utf16_column(0u64, 2u64) == 3u64: "supplementary characters use two UTF-16 units";
+    assert positions.scalar_column(0u64, 2u64) == 2u64: "surrogate midpoint clamps after the character";
+    let utf16_position = positions.utf16_position(5u64);
+    assert utf16_position.row == 0u64 && utf16_position.column == 3u64: "byte offset maps to UTF-16";
+    let combining_position = positions.utf16_position(6u64);
+    assert combining_position.row == 0u64 && combining_position.column == 4u64: "byte offsets after combining marks preserve UTF-16 columns";
+    let next_line_position = positions.scalar_position(10u64);
+    assert next_line_position.row == 1u64 && next_line_position.column == 0u64: "CRLF advances one row";
+    positions.drop();
+
+    let empty_positions = LineIndex.new("");
+    assert empty_positions.line_count() == 1u64: "empty text has one addressable line";
+    assert empty_positions.byte_offset(TextPosition(row=0u64, column=99u64)) == 0u64:
+    "columns beyond an empty line clamp to its end";
+    assert empty_positions.byte_offset(TextPosition(row=99u64, column=0u64)) == 0u64:
+    "rows beyond empty text clamp to the end of the document";
+    empty_positions.drop();
+
     print("你好易安!\n");
     print("Hello Yian!\n");
     print("こんにちは、イアン！\n");

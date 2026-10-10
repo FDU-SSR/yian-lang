@@ -1,7 +1,10 @@
 from std.core.drop import Drop;
 from std.core.env import args, exit;
-from std.core.io import IoErrorKind, Stderr, Stdout;
-from std.core.process import Command, ExitStatus;
+from std.core.io import IoErrorKind, Read, Stderr, Stdout, Write;
+from std.core.process import Command, ExitStatus, SpawnOptions, StdioMode;
+from std.core.poller import PollInterests, Poller, PollSource;
+from std.core.time import Instant, monotonic_now;
+from std.core.option import Option;
 from std.core.string import String;
 from std.core.vec import Vec;
 
@@ -77,6 +80,33 @@ fn main() {
     }
     missing.drop();
 
+    let spawn_failure_options = SpawnOptions.new();
+    spawn_failure_options.stdin(StdioMode.Piped);
+    spawn_failure_options.stdout(StdioMode.Piped);
+    spawn_failure_options.stderr(StdioMode.Piped);
+    let missing_spawn = Command.new("/yian-test-command-that-does-not-exist");
+    match missing_spawn.spawn(spawn_failure_options) {
+        Ok(child) => { child.drop(); @panic("missing spawn command unexpectedly started"); },
+        Err(problem) => {
+            assert problem.kind() == IoErrorKind.NotFound: "spawn reports a missing executable";
+            problem.drop();
+        },
+    }
+    missing_spawn.drop();
+
+    let cwd_failure_options = SpawnOptions.new();
+    cwd_failure_options.stdout(StdioMode.Piped);
+    let invalid_cwd = Command.new("/bin/true");
+    invalid_cwd.current_dir("/yian-test-directory-that-does-not-exist");
+    match invalid_cwd.spawn(cwd_failure_options) {
+        Ok(child) => { child.drop(); @panic("spawn unexpectedly accepted a missing working directory"); },
+        Err(problem) => {
+            assert problem.kind() == IoErrorKind.NotFound: "spawn reports a missing working directory";
+            problem.drop();
+        },
+    }
+    invalid_cwd.drop();
+
     let interruptible = Command.new("/bin/sh");
     interruptible.arg("-c");
     interruptible.arg("kill -INT \"$PPID\"; exec sleep 2");
@@ -118,4 +148,91 @@ fn main() {
     echoed.drop();
     let completed = early_exit.output().unwrap();
     assert completed.status.success(): "early stdin close does not replace the child status";
+
+    let stream_options = SpawnOptions.new();
+    stream_options.stdin(StdioMode.Piped);
+    stream_options.stdout(StdioMode.Piped);
+    stream_options.stderr(StdioMode.Null);
+    let streaming = Command.new("/bin/cat");
+    let child = streaming.spawn(stream_options).unwrap();
+    let child_stdin = child.stdin().unwrap();
+    let payload = "long-lived child pipe roundtrip";
+    child_stdin.write_all(payload.as_slice()).unwrap();
+    child_stdin.close().unwrap();
+
+    let output_pipe = child.stdout().unwrap();
+    let output_source = PollSource.from_fd(output_pipe.fd()).unwrap();
+    let poller = Poller.new();
+    let token = poller.register(*output_source, PollInterests.readable()).unwrap();
+    let deadline = Instant.after_milliseconds(1000u64).unwrap();
+    let events = poller.wait(Option<Instant>.Some(*deadline)).unwrap();
+    assert !events.is_empty(): "poll reports data or hangup from a completed child";
+    let received = Vec<u8>.with_capacity(64u64);
+    for index in 0u64..64u64 { received.push(0u8); }
+    let received_length = output_pipe.read(received.as_slice()).unwrap();
+    let received_text = str.from_slice(received.as_slice()[0u64.. *received_length]).unwrap();
+    assert *received_text == payload: "long-lived child pipes preserve bytes";
+
+    match child.wait().unwrap() {
+        ExitStatus.Exited(code) => assert *code == 0i32: "child closes output after success",
+        ExitStatus.Signaled(_) => @panic("cat unexpectedly terminated by a signal"),
+    };
+    assert *output_pipe.read(received.as_slice()).unwrap() == 0u64: "child exit reaches EOF after buffered output";
+    poller.remove(*token).unwrap();
+    assert poller.modify(*token, PollInterests.readable()).is_err(): "removed poll tokens cannot be reused";
+    output_pipe.close().unwrap();
+    match child.wait().unwrap() {
+        ExitStatus.Exited(code) => assert *code == 0i32: "child wait returns its exit code",
+        ExitStatus.Signaled(_) => @panic("cat unexpectedly terminated by a signal"),
+    };
+    match child.wait().unwrap() {
+        ExitStatus.Exited(code) => assert *code == 0i32: "repeated wait returns the cached status",
+        ExitStatus.Signaled(_) => @panic("cached child status changed"),
+    };
+    child.close().unwrap();
+    child.close().unwrap();
+    child.drop();
+    events.drop();
+    poller.drop();
+    received.drop();
+    streaming.drop();
+
+    let closing_options = SpawnOptions.new();
+    closing_options.stdout(StdioMode.Piped);
+    let closing_command = Command.new("/bin/sh");
+    closing_command.arg("-c");
+    closing_command.arg("trap '' TERM; printf ready; exec sleep 10");
+    let closing_child = closing_command.spawn(closing_options).unwrap();
+
+    let ready_pipe = closing_child.stdout().unwrap();
+    let ready_source = PollSource.from_fd(ready_pipe.fd()).unwrap();
+    let ready_poller = Poller.new();
+    let ready_token = ready_poller.register(*ready_source, PollInterests.readable()).unwrap();
+    let ready_deadline = Instant.after_milliseconds(1000u64).unwrap();
+    let ready_events = ready_poller.wait(Option<Instant>.Some(*ready_deadline)).unwrap();
+    assert !ready_events.is_empty(): "close escalation child reports readiness";
+    let ready_bytes: u8[5] = [0u8, 0u8, 0u8, 0u8, 0u8];
+    let ready_length = ready_pipe.read(ready_bytes.as_slice()).unwrap();
+    let ready_text = str.from_slice(ready_bytes.as_slice()[0u64.. *ready_length]).unwrap();
+    assert *ready_text == "ready": "child installs its TERM handler before close begins";
+    ready_poller.remove(*ready_token).unwrap();
+    ready_pipe.close().unwrap();
+    ready_events.drop();
+    ready_poller.drop();
+
+    closing_child.request_close().unwrap();
+    let close_status = Option<ExitStatus>.None;
+    while close_status.is_none() {
+        close_status = *closing_child.close_step().unwrap();
+    }
+    assert close_status.is_some(): "incremental close observes the reaped child";
+    match *close_status.unwrap() {
+        ExitStatus.Signaled(signal) => assert signal == 9i32: "incremental close escalates after its grace period",
+        ExitStatus.Exited(_) => @panic("a child that ignores TERM was not killed"),
+    };
+    closing_child.drop();
+    closing_command.drop();
+
+    let now = monotonic_now().unwrap();
+    assert now.nanoseconds() > 0i64: "monotonic clock returns a process-local timestamp";
 }

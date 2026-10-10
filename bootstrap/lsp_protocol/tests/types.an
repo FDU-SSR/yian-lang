@@ -1,0 +1,158 @@
+from lsp_protocol.method import Method;
+from lsp_protocol.types import Position, Range, Location, TextEdit, TextDocumentPositionParams, TextDocumentItem, ContentChangeEvent, ReferenceParams, RenameParams, DocumentFormattingParams, CompletionParams, SignatureHelpParams;
+from lsp_protocol.uri import path_to_uri, uri_to_path;
+from lsp_protocol.error import LspErrorCode;
+from lsp_protocol.sync import DidOpenParams, DidChangeParams, DidSaveParams, DidCloseParams, DidChangeWatchedFilesParams;
+from lsp_protocol.diagnostic import Diagnostic, decode_diagnostic;
+from json.parse import parse;
+from json.write import stringify;
+from std.core.drop import Drop;
+from std.core.string import String;
+
+fn main() {
+    let method = Method.from_name("textDocument/hover");
+    assert method.name() == "textDocument/hover": "known methods round trip";
+    method.drop();
+
+    let position_json = parse("{\"line\":4,\"character\":7}").unwrap();
+    let position = Position.from_json(position_json).unwrap();
+    assert position.line == 4u64 && position.character == 7u64: "position fields decode";
+    let encoded_position = position.to_json();
+    let position_text = stringify(&encoded_position).unwrap();
+    assert position_text.as_str() == "{\"line\":4,\"character\":7}": "position fields encode";
+
+    let range_json = parse("{\"start\":{\"line\":1,\"character\":2},\"end\":{\"line\":3,\"character\":4}}").unwrap();
+    let range = Range.from_json(range_json).unwrap();
+    assert range.start.line == 1u64 && range.end.character == 4u64: "range endpoints decode";
+    let encoded_range = range.to_json();
+    let range_text = stringify(&encoded_range).unwrap();
+    assert range_text.as_str() == "{\"start\":{\"line\":1,\"character\":2},\"end\":{\"line\":3,\"character\":4}}": "range fields encode";
+
+    let location = Location(uri=String.from(&"file:///tmp/a.an"), range=*range);
+    let location_value = location.to_json();
+    let location_text = stringify(&location_value).unwrap();
+    assert location_text.as_str() == "{\"uri\":\"file:///tmp/a.an\",\"range\":{\"start\":{\"line\":1,\"character\":2},\"end\":{\"line\":3,\"character\":4}}}":
+    "location encoding preserves URI and range";
+    location_text.drop();
+    location_value.drop();
+    location.drop();
+
+    let edit = TextEdit(range=*range, new_text=String.from(&"replacement"));
+    let edit_value = edit.to_json();
+    let edit_text = stringify(&edit_value).unwrap();
+    assert edit_text.as_str() == "{\"range\":{\"start\":{\"line\":1,\"character\":2},\"end\":{\"line\":3,\"character\":4}},\"newText\":\"replacement\"}":
+    "text edit encoding uses protocol field names";
+    edit_text.drop();
+    edit_value.drop();
+    edit.drop();
+
+    let negative = parse("{\"line\":-1,\"character\":0}").unwrap();
+    assert Position.from_json(negative).is_none(): "negative positions are rejected";
+
+    let uri = path_to_uri("/tmp/a b/é#?.an").unwrap();
+    assert uri.as_str() == "file:///tmp/a%20b/%C3%A9%23%3F.an": "URI encoding uses UTF-8 bytes";
+    let path = uri_to_path(uri.as_str()).unwrap();
+    assert path.as_str() == "/tmp/a b/é#?.an": "file URI round trips without filesystem access";
+    path.drop();
+    uri.drop();
+    assert path_to_uri("relative/file.an").is_err(): "relative paths are not file URIs";
+    assert uri_to_path("file:///tmp/%Q0").is_err(): "malformed escapes are rejected";
+
+    assert LspErrorCode.from_value(-32800i64).value() == -32800i64: "cancel error code round trips";
+    assert LspErrorCode.from_value(-32801i64).value() == -32801i64: "content-modified code round trips";
+    assert LspErrorCode.from_value(-32803i64).value() == -32803i64: "request-failed code round trips";
+    assert LspErrorCode.from_value(-31999i64).value() == -31999i64: "unknown error codes are preserved";
+
+    let query = parse("{\"textDocument\":{\"uri\":\"file:///tmp/a.an\"},\"position\":{\"line\":2,\"character\":5}}").unwrap();
+    let position_params = TextDocumentPositionParams.from_json(query).unwrap();
+    assert position_params.text_document.uri.as_str() == "file:///tmp/a.an": "position request decodes its document";
+    assert position_params.position.line == 2u64 && position_params.position.character == 5u64: "position request decodes coordinates";
+    position_params.drop();
+
+    let references_json = parse("{\"textDocument\":{\"uri\":\"file:///tmp/a.an\"},\"position\":{\"line\":2,\"character\":5},\"context\":{\"includeDeclaration\":true}}").unwrap();
+    let references = ReferenceParams.from_json(references_json).unwrap();
+    assert references.context.include_declaration && references.position.character == 5u64:
+    "reference requests decode their context and position";
+    references.drop();
+
+    let invalid_references = parse("{\"textDocument\":{\"uri\":\"file:///tmp/a.an\"},\"position\":{\"line\":0,\"character\":0},\"context\":{\"includeDeclaration\":\"yes\"}}").unwrap();
+    assert ReferenceParams.from_json(invalid_references).is_none(): "reference context rejects invalid boolean fields";
+
+    let rename_json = parse("{\"textDocument\":{\"uri\":\"file:///tmp/a.an\"},\"position\":{\"line\":1,\"character\":3},\"newName\":\"renamed\"}").unwrap();
+    let rename = RenameParams.from_json(rename_json).unwrap();
+    assert rename.new_name.as_str() == "renamed": "rename requests own their replacement name";
+    rename.drop();
+
+    let formatting_json = parse("{\"textDocument\":{\"uri\":\"file:///tmp/a.an\"},\"options\":{\"tabSize\":4,\"insertSpaces\":true}}").unwrap();
+    let formatting = DocumentFormattingParams.from_json(formatting_json).unwrap();
+    assert formatting.options.tab_size == 4u64 && formatting.options.insert_spaces:
+    "formatting requests decode their layout options";
+    formatting.drop();
+
+    let completion_json = parse("{\"textDocument\":{\"uri\":\"file:///tmp/a.an\"},\"position\":{\"line\":1,\"character\":4},\"context\":{\"triggerKind\":2,\"triggerCharacter\":\".\"}}").unwrap();
+    let completion = CompletionParams.from_json(completion_json).unwrap();
+    let completion_context = completion.context.unwrap();
+    assert completion_context.trigger_kind == 2u64 && completion_context.trigger_character.unwrap().as_str() == ".":
+    "completion trigger data is retained";
+    completion.drop();
+
+    let signature_json = parse("{\"textDocument\":{\"uri\":\"file:///tmp/a.an\"},\"position\":{\"line\":1,\"character\":8},\"context\":{\"triggerKind\":1,\"isRetrigger\":false,\"activeSignatureHelp\":{\"activeSignature\":0}}}").unwrap();
+    let signature = SignatureHelpParams.from_json(signature_json).unwrap();
+    assert signature.context.trigger_kind == 1u64 && !signature.context.is_retrigger:
+    "signature-help trigger context is decoded";
+    assert signature.context.active_signature_help.is_some(): "active signature state is retained";
+    signature.drop();
+
+    let opened = parse("{\"uri\":\"file:///tmp/open.an\",\"languageId\":\"yian\",\"version\":7,\"text\":\"fn main() {}\"}").unwrap();
+    let item = TextDocumentItem.from_json(opened).unwrap();
+    assert item.version == 7i64 && item.text.as_str() == "fn main() {}": "open document text and version decode";
+    item.drop();
+
+    let changed = parse("{\"text\":\"fn changed() {}\"}").unwrap();
+    let change = ContentChangeEvent.from_json(changed).unwrap();
+    assert change.text.as_str() == "fn changed() {}": "full document change text decodes";
+    change.drop();
+
+    let did_open_json = parse("{\"textDocument\":{\"uri\":\"file:///tmp/open.an\",\"languageId\":\"yian\",\"version\":2,\"text\":\"fn opened() {}\"}}").unwrap();
+    let did_open = DidOpenParams.from_json(did_open_json).unwrap();
+    assert did_open.text_document.version == 2i64 && did_open.text_document.text.as_str() == "fn opened() {}":
+    "didOpen decodes the complete owned document";
+    did_open.drop();
+
+    let did_change_json = parse("{\"textDocument\":{\"uri\":\"file:///tmp/open.an\",\"version\":3},\"contentChanges\":[{\"text\":\"first\"},{\"text\":\"second😀\"}]}").unwrap();
+    let did_change = DidChangeParams.from_json(did_change_json).unwrap();
+    assert did_change.text_document.version == 3i64 && did_change.content_changes.len() == 2u64:
+    "didChange retains the document version and ordered full-text changes";
+    assert did_change.content_changes[0u64].text.as_str() == "first" &&
+    did_change.content_changes[1u64].text.as_str() == "second😀":
+    "didChange owns each replacement text";
+    did_change.drop();
+
+    let did_save_json = parse("{\"textDocument\":{\"uri\":\"file:///tmp/open.an\"}}").unwrap();
+    let did_save = DidSaveParams.from_json(did_save_json).unwrap();
+    assert did_save.text.is_none(): "didSave preserves an omitted optional text";
+    did_save.drop();
+
+    let did_close_json = parse("{\"textDocument\":{\"uri\":\"file:///tmp/open.an\"}}").unwrap();
+    let did_close = DidCloseParams.from_json(did_close_json).unwrap();
+    assert did_close.text_document.uri.as_str() == "file:///tmp/open.an": "didClose decodes its document identity";
+    did_close.drop();
+
+    let watcher_json = parse("{\"changes\":[{\"uri\":\"file:///tmp/a.an\",\"type\":1},{\"uri\":\"file:///tmp/b.an\",\"type\":2},{\"uri\":\"file:///tmp/c.an\",\"type\":3},{\"uri\":\"file:///tmp/d.an\",\"type\":9}]}").unwrap();
+    let watcher = DidChangeWatchedFilesParams.from_json(watcher_json).unwrap();
+    assert watcher.changes.len() == 4u64: "watcher changes preserve the received order";
+    assert watcher.changes[0u64].kind.value() == 1u64 &&
+    watcher.changes[3u64].kind.value() == 9u64:
+    "known and future file-change kinds round trip";
+    watcher.drop();
+
+    let diagnostic_json = parse("{\"range\":{\"start\":{\"line\":1,\"character\":2},\"end\":{\"line\":1,\"character\":4}},\"severity\":1,\"message\":\"bad name\",\"source\":\"yianc\",\"data\":{\"tag\":\"kept\"}}").unwrap();
+    let diagnostic = decode_diagnostic(diagnostic_json).unwrap();
+    assert diagnostic.message.as_str() == "bad name": "diagnostic required message is typed";
+    let diagnostic_value = diagnostic.to_json();
+    let diagnostic_object = diagnostic_value.as_object().unwrap();
+    assert diagnostic_object.get("severity").is_some(): "diagnostic optional severity is preserved";
+    assert diagnostic_object.get("data").is_some(): "unknown diagnostic fields retain ownership";
+    diagnostic_value.drop();
+    diagnostic.drop();
+}

@@ -34,6 +34,19 @@ class Scenario:
     project_root: bool
 
 
+@dataclass(frozen=True)
+class QueryCase:
+    method: str
+    params: Json
+
+
+@dataclass(frozen=True)
+class QuerySpec:
+    primary: QueryCase
+    distinct: tuple[QueryCase, ...] = ()
+    empty_probe: QueryCase | None = None
+
+
 class ProtocolError(RuntimeError):
     """An LSP process or JSON-RPC protocol failure."""
 
@@ -472,6 +485,115 @@ def __observe(client: StdioSession, scenario: Scenario) -> dict[str, Json]:
     return result
 
 
+def __positions_for_word(source: str, line_number: int, word: str) -> tuple[dict[str, Json], ...]:
+    """Return valid cursors within one source identifier, including its end."""
+    line = source.splitlines()[line_number]
+    start = line.index(word)
+    return tuple(
+        {"line": line_number, "character": start + offset}
+        for offset in range(len(word) + 1)
+    )
+
+
+def __query_specs(scenario: Scenario) -> dict[str, QuerySpec]:
+    """Build repeat and distinct requests from real declarations and references."""
+    uri = scenario.source.as_uri()
+    document: Json = {"uri": uri}
+    local_positions = __positions_for_word(scenario.text, 6, "local")
+    identity_positions = __positions_for_word(scenario.text, 5, "identity")
+    argument_positions = __positions_for_word(scenario.text, 5, "41")
+    local_use = local_positions[0]
+    empty_position: Json = {"line": 3, "character": 0}
+
+    def position_case(method: str, position: Json, extra: dict[str, Json] | None = None) -> QueryCase:
+        params: dict[str, Json] = {"textDocument": document, "position": position}
+        if extra is not None:
+            params.update(extra)
+        return QueryCase(method, params)
+
+    def reference_case(method: str, position: Json) -> QueryCase:
+        return position_case(method, position, {"context": {"includeDeclaration": True}})
+
+    def edit_case(position: dict[str, Json], new_name: str) -> QueryCase:
+        return position_case("textDocument/rename", position, {"newName": new_name})
+
+    def code_action_case(position: dict[str, Json]) -> QueryCase:
+        end: dict[str, Json] = {
+            "line": position["line"],
+            "character": position["character"] + 1
+            if isinstance(position["character"], int) else position["character"],
+        }
+        params: Json = {
+            "textDocument": document,
+            "range": {"start": position, "end": end},
+            "context": {"diagnostics": []},
+        }
+        return QueryCase("textDocument/codeAction", params)
+
+    local_ref_positions = tuple(position_case("textDocument/definition", p) for p in local_positions)
+    identity_ref_positions = tuple(position_case("textDocument/definition", p) for p in identity_positions)
+    refs_positions = tuple(reference_case("textDocument/references", p) for p in local_positions)
+    refs_identity = tuple(reference_case("textDocument/references", p) for p in identity_positions)
+    highlight_positions = tuple(position_case("textDocument/documentHighlight", p) for p in local_positions)
+    highlight_identity = tuple(position_case("textDocument/documentHighlight", p) for p in identity_positions)
+    rename_local = tuple(edit_case(p, "renamed_local") for p in local_positions)
+    rename_identity = tuple(edit_case(p, "renamed_identity") for p in identity_positions)
+    completion_local = tuple(position_case("textDocument/completion", p) for p in local_positions)
+    completion_identity = tuple(position_case("textDocument/completion", p) for p in identity_positions)
+    signature_cases = tuple(position_case("textDocument/signatureHelp", p) for p in argument_positions)
+
+    symbols = QueryCase("textDocument/documentSymbol", {"textDocument": document})
+    semantic_tokens = QueryCase("textDocument/semanticTokens/full", {"textDocument": document})
+    formatting = QueryCase("textDocument/formatting", {
+        "textDocument": document,
+        "options": {"tabSize": 4, "insertSpaces": True},
+    })
+
+    return {
+        "definition": QuerySpec(
+            local_ref_positions[0],
+            local_ref_positions[1:] + identity_ref_positions,
+            position_case("textDocument/definition", empty_position),
+        ),
+        "hover": QuerySpec(
+            position_case("textDocument/hover", local_use),
+            tuple(position_case("textDocument/hover", p) for p in local_positions[1:] + identity_positions),
+            position_case("textDocument/hover", empty_position),
+        ),
+        "document_symbols": QuerySpec(symbols),
+        "semantic_tokens": QuerySpec(semantic_tokens),
+        "completion": QuerySpec(
+            completion_local[0], completion_local[1:] + completion_identity,
+        ),
+        "signature_help": QuerySpec(
+            signature_cases[0], signature_cases[1:],
+            position_case("textDocument/signatureHelp", empty_position),
+        ),
+        "references": QuerySpec(
+            refs_positions[0], refs_positions[1:] + refs_identity,
+            reference_case("textDocument/references", empty_position),
+        ),
+        "highlights": QuerySpec(
+            highlight_positions[0], highlight_positions[1:] + highlight_identity,
+            position_case("textDocument/documentHighlight", empty_position),
+        ),
+        "prepare_rename": QuerySpec(
+            position_case("textDocument/prepareRename", local_use),
+            tuple(position_case("textDocument/prepareRename", p) for p in local_positions[1:] + identity_positions),
+            position_case("textDocument/prepareRename", empty_position),
+        ),
+        "rename": QuerySpec(
+            edit_case(local_use, "renamed_local"), rename_local[1:] + rename_identity,
+        ),
+        "code_action": QuerySpec(
+            code_action_case(local_use),
+            tuple(code_action_case(p) for p in local_positions[1:] + identity_positions),
+            code_action_case({"line": 3, "character": 0}),
+        ),
+        "formatting": QuerySpec(formatting),
+    }
+
+
 def __normalize(value: Json, paths: list[Path]) -> Json:
     if isinstance(value, str):
         for path in paths:
@@ -539,9 +661,12 @@ def __replace_artifact_paths(value: Json, replacements: dict[str, str]) -> Json:
 
 def __source_fingerprint() -> dict[str, Json]:
     files = [
+        *sorted((ROOT / "compiler").rglob("*.py")),
+        *sorted((ROOT / "lib" / "src").rglob("*.an")),
         *sorted((ROOT / "lsp").rglob("*.py")),
         ROOT / "scripts" / "check_lsp.py",
         *sorted((ROOT / "tests" / "unit").glob("test_lsp_*.py")),
+        ROOT / "tests" / "unit" / "test_shared_analysis.py",
     ]
     digest = hashlib.sha256()
     relative_paths: list[Json] = []
@@ -645,6 +770,7 @@ def __run_session(
                 "PYTHONPATH",
                 "YIAN_LSP_TRACE_FILE",
                 "YIAN_LSP_PROFILE_FILE",
+                "YIAN_LSP_DISABLE_QUERY_CACHE",
             )
             if key in environment
         },
@@ -800,42 +926,69 @@ def __run_cache_probe(
     parent: Path,
     timeout: float,
 ) -> dict[str, Json]:
-    """Observe cache hit/miss behavior in a separate traced session."""
+    """Observe query-cache hit/miss behavior separately from formal timings."""
     scenario_dir = parent / "cache-probe"
     scenario_dir.mkdir(parents=True)
     scenario = __make_scenario(scenario_name, scenario_dir)
     trace_path = scenario_dir / "trace.jsonl"
     command = __command(template, server_root, raw)
     environment = __environment(server_root, trace_path, None)
+    query_cache_disabled = environment.get("YIAN_LSP_DISABLE_QUERY_CACHE") == "1"
     client = StdioSession(command, cwd=server_root, environment=environment, timeout=timeout)
-    uri = scenario.source.as_uri()
-    request = {
-        "textDocument": {"uri": uri},
-        "position": {"line": 6, "character": 4},
-    }
+    specs = __query_specs(scenario)
     try:
         client.initialize(scenario.root if scenario.project_root else None)
         client.open_document(scenario)
-        for _ in range(2):
-            client.request("textDocument/hover", request)
-        client.request("textDocument/hover", {
-            "textDocument": {"uri": uri},
-            "position": {"line": 1, "character": 4},
-        })
+        for spec in specs.values():
+            for case in (spec.primary, spec.primary, *spec.distinct[:1]):
+                response = client.request_message(case.method, case.params)
+                if "error" in response:
+                    raise ProtocolError(f"cache probe {case.method} failed: {response['error']!r}")
+            if spec.empty_probe is not None:
+                response = client.request_message(spec.empty_probe.method, spec.empty_probe.params)
+                if "error" in response:
+                    raise ProtocolError(
+                        f"empty-result cache probe {spec.empty_probe.method} failed: {response['error']!r}"
+                    )
         status = client.shutdown()
     except Exception:
         client.kill()
         raise
 
+    trace_events = __read_trace(trace_path)
     query_operations = [
-        event for event in __read_trace(trace_path)
+        event for event in trace_events
         if isinstance(event, dict)
         and event.get("event") == "worker_operation_finished"
-        and event.get("operation") == "query"
+        and event.get("operation") in ("query", "format")
     ]
+    by_method: dict[str, list[dict[str, Json]]] = {}
+    for event in query_operations:
+        method = event.get("method")
+        if isinstance(method, str):
+            by_method.setdefault(method, []).append(event)
+    method_counts: dict[str, Json] = {}
+    for method, events in by_method.items():
+        method_counts[method] = {
+            "hit_count": sum(1 for event in events if event.get("cache_hit") is True),
+            "miss_count": sum(1 for event in events if event.get("cache_hit") is False),
+            "operation_count": len(events),
+        }
+    analysis_timing_sample = next(
+        (
+            event.get("analysis_timings")
+            for event in trace_events
+            if isinstance(event, dict)
+            and event.get("event") == "analysis_completed"
+            and event.get("full") is True
+            and isinstance(event.get("analysis_timings"), dict)
+        ),
+        None,
+    )
     return {
         "exit_status": status,
         "shutdown_ms": client.shutdown_ms,
+        "query_cache_disabled": query_cache_disabled,
         "hit_count": sum(
             1 for event in query_operations if event.get("cache_hit") is True
         ),
@@ -843,6 +996,9 @@ def __run_cache_probe(
             1 for event in query_operations if event.get("cache_hit") is False
         ),
         "query_operation_count": len(query_operations),
+        "methods": method_counts,
+        # This traced sample is separate from formal latency measurements.
+        "analysis_timing_sample": analysis_timing_sample,
         "trace_path": str(trace_path),
     }
 
@@ -972,6 +1128,122 @@ def __run_memory_probe(
     }
 
 
+def __timed_query(
+    client: StdioSession, case: QueryCase, paths: list[Path]
+) -> tuple[float, dict[str, Json], str, bool]:
+    started = time.perf_counter()
+    response = client.request_message(case.method, case.params)
+    elapsed_ms = (time.perf_counter() - started) * 1000
+    normalized = cast(dict[str, Json], __normalize(response, paths))
+    result = normalized.get("result")
+    result_text = json.dumps(result, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    is_error = "error" in normalized
+    is_empty = not is_error and ("result" not in normalized or result is None or result == [] or result == {})
+    return elapsed_ms, normalized, hashlib.sha256(result_text.encode("utf-8")).hexdigest(), is_empty
+
+
+def __measure_queries(
+    client: StdioSession,
+    scenario: Scenario,
+    sample_count: int,
+) -> tuple[dict[str, Json], list[float], list[float], list[str]]:
+    """Measure each LSP method at valid sites and retain result evidence."""
+    reports: dict[str, Json] = {}
+    repeated_all: list[float] = []
+    distinct_all: list[float] = []
+    failures: list[str] = []
+    specs = __query_specs(scenario)
+    paths = [scenario.root, scenario.source.parent]
+
+    for name, spec in specs.items():
+        first_ms, first_response, first_digest, first_empty = __timed_query(
+            client, spec.primary, paths
+        )
+        repeated_ms: list[float] = []
+        repeated_digests: list[str] = []
+        repeated_errors = 0
+        for _ in range(sample_count):
+            elapsed, response, digest, _empty = __timed_query(client, spec.primary, paths)
+            repeated_ms.append(elapsed)
+            repeated_all.append(elapsed)
+            repeated_digests.append(digest)
+            if "error" in response:
+                repeated_errors += 1
+
+        distinct_ms: list[float] = []
+        distinct_digests: list[str] = []
+        distinct_errors = 0
+        if spec.distinct:
+            for index in range(sample_count):
+                case = spec.distinct[index % len(spec.distinct)]
+                elapsed, response, digest, _empty = __timed_query(client, case, paths)
+                distinct_ms.append(elapsed)
+                distinct_all.append(elapsed)
+                distinct_digests.append(digest)
+                if "error" in response:
+                    distinct_errors += 1
+
+        empty_probe: Json = None
+        empty_probe_is_empty: bool | None = None
+        empty_probe_ms: float | None = None
+        if spec.empty_probe is not None:
+            empty_probe_ms, empty_response, empty_digest, empty_probe_is_empty = __timed_query(
+                client, spec.empty_probe, paths
+            )
+            empty_probe = {
+                "params": __normalize(spec.empty_probe.params, paths),
+                "response": empty_response,
+                "result_sha256": empty_digest,
+                "result_is_empty": empty_probe_is_empty,
+                "elapsed_ms": empty_probe_ms,
+            }
+            if "error" in empty_response:
+                failures.append(f"{name}: empty probe returned an error")
+            elif not empty_probe_is_empty:
+                failures.append(f"{name}: expected the designated empty-result probe to be empty")
+
+        if "error" in first_response:
+            failures.append(f"{name}: first request returned an error")
+        if repeated_errors:
+            failures.append(f"{name}: {repeated_errors} repeated requests returned errors")
+        if distinct_errors:
+            failures.append(f"{name}: {distinct_errors} distinct-position requests returned errors")
+
+        reports[name] = {
+            "method": spec.primary.method,
+            "primary_params": __normalize(spec.primary.params, paths),
+            "first_request": {
+                "elapsed_ms": first_ms,
+                "response": first_response,
+                "result_sha256": first_digest,
+                "result_is_empty": first_empty,
+            },
+            "repeated": {
+                "sample_count": len(repeated_ms),
+                "samples_ms": repeated_ms,
+                "median_ms": statistics.median(repeated_ms) if repeated_ms else None,
+                "p95_ms": __percentile(repeated_ms, 0.95),
+                "result_sha256": repeated_digests,
+                "error_count": repeated_errors,
+            },
+            "distinct_positions": {
+                "status": "measured" if spec.distinct else "not_applicable",
+                "variant_count": len(spec.distinct),
+                "sample_count": len(distinct_ms),
+                "samples_ms": distinct_ms,
+                "median_ms": statistics.median(distinct_ms) if distinct_ms else None,
+                "p95_ms": __percentile(distinct_ms, 0.95),
+                "result_sha256": distinct_digests,
+                "error_count": distinct_errors,
+            },
+            "empty_result_probe": empty_probe,
+            "empty_result_probe_is_empty": empty_probe_is_empty,
+            "empty_result_probe_ms": empty_probe_ms,
+        }
+
+    return reports, repeated_all, distinct_all, failures
+
+
 def __run_benchmark(
     template: list[str],
     server_root: Path,
@@ -1021,6 +1293,8 @@ def __run_benchmark(
     analysis_samples_ms: list[float] = []
     repeated_query_ms: list[float] = []
     distinct_query_ms: list[float] = []
+    query_methods: dict[str, Json] = {}
+    query_failures: list[str] = []
     uri = scenario.source.as_uri()
     try:
         client.initialize(scenario.root if scenario.project_root else None)
@@ -1040,25 +1314,9 @@ def __run_benchmark(
                 "textDocument": {"uri": uri}
             })
             analysis_samples_ms.append((time.perf_counter() - full_started) * 1000)
-        request = {
-            "textDocument": {"uri": uri},
-            "position": {"line": 6, "character": 4},
-        }
-        client.request("textDocument/hover", request)
-        for _ in range(query_samples):
-            started = time.perf_counter()
-            client.request("textDocument/hover", {
-                "textDocument": {"uri": uri},
-                "position": {"line": 6, "character": 4},
-            })
-            repeated_query_ms.append((time.perf_counter() - started) * 1000)
-        for index in range(query_samples):
-            started = time.perf_counter()
-            client.request("textDocument/hover", {
-                "textDocument": {"uri": uri},
-                "position": {"line": index % 8, "character": index // 8},
-            })
-            distinct_query_ms.append((time.perf_counter() - started) * 1000)
+        query_methods, repeated_query_ms, distinct_query_ms, query_failures = __measure_queries(
+            client, scenario, query_samples
+        )
         exit_status = client.shutdown()
     except Exception:
         client.kill()
@@ -1118,6 +1376,7 @@ def __run_benchmark(
                 "PYTHONPATH",
                 "YIAN_LSP_TRACE_FILE",
                 "YIAN_LSP_PROFILE_FILE",
+                "YIAN_LSP_DISABLE_QUERY_CACHE",
             )
             if key in environment
         },
@@ -1129,6 +1388,8 @@ def __run_benchmark(
         "shutdown_ms": client.shutdown_ms,
         "control_probe": control_probe,
         "cache_probe": cache_probe,
+        "query_methods": query_methods,
+        "query_failures": query_failures,
         "profile_run": profile_run,
         "memory_probe": memory_probe,
         "sample_counts": {
@@ -1136,6 +1397,7 @@ def __run_benchmark(
             "analysis": len(analysis_samples_ms),
             "syntax_feedback": len(syntax_samples),
             "queries": len(repeated_query_ms) + len(distinct_query_ms),
+            "query_methods": len(query_methods),
         },
         "cold_start_ms": {
             "samples": cold,
@@ -1191,9 +1453,96 @@ def __parse_command(value: str | None, *, default: list[str]) -> list[str]:
     return parsed
 
 
+def __run_infrastructure(args: argparse.Namespace) -> int:
+    """Run the library-level checks that underpin the native LSP integration."""
+    commands = [
+        [sys.executable, "scripts/run_tests.py", "--suite", "bootstrap", "--implementation", "both", "-q"],
+        [sys.executable, "-m", "unittest", "discover", "-s", "tests/unit", "-v"],
+        [sys.executable, "-m", "compiler.format", "--verify", "bootstrap/compiler/src"],
+        [sys.executable, "-m", "compiler.format", "--check", "bootstrap/compiler/src"],
+        [sys.executable, "runtime/build.py", "--check"],
+        [sys.executable, "runtime/build.py", "--asan"],
+    ]
+    results: list[dict[str, Json]] = []
+    failures = 0
+
+    for command in commands:
+        started = time.perf_counter()
+        try:
+            completed = subprocess.run(
+                command,
+                cwd=ROOT,
+                capture_output=True,
+                text=True,
+                errors="replace",
+                timeout=args.infrastructure_timeout,
+                check=False,
+            )
+            elapsed_ms = (time.perf_counter() - started) * 1000
+            results.append({
+                "command": command,
+                "exit_status": completed.returncode,
+                "elapsed_ms": elapsed_ms,
+                "stdout": completed.stdout,
+                "stderr": completed.stderr,
+            })
+            if completed.returncode != 0:
+                failures += 1
+        except subprocess.TimeoutExpired as error:
+            elapsed_ms = (time.perf_counter() - started) * 1000
+            results.append({
+                "command": command,
+                "exit_status": None,
+                "elapsed_ms": elapsed_ms,
+                "timeout_seconds": args.infrastructure_timeout,
+                "stdout": error.stdout.decode("utf-8", "replace")
+                if isinstance(error.stdout, bytes) else error.stdout or "",
+                "stderr": error.stderr.decode("utf-8", "replace")
+                if isinstance(error.stderr, bytes) else error.stderr or "",
+                "error": "timeout",
+            })
+            failures += 1
+        except OSError as error:
+            elapsed_ms = (time.perf_counter() - started) * 1000
+            results.append({
+                "command": command,
+                "exit_status": None,
+                "elapsed_ms": elapsed_ms,
+                "error": f"{type(error).__name__}: {error}",
+            })
+            failures += 1
+
+    report: dict[str, Json] = {
+        "format": 1,
+        "mode": "infrastructure",
+        "source_root": str(ROOT),
+        "source_revision": subprocess.run(
+            ["git", "-C", str(ROOT), "rev-parse", "HEAD"],
+            check=False,
+            capture_output=True,
+            text=True,
+        ).stdout.strip(),
+        "source_worktree": __source_fingerprint(),
+        "environment": {
+            "python": sys.executable,
+            "python_version": sys.version,
+            "platform": sys.platform,
+            "cwd": str(Path.cwd()),
+        },
+        "results": results,
+        "ok": failures == 0,
+        "failure_count": failures,
+    }
+    args.report.parent.mkdir(parents=True, exist_ok=True)
+    args.report.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    print(f"LSP infrastructure: {'PASS' if failures == 0 else 'FAIL'} ({failures} failures)")
+    print(f"report: {args.report}")
+    return 0 if failures == 0 else 1
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--mode", choices=("check", "benchmark", "profile"), default="check")
+    parser.add_argument("--mode", choices=("check", "benchmark", "profile", "infrastructure"), default="check")
     parser.add_argument("--server-command", help="server command as a JSON string array")
     parser.add_argument("--server-root", type=Path, default=ROOT)
     parser.add_argument("--reference-command", help="optional reference command as a JSON string array")
@@ -1210,8 +1559,14 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--query-samples", type=int, default=100)
     parser.add_argument("--memory-samples", type=int, default=100)
     parser.add_argument("--timeout", type=float, default=120.0)
+    parser.add_argument("--infrastructure-timeout", type=float, default=1800.0)
     parser.add_argument("--report", type=Path, default=ROOT / "build/lsp/report.json")
     args = parser.parse_args(argv)
+    if args.infrastructure_timeout <= 0:
+        parser.error("infrastructure timeout must be positive")
+    if args.mode == "infrastructure":
+        return __run_infrastructure(args)
+
     try:
         command = __parse_command(args.server_command, default=__default_command())
         reference_command = __parse_command(args.reference_command, default=__default_command()) \
@@ -1291,6 +1646,9 @@ def main(argv: list[str] | None = None) -> int:
                         compared[role] = cast(Json, record)
                         if record.get("error") is not None or record.get("exit_status") != 0:
                             failures += 1
+                        query_errors = record.get("query_failures")
+                        if isinstance(query_errors, list) and query_errors:
+                            failures += 1
                         if args.mode in ("benchmark", "profile") and role == "candidate":
                             probe = record.get("control_probe")
                             if not isinstance(probe, dict):
@@ -1315,14 +1673,35 @@ def main(argv: list[str] | None = None) -> int:
                                 else:
                                     hits = cache_probe.get("hit_count")
                                     misses = cache_probe.get("miss_count")
+                                    cache_disabled = cache_probe.get("query_cache_disabled") is True
                                     if (
                                         cache_probe.get("exit_status") != 0
                                         or not isinstance(hits, int)
-                                        or hits < 1
+                                        or (hits != 0 if cache_disabled else hits < 1)
                                         or not isinstance(misses, int)
                                         or misses < 1
                                     ):
                                         failures += 1
+                                    method_counts = cache_probe.get("methods")
+                                    measured_methods = record.get("query_methods")
+                                    if not isinstance(method_counts, dict) or not isinstance(measured_methods, dict):
+                                        failures += 1
+                                    else:
+                                        for method_report in measured_methods.values():
+                                            method = method_report.get("method") if isinstance(method_report, dict) else None
+                                            method_cache = method_counts.get(method) if isinstance(method, str) else None
+                                            if (
+                                                not isinstance(method_cache, dict)
+                                                or not isinstance(method_cache.get("hit_count"), int)
+                                                or (
+                                                    method_cache["hit_count"] != 0
+                                                    if cache_disabled
+                                                    else method_cache["hit_count"] < 1
+                                                )
+                                                or not isinstance(method_cache.get("miss_count"), int)
+                                                or method_cache["miss_count"] < 1
+                                            ):
+                                                failures += 1
                                 if args.mode == "profile":
                                     profile_run = record.get("profile_run")
                                     if (
