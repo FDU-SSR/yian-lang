@@ -1,0 +1,29 @@
+from std.core.io import IoError, IoErrorKind;
+from std.core.result import Result;
+
+extern "C" {
+    fn yian_monotonic_nanos() -> i64;
+}
+
+// Monotonic timestamps are process-local and cannot be used as wall-clock times.
+pub struct Instant { nanoseconds: i64 }
+
+impl Instant {
+    pub fn nanoseconds() -> i64 { self.nanoseconds }
+
+    static pub fn after_milliseconds(delay: u64) -> Result<Instant, IoError> {
+        let now = monotonic_now()?;
+        if delay > u64((9223372036854775807i64 - now.nanoseconds) / 1000000i64) {
+            return Result<Instant, IoError>.Err(IoError.new(IoErrorKind.InvalidInput, "deadline is too far in the future"));
+        }
+        Result<Instant, IoError>.Ok(Instant(nanoseconds=now.nanoseconds + i64(delay * 1000000u64)))
+    }
+}
+
+pub ffi fn monotonic_now() -> Result<Instant, IoError> {
+    let value = yian_monotonic_nanos();
+    if value < 0i64 {
+        return Result<Instant, IoError>.Err(IoError.from_os_error(i32(-value), "read monotonic clock"));
+    }
+    Result<Instant, IoError>.Ok(Instant(nanoseconds=value))
+}

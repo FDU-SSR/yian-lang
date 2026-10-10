@@ -3,7 +3,7 @@ from std.collections.arena import Arena;
 from std.collections.sort import sort_by;
 from std.core.convert import From;
 from std.core.drop import Drop;
-from std.core.fs import Directory, DirEntryKind, metadata, read_to_string, canonicalize;
+from std.core.fs import Directory, DirEntryKind, metadata, read_to_string, canonicalize, resolve;
 from std.core.io import IoError, IoErrorKind;
 from std.core.ops import Add, AddAssign, Index;
 from std.core.result import Result;
@@ -73,6 +73,20 @@ pub struct SourceFile {
     canonical: PathBuf,
 }
 
+// An editor input owns its path and text until a preparation call copies both into its session.
+pub struct SourceDocument {
+    pub path: String,
+    pub text: String,
+    pub version: Option<i64>,
+}
+
+impl Drop for SourceDocument {
+    pub fn drop() {
+        self.path.drop();
+        self.text.drop();
+    }
+}
+
 impl SourceFile {
     pub fn path() -> str { return self.path.as_str(); }
 
@@ -119,6 +133,17 @@ impl SourceManager {
 
         let id = self.files.len();
         self.files.alloc(SourceFile(path=String.from(&path), text=text, canonical=canonical));
+        Result<u64, IoError>.Ok(val=id)
+    }
+
+    // Editor buffers may refer to paths that do not exist on disk; resolve still canonicalizes their existing prefixes.
+    pub fn load_text(path: str, text: str) -> Result<u64, IoError> {
+        let canonical = resolve(path)?;
+        let canonical_text = canonical.as_str();
+        let display_path = String.from(&canonical_text);
+        let owned_text = String.from(&text);
+        let id = self.files.len();
+        self.files.alloc(SourceFile(path=display_path, text=owned_text, canonical=canonical));
         Result<u64, IoError>.Ok(val=id)
     }
 }

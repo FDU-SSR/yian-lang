@@ -55,25 +55,100 @@ class AnalysisView:
         self.__result = result
         self.__type_ctx: TypeCtx | None = result.type_ctx
         self.__index: DeclarationIndex | None = context.index
+        self.__canonical_paths: dict[Path, Path] = {}
+        self.__texts_by_path: dict[Path, str] = {}
+        self.__tokens_by_path: dict[Path, tuple[Tok.Token, ...]] = {}
+        self.__units_by_path: dict[Path, UnitData] = {}
+
+        for path, text in result.sources.items():
+            canonical = self.canonical_path(path)
+            self.__texts_by_path[canonical] = text
+        for path, tokens in result.tokens.items():
+            self.__tokens_by_path[self.canonical_path(path)] = tokens
+        for unit in result.units.values():
+            self.__units_by_path.setdefault(self.canonical_path(unit.path), unit)
+
         # Position → what is there, built once per view: a request may ask about
         # many positions (semantic tokens, completion), and each answer is then a
         # dictionary lookup rather than a scan of every reference.
         self.__references: dict[tuple[Path, int, int], NameRef] | None = None
         self.__declarations: dict[tuple[Path, int, int], Declaration] | None = None
         self.__references_by_path: dict[Path, tuple[NameRef, ...]] | None = None
+        self.__unchecked_names: dict[str, tuple[SrcSpan, ...]] | None = None
+        self.__lines_by_path: dict[Path, tuple[str, ...]] = {}
+
+    def canonical_path(self, path: Path) -> Path:
+        """Normalize a snapshot path once; query loops reuse the stored result."""
+        canonical = self.__canonical_paths.get(path)
+        if canonical is None:
+            canonical = path.resolve()
+            self.__canonical_paths[path] = canonical
+        return canonical
+
+    def prepare_query_indexes(self) -> None:
+        """Build per-snapshot position and rename-safety maps before queries."""
+        self.__reference_map()
+        self.__references_by_path_map()
+        self.__declaration_map()
+        self.__unchecked_name_map()
+
+    def identifier_name_at(self, span: SrcSpan) -> str | None:
+        """Read the exact spelling for a recorded name, caching each file's lines."""
+        if span.start.row != span.end.row:
+            return None
+
+        path = self.canonical_path(span.path)
+        lines = self.__lines_by_path.get(path)
+        if lines is None:
+            lines = tuple(self.__texts_by_path.get(path, "").splitlines())
+            self.__lines_by_path[path] = lines
+
+        if not 0 <= span.start.row < len(lines):
+            return None
+
+        line = lines[span.start.row]
+        return line[span.start.col : span.end.col]
+
+    def unchecked_name_uses(self, name: str) -> tuple[SrcSpan, ...]:
+        """Source names inside procedure bodies the type checker did not visit."""
+        return self.__unchecked_name_map().get(name, ())
+
+    def __unchecked_name_map(self) -> dict[str, tuple[SrcSpan, ...]]:
+        """Index unchecked procedure names once so each rename is proportional to its result."""
+        if self.__unchecked_names is None:
+            grouped: dict[str, list[SrcSpan]] = {}
+            if self.has_types:
+                checked = set(self.def_points())
+                for type_id, body, unit_id in self.procedures():
+                    if type_id in checked:
+                        continue
+
+                    path = self.unit_path(unit_id)
+                    extent = body.full_span()
+                    if path is None or extent is None:
+                        continue
+
+                    for token in self.tokens_of(path):
+                        if not isinstance(token, Tok.Identifier):
+                            continue
+                        if not _span_contains(extent, token.span):
+                            continue
+                        grouped.setdefault(token.name, []).append(token.span)
+
+            self.__unchecked_names = {
+                name: tuple(spans) for name, spans in grouped.items()
+            }
+        return self.__unchecked_names
 
     # ── sources and tokens ────────────────────────────────────────────────────
 
     def text_of(self, path: Path) -> str:
         """The analyzed text of *path*, which is what ranges are measured in."""
-        for candidate, text in self.__result.sources.items():
-            if candidate.resolve() == path.resolve():
-                return text
-        return ""
+        return self.__texts_by_path.get(self.canonical_path(path), "")
 
     def tokens_of(self, path: Path) -> tuple[Tok.Token, ...]:
         """The lexed tokens of *path*, empty when the file was not analyzed."""
-        return self.__result.tokens.get(path.resolve(), ())
+        return self.__tokens_by_path.get(self.canonical_path(path), ())
 
     # ── declarations ──────────────────────────────────────────────────────────
 
@@ -95,11 +170,11 @@ class AnalysisView:
 
     def declaration_starting_at(self, path: Path, row: int, col: int) -> Declaration | None:
         """The declaration whose *name* starts at the position, if any."""
-        return self.__declaration_map().get((path.resolve(), row, col))
+        return self.__declaration_map().get((self.canonical_path(path), row, col))
 
     def module_of(self, path: Path) -> str | None:
         """The ``<package>.<module>`` name of *path*, for hover's origin line."""
-        return None if self.__index is None else self.__index.modules.get(path.resolve())
+        return None if self.__index is None else self.__index.modules.get(self.canonical_path(path))
 
     def package_names(self) -> tuple[str, ...]:
         """Package names in the project, sorted."""
@@ -154,11 +229,11 @@ class AnalysisView:
         A recorded name is exactly one identifier, so its start position
         identifies it: this is the lookup semantic tokens and completion use.
         """
-        return self.__reference_map().get((path.resolve(), row, col))
+        return self.__reference_map().get((self.canonical_path(path), row, col))
 
     def references_of(self, path: Path) -> tuple[NameRef, ...]:
         """Every recorded name in *path* (grouped once per view)."""
-        return self.__references_by_path_map().get(path.resolve(), ())
+        return self.__references_by_path_map().get(self.canonical_path(path), ())
 
     def reference_in_span(self, span: SrcSpan) -> NameRef | None:
         """The resolved name inside *span*, if one was recorded there."""
@@ -172,15 +247,12 @@ class AnalysisView:
 
     def unit_of(self, path: Path) -> UnitData | None:
         """The compilation unit analyzed for *path*, if it was analyzed."""
-        for unit in self.__result.units.values():
-            if unit.path.resolve() == path.resolve():
-                return unit
-        return None
+        return self.__units_by_path.get(self.canonical_path(path))
 
     def unit_path(self, unit_id: int) -> Path | None:
         """The file a unit id belongs to."""
         unit = self.__result.units.get(unit_id)
-        return None if unit is None else unit.path.resolve()
+        return None if unit is None else self.canonical_path(unit.path)
 
     def has_symbols(self, path: Path) -> bool:
         """True when the analysis produced a symbol table for *path*.
@@ -205,7 +277,7 @@ class AnalysisView:
         return tuple(
             symbol
             for _, symbol in unit.symbol_ctx.items()
-            if symbol.span is not None and symbol.span.path.resolve() == path.resolve()
+            if symbol.span is not None and self.canonical_path(symbol.span.path) == self.canonical_path(path)
         )
 
     def symbol_named_in(self, path: Path, name: str) -> Symbol | AliasSymbol | None:
@@ -242,7 +314,7 @@ class AnalysisView:
         bodies: list[tuple[int, SrcSpan]] = []
         for type_id, def_point in self.__result.def_points.items():
             body = def_point.ast_body
-            if body.span.path.resolve() != path.resolve():
+            if self.canonical_path(body.span.path) != self.canonical_path(path):
                 continue
             span = body.full_span()
             if span is not None:
@@ -352,7 +424,7 @@ class AnalysisView:
             references: dict[tuple[Path, int, int], NameRef] = {}
             for reference in self.name_refs():
                 start = reference.span.start
-                key = (reference.span.path.resolve(), start.row, start.col)
+                key = (self.canonical_path(reference.span.path), start.row, start.col)
                 references.setdefault(key, reference)
             self.__references = references
         return self.__references
@@ -365,7 +437,7 @@ class AnalysisView:
                     span = declaration.span
                     if span is None:
                         continue
-                    key = (span.path.resolve(), span.start.row, span.start.col)
+                    key = (self.canonical_path(span.path), span.start.row, span.start.col)
                     declarations.setdefault(key, declaration)
             self.__declarations = declarations
         return self.__declarations
@@ -374,7 +446,7 @@ class AnalysisView:
         if self.__references_by_path is None:
             grouped: dict[Path, list[NameRef]] = {}
             for reference in self.name_refs():
-                grouped.setdefault(reference.span.path.resolve(), []).append(reference)
+                grouped.setdefault(self.canonical_path(reference.span.path), []).append(reference)
             self.__references_by_path = {
                 path: tuple(references) for path, references in grouped.items()
             }
@@ -388,3 +460,10 @@ def _contains(span: SrcSpan, row: int, col: int) -> bool:
     body would mangle if it were written ``__contains`` (AGENTS.md).
     """
     return (span.start.row, span.start.col) <= (row, col) <= (span.end.row, span.end.col)
+
+
+def _span_contains(span: SrcSpan, inner: SrcSpan) -> bool:
+    return (span.start.row, span.start.col) <= (inner.start.row, inner.start.col) and (
+        inner.end.row,
+        inner.end.col,
+    ) <= (span.end.row, span.end.col)

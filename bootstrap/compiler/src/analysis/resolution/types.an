@@ -191,6 +191,10 @@ pub fn resolve_const(ctx: ResolutionContext&, unit: UnitId, scope: ScopeId, expr
                 Some(value) => value,
                 None => return Result<TypeId, AnalysisError>.Err(ctx.error(unit, expr.span, DiagnosticCode.Undefined, "unknown constant parameter")),
             };
+            if !name.data.synthetic {
+                let type_id = ctx.session.symbols.get(symbol).unwrap().type_id;
+                ctx.session.editor_facts.record(symbol, ctx.span(unit, name.span), type_id);
+            }
             named_constant(ctx, unit, symbol, expr.span)
         },
         UnaryConstExpr(op, operand) => {
@@ -324,6 +328,10 @@ fn resolve_type_inner(ctx: ResolutionContext&, unit: UnitId, scope: ScopeId, syn
                     Option<SourceSpan>.Some(ctx.span(unit, syntax.span)), "", text, " is not a type"));
             }
 
+            if !name.data.synthetic {
+                ctx.session.editor_facts.record(symbol, ctx.span(unit, name.span), record.type_id);
+            }
+
             resolve_alias(ctx, symbol)
         },
         PointerType(pointee) => {
@@ -411,6 +419,10 @@ fn resolve_type_inner(ctx: ResolutionContext&, unit: UnitId, scope: ScopeId, syn
                         Some(value) => value,
                         None => return Result<TypeId, AnalysisError>.Err(ctx.error(unit, syntax.span, DiagnosticCode.Undefined, "unknown generic type")),
                     };
+                    if !name.data.synthetic {
+                        let type_id = ctx.session.symbols.get(symbol).unwrap().type_id;
+                        ctx.session.editor_facts.record(symbol, ctx.span(unit, name.span), type_id);
+                    }
                     return apply_arguments(ctx, unit, scope, symbol, arguments, syntax.span);
                 },
                 _ => {},

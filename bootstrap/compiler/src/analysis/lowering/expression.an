@@ -49,7 +49,7 @@ impl ExprChecker {
             Array(elements) => self.array(span, elements),
             ArrayRepeat(element, count) => self.repeated_array(span, *element, *count),
             ClosureExpr(captures, parameters, result, body) => self.closure(span, captures, parameters, result, *body),
-            Identifier(name) => self.identifier(span, name.data.name.as_str()),
+            Identifier(name) => self.identifier(span, name.data.name.as_str(), name.data.synthetic),
             TypeItem(name, generics) => {
                 if !self.ffi_allowed {
                     for argument in *generics {
@@ -70,7 +70,7 @@ impl ExprChecker {
                 }
 
                 if generics.len() == 0 {
-                    return self.identifier(span, name.data.name.as_str());
+                    return self.identifier(span, name.data.name.as_str(), name.data.synthetic);
                 }
 
                 let interned = self.ctx.session.names.intern(name.data.name.as_str());
@@ -86,6 +86,9 @@ impl ExprChecker {
                 }
 
                 let type_id = apply_arguments(self.ctx, self.unit, self.scope, symbol, generics, span)?;
+                if !name.data.synthetic {
+                    self.ctx.session.editor_facts.record(symbol, self.ctx.span(self.unit, name.span), type_id);
+                }
                 Result<HirId, AnalysisError>.Ok(self.node(span, type_id, false, HirKind.Ty))
             },
             CompileConfig(name) => {
@@ -154,7 +157,7 @@ impl ExprChecker {
             TraitCall(trait_expr, self_type, trait_args, method_name, args) => self.trait_call(span, *trait_expr, self_type, trait_args, method_name.data.name.as_str(), args),
             FieldAccess(receiver, name) => {
                 let value = self.expression(*receiver)?;
-                self.field(span, value, name.data.name.as_str())
+                self.field(span, name.span, value, name.data.name.as_str())
             },
             PatternLet(binding) => self.pattern_binding(*binding),
             Match(value, arms) => {
@@ -193,6 +196,7 @@ impl ExprChecker {
 
                 for arm in *arms {
                     self.scope = self.ctx.session.symbols.create_scope(Option<ScopeId>.Some(previous))?;
+                    self.ctx.session.editor_facts.record_scope(self.ctx.span(self.unit, arm.span), self.scope);
                     let pattern = self.test_pattern(arm.data.pattern, target_type)?;
                     let guard = match &arm.data.guard {
                         Some(condition) => {
@@ -227,7 +231,8 @@ impl ExprChecker {
                 };
                 Result<HirId, AnalysisError>.Ok(self.node(span, result_type, false, HirKind.Match(HirMatch(target, values, by_ref))))
             },
-            MethodCall(receiver, method_name, generics, args) => self.method(span, *receiver, method_name.data.name.as_str(), generics, args),
+            MethodCall(receiver, method_name, generics, args) => self.method(
+                span, method_name.span, *receiver, method_name.data.name.as_str(), generics, args),
             Return(value) => {
                 if self.deferred != 0 {
                     return Result<HirId, AnalysisError>.Err(self.error(span, "'return' is not allowed inside a deferred action"));

@@ -83,6 +83,10 @@ class Navigator:
     def __init__(self, context: QueryContext, *, std_root: Path | None = None) -> None:
         self.__view = AnalysisView(context)
         self.__std_root = std_root
+        self.__std_root_path = None if std_root is None else self.__view.canonical_path(std_root)
+        self.__stdlib_by_path: dict[Path, bool] = {}
+        self.__target_cache: dict[tuple[type, int], Target | None] = {}
+        self.__references_by_target: dict[tuple[Path, int, int], tuple[NameRef, ...]] | None = None
 
     @property
     def view(self) -> AnalysisView:
@@ -99,6 +103,10 @@ class Navigator:
     def text_of(self, path: Path) -> str:
         """The analyzed text of *path*, which is what ranges are measured in."""
         return self.__view.text_of(path)
+
+    def canonical_path(self, path: Path) -> Path:
+        """Return the path identity used by this immutable analysis snapshot."""
+        return self.__view.canonical_path(path)
 
     def tokens_of(self, path: Path) -> tuple[Tok.Token, ...]:
         """The lexed tokens of *path*, for the queries that read the text."""
@@ -228,6 +236,63 @@ class Navigator:
 
     def target_of(self, target: NameTarget) -> Target | None:
         """The declaration a recorded resolution points at."""
+        key = (type(target), target if isinstance(target, int) else id(target))
+        if key in self.__target_cache:
+            return self.__target_cache[key]
+
+        result = self.__target_of_uncached(target)
+        self.__target_cache[key] = result
+        return result
+
+    def target_span(self, target: NameTarget) -> SrcSpan | None:
+        """Return declaration identity without rendering hover or signature text."""
+        if isinstance(target, int):
+            return self.__span_for_type(target)
+
+        if isinstance(target, AliasSymbol):
+            info = self.__view.alias_info(target)
+            if info is None:
+                return None
+            span = info.definition.name.span
+            return span if self.__real(span) else None
+
+        if isinstance(target, Symbol):
+            if target.kind is SymbolKind.Variable and target.span is not None:
+                return target.span if self.__real(target.span) else None
+
+            span = self.__span_for_type(target.type_id)
+            if span is not None:
+                return span
+            if target.span is not None and self.__real(target.span):
+                return target.span
+            return None
+
+        span = target.span
+        return span if span is not None and self.__real(span) else None
+
+    def __span_for_type(self, type_id: int) -> SrcSpan | None:
+        """Find a nominal declaration span without formatting an instantiated type."""
+        visited: set[int] = set()
+        current = type_id
+        while current not in visited:
+            visited.add(current)
+            resolved = self.__view.type_of(current)
+            if isinstance(resolved, Type.SelfType):
+                current = resolved.trait_type_id
+                continue
+
+            if isinstance(
+                resolved,
+                (Type.StructType, Type.EnumType, Type.TraitType, Type.FunctionType, Type.MethodType),
+            ):
+                span = resolved.custom_def.span
+                return span if self.__real(span) else None
+
+            return None
+        return None
+
+    def __target_of_uncached(self, target: NameTarget) -> Target | None:
+        """Resolve one stored name target; the outer method caches this result."""
         if isinstance(target, int):
             return self.__target_of_type(target)
         if isinstance(target, AliasSymbol):
@@ -246,6 +311,39 @@ class Navigator:
         if isinstance(target, Type.StructField):
             return self.__target_of_field(target)
         return self.__target_of_variant(target)
+
+    def span_key(self, span: SrcSpan) -> tuple[Path, int, int]:
+        """Identity of a declaration site inside this snapshot."""
+        return (self.canonical_path(span.path), span.start.row, span.start.col)
+
+    def prepare_query_indexes(self) -> None:
+        """Build every snapshot index before the first interactive query."""
+        self.__view.prepare_query_indexes()
+        self.__build_reference_index()
+
+    def references_to(self, target: Target) -> tuple[NameRef, ...]:
+        """References grouped by resolved declaration identity, built once per snapshot."""
+        self.__build_reference_index()
+        index = self.__references_by_target
+        return () if index is None else index.get(self.span_key(target.span), ())
+
+    def __build_reference_index(self) -> None:
+        if self.__references_by_target is None:
+            grouped: dict[tuple[Path, int, int], list[NameRef]] = {}
+            for reference in self.all_references():
+                span = self.target_span(reference.target)
+                if span is not None:
+                    grouped.setdefault(self.span_key(span), []).append(reference)
+            self.__references_by_target = {
+                key: tuple(references) for key, references in grouped.items()
+            }
+
+    def declaration_for(self, target: Target) -> Declaration | None:
+        """Find the indexed declaration at a resolved target site in constant time."""
+        span = target.span
+        return self.declaration_starting_at(
+            span.path, span.start.row, span.start.col
+        )
 
     def __target_of_symbol(self, symbol: Symbol) -> Target | None:
         """A symbol's declaration site.
@@ -374,13 +472,15 @@ class Navigator:
 
     def __is_stdlib(self, path: Path) -> bool:
         """True when *path* is part of the standard library."""
-        root = self.__std_root
+        root = self.__std_root_path
         if root is None:
             return False
-        try:
-            return path.resolve().is_relative_to(root.resolve())
-        except OSError:
-            return False
+        canonical = self.canonical_path(path)
+        cached = self.__stdlib_by_path.get(canonical)
+        if cached is None:
+            cached = canonical.is_relative_to(root)
+            self.__stdlib_by_path[canonical] = cached
+        return cached
 
     @staticmethod
     def __kind_of_symbol(kind: SymbolKind) -> DeclarationKind:
@@ -426,7 +526,7 @@ class Navigator:
         return (row, col) <= (span.end.row, span.end.col)
 
     def __spans(self, span: SrcSpan, path: Path, row: int, col: int) -> bool:
-        return span.path.resolve() == path.resolve() and self.__contains(span, row, col)
+        return self.canonical_path(span.path) == self.canonical_path(path) and self.__contains(span, row, col)
 
     @staticmethod
     def __size(span: SrcSpan) -> tuple[int, int]:

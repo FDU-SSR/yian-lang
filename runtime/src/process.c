@@ -1,5 +1,6 @@
 #define _GNU_SOURCE
 #include "yian_process.h"
+#include "yian_io.h"
 #include <errno.h>
 #include <fcntl.h>
 #include <limits.h>
@@ -419,4 +420,325 @@ int64_t yian_process_temp_dir(const char *parent, uint8_t *buffer, uint64_t capa
     memcpy(buffer, path, total);
     free(path);
     return (int64_t)total;
+}
+
+struct long_lived_child {
+    pid_t process;
+    int descriptors[3];
+    int reaped;
+    int wait_status;
+    int closed;
+};
+
+static int set_nonblocking(int descriptor) {
+    int flags = fcntl(descriptor, F_GETFL);
+    if (flags < 0) return errno;
+    if (fcntl(descriptor, F_SETFL, flags | O_NONBLOCK) < 0) return errno;
+    return 0;
+}
+
+static int stream_pipe(int descriptors[2], int parent_index) {
+    if (pipe2(descriptors, O_CLOEXEC) < 0) return errno;
+    descriptors[0] = above_stdio(descriptors[0]);
+    if (descriptors[0] < 0) {
+        int error = errno;
+        close(descriptors[1]);
+        descriptors[1] = -1;
+        return error;
+    }
+    descriptors[1] = above_stdio(descriptors[1]);
+    if (descriptors[1] < 0) {
+        int error = errno;
+        close(descriptors[0]);
+        descriptors[0] = -1;
+        return error;
+    }
+    return set_nonblocking(descriptors[parent_index]);
+}
+
+static void close_descriptor(int *descriptor) {
+    if (*descriptor >= 0) {
+        close(*descriptor);
+        *descriptor = -1;
+    }
+}
+
+static int child_record_status(struct long_lived_child *child, int wait_status) {
+    child->wait_status = wait_status;
+    child->reaped = 1;
+    child->process = -1;
+    return 1;
+}
+
+static int child_wait_nonblocking(struct long_lived_child *child) {
+    if (child->reaped) return 1;
+    int status = 0;
+    pid_t result;
+    do { result = waitpid(child->process, &status, WNOHANG); }
+    while (result < 0 && errno == EINTR);
+    if (result == 0) return 0;
+    if (result < 0) return -errno;
+    return child_record_status(child, status);
+}
+
+void *yian_child_spawn(const char *program, char *const *arguments,
+                       const char *directory, const int32_t stdio_modes[3],
+                       int32_t *reported_error) {
+    int pipes[3][2] = {{-1, -1}, {-1, -1}, {-1, -1}};
+    int null_descriptors[3] = {-1, -1, -1};
+    int error = 0;
+    int actions_initialized = 0;
+    posix_spawn_file_actions_t actions;
+    pid_t process = -1;
+    struct long_lived_child *child = NULL;
+
+    if (program == NULL || arguments == NULL || stdio_modes == NULL) {
+        error = EINVAL;
+        goto done;
+    }
+    for (int stream = 0; stream < 3; ++stream) {
+        if (stdio_modes[stream] < 0 || stdio_modes[stream] > 2) {
+            error = EINVAL;
+            goto done;
+        }
+    }
+
+    child = calloc(1, sizeof(*child));
+    if (child == NULL) { error = ENOMEM; goto done; }
+    child->process = -1;
+    for (int stream = 0; stream < 3; ++stream) {
+        child->descriptors[stream] = -1;
+    }
+
+    for (int stream = 0; stream < 3; ++stream) {
+        if (stdio_modes[stream] == 2) {
+            int parent_end = stream == 0 ? 1 : 0;
+            error = stream_pipe(pipes[stream], parent_end);
+            if (error != 0) goto done;
+        } else if (stdio_modes[stream] == 0) {
+            int flags = stream == 0 ? O_RDONLY : O_WRONLY;
+            null_descriptors[stream] = open("/dev/null", flags | O_CLOEXEC);
+            if (null_descriptors[stream] < 0) { error = errno; goto done; }
+            null_descriptors[stream] = above_stdio(null_descriptors[stream]);
+            if (null_descriptors[stream] < 0) { error = errno; goto done; }
+        }
+    }
+
+    error = posix_spawn_file_actions_init(&actions);
+    if (error != 0) goto done;
+    actions_initialized = 1;
+    for (int stream = 0; stream < 3; ++stream) {
+        if (stdio_modes[stream] == 1) continue;
+        int child_end = stdio_modes[stream] == 0
+            ? null_descriptors[stream]
+            : (stream == 0 ? pipes[stream][0] : pipes[stream][1]);
+        int target = stream == 0 ? STDIN_FILENO : stream == 1 ? STDOUT_FILENO : STDERR_FILENO;
+        error = posix_spawn_file_actions_adddup2(&actions, child_end, target);
+        if (error != 0) goto done;
+        if (stdio_modes[stream] == 0) {
+            error = posix_spawn_file_actions_addclose(&actions, null_descriptors[stream]);
+            if (error != 0) goto done;
+        } else {
+            for (int end = 0; end < 2; ++end) {
+                error = posix_spawn_file_actions_addclose(&actions, pipes[stream][end]);
+                if (error != 0) goto done;
+            }
+        }
+    }
+    if (directory != NULL) {
+        error = posix_spawn_file_actions_addchdir_np(&actions, directory);
+        if (error != 0) goto done;
+    }
+    error = posix_spawnp(&process, program, &actions, NULL, arguments, environ);
+    if (error != 0) { process = -1; goto done; }
+
+    child->process = process;
+    process = -1;
+    for (int stream = 0; stream < 3; ++stream) {
+        if (stdio_modes[stream] == 2) {
+            int parent_end = stream == 0 ? 1 : 0;
+            int child_end = 1 - parent_end;
+            close_descriptor(&pipes[stream][child_end]);
+            child->descriptors[stream] = pipes[stream][parent_end];
+            pipes[stream][parent_end] = -1;
+        }
+        close_descriptor(&null_descriptors[stream]);
+    }
+
+done:
+    if (actions_initialized) posix_spawn_file_actions_destroy(&actions);
+    for (int stream = 0; stream < 3; ++stream) {
+        close_descriptor(&null_descriptors[stream]);
+        close_descriptor(&pipes[stream][0]);
+        close_descriptor(&pipes[stream][1]);
+    }
+    if (process > 0) {
+        kill(process, SIGKILL);
+        while (waitpid(process, NULL, 0) < 0 && errno == EINTR) {}
+    }
+    if (error != 0) {
+        if (child != NULL) {
+            for (int stream = 0; stream < 3; ++stream) close_descriptor(&child->descriptors[stream]);
+            free(child);
+        }
+        *reported_error = error;
+        return NULL;
+    }
+    *reported_error = 0;
+    return child;
+}
+
+int32_t yian_child_fd(void *opaque, int32_t stream) {
+    if (opaque == NULL || stream < 0 || stream >= 3) return -EINVAL;
+    const struct long_lived_child *child = opaque;
+    if (child->closed) return -EBADF;
+    return child->descriptors[stream];
+}
+
+int32_t yian_child_close_pipe(void *opaque, int32_t stream) {
+    if (opaque == NULL || stream < 0 || stream >= 3) return -EINVAL;
+    struct long_lived_child *child = opaque;
+    close_descriptor(&child->descriptors[stream]);
+    return 0;
+}
+
+int64_t yian_child_read(void *opaque, int32_t stream, uint8_t *buffer, uint64_t length) {
+    int32_t descriptor = yian_child_fd(opaque, stream);
+    if (descriptor < 0) return descriptor;
+    return yian_io_read(descriptor, buffer, length);
+}
+
+int64_t yian_child_write(void *opaque, int32_t stream, const uint8_t *buffer, uint64_t length) {
+    int32_t descriptor = yian_child_fd(opaque, stream);
+    if (descriptor < 0) return descriptor;
+    return yian_io_write(descriptor, buffer, length);
+}
+
+static void child_status_fields(struct long_lived_child *child, int32_t *status,
+                                int32_t *signaled) {
+    *signaled = WIFSIGNALED(child->wait_status);
+    *status = *signaled ? WTERMSIG(child->wait_status) : WEXITSTATUS(child->wait_status);
+}
+
+int32_t yian_child_try_wait(void *opaque, int32_t *status, int32_t *signaled) {
+    if (opaque == NULL || status == NULL || signaled == NULL) return -EINVAL;
+    struct long_lived_child *child = opaque;
+    int result = child_wait_nonblocking(child);
+    if (result <= 0) return result;
+    child_status_fields(child, status, signaled);
+    return 1;
+}
+
+int32_t yian_child_wait(void *opaque, int32_t *status, int32_t *signaled) {
+    if (opaque == NULL || status == NULL || signaled == NULL) return -EINVAL;
+    struct long_lived_child *child = opaque;
+    if (!child->reaped) {
+        int wait_status = 0;
+        pid_t result;
+        do { result = waitpid(child->process, &wait_status, 0); }
+        while (result < 0 && errno == EINTR);
+        if (result < 0) return -errno;
+        child_record_status(child, wait_status);
+    }
+    child_status_fields(child, status, signaled);
+    return 0;
+}
+
+int32_t yian_child_signal(void *opaque, int32_t signal_number) {
+    if (opaque == NULL || signal_number <= 0) return -EINVAL;
+    struct long_lived_child *child = opaque;
+    if (child->reaped || child->process <= 0) return 0;
+    if (kill(child->process, signal_number) == 0 || errno == ESRCH) return 0;
+    return -errno;
+}
+
+int32_t yian_child_close(void *opaque) {
+    if (opaque == NULL) return -EINVAL;
+    struct long_lived_child *child = opaque;
+    if (child->closed) return 0;
+    child->closed = 1;
+    for (int stream = 0; stream < 3; ++stream) close_descriptor(&child->descriptors[stream]);
+    if (child->reaped) return 0;
+
+    if (kill(child->process, SIGTERM) < 0 && errno != ESRCH) return -errno;
+    struct timespec pause = {0, 5000000};
+    int64_t now = monotonic_millis();
+    if (now < 0) return -errno;
+    int64_t deadline = now + 250;
+    while (!child->reaped) {
+        int result = child_wait_nonblocking(child);
+        if (result < 0) return result;
+        if (result > 0) break;
+        now = monotonic_millis();
+        if (now < 0) return -errno;
+        if (now >= deadline) break;
+        while (nanosleep(&pause, &pause) < 0 && errno == EINTR) {}
+        pause.tv_sec = 0;
+        pause.tv_nsec = 5000000;
+    }
+    if (!child->reaped) {
+        if (kill(child->process, SIGKILL) < 0 && errno != ESRCH) return -errno;
+        return yian_child_wait(child, &(int32_t){0}, &(int32_t){0});
+    }
+    return 0;
+}
+
+void yian_child_drop(void *opaque) {
+    struct long_lived_child *child = opaque;
+    if (child == NULL) return;
+    if (!child->closed) yian_child_close(child);
+    if (!child->reaped && child->process > 0) {
+        kill(child->process, SIGKILL);
+        while (waitpid(child->process, NULL, 0) < 0 && errno == EINTR) {}
+    }
+    for (int stream = 0; stream < 3; ++stream) close_descriptor(&child->descriptors[stream]);
+    free(child);
+}
+
+int64_t yian_poller_wait(const int32_t *descriptors, const uint32_t *interests,
+                         uint64_t count, int64_t timeout_milliseconds,
+                         uint32_t *ready) {
+    if (count > INT_MAX || timeout_milliseconds < -1 ||
+        (count != 0 && (descriptors == NULL || interests == NULL || ready == NULL))) return -EINVAL;
+    struct pollfd *poll_descriptors = count == 0 ? NULL : calloc((size_t)count, sizeof(*poll_descriptors));
+    if (count != 0 && poll_descriptors == NULL) return -ENOMEM;
+    for (uint64_t index = 0; index < count; ++index) {
+        short events = 0;
+        if (interests[index] & 1u) events |= POLLIN;
+        if (interests[index] & 2u) events |= POLLOUT;
+        if (interests[index] & ~3u) { free(poll_descriptors); return -EINVAL; }
+        poll_descriptors[index] = (struct pollfd){descriptors[index], events, 0};
+        ready[index] = 0;
+    }
+    int timeout = timeout_milliseconds > INT_MAX ? INT_MAX : (int)timeout_milliseconds;
+    int result = poll(poll_descriptors, (nfds_t)count, timeout);
+    int error = result < 0 ? errno : 0;
+    if (result > 0) {
+        for (uint64_t index = 0; index < count; ++index) {
+            short flags = poll_descriptors[index].revents;
+            uint32_t output = 0;
+            if (flags & (POLLIN | POLLPRI)) output |= 1u;
+            if (flags & POLLOUT) output |= 2u;
+            if (flags & POLLHUP) output |= 4u;
+            if (flags & (POLLERR | POLLNVAL)) output |= 8u;
+            ready[index] = output;
+        }
+    }
+    free(poll_descriptors);
+    return error == 0 ? result : -error;
+}
+
+int64_t yian_monotonic_nanos(void) {
+    struct timespec now;
+    if (clock_gettime(CLOCK_MONOTONIC, &now) < 0) return -errno;
+    if ((uint64_t)now.tv_sec > (uint64_t)INT64_MAX / 1000000000u) return -EOVERFLOW;
+    return (int64_t)now.tv_sec * 1000000000 + now.tv_nsec;
+}
+
+int64_t yian_process_executable_path(uint8_t *buffer, uint64_t capacity) {
+    if (buffer == NULL || capacity == 0 || capacity > SIZE_MAX) return -EINVAL;
+    ssize_t length = readlink("/proc/self/exe", (char *)buffer, (size_t)capacity);
+    if (length < 0) return -errno;
+    if ((uint64_t)length == capacity) return -ERANGE;
+    return (int64_t)length;
 }

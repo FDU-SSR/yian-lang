@@ -1,0 +1,169 @@
+from std.core.drop import Drop;
+from std.core.ops import Index;
+from std.core.range import Range;
+from std.core.vec import Vec;
+
+pub struct TextPosition { pub row: u64, pub column: u64 }
+
+struct LineData {
+    byte_start: u64,
+    byte_end: u64,
+    byte_offsets: Vec<u64>,
+    utf16_offsets: Vec<u64>,
+}
+
+impl LineData {
+    static fn new(text: str, byte_start: u64, byte_end: u64) -> Self {
+        let byte_offsets = Vec<u64>.new();
+        let utf16_offsets = Vec<u64>.new();
+        byte_offsets.push(0u64);
+        utf16_offsets.push(0u64);
+
+        let utf16_units = 0u64;
+        for entry in text.char_indices() {
+            let offset = entry[0];
+            let character = entry[1];
+            let codepoint = u32(character);
+            let width = if codepoint < 0x80u32 { 1u64 } elif codepoint < 0x800u32 { 2u64 } elif codepoint < 0x10000u32 { 3u64 } else { 4u64 };
+
+            utf16_units += if codepoint > 0xffffu32 { 2u64 } else { 1u64 };
+            byte_offsets.push(offset + width);
+            utf16_offsets.push(utf16_units);
+        }
+
+        Self(byte_start, byte_end, byte_offsets, utf16_offsets)
+    }
+
+    fn scalar_count() -> u64 { self.byte_offsets.len() - 1u64 }
+
+    fn clamped_scalar_column(column: u64) -> u64 {
+        if column > self.scalar_count() { self.scalar_count() } else { column }
+    }
+
+    fn clamped_utf16_column(column: u64) -> u64 {
+        let count = self.scalar_count();
+        let index = 0u64;
+        while index <= count {
+            if self.utf16_offsets[index] >= column { return index; }
+            index += 1u64;
+        }
+        count
+    }
+
+    fn scalar_column_at_byte(byte: u64) -> u64 {
+        let relative = if byte <= self.byte_start { 0u64 } elif byte >= self.byte_end { self.byte_end - self.byte_start } else { byte - self.byte_start };
+        let index = 0u64;
+        while index < self.byte_offsets.len() {
+            if self.byte_offsets[index] > relative { return index - 1u64; }
+            index += 1u64;
+        }
+        self.scalar_count()
+    }
+
+    fn byte_offset(column: u64) -> u64 {
+        self.byte_start + self.byte_offsets[self.clamped_scalar_column(column)]
+    }
+
+    fn byte_offset_utf16(column: u64) -> u64 {
+        self.byte_offset(self.clamped_utf16_column(column))
+    }
+
+    fn utf16_column(column: u64) -> u64 {
+        self.utf16_offsets[self.clamped_scalar_column(column)]
+    }
+}
+
+impl Drop for LineData {
+    pub fn drop() {
+        self.byte_offsets.drop();
+        self.utf16_offsets.drop();
+    }
+}
+
+// The index borrows immutable UTF-8 text and owns only line and coordinate tables.
+// Drop the index before releasing the text whose byte offsets it records.
+pub struct LineIndex { text: str, lines: Vec<LineData> }
+
+impl LineIndex {
+    static pub fn new(text: str) -> Self {
+        let starts = Vec<u64>.new();
+        starts.push(0u64);
+        for entry in text.char_indices() {
+            if entry[1] == '\n' { starts.push(entry[0] + 1u64); }
+        }
+
+        let lines = Vec<LineData>.with_capacity(starts.len());
+        let bytes = text.as_slice();
+        let row = 0u64;
+        while row < starts.len() {
+            let start = starts[row];
+            let end = if row + 1u64 < starts.len() { starts[row + 1u64] - 1u64 } else { bytes.len() };
+            let content_end = if end > start && bytes[end - 1u64] == 13u8 { end - 1u64 } else { end };
+            let line_text = str.from_slice_unchecked(bytes[start..content_end]);
+            lines.push(LineData.new(line_text, start, content_end));
+            row += 1u64;
+        }
+
+        starts.drop();
+        Self(text, lines)
+    }
+
+    pub fn line_count() -> u64 { self.lines.len() }
+
+    pub fn byte_range(row: u64) -> (u64, u64) {
+        if row >= self.lines.len() {
+            let end = self.text.as_slice().len();
+            return (end, end);
+        }
+        let line = &self.lines[row];
+        (line.byte_start, line.byte_end)
+    }
+
+    pub fn byte_offset(position: TextPosition) -> u64 {
+        if position.row >= self.lines.len() { return self.text.as_slice().len(); }
+        self.lines[position.row].byte_offset(position.column)
+    }
+
+    pub fn byte_offset_utf16(position: TextPosition) -> u64 {
+        if position.row >= self.lines.len() { return self.text.as_slice().len(); }
+        self.lines[position.row].byte_offset_utf16(position.column)
+    }
+
+    pub fn scalar_position(byte: u64) -> TextPosition {
+        let last = self.lines.len() - 1u64;
+        let row = 0u64;
+        while row < last {
+            if byte < self.lines[row + 1u64].byte_start { break; }
+            row += 1u64;
+        }
+        let line = &self.lines[row];
+        TextPosition(row=row, column=line.scalar_column_at_byte(byte))
+    }
+
+    pub fn utf16_position(byte: u64) -> TextPosition {
+        let scalar = self.scalar_position(byte);
+        let line = &self.lines[scalar.row];
+        TextPosition(row=scalar.row, column=line.utf16_column(scalar.column))
+    }
+
+    pub fn scalar_column(row: u64, utf16_column: u64) -> u64 {
+        if row >= self.lines.len() { return 0u64; }
+        self.lines[row].clamped_utf16_column(utf16_column)
+    }
+
+    pub fn utf16_column(row: u64, scalar_column: u64) -> u64 {
+        if row >= self.lines.len() { return 0u64; }
+        self.lines[row].utf16_column(scalar_column)
+    }
+}
+
+impl Drop for LineIndex {
+    pub fn drop() {
+        let row = 0u64;
+        while row < self.lines.len() {
+            self.lines[row].drop();
+            row += 1u64;
+        }
+        self.lines.drop();
+    }
+}

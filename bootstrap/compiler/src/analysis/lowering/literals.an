@@ -87,7 +87,7 @@ impl ExprChecker {
         Result<HirId, AnalysisError>.Ok(result)
     }
 
-    fn identifier(span: Span, name: str) -> Result<HirId, AnalysisError> {
+    fn identifier(span: Span, name: str, synthetic: bool) -> Result<HirId, AnalysisError> {
         if name == "c_int" || name == "c_uint" || name == "c_size" || name == "c_char" {
             if !self.ffi_allowed {
                 return Result<HirId, AnalysisError>.Err(self.error(span, "extern C function calls require an ffi fn"));
@@ -119,6 +119,9 @@ impl ExprChecker {
         };
         let record = *self.ctx.session.symbols.get(symbol).unwrap();
         let type_id = record.type_id;
+        if !synthetic {
+            self.ctx.session.editor_facts.record(symbol, self.ctx.span(self.unit, span), type_id);
+        }
 
         match &record.kind {
             Variable => Result<HirId, AnalysisError>.Ok(self.node(span, type_id, true, HirKind.Var(symbol))),

@@ -1,0 +1,316 @@
+from compiler.common.ids import SourceId, SymbolId, TypeId, ScopeId, DefId, NameId;
+from compiler.common.location import SourceSpan;
+from std.collections.hash_map import HashMap;
+from std.core.drop import Drop;
+from std.core.hash import Hash, Murmur3Hasher;
+from std.core.iter import Iterator, IntoIterator;
+from std.core.option import Option;
+from std.core.ops import PartialEq;
+from std.core.vec import Vec;
+
+struct NamePosition {
+    source: SourceId,
+    row: u64,
+    column: u64,
+}
+
+impl PartialEq<NamePosition> for NamePosition {
+    pub fn eq(other: NamePosition&) -> bool {
+        self.source == other.source && self.row == other.row && self.column == other.column
+    }
+}
+
+impl Hash<Murmur3Hasher> for NamePosition {
+    pub fn hash(hasher: Murmur3Hasher&) {
+        self.source.hash(hasher);
+        self.row.hash(hasher);
+        self.column.hash(hasher);
+    }
+}
+
+pub struct ResolvedName {
+    pub symbol: SymbolId,
+    pub location: SourceSpan,
+    pub type_id: TypeId,
+}
+
+pub enum EditorMemberKind { Field, Variant, Method }
+
+pub struct ResolvedMember {
+    pub name: NameId,
+    pub kind: EditorMemberKind,
+    pub location: SourceSpan,
+    pub declaration: SourceSpan,
+    pub type_id: TypeId,
+    pub is_declaration: bool,
+}
+
+struct ScopeRegion {
+    span: SourceSpan,
+    scope: ScopeId,
+}
+
+// The snapshot owns one ordered fact list and indexes both query directions.
+pub struct EditorFacts {
+    names: Vec<ResolvedName>,
+    by_position: HashMap<NamePosition, u64>,
+    declarations: HashMap<NamePosition, SymbolId>,
+    by_symbol: HashMap<SymbolId, Vec<u64>>,
+    members: Vec<ResolvedMember>,
+    member_positions: HashMap<NamePosition, u64>,
+    members_by_declaration: HashMap<NamePosition, Vec<u64>>,
+    methods_by_definition: HashMap<DefId, SourceSpan>,
+    scopes_by_source: HashMap<SourceId, Vec<ScopeRegion>>,
+}
+
+impl EditorFacts {
+    static pub fn new() -> Self {
+        Self(Vec<ResolvedName>.new(), HashMap<NamePosition, u64>.new(),
+            HashMap<NamePosition, SymbolId>.new(), HashMap<SymbolId, Vec<u64>>.new(),
+            Vec<ResolvedMember>.new(), HashMap<NamePosition, u64>.new(),
+            HashMap<NamePosition, Vec<u64>>.new(), HashMap<DefId, SourceSpan>.new(),
+            HashMap<SourceId, Vec<ScopeRegion>>.new())
+    }
+
+    // Repeated lowering of one source span keeps the first fact instead of duplicating references.
+    pub fn record(symbol: SymbolId, location: SourceSpan, type_id: TypeId) {
+        let key = NamePosition(location.source, location.span.start.row, location.span.start.column);
+        if self.by_position.contains(&key) {
+            return;
+        }
+
+        let index = self.names.len();
+        self.names.push(ResolvedName(symbol, location, type_id));
+        let column = location.span.start.column;
+        while column <= location.span.end.column {
+            self.by_position.insert(NamePosition(location.source, location.span.start.row, column), index);
+            column += 1;
+        }
+
+        match self.by_symbol.get(&symbol) {
+            Some(indices) => indices.push(index),
+            None => {
+                let indices = Vec<u64>.new();
+                indices.push(index);
+                self.by_symbol.insert(symbol, indices);
+            },
+        }
+    }
+
+    pub fn at(source: SourceId, row: u64, column: u64) -> Option<ResolvedName&> {
+        let key = NamePosition(source, row, column);
+        match self.by_position.get(&key) {
+            Some(index) => self.names.get(*index),
+            None => Option<ResolvedName&>.None,
+        }
+    }
+
+    // Declaration lookup is indexed once after analysis, avoiding a symbol-table scan per cursor request.
+    pub fn record_declaration(symbol: SymbolId, location: SourceSpan) {
+        let column = location.span.start.column;
+        while column <= location.span.end.column {
+            self.declarations.insert(NamePosition(location.source, location.span.start.row, column), symbol);
+            column += 1u64;
+        }
+    }
+
+    pub fn declaration_at(source: SourceId, row: u64, column: u64) -> Option<SymbolId> {
+        match self.declarations.get(&NamePosition(source, row, column)) {
+            Some(symbol) => Option<SymbolId>.Some(*symbol),
+            None => Option<SymbolId>.None,
+        }
+    }
+
+    static fn member_key(location: SourceSpan) -> NamePosition {
+        NamePosition(location.source, location.span.start.row, location.span.start.column)
+    }
+
+    fn index_member(member: ResolvedMember) {
+        let index = self.members.len();
+        self.members.push(member);
+        let stored = &self.members[index];
+        let column = stored.location.span.start.column;
+        while column <= stored.location.span.end.column {
+            self.member_positions.insert(
+                NamePosition(stored.location.source, stored.location.span.start.row, column), index);
+            column += 1u64;
+        }
+
+        let key = Self.member_key(stored.declaration);
+        match self.members_by_declaration.get(&key) {
+            Some(indices) => indices.push(index),
+            None => {
+                let indices = Vec<u64>.new();
+                indices.push(index);
+                self.members_by_declaration.insert(key, indices);
+            },
+        }
+    }
+
+    // The declaration span is the exact name token; target_span only supplies stable identity.
+    pub fn record_member_declaration(kind: EditorMemberKind, name: NameId,
+        location: SourceSpan, target_span: SourceSpan, type_id: TypeId) {
+        let key = Self.member_key(location);
+        if self.member_positions.contains(&key) {
+            return;
+        }
+        self.index_member(ResolvedMember(name, kind, location, target_span, type_id, true));
+    }
+
+    pub fn record_member_reference(kind: EditorMemberKind, name: NameId,
+        location: SourceSpan, declaration: SourceSpan, type_id: TypeId) {
+        let key = Self.member_key(location);
+        if self.member_positions.contains(&key) {
+            return;
+        }
+        self.index_member(ResolvedMember(name, kind, location, declaration, type_id, false));
+    }
+
+    pub fn record_method_declaration(definition: DefId, name: NameId,
+        location: SourceSpan, type_id: TypeId) {
+        self.methods_by_definition.insert(definition, location);
+        self.record_member_declaration(EditorMemberKind.Method, name, location, location, type_id);
+    }
+
+    pub fn method_declaration(definition: DefId) -> Option<SourceSpan> {
+        match self.methods_by_definition.get(&definition) {
+            Some(location) => Option<SourceSpan>.Some(*location),
+            None => Option<SourceSpan>.None,
+        }
+    }
+
+    pub fn member_at(source: SourceId, row: u64, column: u64) -> Option<ResolvedMember&> {
+        match self.member_positions.get(&NamePosition(source, row, column)) {
+            Some(index) => self.members.get(*index),
+            None => Option<ResolvedMember&>.None,
+        }
+    }
+
+    pub fn member_declaration(declaration: SourceSpan) -> Option<SourceSpan> {
+        let key = Self.member_key(declaration);
+        match self.members_by_declaration.get(&key) {
+            Some(indices) => {
+                for index in *indices {
+                    let member = &self.members[*index];
+                    if member.is_declaration {
+                        return Option<SourceSpan>.Some(member.location);
+                    }
+                }
+                Option<SourceSpan>.None
+            },
+            None => Option<SourceSpan>.None,
+        }
+    }
+
+    pub fn member_occurrences(declaration: SourceSpan, include_declaration: bool) -> Vec<SourceSpan> {
+        let result = Vec<SourceSpan>.new();
+        match self.members_by_declaration.get(&Self.member_key(declaration)) {
+            Some(indices) => {
+                for index in *indices {
+                    let member = &self.members[*index];
+                    if include_declaration || !member.is_declaration {
+                        result.push(member.location);
+                    }
+                }
+            },
+            None => {},
+        }
+        result
+    }
+
+    // Regions are recorded as scopes are created; the narrowest containing span wins.
+    pub fn record_scope(location: SourceSpan, scope: ScopeId) {
+        match self.scopes_by_source.get(&location.source) {
+            Some(regions) => regions.push(ScopeRegion(location, scope)),
+            None => {
+                let regions = Vec<ScopeRegion>.new();
+                regions.push(ScopeRegion(location, scope));
+                self.scopes_by_source.insert(location.source, regions);
+            },
+        }
+    }
+
+    static fn before(left_row: u64, left_column: u64, right_row: u64, right_column: u64) -> bool {
+        left_row < right_row || (left_row == right_row && left_column < right_column)
+    }
+
+    static fn contains(span: SourceSpan, row: u64, column: u64) -> bool {
+        !Self.before(row, column, span.span.start.row, span.span.start.column) &&
+        !Self.before(span.span.end.row, span.span.end.column, row, column)
+    }
+
+    static fn narrower(candidate: SourceSpan, current: SourceSpan) -> bool {
+        let starts_later = !Self.before(candidate.span.start.row, candidate.span.start.column,
+            current.span.start.row, current.span.start.column);
+        let ends_earlier = !Self.before(current.span.end.row, current.span.end.column,
+            candidate.span.end.row, candidate.span.end.column);
+        let strictly_narrower = candidate.span.start.row != current.span.start.row ||
+        candidate.span.start.column != current.span.start.column ||
+        candidate.span.end.row != current.span.end.row ||
+        candidate.span.end.column != current.span.end.column;
+        starts_later && ends_earlier && strictly_narrower
+    }
+
+    pub fn scope_at(source: SourceId, row: u64, column: u64) -> Option<ScopeId> {
+        let best = Option<ScopeRegion>.None;
+        match self.scopes_by_source.get(&source) {
+            Some(regions) => {
+                for region in *regions {
+                    if !Self.contains(region.span, row, column) {
+                        continue;
+                    }
+
+                    match &best {
+                        Some(current) if !Self.narrower(region.span, current.span) => {},
+                        _ => { best = Option<ScopeRegion>.Some(*region); },
+                    }
+                }
+            },
+            None => {},
+        }
+
+        match best {
+            Some(region) => Option<ScopeId>.Some(region.scope),
+            None => Option<ScopeId>.None,
+        }
+    }
+
+    pub fn references(symbol: SymbolId) -> Vec<SourceSpan> {
+        let result = Vec<SourceSpan>.new();
+        match self.by_symbol.get(&symbol) {
+            Some(indices) => {
+                for index in *indices {
+                    result.push(self.names[*index].location);
+                }
+            },
+            None => {},
+        }
+        result
+    }
+
+    pub fn len() -> u64 { self.names.len() }
+}
+
+impl Drop for EditorFacts {
+    pub fn drop() {
+        for entry in self.by_symbol.entries() {
+            entry[1].drop();
+        }
+
+        self.by_symbol.drop();
+        for indices in self.members_by_declaration.values() {
+            indices.drop();
+        }
+        self.members_by_declaration.drop();
+        self.methods_by_definition.drop();
+        self.member_positions.drop();
+        self.members.drop();
+        for regions in self.scopes_by_source.values() {
+            regions.drop();
+        }
+        self.scopes_by_source.drop();
+        self.declarations.drop();
+        self.by_position.drop();
+        self.names.drop();
+    }
+}

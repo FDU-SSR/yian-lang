@@ -4,7 +4,7 @@ from compiler.analysis.session.session import AnalysisSession;
 from compiler.analysis.ty.model import TypeData;
 from compiler.analysis.constant.evaluate import TypeSizeProvider;
 from compiler.frontend.ast.node import Item;
-from compiler.frontend.source import Span;
+from compiler.frontend.source import Position, Span;
 from compiler.diagnostics.model import DiagnosticCode, AnalysisError;
 from std.collections.arena import Arena;
 from std.collections.hash_map import HashMap;
@@ -13,6 +13,20 @@ from std.core.iter import Iterator, IntoIterator;
 from std.core.option import Option;
 from std.core.result import Result;
 from std.core.vec import Vec;
+
+fn end_position(text: str) -> Position {
+    let row = 0u64;
+    let column = 0u64;
+    for character in text.chars() {
+        if character == '\n' {
+            row += 1u64;
+            column = 0u64;
+        } else {
+            column += 1u64;
+        }
+    }
+    Position(row=row, column=column)
+}
 
 pub enum DeclarationState {
     Declared,
@@ -85,7 +99,12 @@ impl ResolutionContext {
         let index = 0u64;
 
         while index < session.len() {
-            scopes.push(session.symbols.create_scope(Option<ScopeId>.None)?);
+            let scope = session.symbols.create_scope(Option<ScopeId>.None)?;
+            scopes.push(scope);
+            let source_id = session.unit(UnitId(index)).unwrap().source;
+            let source = session.source(source_id).unwrap();
+            session.editor_facts.record_scope(SourceSpan(source_id,
+                Span(start=Position(row=0u64, column=0u64), end=end_position(source.text()))), scope);
             index += 1;
         }
 

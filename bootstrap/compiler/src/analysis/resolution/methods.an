@@ -9,6 +9,7 @@ from compiler.analysis.ty.impl_registry import ImplRecord, ImplCondition;
 from compiler.analysis.ty.validation import contains_ffi;
 from compiler.common.ids import UnitId, ScopeId, TypeId, DefId, NameId, SymbolId;
 from compiler.common.location import SourceSpan;
+from compiler.analysis.editor_facts import EditorMemberKind;
 from compiler.frontend.ast.node import MethodDecl, Block;
 from compiler.frontend.ast.atoms import AttrKind;
 from compiler.diagnostics.model import DiagnosticCode, AnalysisError;
@@ -119,6 +120,9 @@ pub fn resolve_method(ctx: ResolutionContext&, unit: UnitId, parent: ScopeId, re
 
     ctx.session.types.finish_definition(definition, DefinitionBody.Method(CallableDefinition(params, result, Option<TypeId>.Some(receiver),
         has_attr(&syntax.data.attrs, AttrKind.Static), body.is_none(), has_attr(&syntax.data.attrs, AttrKind.Ffi), false, has_attr(&syntax.data.attrs, AttrKind.PubFfi), trait_member || has_attr(&syntax.data.attrs, AttrKind.Pub), previous.len())))?;
+
+    ctx.session.editor_facts.record_method_declaration(
+        definition, name, ctx.span(unit, syntax.data.name.span), type_id);
 
     match body {
         Some(value) => {

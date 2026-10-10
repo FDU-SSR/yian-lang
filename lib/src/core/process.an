@@ -1,11 +1,12 @@
 from std.core.drop import Drop;
-from std.core.io import IoError;
+from std.core.io import IoError, IoErrorKind, Read, Write;
 from std.core.iter import Iterator, IntoIterator;
 from std.core.option import Option;
 from std.core.range import Range;
 from std.core.ops import Index, Deref;
 from std.core.result import Result;
 from std.core.string import String;
+from std.core.time import Instant, monotonic_now;
 from std.core.vec import Vec;
 from std.ffi.c_string import c_string_bytes;
 
@@ -20,7 +21,21 @@ extern "C" {
     fn yian_process_drop(result: cptr<u8>);
     fn yian_process_env(name: cptr<c_char>, buffer: cptr<u8>, capacity: u64) -> i64;
     fn yian_process_temp_dir(parent: cptr<c_char>, buffer: cptr<u8>, capacity: u64) -> i64;
+    fn yian_child_spawn(program: cptr<c_char>, arguments: cptr<cptr<c_char>>,
+        directory: cptr<c_char>, stdio_modes: cptr<i32>, error: cptr<i32>) -> cptr<NativeChild>;
+    fn yian_child_fd(child: cptr<NativeChild>, stream: i32) -> i32;
+    fn yian_child_close_pipe(child: cptr<NativeChild>, stream: i32) -> i32;
+    fn yian_child_read(child: cptr<NativeChild>, stream: i32, buffer: cptr<u8>, length: u64) -> i64;
+    fn yian_child_write(child: cptr<NativeChild>, stream: i32, buffer: cptr<u8>, length: u64) -> i64;
+    fn yian_child_try_wait(child: cptr<NativeChild>, status: cptr<i32>, signaled: cptr<i32>) -> i32;
+    fn yian_child_wait(child: cptr<NativeChild>, status: cptr<i32>, signaled: cptr<i32>) -> i32;
+    fn yian_child_signal(child: cptr<NativeChild>, signal_number: i32) -> i32;
+    fn yian_child_close(child: cptr<NativeChild>) -> i32;
+    fn yian_child_drop(child: cptr<NativeChild>);
+    fn yian_process_executable_path(buffer: cptr<u8>, capacity: u64) -> i64;
 }
+
+opaque type NativeChild;
 
 pub enum ExitStatus {
     Exited { code: i32 },
@@ -57,6 +72,7 @@ pub struct Command {
     input: Vec<u8>,
     input_mode: i32,
     interruptible: bool,
+    input_configured: bool,
 }
 
 fn terminated(value: str) -> Result<Vec<u8>, IoError> {
@@ -94,7 +110,7 @@ impl Command {
     static pub fn new(program: str) -> Self {
         Self(program=String.from(&program), arguments=Vec<String>.new(),
             directory=Option<String>.None, input=Vec<u8>.new(), input_mode=0,
-            interruptible=false)
+            interruptible=false, input_configured=false)
     }
 
     pub fn arg(value: str) {
@@ -115,16 +131,89 @@ impl Command {
         self.input = Vec<u8>.with_capacity(data.len());
         self.input.extend_from_slice(data);
         self.input_mode = 2;
+        self.input_configured = true;
     }
 
     pub fn inherit_stdin() {
         self.input.drop();
         self.input = Vec<u8>.new();
         self.input_mode = 1;
+        self.input_configured = true;
     }
 
     pub fn interruptible(enabled: bool) {
         self.interruptible = enabled;
+    }
+
+    // Long-lived children use explicit stream modes and cannot inherit the synchronous interrupt handler.
+    pub ffi fn spawn(options: SpawnOptions) -> Result<Child, IoError> {
+        if self.input_configured || self.interruptible {
+            return Result<Child, IoError>.Err(IoError.new(
+                IoErrorKind.InvalidInput,
+                "spawn uses SpawnOptions and does not support synchronous input or interrupt settings",
+                ));
+        }
+
+        let buffers = Vec<Vec<u8>>.new();
+        defer release_buffers(&buffers);
+        buffers.push(terminated(self.program.as_str())?);
+        for argument in self.arguments {
+            buffers.push(terminated(argument.as_str())?);
+        }
+
+        let pointers = Vec<cptr<c_char>>.new();
+        defer pointers.drop();
+        for buffer in buffers {
+            let data = @ffi_parts(buffer.as_slice())[0];
+            pointers.push(@ffi_ptr_cast<c_char>(data));
+        }
+        pointers.push(@ffi_null<c_char>());
+
+        let directory = match &self.directory {
+            Some(path) => terminated(path.as_str())?,
+            None => Vec<u8>.new(),
+        };
+        defer directory.drop();
+        let cwd = @ffi_null<c_char>();
+        if directory.len() != 0u64 {
+            cwd = @ffi_ptr_cast<c_char>(@ffi_parts(directory.as_slice())[0]);
+        }
+
+        let modes: i32[3] = [options.mode(options.stdin), options.mode(options.stdout), options.mode(options.stderr)];
+        let native_error = 0i32;
+        let arguments = @ffi_parts(pointers.as_slice())[0];
+        let native = yian_child_spawn(
+            pointers[0], arguments, cwd, @ffi_parts(modes.as_slice())[0], @ffi_addr(&native_error),
+        );
+        if native == @ffi_null<NativeChild>() {
+            return Result<Child, IoError>.Err(IoError.from_os_error(native_error, "spawn process"));
+        }
+
+        let input_pipe = if options.stdin == StdioMode.Piped {
+            Option<PipeWriter>.Some(PipeWriter(owner=native, stream=0i32))
+        } else {
+            Option<PipeWriter>.None
+        };
+        let output_pipe = if options.stdout == StdioMode.Piped {
+            Option<PipeReader>.Some(PipeReader(owner=native, stream=1i32))
+        } else {
+            Option<PipeReader>.None
+        };
+        let error_pipe = if options.stderr == StdioMode.Piped {
+            Option<PipeReader>.Some(PipeReader(owner=native, stream=2i32))
+        } else {
+            Option<PipeReader>.None
+        };
+        Result<Child, IoError>.Ok(Child(
+            native=native,
+            stdin_pipe=input_pipe,
+            stdout_pipe=output_pipe,
+            stderr_pipe=error_pipe,
+            closed=false,
+            close_requested=false,
+            kill_sent=false,
+            close_deadline_ns=Option<i64>.None,
+            ))
     }
 
     // Native calls borrow terminated buffers only for this synchronous operation.
@@ -202,6 +291,240 @@ impl Drop for Command {
             None => {},
         }
     }
+}
+
+pub enum StdioMode { Null, Inherit, Piped }
+
+pub struct SpawnOptions {
+    stdin: StdioMode,
+    stdout: StdioMode,
+    stderr: StdioMode,
+}
+
+impl SpawnOptions {
+    static pub fn new() -> Self {
+        Self(stdin=StdioMode.Null, stdout=StdioMode.Inherit, stderr=StdioMode.Inherit)
+    }
+
+    pub fn stdin(mode: StdioMode) { self.stdin = mode; }
+    pub fn stdout(mode: StdioMode) { self.stdout = mode; }
+    pub fn stderr(mode: StdioMode) { self.stderr = mode; }
+
+    fn mode(value: StdioMode) -> i32 {
+        match value {
+            Null => 0i32,
+            Inherit => 1i32,
+            Piped => 2i32,
+        }
+    }
+}
+
+// Pipe handles borrow descriptors owned by Child and must not outlive it.
+pub struct PipeReader { owner: cptr<NativeChild>, stream: i32 }
+pub struct PipeWriter { owner: cptr<NativeChild>, stream: i32 }
+
+impl PipeReader {
+    pub ffi fn fd() -> i32 { yian_child_fd(self.owner, self.stream) }
+
+    pub ffi fn close() -> Result<(), IoError> {
+        let status = yian_child_close_pipe(self.owner, self.stream);
+        if status < 0 { return Result<(), IoError>.Err(IoError.from_os_error(-status, "close child pipe")); }
+        Result<(), IoError>.Ok(())
+    }
+}
+
+impl PipeWriter {
+    pub ffi fn fd() -> i32 { yian_child_fd(self.owner, self.stream) }
+
+    pub ffi fn close() -> Result<(), IoError> {
+        let status = yian_child_close_pipe(self.owner, self.stream);
+        if status < 0 { return Result<(), IoError>.Err(IoError.from_os_error(-status, "close child pipe")); }
+        Result<(), IoError>.Ok(())
+    }
+}
+
+impl Read for PipeReader {
+    pub ffi fn read(buffer: u8[]) -> Result<u64, IoError> {
+        let(data, length) = @ffi_parts(buffer);
+        let count = yian_child_read(self.owner, self.stream, data, length);
+        if count < 0 { return Result<u64, IoError>.Err(IoError.from_os_error(i32(-count), "read child pipe")); }
+        Result<u64, IoError>.Ok(u64(count))
+    }
+}
+
+impl Write for PipeWriter {
+    pub ffi fn write(data: u8[]) -> Result<u64, IoError> {
+        let(bytes, length) = @ffi_parts(data);
+        let count = yian_child_write(self.owner, self.stream, bytes, length);
+        if count < 0 { return Result<u64, IoError>.Err(IoError.from_os_error(i32(-count), "write child pipe")); }
+        Result<u64, IoError>.Ok(u64(count))
+    }
+
+    pub fn flush() -> Result<(), IoError> { Result<(), IoError>.Ok(()) }
+}
+
+pub struct Child {
+    native: cptr<NativeChild>,
+    stdin_pipe: Option<PipeWriter>,
+    stdout_pipe: Option<PipeReader>,
+    stderr_pipe: Option<PipeReader>,
+    closed: bool,
+    close_requested: bool,
+    kill_sent: bool,
+    close_deadline_ns: Option<i64>,
+}
+
+impl Child {
+    pub fn stdin() -> Option<PipeWriter&> {
+        match &self.stdin_pipe {
+            Some(value) => Option<PipeWriter&>.Some(value),
+            None => Option<PipeWriter&>.None,
+        }
+    }
+
+    pub fn stdout() -> Option<PipeReader&> {
+        match &self.stdout_pipe {
+            Some(value) => Option<PipeReader&>.Some(value),
+            None => Option<PipeReader&>.None,
+        }
+    }
+
+    pub fn stderr() -> Option<PipeReader&> {
+        match &self.stderr_pipe {
+            Some(value) => Option<PipeReader&>.Some(value),
+            None => Option<PipeReader&>.None,
+        }
+    }
+
+    static fn status_fields(status: i32, signaled: i32) -> ExitStatus {
+        if signaled != 0 { ExitStatus.Signaled(status) } else { ExitStatus.Exited(status) }
+    }
+
+    pub ffi fn try_wait() -> Result<Option<ExitStatus>, IoError> {
+        let status = 0i32;
+        let signaled = 0i32;
+        let result = yian_child_try_wait(self.native, @ffi_addr(&status), @ffi_addr(&signaled));
+        if result < 0 { return Result<Option<ExitStatus>, IoError>.Err(IoError.from_os_error(-result, "wait for child")); }
+        if result == 0 { return Result<Option<ExitStatus>, IoError>.Ok(Option<ExitStatus>.None); }
+        Result<Option<ExitStatus>, IoError>.Ok(Option<ExitStatus>.Some(Self.status_fields(status, signaled)))
+    }
+
+    pub ffi fn wait() -> Result<ExitStatus, IoError> {
+        let status = 0i32;
+        let signaled = 0i32;
+        let result = yian_child_wait(self.native, @ffi_addr(&status), @ffi_addr(&signaled));
+        if result < 0 { return Result<ExitStatus, IoError>.Err(IoError.from_os_error(-result, "wait for child")); }
+        Result<ExitStatus, IoError>.Ok(Self.status_fields(status, signaled))
+    }
+
+    pub ffi fn terminate() -> Result<(), IoError> {
+        let status = yian_child_signal(self.native, 15i32);
+        if status < 0 { return Result<(), IoError>.Err(IoError.from_os_error(-status, "terminate child")); }
+        Result<(), IoError>.Ok(())
+    }
+
+    pub ffi fn kill() -> Result<(), IoError> {
+        let status = yian_child_signal(self.native, 9i32);
+        if status < 0 { return Result<(), IoError>.Err(IoError.from_os_error(-status, "kill child")); }
+        Result<(), IoError>.Ok(())
+    }
+
+    // Begin shutdown without waiting; callers must unregister borrowed pipe descriptors first.
+    pub fn request_close() -> Result<(), IoError> {
+        if self.closed || self.close_requested { return Result<(), IoError>.Ok(()); }
+
+        let deadline = Instant.after_milliseconds(250u64)?;
+        self.close_deadline_ns = Option<i64>.Some(deadline.nanoseconds());
+
+        if self.stdin_pipe.is_some() { self.stdin_pipe.unwrap().close()?; }
+        if self.stdout_pipe.is_some() { self.stdout_pipe.unwrap().close()?; }
+        if self.stderr_pipe.is_some() { self.stderr_pipe.unwrap().close()?; }
+        self.stdin_pipe = Option<PipeWriter>.None;
+        self.stdout_pipe = Option<PipeReader>.None;
+        self.stderr_pipe = Option<PipeReader>.None;
+        self.close_requested = true;
+
+        self.terminate()
+    }
+
+    // Advance graceful shutdown once; None means the caller should poll or wait and try again.
+    pub fn close_step() -> Result<Option<ExitStatus>, IoError> {
+        if self.closed {
+            return self.try_wait();
+        }
+        if !self.close_requested { self.request_close()?; }
+
+        match self.try_wait()? {
+            Some(status) => {
+                self.closed = true;
+                self.close_deadline_ns = Option<i64>.None;
+                return Result<Option<ExitStatus>, IoError>.Ok(Option<ExitStatus>.Some(status));
+            },
+            None => {},
+        }
+
+        if !self.kill_sent {
+            let now = monotonic_now()?;
+            let deadline = match &self.close_deadline_ns {
+                Some(value) => *value,
+                None => return Result<Option<ExitStatus>, IoError>.Err(IoError.new(
+                    IoErrorKind.InvalidInput, "missing child close deadline")),
+            };
+            if now.nanoseconds() >= deadline {
+                self.kill()?;
+                self.kill_sent = true;
+            }
+        }
+
+        Result<Option<ExitStatus>, IoError>.Ok(Option<ExitStatus>.None)
+    }
+
+    pub ffi fn close() -> Result<(), IoError> {
+        if self.closed { return Result<(), IoError>.Ok(()); }
+        let status = yian_child_close(self.native);
+        if status < 0 { return Result<(), IoError>.Err(IoError.from_os_error(-status, "close child")); }
+        self.closed = true;
+        self.stdin_pipe = Option<PipeWriter>.None;
+        self.stdout_pipe = Option<PipeReader>.None;
+        self.stderr_pipe = Option<PipeReader>.None;
+        Result<(), IoError>.Ok(())
+    }
+}
+
+impl Drop for Child {
+    pub ffi fn drop() {
+        if self.native == @ffi_null<NativeChild>() { return; }
+        yian_child_drop(self.native);
+        self.native = @ffi_null<NativeChild>();
+    }
+}
+
+// Resolve the running executable from the kernel rather than from PATH or cwd.
+pub ffi fn executable_path() -> Result<String, IoError> {
+    let capacity = 256u64;
+    while capacity <= 1048576u64 {
+        let buffer = Vec<u8>.with_capacity(capacity);
+        let i = 0u64;
+        while i < capacity { buffer.push(0u8); i += 1u64; }
+        let(data, _) = @ffi_parts(buffer.as_slice());
+        let length = yian_process_executable_path(data, capacity);
+        if length == -34i64 {
+            buffer.drop();
+            capacity *= 2u64;
+            continue;
+        }
+        if length < 0i64 {
+            buffer.drop();
+            return Result<String, IoError>.Err(IoError.from_os_error(i32(-length), "resolve executable path"));
+        }
+        defer buffer.drop();
+        let text = match str.from_slice(buffer.as_slice()[0u64..u64(length)]) {
+            Some(value) => value,
+            None => return Result<String, IoError>.Err(IoError.new(IoErrorKind.InvalidData, "executable path is not UTF-8")),
+        };
+        return Result<String, IoError>.Ok(String.from(&text));
+    }
+    Result<String, IoError>.Err(IoError.other("executable path is too long"))
 }
 
 // A missing variable is None; invalid UTF-8 and operating-system errors remain explicit.

@@ -1,37 +1,39 @@
 from compiler.analysis.resolution.context import ResolutionContext;
+from compiler.analysis.names import NameInterner;
+from compiler.analysis.ty.store import TypeStore;
 from compiler.common.ids import TypeId;
 from std.core.string import String;
 from std.core.iter import Iterator, IntoIterator;
 from std.core.drop import Drop;
 
-fn append(ctx: ResolutionContext&, id: TypeId, text: String&, depth: u64) {
+fn append(types: TypeStore&, names: NameInterner&, id: TypeId, text: String&, depth: u64) {
     if depth > 64 {
         text.push_str("...");
         return;
     }
 
-    match *ctx.session.types.get(id).unwrap() {
+    match *types.get(id).unwrap() {
         Reference(inner) => {
-            append(ctx, *inner, text, depth + 1);
+            append(types, names, *inner, text, depth + 1);
             text.push_str("&");
         },
         Pointer(inner) => {
-            append(ctx, *inner, text, depth + 1);
+            append(types, names, *inner, text, depth + 1);
             text.push_str("*");
         },
         CPointer(inner) => {
             text.push_str("cptr<");
-            append(ctx, *inner, text, depth + 1);
+            append(types, names, *inner, text, depth + 1);
             text.push_str(">");
         },
         Slice(inner) => {
-            append(ctx, *inner, text, depth + 1);
+            append(types, names, *inner, text, depth + 1);
             text.push_str("[]");
         },
         Array(inner, length) => {
-            append(ctx, *inner, text, depth + 1);
+            append(types, names, *inner, text, depth + 1);
             text.push_str("[");
-            append(ctx, *length, text, depth + 1);
+            append(types, names, *length, text, depth + 1);
             text.push_str("]");
         },
         Tuple(elements) => {
@@ -39,7 +41,7 @@ fn append(ctx: ResolutionContext&, id: TypeId, text: String&, depth: u64) {
             let index = 0u64;
             for element in *elements {
                 if index != 0 { text.push_str(", "); }
-                append(ctx, *element, text, depth + 1);
+                append(types, names, *element, text, depth + 1);
                 index += 1;
             }
             text.push_str(")");
@@ -49,15 +51,15 @@ fn append(ctx: ResolutionContext&, id: TypeId, text: String&, depth: u64) {
             let index = 0u64;
             for parameter in *parameters {
                 if index != 0 { text.push_str(", "); }
-                append(ctx, *parameter, text, depth + 1);
+                append(types, names, *parameter, text, depth + 1);
                 index += 1;
             }
             text.push_str(") -> ");
-            append(ctx, *result, text, depth + 1);
+            append(types, names, *result, text, depth + 1);
         },
-        CScalar(_, _, name) | Opaque(name, _) => text.push_str(ctx.session.names.text(*name)),
+        CScalar(_, _, name) | Opaque(name, _) => text.push_str(names.text(*name)),
         Nominal(definition, arguments) => {
-            text.push_str(ctx.session.names.text(ctx.session.types.definition(*definition).unwrap().header().name));
+            text.push_str(names.text(types.definition(*definition).unwrap().header().name));
 
             if arguments.len() != 0 {
                 text.push_str("<");
@@ -68,15 +70,15 @@ fn append(ctx: ResolutionContext&, id: TypeId, text: String&, depth: u64) {
                         text.push_str(", ");
                     }
 
-                    append(ctx, *argument, text, depth + 1);
+                    append(types, names, *argument, text, depth + 1);
                     index += 1;
                 }
 
                 text.push_str(">");
             }
         },
-        Generic(name) => text.push_str(ctx.session.names.text(*name)),
-        ConstGeneric(name, _) => text.push_str(ctx.session.names.text(*name)),
+        Generic(name) => text.push_str(names.text(*name)),
+        ConstGeneric(name, _) => text.push_str(names.text(*name)),
         LiteralValue(bits, negative, _) => {
             if *negative {
                 text.push_str("-");
@@ -104,7 +106,7 @@ fn append(ctx: ResolutionContext&, id: TypeId, text: String&, depth: u64) {
         },
         Bool => text.push_str("bool"), Char => text.push_str("char"), Str => text.push_str("str"), Void => text.push_str("void"), Never => text.push_str("!"), IntLiteral => text.push_str("IntLiteralType"), FloatLiteral => text.push_str("FloatLiteralType"),
         TraitObject(inner) => {
-            append(ctx, *inner, text, depth + 1);
+            append(types, names, *inner, text, depth + 1);
             text.push_str("&");
         },
         SelfType(_) => text.push_str("Self"),
@@ -113,22 +115,22 @@ fn append(ctx: ResolutionContext&, id: TypeId, text: String&, depth: u64) {
             let index = 0u64;
             for capture in *captures {
                 if index != 0 { text.push_str(", "); }
-                text.push_str(ctx.session.names.text(capture.name));
+                text.push_str(names.text(capture.name));
                 text.push_str(": ");
-                append(ctx, capture.type_id, text, depth + 1);
+                append(types, names, capture.type_id, text, depth + 1);
                 index += 1;
             }
             text.push_str("| (");
             index = 0;
             for parameter in *parameters {
                 if index != 0 { text.push_str(", "); }
-                text.push_str(ctx.session.names.text(parameter.name));
+                text.push_str(names.text(parameter.name));
                 text.push_str(": ");
-                append(ctx, parameter.type_id, text, depth + 1);
+                append(types, names, parameter.type_id, text, depth + 1);
                 index += 1;
             }
             text.push_str(") -> ");
-            append(ctx, *result, text, depth + 1);
+            append(types, names, *result, text, depth + 1);
         },
         _ => text.push_str("composite type"),
     }
@@ -137,6 +139,13 @@ fn append(ctx: ResolutionContext&, id: TypeId, text: String&, depth: u64) {
 // The caller owns the resulting message buffer; it borrows no type-store text.
 pub fn type_text(ctx: ResolutionContext&, id: TypeId) -> String {
     let text = String.new();
-    append(ctx, id, &text, 0);
+    append(&ctx.session.types, &ctx.session.names, id, &text, 0);
+    text
+}
+
+// This overload lets editor queries render a checked type without retaining a resolution context.
+pub fn stored_type_text(types: TypeStore&, names: NameInterner&, id: TypeId) -> String {
+    let text = String.new();
+    append(types, names, id, &text, 0);
     text
 }

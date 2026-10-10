@@ -1,0 +1,1641 @@
+from compiler.analysis.session.session import AnalysisSession, CompilationUnit;
+from compiler.analysis.session.output import AnalysisOptions, AnalysisReport;
+from compiler.codegen.session import BackendSession, BackendOptions;
+from compiler.codegen.error import CodegenError;
+from compiler.analysis.constant.evaluate import TypeSizeProvider;
+from compiler.analysis.editor_facts import EditorMemberKind, ResolvedMember, ResolvedName;
+from compiler.analysis.symbol.model import Symbol, SymbolKind;
+from compiler.analysis.ty.display import stored_type_text;
+from compiler.analysis.ty.model import StructField, EnumVariant, TypeData, DefinitionBody;
+from compiler.analysis.ty.queries import struct_fields, enum_variants;
+from compiler.common.ids import SourceId, UnitId, SymbolId, ScopeId, DefId, TypeId;
+from compiler.common.location import SourceSpan;
+from compiler.diagnostics.model import Diagnostic, DiagnosticLocation, AnalysisError, AnalysisErrorKind;
+from compiler.format.api import format_text;
+from compiler.frontend.ast.node import Item, ItemData, MethodDecl, MethodDef, TypeSyntax;
+from compiler.frontend.source import SourceDocument, Position, Span;
+from compiler.frontend.lex.lexer import Lexer;
+from compiler.frontend.lex.token import Token, TokenPayload, KeywordKind, PunctuatorKind, drop_tokens;
+from compiler.package.model import PackageMap;
+from compiler.package.provenance import SourceTrust;
+from std.collections.sort import sort_by;
+from std.core.drop import Drop;
+from std.core.iter import Iterator, IntoIterator;
+from std.core.option import Option;
+from std.core.result import Result;
+from std.core.string import String;
+from std.core.vec import Vec;
+
+pub enum EditorMode { Syntax, Full }
+
+pub enum EditorFailure {
+    Analysis { error: AnalysisError },
+    Backend { error: CodegenError },
+}
+
+// Locations copied to the protocol boundary use paths rather than session-local SourceIds.
+pub struct EditorLocation {
+    pub path: String,
+    pub span: Span,
+}
+
+impl Drop for EditorLocation {
+    pub fn drop() { self.path.drop(); }
+}
+
+// The copied symbol text and path remain valid after the snapshot is released.
+pub struct EditorSymbolInfo {
+    pub name: String,
+    pub kind: SymbolKind,
+    pub type_text: String,
+    pub location: Option<EditorLocation>,
+    pub is_public: bool,
+}
+
+pub enum EditorDocumentSymbolKind { Function, Method, Struct, Enum, Trait, Alias, Field, Variant }
+
+// A source declaration and its optional container are detached from the snapshot.
+pub struct EditorDocumentSymbol {
+    pub name: String,
+    pub kind: EditorDocumentSymbolKind,
+    pub detail: Option<String>,
+    pub location: EditorLocation,
+    pub container: Option<String>,
+}
+
+pub struct EditorMemberInfo {
+    pub name: String,
+    pub kind: EditorMemberKind,
+    pub type_text: String,
+    pub location: Option<EditorLocation>,
+}
+
+// A rename edit owns both its path and replacement text independently of the snapshot.
+pub struct EditorTextEdit {
+    pub location: EditorLocation,
+    pub new_text: String,
+}
+
+// Quick-fix data is detached from the analysis snapshot before it reaches a protocol adapter.
+pub struct EditorImportQuickFix {
+    pub title: String,
+    pub diagnostic_code: String,
+    pub diagnostic_message: String,
+    pub diagnostic_location: EditorLocation,
+    pub edit_location: EditorLocation,
+}
+
+struct EditorTokenRange {
+    start: u64,
+    end: u64,
+}
+
+impl Drop for EditorTextEdit {
+    pub fn drop() {
+        self.location.drop();
+        self.new_text.drop();
+    }
+}
+
+impl Drop for EditorImportQuickFix {
+    pub fn drop() {
+        self.title.drop();
+        self.diagnostic_code.drop();
+        self.diagnostic_message.drop();
+        self.diagnostic_location.drop();
+        self.edit_location.drop();
+    }
+}
+
+// A refusal is explicit; an empty edit list never ambiguously means success.
+pub struct EditorRenameResult {
+    pub edits: Vec<EditorTextEdit>,
+    pub refusal: Option<String>,
+}
+
+// The prepared range and placeholder are owned independently of the snapshot.
+pub struct EditorPrepareRenameResult {
+    pub location: Option<EditorLocation>,
+    pub placeholder: Option<String>,
+    pub refusal: Option<String>,
+}
+
+// Hover data is detached from the snapshot except for no retained semantic IDs.
+pub struct EditorHoverInfo {
+    pub symbol: Option<EditorSymbolInfo>,
+    pub member: Option<EditorMemberInfo>,
+    pub expression_type: Option<String>,
+}
+
+impl EditorRenameResult {
+    pub fn ok() -> bool { self.refusal.is_none() }
+}
+
+impl EditorPrepareRenameResult {
+    pub fn ok() -> bool { self.refusal.is_none() }
+}
+
+impl Drop for EditorRenameResult {
+    pub fn drop() {
+        for edit in self.edits { edit.drop(); }
+        self.edits.drop();
+        match &self.refusal { Some(message) => message.drop(), None => {}, }
+    }
+}
+
+impl Drop for EditorPrepareRenameResult {
+    pub fn drop() {
+        match &self.location { Some(value) => value.drop(), None => {}, }
+        match &self.placeholder { Some(value) => value.drop(), None => {}, }
+        match &self.refusal { Some(value) => value.drop(), None => {}, }
+    }
+}
+
+impl Drop for EditorHoverInfo {
+    pub fn drop() {
+        match &self.symbol { Some(value) => value.drop(), None => {}, }
+        match &self.member { Some(value) => value.drop(), None => {}, }
+        match &self.expression_type { Some(value) => value.drop(), None => {}, }
+    }
+}
+
+impl Drop for EditorSymbolInfo {
+    pub fn drop() {
+        self.name.drop();
+        self.type_text.drop();
+        match &self.location {
+            Some(location) => location.drop(),
+            None => {},
+        }
+    }
+}
+
+impl Drop for EditorDocumentSymbol {
+    pub fn drop() {
+        self.name.drop();
+        match &self.detail { Some(value) => value.drop(), None => {}, }
+        self.location.drop();
+        match &self.container { Some(value) => value.drop(), None => {}, }
+    }
+}
+
+impl Drop for EditorMemberInfo {
+    pub fn drop() {
+        self.name.drop();
+        self.type_text.drop();
+        match &self.location { Some(value) => value.drop(), None => {}, }
+    }
+}
+
+fn compare_text(left: str, right: str) -> i32 {
+    let a = left.as_slice();
+    let b = right.as_slice();
+    let index = 0u64;
+
+    while index < a.len() && index < b.len() {
+        if a[index] < b[index] { return -1; }
+        if a[index] > b[index] { return 1; }
+        index += 1u64;
+    }
+
+    if a.len() < b.len() { -1 } elif a.len() > b.len() { 1 } else { 0 }
+}
+
+fn editor_edit_less(left: EditorTextEdit&, right: EditorTextEdit&) -> bool {
+    let paths = compare_text(left.location.path.as_str(), right.location.path.as_str());
+    if paths != 0 { return paths < 0; }
+
+    let a = left.location.span;
+    let b = right.location.span;
+    if a.start.row != b.start.row { return a.start.row < b.start.row; }
+    if a.start.column != b.start.column { return a.start.column < b.start.column; }
+    if a.end.row != b.end.row { return a.end.row < b.end.row; }
+    a.end.column < b.end.column
+}
+
+fn editor_location_less(left: EditorLocation&, right: EditorLocation&) -> bool {
+    let paths = compare_text(left.path.as_str(), right.path.as_str());
+    if paths != 0 { return paths < 0; }
+
+    let a = left.span;
+    let b = right.span;
+    if a.start.row != b.start.row { return a.start.row < b.start.row; }
+    if a.start.column != b.start.column { return a.start.column < b.start.column; }
+    if a.end.row != b.end.row { return a.end.row < b.end.row; }
+    a.end.column < b.end.column
+}
+
+fn editor_position_before(left: Position, right: Position) -> bool {
+    left.row < right.row || (left.row == right.row && left.column < right.column)
+}
+
+fn editor_span_contains(outer: Span, inner: Span) -> bool {
+    !editor_position_before(inner.start, outer.start) &&
+    !editor_position_before(outer.end, inner.end)
+}
+
+fn import_statement_span(item: Item&) -> Option<Span> {
+    match item.data {
+        Import(_, _, _, end) => match end {
+            Some(position) => Option<Span>.Some(Span(item.span.start, position)),
+            None => Option<Span>.Some(item.span),
+        },
+        _ => Option<Span>.None,
+    }
+}
+
+fn token_in_statement(token: Token&, statement: Span) -> bool {
+    editor_span_contains(statement, token.span)
+}
+
+fn token_is_from(token: Token&) -> bool {
+    token.is_keyword_token() && token.value() == "from"
+}
+
+fn token_is_import(token: Token&) -> bool {
+    token.is_keyword_token() && token.value() == "import"
+}
+
+fn token_is_separator(token: Token&) -> bool {
+    token.is_punctuator() && (token.value() == "," || token.value() == ";")
+}
+
+fn token_is_comma(token: Token&) -> bool {
+    token.is_punctuator() && token.value() == ","
+}
+
+fn is_import_failure_code(code: str) -> bool {
+    match code {
+        "E304" | "E307" | "E308" | "E309" | "E310" => true,
+        _ => false,
+    }
+}
+
+fn editor_unit_for_source(session: AnalysisSession&, source: SourceId) -> Option<CompilationUnit&> {
+    let index = 0u64;
+    while index < session.len() {
+        match session.unit(UnitId(index)) {
+            Some(unit) if unit.source == source => return Option<CompilationUnit&>.Some(unit),
+            _ => {},
+        }
+        index += 1u64;
+    }
+    Option<CompilationUnit&>.None
+}
+
+fn drop_optional_text(value: Option<String>) {
+    match value {
+        Some(text) => text.drop(),
+        None => {},
+    }
+}
+
+fn drop_document_symbol_values(values: Vec<EditorDocumentSymbol>&) {
+    for symbol in *values {
+        symbol.drop();
+    }
+}
+
+fn document_symbol_for_name(
+    session: AnalysisSession&,
+    unit: CompilationUnit&,
+    name: str,
+    kind: SymbolKind,
+) -> Option<SymbolId> {
+    let index = 0u64;
+    while index < session.symbols.symbol_count() {
+        match session.symbols.get(SymbolId(index)) {
+            Some(symbol) if symbol.unit == unit.id && symbol.kind == kind &&
+            session.names.text(symbol.name) == name =>
+            return Option<SymbolId>.Some(SymbolId(index)),
+            _ => {},
+        }
+        index += 1u64;
+    }
+    Option<SymbolId>.None
+}
+
+fn document_symbol_detail(
+    session: AnalysisSession&,
+    unit: CompilationUnit&,
+    name: str,
+    kind: SymbolKind,
+) -> Option<String> {
+    if kind == SymbolKind.Alias {
+        return Option<String>.None;
+    }
+
+    match document_symbol_for_name(session, unit, name, kind) {
+        Some(symbol_id) => match session.symbols.get(symbol_id) {
+            Some(symbol) => Option<String>.Some(stored_type_text(
+                &session.types, &session.names, symbol.type_id)),
+            None => Option<String>.None,
+        },
+        None => Option<String>.None,
+    }
+}
+
+fn append_document_symbol(
+    result: Vec<EditorDocumentSymbol>&,
+    session: AnalysisSession&,
+    source: SourceId,
+    name: str,
+    kind: EditorDocumentSymbolKind,
+    span: Span,
+    detail: Option<String>,
+    container: Option<String>,
+) {
+    match owned_location(session, SourceSpan(source, span)) {
+        Some(location) => result.push(EditorDocumentSymbol(
+            name=String.from(&name), kind=kind, detail=detail,
+            location=location, container=container)),
+        None => {
+            drop_optional_text(detail);
+            drop_optional_text(container);
+        },
+    }
+}
+
+fn append_struct_document_symbols(
+    result: Vec<EditorDocumentSymbol>&,
+    session: AnalysisSession&,
+    source: SourceId,
+    type_id: TypeId,
+    container: str,
+) -> Result<(), AnalysisError> {
+    let fields = struct_fields(&session.types, type_id)?;
+    defer fields.drop();
+
+    for field in fields {
+        match &field.span {
+            Some(location) if location.source == source => append_document_symbol(
+                result,
+                session,
+                source,
+                session.names.text(field.name),
+                EditorDocumentSymbolKind.Field,
+                location.span,
+                Option<String>.Some(stored_type_text(&session.types, &session.names, field.type_id)),
+                Option<String>.Some(String.from(&container)),
+            ),
+            _ => {},
+        }
+    }
+
+    Result<(), AnalysisError>.Ok(())
+}
+
+fn type_syntax_base_name(type_syntax: TypeSyntax&) -> str {
+    match type_syntax.data {
+        NamedType(name) => name.data.name.as_str(),
+        InstanceType(base, _) => type_syntax_base_name(base),
+        _ => "impl",
+    }
+}
+
+fn append_method_document_symbol(
+    result: Vec<EditorDocumentSymbol>&,
+    session: AnalysisSession&,
+    source: SourceId,
+    method: MethodDecl&,
+    container: str,
+) {
+    let name = &method.data.name;
+    append_document_symbol(
+        result,
+        session,
+        source,
+        name.data.name.as_str(),
+        EditorDocumentSymbolKind.Method,
+        name.span,
+        Option<String>.None,
+        Option<String>.Some(String.from(&container)),
+    );
+}
+
+fn append_enum_document_symbols(
+    result: Vec<EditorDocumentSymbol>&,
+    session: AnalysisSession&,
+    source: SourceId,
+    type_id: TypeId,
+    container: str,
+) -> Result<(), AnalysisError> {
+    let variants = enum_variants(&session.types, type_id)?;
+    defer variants.drop();
+
+    for variant in variants {
+        let name = session.names.text(variant.name);
+        let detail = match &variant.payload {
+            Some(payload) => Option<String>.Some(stored_type_text(&session.types, &session.names, *payload)),
+            None => Option<String>.None,
+        };
+        match &variant.span {
+            Some(location) if location.source == source => append_document_symbol(
+                result,
+                session,
+                source,
+                name,
+                EditorDocumentSymbolKind.Variant,
+                location.span,
+                detail,
+                Option<String>.Some(String.from(&container)),
+            ),
+            _ => {
+                drop_optional_text(detail);
+            },
+        }
+
+        match &variant.payload {
+            Some(payload) => match session.types.get(*payload) {
+                Some(Nominal(definition, _)) => match session.types.complete_definition(*definition) {
+                    Ok(Struct(_)) => {
+                        let nested_container = String.from(&container);
+                        nested_container.push_str(".");
+                        nested_container.push_str(name);
+                        let fields = append_struct_document_symbols(
+                            result, session, source, *payload, nested_container.as_str());
+                        nested_container.drop();
+                        fields?;
+                    },
+                    Ok(_) => {},
+                    Err(error) => error.drop(),
+                },
+                _ => {},
+            },
+            None => {},
+        }
+    }
+
+    Result<(), AnalysisError>.Ok(())
+}
+
+// The parser expands a from-import into multiple AST items; this token scan preserves its original separators.
+fn import_removal_span(tokens: Vec<Token>&, statement: Span, diagnostic: Span) -> Option<Span> {
+    let from_token_index = Option<u64>.None;
+    let import_index = Option<u64>.None;
+    let index = 0u64;
+
+    while index < tokens.len() {
+        let token = &tokens[index];
+        if token_in_statement(token, statement) {
+            if token_is_from(token) { from_token_index = Option<u64>.Some(index); }
+            if token_is_import(token) { import_index = Option<u64>.Some(index); }
+        }
+        index += 1u64;
+    }
+
+    let from_index = match from_token_index { Some(value) => value, None => return Option<Span>.Some(statement) };
+    let import = match import_index { Some(value) => value, None => return Option<Span>.Some(statement) };
+    if from_index >= import || editor_position_before(diagnostic.start, tokens[import].span.start) {
+        return Option<Span>.Some(statement);
+    }
+
+    let segments = Vec<EditorTokenRange>.new();
+    defer segments.drop();
+    let segment_start = import + 1u64;
+    let cursor = segment_start;
+
+    while cursor < tokens.len() {
+        let token = &tokens[cursor];
+        if editor_position_before(statement.end, token.span.start) {
+            break;
+        }
+
+        if token_in_statement(token, statement) && token_is_separator(token) {
+            if segment_start < cursor {
+                segments.push(EditorTokenRange(segment_start, cursor));
+            }
+            segment_start = cursor + 1u64;
+        }
+        cursor += 1u64;
+    }
+
+    if segment_start < cursor {
+        segments.push(EditorTokenRange(segment_start, cursor));
+    }
+    if segments.len() <= 1u64 {
+        return Option<Span>.Some(statement);
+    }
+
+    let selected = Option<u64>.None;
+    let segment_index = 0u64;
+    while segment_index < segments.len() {
+        let range = segments[segment_index];
+        let token_index = range.start;
+        while token_index < range.end {
+            if token_in_statement(&tokens[token_index], statement) &&
+            editor_span_contains(tokens[token_index].span, diagnostic) {
+                selected = Option<u64>.Some(segment_index);
+                break;
+            }
+            token_index += 1u64;
+        }
+        if selected.is_some() { break; }
+        segment_index += 1u64;
+    }
+
+    let selected_index = match selected { Some(value) => value, None => return Option<Span>.Some(statement) };
+    let selected_range = segments[selected_index];
+    let first = tokens[selected_range.start].span;
+    let last = tokens[selected_range.end - 1u64].span;
+
+    if selected_index + 1u64 < segments.len() {
+        let next_range = segments[selected_index + 1u64];
+        let comma_index = selected_range.end;
+        while comma_index < next_range.start {
+            if token_is_comma(&tokens[comma_index]) {
+                let following = tokens[next_range.start].span.start;
+                let end = if following.row == tokens[comma_index].span.end.row {
+                    following
+                } else {
+                    tokens[comma_index].span.end
+                };
+                return Option<Span>.Some(Span(first.start, end));
+            }
+            comma_index += 1u64;
+        }
+        return Option<Span>.Some(statement);
+    }
+
+    if selected_index > 0u64 {
+        let previous_range = segments[selected_index - 1u64];
+        let comma_index = previous_range.end;
+        while comma_index < selected_range.start {
+            if token_is_comma(&tokens[comma_index]) {
+                return Option<Span>.Some(Span(tokens[comma_index].span.start, last.end));
+            }
+            comma_index += 1u64;
+        }
+    }
+
+    Option<Span>.Some(statement)
+}
+
+fn valid_identifier(text: str) -> bool {
+    if text.as_slice().len() == 0 || KeywordKind.from_text(text).is_some() {
+        return false;
+    }
+
+    let tokens = match Lexer.new(text).run() {
+        Ok(value) => value,
+        Err(error) => { error.drop(); return false; },
+    };
+    defer drop_tokens(&tokens);
+
+    if tokens.len() != 2u64 { return false; }
+    match tokens[0].kind() {
+        Identifier(value) => value.as_str() == text,
+        _ => false,
+    }
+}
+
+fn position_before(left_row: u64, left_column: u64, right_row: u64, right_column: u64) -> bool {
+    left_row < right_row || (left_row == right_row && left_column < right_column)
+}
+
+fn token_is_inside_body(token: Span, body_start: Span, body_end_row: u64, body_end_column: u64) -> bool {
+    !position_before(token.start.row, token.start.column, body_start.start.row, body_start.start.column) &&
+    !position_before(body_end_row, body_end_column, token.end.row, token.end.column)
+}
+
+fn definition_was_checked(snapshot: EditorSnapshot&, definition: DefId) -> bool {
+    match &snapshot.report {
+        Some(report) => match &report.output {
+            Some(output) => {
+                for checked in output.checked {
+                    if *checked == definition { return true; }
+                }
+                false
+            },
+            None => false,
+        },
+        None => false,
+    }
+}
+
+// A textual scan is deliberately conservative for bodies skipped by generic checking.
+fn unchecked_name_use(snapshot: EditorSnapshot&, name: str) -> Option<EditorLocation> {
+    let index = 0u64;
+
+    while index < snapshot.session.definitions.len() {
+        let procedure = match snapshot.session.definitions.at(index) {
+            Some(value) => value,
+            None => return Option<EditorLocation>.None,
+        };
+        index += 1u64;
+
+        if definition_was_checked(snapshot, procedure.definition) {
+            continue;
+        }
+
+        let unit = match snapshot.session.unit(procedure.unit) {
+            Some(value) => value,
+            None => continue,
+        };
+        let body_start = procedure.body.span;
+        let body_end = match procedure.body.data.end {
+            Some(position) => position,
+            None => body_start.end,
+        };
+
+        for token in unit.prepared.tokens {
+            let matches_name = match token.kind() {
+                Identifier(value) => value.as_str() == name,
+                _ => false,
+            };
+            if !matches_name || !token_is_inside_body(
+                token.span, body_start, body_end.row, body_end.column) {
+                continue;
+            }
+
+            return owned_location(&snapshot.session,
+                SourceSpan(unit.source, token.span));
+        }
+    }
+
+    Option<EditorLocation>.None
+}
+
+fn refuse_rename(message: str) -> EditorRenameResult {
+    EditorRenameResult(Vec<EditorTextEdit>.new(), Option<String>.Some(String.from(&message)))
+}
+
+fn member_declaration_span(snapshot: EditorSnapshot&, member: ResolvedMember&) -> SourceSpan {
+    match snapshot.session.editor_facts.member_declaration(member.declaration) {
+        Some(location) => location,
+        None => member.declaration,
+    }
+}
+
+fn prepare_member_rename(snapshot: EditorSnapshot&, member: ResolvedMember&) -> EditorPrepareRenameResult {
+    let name = snapshot.session.names.text(member.name);
+    if source_is_stdlib(&snapshot.session, member.declaration.source) {
+        let message = String.from(&"'");
+        message.push_str(name);
+        message.push_str("' is declared in the standard library");
+        return EditorPrepareRenameResult(
+            Option<EditorLocation>.None, Option<String>.None, Option<String>.Some(message));
+    }
+
+    match unchecked_name_use(snapshot, name) {
+        Some(location) => {
+            let message = String.from(&"a definition the analysis did not check uses '");
+            defer message.drop();
+            message.push_str(name);
+            message.push_str("' (");
+            message.push_str(location.path.as_str());
+            message.push(':');
+            let line = (location.span.start.row + 1u64).to_string_radix(10);
+            defer line.drop();
+            message.push_str(line.as_str());
+            message.push_str("); rename it there first");
+            location.drop();
+            return EditorPrepareRenameResult(
+                Option<EditorLocation>.None, Option<String>.None,
+                Option<String>.Some(String.from(&message.as_str())));
+        },
+        None => {},
+    }
+
+    match owned_location(&snapshot.session, member_declaration_span(snapshot, member)) {
+        Some(location) => EditorPrepareRenameResult(
+            Option<EditorLocation>.Some(location), Option<String>.Some(String.from(&name)), Option<String>.None),
+        None => EditorPrepareRenameResult(
+            Option<EditorLocation>.None, Option<String>.None,
+            Option<String>.Some(String.from(&"rename target has no source location"))),
+    }
+}
+
+fn rename_member(snapshot: EditorSnapshot&, member: ResolvedMember&, new_name: str) -> EditorRenameResult {
+    let name = snapshot.session.names.text(member.name);
+    if source_is_stdlib(&snapshot.session, member.declaration.source) {
+        let message = String.from(&"'");
+        message.push_str(name);
+        message.push_str("' is declared in the standard library");
+        return EditorRenameResult(Vec<EditorTextEdit>.new(), Option<String>.Some(message));
+    }
+
+    match unchecked_name_use(snapshot, name) {
+        Some(location) => {
+            let message = String.from(&"a definition the analysis did not check uses '");
+            defer message.drop();
+            message.push_str(name);
+            message.push_str("' (");
+            message.push_str(location.path.as_str());
+            message.push(':');
+            let line = (location.span.start.row + 1u64).to_string_radix(10);
+            defer line.drop();
+            message.push_str(line.as_str());
+            message.push_str("); rename it there first");
+            location.drop();
+            return refuse_rename(message.as_str());
+        },
+        None => {},
+    }
+
+    let edits = Vec<EditorTextEdit>.new();
+    let transferred = false;
+    defer { if !transferred { edits.drop(); } };
+    let declaration = member_declaration_span(snapshot, member);
+    let occurrences = snapshot.session.editor_facts.member_occurrences(declaration, true);
+    for occurrence in occurrences {
+        match owned_location(&snapshot.session, *occurrence) {
+            Some(location) => append_edit(&edits, location, new_name),
+            None => {},
+        }
+    }
+    occurrences.drop();
+
+    if edits.len() == 0u64 {
+        return refuse_rename("nothing to rename for this member");
+    }
+
+    sort_by(edits.as_slice(), editor_edit_less);
+    transferred = true;
+    EditorRenameResult(edits, Option<String>.None)
+}
+
+fn append_edit(edits: Vec<EditorTextEdit>&, location: EditorLocation, new_name: str) {
+    for current in *edits {
+        if current.location.path.as_str() == location.path.as_str() &&
+        current.location.span.start.row == location.span.start.row &&
+        current.location.span.start.column == location.span.start.column &&
+        current.location.span.end.row == location.span.end.row &&
+        current.location.span.end.column == location.span.end.column {
+            location.drop();
+            return;
+        }
+    }
+
+    edits.push(EditorTextEdit(location, String.from(&new_name)));
+}
+
+pub struct EditorOptions {
+    pub trust: SourceTrust,
+    pub packages: Option<PackageMap>,
+    pub raw_pointers: bool,
+    pub allow_ffi: bool,
+    pub mode: EditorMode,
+    pub analysis: AnalysisOptions,
+}
+
+pub fn editor_options(trust: SourceTrust, packages: Option<PackageMap>, mode: EditorMode) -> EditorOptions {
+    EditorOptions(trust=trust, packages=packages, raw_pointers=false, allow_ffi=false,
+        mode=mode, analysis=AnalysisOptions.new())
+}
+
+impl Drop for EditorFailure {
+    pub fn drop() {
+        match self {
+            Analysis(error) => error.drop(),
+            Backend(error) => error.drop(),
+        }
+    }
+}
+
+// The input list and version metadata are owned independently from any compiler session.
+pub struct FrozenInputs {
+    documents: Vec<SourceDocument>,
+    pub revision: u64,
+    pub topology_revision: u64,
+    pub configuration_identity: String,
+}
+
+impl FrozenInputs {
+    static pub fn new(revision: u64, topology_revision: u64, configuration_identity: str) -> Self {
+        Self(Vec<SourceDocument>.new(), revision, topology_revision, String.from(&configuration_identity))
+    }
+
+    // The snapshot owns a stable ordered copy; preparation copies it again into SourceManager.
+    pub fn add(path: str, text: str, version: Option<i64>) {
+        self.documents.push(SourceDocument(
+            path=String.from(&path), text=String.from(&text), version=version));
+    }
+
+    pub fn len() -> u64 { self.documents.len() }
+}
+
+// Analysis IDs remain valid only while this owner keeps the session alive.
+pub struct EditorSnapshot {
+    session: AnalysisSession,
+    report: Option<AnalysisReport>,
+    versions: Vec<Option<i64>>,
+    pub configuration_identity: String,
+    pub mode: EditorMode,
+    pub revision: u64,
+    pub topology_revision: u64,
+}
+
+impl EditorSnapshot {
+    pub fn session() -> AnalysisSession& { &self.session }
+
+    // Source text and resolved paths belong to the session; the version vector copies input metadata.
+    pub fn source_path(source: SourceId) -> Option<str> {
+        match self.session.source_manager().get(source.index) {
+            Some(file) => Option<str>.Some(file.path()),
+            None => Option<str>.None,
+        }
+    }
+
+    pub fn source_text(source: SourceId) -> Option<str> {
+        match self.session.source_manager().get(source.index) {
+            Some(file) => Option<str>.Some(file.text()),
+            None => Option<str>.None,
+        }
+    }
+
+    pub fn document_version(source: SourceId) -> Option<i64> {
+        if source.index >= self.versions.len() {
+            return Option<i64>.None;
+        }
+        self.versions[source.index]
+    }
+
+    // Formatting consumes frozen session text and returns an owned result.
+    pub fn format_document(source: SourceId) -> Result<Option<String>, EditorFailure> {
+        match self.session.source(source) {
+            Some(file) => match format_text(file.text(), file.path()) {
+                Ok(value) => Result<Option<String>, EditorFailure>.Ok(value),
+                Err(error) => Result<Option<String>, EditorFailure>.Err(EditorFailure.Analysis(error)),
+            },
+            None => Result<Option<String>, EditorFailure>.Err(EditorFailure.Analysis(
+                AnalysisError.internal("invalid editor source ID"))),
+        }
+    }
+
+    // Returned semantic references remain valid until this snapshot releases its session.
+    pub fn resolved_name_at(source: SourceId, row: u64, column: u64) -> Option<ResolvedName&> {
+        self.session.editor_facts.at(source, row, column)
+    }
+
+    pub fn resolved_member_at(source: SourceId, row: u64, column: u64) -> Option<ResolvedMember&> {
+        self.session.editor_facts.member_at(source, row, column)
+    }
+
+    pub fn references_to(symbol: SymbolId) -> Vec<SourceSpan> {
+        self.session.editor_facts.references(symbol)
+    }
+
+    pub fn symbol(symbol: SymbolId) -> Option<Symbol&> {
+        self.session.symbols.get(symbol)
+    }
+
+    // Rendered names and types are owned by the result and do not expose session storage.
+    pub fn symbol_info(symbol_id: SymbolId) -> Option<EditorSymbolInfo> {
+        match self.session.symbols.get(symbol_id) {
+            Some(symbol) => {
+                let name = String.from(&self.session.names.text(symbol.name));
+                let rendered_type = stored_type_text(&self.session.types, &self.session.names, symbol.type_id);
+                let location = match &symbol.span {
+                    Some(source_span) => match self.session.source(source_span.source) {
+                        Some(source) => Option<EditorLocation>.Some(EditorLocation(
+                            path=String.from(&source.path()), span=source_span.span)),
+                        None => Option<EditorLocation>.None,
+                    },
+                    None => Option<EditorLocation>.None,
+                };
+                Option<EditorSymbolInfo>.Some(EditorSymbolInfo(
+                    name=name,
+                    kind=symbol.kind,
+                    type_text=rendered_type,
+                    location=location,
+                    is_public=symbol.is_public))
+            },
+            None => Option<EditorSymbolInfo>.None,
+        }
+    }
+
+    pub fn member_info(member: ResolvedMember&) -> EditorMemberInfo {
+        let declaration = match self.session.editor_facts.member_declaration(member.declaration) {
+            Some(location) => location,
+            None => member.declaration,
+        };
+        let location = owned_location(&self.session, declaration);
+        EditorMemberInfo(
+            name=String.from(&self.session.names.text(member.name)),
+            kind=member.kind,
+            type_text=stored_type_text(&self.session.types, &self.session.names, member.type_id),
+            location=location)
+    }
+
+    // The type and symbol display data are copied before returning to the protocol layer.
+    pub fn hover_at(source: SourceId, row: u64, column: u64) -> Option<EditorHoverInfo> {
+        let symbol_id = self.symbol_at(source, row, column);
+        let symbol_info = match symbol_id {
+            Some(id) => self.symbol_info(id),
+            None => Option<EditorSymbolInfo>.None,
+        };
+        let member_info = match self.resolved_member_at(source, row, column) {
+            Some(member) => Option<EditorMemberInfo>.Some(self.member_info(member)),
+            None => Option<EditorMemberInfo>.None,
+        };
+        let type_id = match self.resolved_name_at(source, row, column) {
+            Some(reference) => Option<TypeId>.Some(reference.type_id),
+            None => match self.resolved_member_at(source, row, column) {
+                Some(member) => Option<TypeId>.Some(member.type_id),
+                None => match symbol_id {
+                    Some(id) => match self.session.symbols.get(id) {
+                        Some(symbol) => Option<TypeId>.Some(symbol.type_id),
+                        None => Option<TypeId>.None,
+                    },
+                    None => Option<TypeId>.None,
+                },
+            },
+        };
+        let expression_type = match type_id {
+            Some(id) => Option<String>.Some(stored_type_text(&self.session.types, &self.session.names, id)),
+            None => Option<String>.None,
+        };
+
+        if symbol_info.is_none() && member_info.is_none() && expression_type.is_none() {
+            return Option<EditorHoverInfo>.None;
+        }
+
+        Option<EditorHoverInfo>.Some(EditorHoverInfo(symbol_info, member_info, expression_type))
+    }
+
+    pub fn declaration_at(source: SourceId, row: u64, column: u64) -> Option<SymbolId> {
+        match self.session.editor_facts.declaration_at(source, row, column) {
+            Some(symbol) => return Option<SymbolId>.Some(symbol),
+            None => {},
+        }
+        match self.resolved_name_at(source, row, column) {
+            Some(reference) => return Option<SymbolId>.Some(reference.symbol),
+            None => {},
+        }
+        Option<SymbolId>.None
+    }
+
+    // The returned identity is valid only for this snapshot's lifetime.
+    pub fn symbol_at(source: SourceId, row: u64, column: u64) -> Option<SymbolId> {
+        self.declaration_at(source, row, column)
+    }
+
+    // Scope lookup also works in whitespace, where no resolved-name fact exists.
+    pub fn scope_at(source: SourceId, row: u64, column: u64) -> Option<ScopeId> {
+        self.session.editor_facts.scope_at(source, row, column)
+    }
+
+    // Candidate bindings are filtered at the cursor so later local declarations do not leak backward.
+    pub fn visible_symbols_at(source: SourceId, row: u64, column: u64)
+    -> Result<Vec<SymbolId>, AnalysisError> {
+        let scope = match self.scope_at(source, row, column) {
+            Some(value) => value,
+            None => return Result<Vec<SymbolId>, AnalysisError>.Ok(Vec<SymbolId>.new()),
+        };
+        self.session.symbols.visible_symbols_at(scope, source, row, column)
+    }
+
+    // The copied path and span are independent from session-owned source records.
+    pub fn definition_at(source: SourceId, row: u64, column: u64) -> Option<EditorLocation> {
+        match self.resolved_member_at(source, row, column) {
+            Some(member) => {
+                let location = match self.session.editor_facts.member_declaration(member.declaration) {
+                    Some(value) => value,
+                    None => member.declaration,
+                };
+                return owned_location(&self.session, location);
+            },
+            None => {},
+        }
+
+        let symbol_id = match self.symbol_at(source, row, column) {
+            Some(value) => value,
+            None => return Option<EditorLocation>.None,
+        };
+        match self.session.symbols.get(symbol_id) {
+            Some(symbol) => match &symbol.span {
+                Some(location) => owned_location(&self.session, *location),
+                None => Option<EditorLocation>.None,
+            },
+            None => Option<EditorLocation>.None,
+        }
+    }
+
+    // Rename preparation shares the same completeness and standard-library safety rules as edits.
+    pub fn prepare_rename(source: SourceId, row: u64, column: u64) -> EditorPrepareRenameResult {
+        if !self.semantic_complete() {
+            return EditorPrepareRenameResult(
+                Option<EditorLocation>.None,
+                Option<String>.None,
+                Option<String>.Some(String.from(&"semantic analysis is incomplete; rename is unavailable")));
+        }
+
+        match self.resolved_member_at(source, row, column) {
+            Some(member) => return prepare_member_rename(self, member),
+            None => {},
+        }
+
+        let symbol_id = match self.symbol_at(source, row, column) {
+            Some(value) => value,
+            None => return EditorPrepareRenameResult(
+                Option<EditorLocation>.None, Option<String>.None,
+                Option<String>.Some(String.from(&"nothing to rename here"))),
+        };
+        let symbol = match self.session.symbols.get(symbol_id) {
+            Some(value) => value,
+            None => return EditorPrepareRenameResult(
+                Option<EditorLocation>.None, Option<String>.None,
+                Option<String>.Some(String.from(&"nothing to rename here"))),
+        };
+        let symbol_name = self.session.names.text(symbol.name);
+
+        match self.session.unit(symbol.unit) {
+            Some(unit) if unit.is_stdlib => {
+                let message = String.from(&"'");
+                message.push_str(symbol_name);
+                message.push_str("' is declared in the standard library");
+                return EditorPrepareRenameResult(
+                    Option<EditorLocation>.None, Option<String>.None, Option<String>.Some(message));
+            },
+            _ => {},
+        }
+
+        match unchecked_name_use(self, symbol_name) {
+            Some(location) => {
+                let message = String.from(&"a definition the analysis did not check uses '");
+                defer message.drop();
+                message.push_str(symbol_name);
+                message.push_str("' (");
+                message.push_str(location.path.as_str());
+                message.push(':');
+                let line = (location.span.start.row + 1u64).to_string_radix(10);
+                defer line.drop();
+                message.push_str(line.as_str());
+                message.push_str("); rename it there first");
+                location.drop();
+                return EditorPrepareRenameResult(
+                    Option<EditorLocation>.None, Option<String>.None,
+                    Option<String>.Some(String.from(&message.as_str())));
+            },
+            None => {},
+        }
+
+        let location = match &symbol.span {
+            Some(span) => match owned_location(&self.session, *span) {
+                Some(value) => value,
+                None => return EditorPrepareRenameResult(
+                    Option<EditorLocation>.None, Option<String>.None,
+                    Option<String>.Some(String.from(&"rename target has no source location"))),
+            },
+            None => return EditorPrepareRenameResult(
+                Option<EditorLocation>.None, Option<String>.None,
+                Option<String>.Some(String.from(&"rename target has no source location"))),
+        };
+
+        EditorPrepareRenameResult(
+            Option<EditorLocation>.Some(location),
+            Option<String>.Some(String.from(&symbol_name)),
+            Option<String>.None)
+    }
+
+    // Renames are refused unless the snapshot has a complete semantic result and all
+    // unchecked procedure bodies have been scanned for same-spelled generic uses.
+    pub fn rename_at(source: SourceId, row: u64, column: u64, new_name: str) -> EditorRenameResult {
+        if !valid_identifier(new_name) {
+            let message = String.from(&"'");
+            message.push_str(new_name);
+            message.push_str("' is not a valid identifier");
+            let result = EditorRenameResult(Vec<EditorTextEdit>.new(), Option<String>.Some(message));
+            return result;
+        }
+
+        if !self.semantic_complete() {
+            return refuse_rename("semantic analysis is incomplete; rename is unavailable");
+        }
+
+        match self.resolved_member_at(source, row, column) {
+            Some(member) => return rename_member(self, member, new_name),
+            None => {},
+        }
+
+        let symbol_id = match self.symbol_at(source, row, column) {
+            Some(value) => value,
+            None => return refuse_rename("nothing to rename here"),
+        };
+        let symbol = match self.session.symbols.get(symbol_id) {
+            Some(value) => value,
+            None => return refuse_rename("nothing to rename here"),
+        };
+        let symbol_name = self.session.names.text(symbol.name);
+
+        match self.session.unit(symbol.unit) {
+            Some(unit) if unit.is_stdlib => {
+                let message = String.from(&"'");
+                message.push_str(symbol_name);
+                message.push_str("' is declared in the standard library");
+                return EditorRenameResult(Vec<EditorTextEdit>.new(), Option<String>.Some(message));
+            },
+            _ => {},
+        }
+
+        match unchecked_name_use(self, symbol_name) {
+            Some(location) => {
+                let message = String.from(&"a definition the analysis did not check uses '");
+                defer message.drop();
+                message.push_str(symbol_name);
+                message.push_str("' (");
+                message.push_str(location.path.as_str());
+                message.push(':');
+                let line = (location.span.start.row + 1u64).to_string_radix(10);
+                defer line.drop();
+                message.push_str(line.as_str());
+                message.push_str("); rename it there first");
+                location.drop();
+                return refuse_rename(message.as_str());
+            },
+            None => {},
+        }
+
+        let edits = Vec<EditorTextEdit>.new();
+        let transferred = false;
+        defer { if !transferred { edits.drop(); } };
+
+        let references = self.session.editor_facts.references(symbol_id);
+        for reference in references {
+            match owned_location(&self.session, *reference) {
+                Some(location) => append_edit(&edits, location, new_name),
+                None => {},
+            }
+        }
+        references.drop();
+
+        match &symbol.span {
+            Some(location) => match owned_location(&self.session, *location) {
+                Some(value) => append_edit(&edits, value, new_name),
+                None => {},
+            },
+            None => {},
+        }
+
+        if edits.len() == 0u64 {
+            return refuse_rename("nothing to rename for this symbol");
+        }
+
+        sort_by(edits.as_slice(), editor_edit_less);
+        transferred = true;
+        EditorRenameResult(edits, Option<String>.None)
+    }
+
+    // Callers must check semantic_complete before treating this partial index as exhaustive.
+    pub fn occurrences(symbol_id: SymbolId, include_declaration: bool) -> Vec<EditorLocation> {
+        let result = Vec<EditorLocation>.new();
+        let references = self.session.editor_facts.references(symbol_id);
+        for reference in references {
+            match owned_location(&self.session, *reference) {
+                Some(location) => result.push(location),
+                None => {},
+            }
+        }
+        references.drop();
+
+        if include_declaration {
+            match self.session.symbols.get(symbol_id) {
+                Some(symbol) => match &symbol.span {
+                    Some(location) => match owned_location(&self.session, *location) {
+                        Some(value) => result.push(value),
+                        None => {},
+                    },
+                    None => {},
+                },
+                None => {},
+            }
+        }
+        sort_by(result.as_slice(), editor_location_less);
+        result
+    }
+
+    // Member references follow their declaration source span rather than a symbol ID.
+    pub fn member_occurrences_at(source: SourceId, row: u64, column: u64,
+        include_declaration: bool) -> Vec<EditorLocation> {
+        let result = Vec<EditorLocation>.new();
+        match self.resolved_member_at(source, row, column) {
+            Some(member) => {
+                let locations = self.session.editor_facts.member_occurrences(member.declaration, include_declaration);
+                for location in locations {
+                    match owned_location(&self.session, *location) {
+                        Some(value) => result.push(value),
+                        None => {},
+                    }
+                }
+                locations.drop();
+            },
+            None => {},
+        }
+        sort_by(result.as_slice(), editor_location_less);
+        result
+    }
+
+    // Highlights reuse symbol identity and retain only occurrences in the requested file.
+    pub fn highlights(source: SourceId, symbol_id: SymbolId) -> Vec<EditorLocation> {
+        let all = self.occurrences(symbol_id, true);
+        let result = Vec<EditorLocation>.new();
+        for location in all {
+            match self.session.source_manager().get(source.index) {
+                Some(file) if file.path() == location.path.as_str() => result.push(EditorLocation(
+                    path=String.from(&location.path.as_str()), span=location.span)),
+                _ => {},
+            }
+            location.drop();
+        }
+        all.drop();
+        sort_by(result.as_slice(), editor_location_less);
+        result
+    }
+
+    // This flat declaration list is protocol-neutral; callers may recover nesting from type definitions.
+    pub fn declared_symbols(source: SourceId) -> Vec<SymbolId> {
+        let result = Vec<SymbolId>.new();
+        let index = 0u64;
+        while index < self.session.symbols.symbol_count() {
+            let symbol = self.session.symbols.symbol_at(index).unwrap();
+            match &symbol.span {
+                Some(location) if location.source == source => match symbol.kind {
+                    Function | Type | Alias | Constant | Module => result.push(SymbolId(index)),
+                    _ => {},
+                },
+                _ => {},
+            }
+            index += 1;
+        }
+        result
+    }
+
+    // Declaration facts retain container labels for a later protocol adapter to nest.
+    pub fn document_symbols(source: SourceId) -> Result<Vec<EditorDocumentSymbol>, AnalysisError> {
+        let result = Vec<EditorDocumentSymbol>.new();
+        let completed = false;
+        defer {
+            if !completed {
+                drop_document_symbol_values(&result);
+                result.drop();
+            }
+        };
+
+        let unit = match editor_unit_for_source(&self.session, source) {
+            Some(value) => value,
+            None => {
+                completed = true;
+                return Result<Vec<EditorDocumentSymbol>, AnalysisError>.Ok(result);
+            },
+        };
+        let tree = match &unit.prepared.tree {
+            Some(value) => value,
+            None => {
+                completed = true;
+                return Result<Vec<EditorDocumentSymbol>, AnalysisError>.Ok(result);
+            },
+        };
+        let include_members = self.semantic_complete();
+
+        for item in tree.root.data.items {
+            match &item.data {
+                FuncDef(_, name, _, _, _, _) => append_document_symbol(
+                    &result,
+                    &self.session,
+                    source,
+                    name.data.name.as_str(),
+                    EditorDocumentSymbolKind.Function,
+                    name.span,
+                    document_symbol_detail(&self.session, unit, name.data.name.as_str(), SymbolKind.Function),
+                    Option<String>.None,
+                ),
+                Alias(_, name, _, _) => append_document_symbol(
+                    &result,
+                    &self.session,
+                    source,
+                    name.data.name.as_str(),
+                    EditorDocumentSymbolKind.Alias,
+                    name.span,
+                    document_symbol_detail(&self.session, unit, name.data.name.as_str(), SymbolKind.Alias),
+                    Option<String>.None,
+                ),
+                StructDef(_, name, _, _) => {
+                    let text = name.data.name.as_str();
+                    append_document_symbol(
+                        &result,
+                        &self.session,
+                        source,
+                        text,
+                        EditorDocumentSymbolKind.Struct,
+                        name.span,
+                        document_symbol_detail(&self.session, unit, text, SymbolKind.Type),
+                        Option<String>.None,
+                    );
+                    if include_members {
+                        match document_symbol_for_name(&self.session, unit, text, SymbolKind.Type) {
+                            Some(symbol_id) => match self.session.symbols.get(symbol_id) {
+                                Some(symbol) => {
+                                    append_struct_document_symbols(
+                                        &result, &self.session, source, symbol.type_id, text)?;
+                                },
+                                None => {},
+                            },
+                            None => {},
+                        }
+                    }
+                },
+                EnumDef(_, name, _, _) => {
+                    let text = name.data.name.as_str();
+                    append_document_symbol(
+                        &result,
+                        &self.session,
+                        source,
+                        text,
+                        EditorDocumentSymbolKind.Enum,
+                        name.span,
+                        document_symbol_detail(&self.session, unit, text, SymbolKind.Type),
+                        Option<String>.None,
+                    );
+                    if include_members {
+                        match document_symbol_for_name(&self.session, unit, text, SymbolKind.Type) {
+                            Some(symbol_id) => match self.session.symbols.get(symbol_id) {
+                                Some(symbol) => {
+                                    append_enum_document_symbols(
+                                        &result, &self.session, source, symbol.type_id, text)?;
+                                },
+                                None => {},
+                            },
+                            None => {},
+                        }
+                    }
+                },
+                TraitDef(_, name, _, members) => {
+                    let text = name.data.name.as_str();
+                    append_document_symbol(
+                        &result,
+                        &self.session,
+                        source,
+                        text,
+                        EditorDocumentSymbolKind.Trait,
+                        name.span,
+                        document_symbol_detail(&self.session, unit, text, SymbolKind.Type),
+                        Option<String>.None,
+                    );
+                    for member in members {
+                        match member {
+                            Declaration(method) => append_method_document_symbol(
+                                &result, &self.session, source, *method, text),
+                            Definition(method) => append_method_document_symbol(
+                                &result, &self.session, source, (*method).data.decl, text),
+                        }
+                    }
+                },
+                Impl(_, target, _, methods, _) => {
+                    let container = type_syntax_base_name(*target);
+                    for method in methods {
+                        append_method_document_symbol(
+                            &result, &self.session, source, (*method).data.decl, container);
+                    }
+                },
+                _ => {},
+            }
+        }
+
+        completed = true;
+        Result<Vec<EditorDocumentSymbol>, AnalysisError>.Ok(result)
+    }
+
+    // Import failures are paired with source edits before the snapshot is released.
+    pub fn import_quick_fixes(source: SourceId) -> Vec<EditorImportQuickFix> {
+        let result = Vec<EditorImportQuickFix>.new();
+        let unit = match editor_unit_for_source(&self.session, source) {
+            Some(value) => value,
+            None => return result,
+        };
+        let tree = match &unit.prepared.tree {
+            Some(value) => value,
+            None => return result,
+        };
+
+        let diagnostic_index = 0u64;
+        while diagnostic_index < self.diagnostic_count() {
+            let diagnostic = match self.diagnostic(diagnostic_index) {
+                Some(value) => value,
+                None => return result,
+            };
+            diagnostic_index += 1u64;
+
+            let diagnostic_span = match &diagnostic.location {
+                Some(Source(location)) if location.source == source => location.span,
+                _ => continue,
+            };
+            let code = diagnostic.code.text();
+            if !is_import_failure_code(code) {
+                continue;
+            }
+
+            for item in tree.root.data.items {
+                let statement = match import_statement_span(*item) {
+                    Some(value) if editor_span_contains(value, diagnostic_span) => value,
+                    _ => continue,
+                };
+                let edit_span = match import_removal_span(
+                    &unit.prepared.tokens, statement, diagnostic_span) {
+                    Some(value) => value,
+                    None => continue,
+                };
+                let diagnostic_source_span = SourceSpan(source, diagnostic_span);
+                let edit_source_span = SourceSpan(source, edit_span);
+
+                match owned_location(&self.session, diagnostic_source_span) {
+                    Some(diagnostic_location) => match owned_location(&self.session, edit_source_span) {
+                        Some(edit_location) => {
+                            let title = String.from(&"Remove this import: ");
+                            title.push_str(diagnostic.message.as_str());
+                            result.push(EditorImportQuickFix(
+                                title,
+                                String.from(&code),
+                                String.from(&diagnostic.message.as_str()),
+                                diagnostic_location,
+                                edit_location,
+                                ));
+                        },
+                        None => diagnostic_location.drop(),
+                    },
+                    None => {},
+                }
+                break;
+            }
+        }
+
+        result
+    }
+
+    pub fn references_with_declaration(symbol: SymbolId) -> Vec<SourceSpan> {
+        let result = self.references_to(symbol);
+        match &self.session.symbols.get(symbol).unwrap().span {
+            Some(location) => result.push(*location),
+            None => {},
+        }
+        result
+    }
+
+    pub fn reference_count() -> u64 { self.session.editor_facts.len() }
+
+    pub fn report() -> Option<AnalysisReport&> {
+        match &self.report {
+            Some(report) => Option<AnalysisReport&>.Some(report),
+            None => Option<AnalysisReport&>.None,
+        }
+    }
+
+    pub fn diagnostic_count() -> u64 {
+        let count = self.session.diagnostics.len();
+        match &self.report {
+            Some(report) => count + report.diagnostics.len(),
+            None => count,
+        }
+    }
+
+    pub fn diagnostic(index: u64) -> Option<Diagnostic&> {
+        let preparation_count = self.session.diagnostics.len();
+        if index < preparation_count {
+            return self.session.diagnostics.get(index);
+        }
+        match &self.report {
+            Some(report) => report.diagnostics.get(index - preparation_count),
+            None => Option<Diagnostic&>.None,
+        }
+    }
+
+    pub fn semantic_complete() -> bool {
+        match &self.report {
+            Some(report) => report.output.is_some(),
+            None => false,
+        }
+    }
+}
+
+impl Drop for EditorSnapshot {
+    pub fn drop() {
+        match &self.report { Some(report) => report.drop(), None => {}, }
+        self.versions.drop();
+        self.session.drop();
+        self.configuration_identity.drop();
+    }
+}
+
+pub struct EditorEngine {
+    marker: bool,
+}
+
+fn copy_versions(documents: Vec<SourceDocument>&) -> Vec<Option<i64>> {
+    let versions = Vec<Option<i64>>.new();
+    for document in *documents {
+        versions.push(document.version);
+    }
+    versions
+}
+
+fn owned_location(session: AnalysisSession&, location: SourceSpan) -> Option<EditorLocation> {
+    match session.source(location.source) {
+        Some(source) => Option<EditorLocation>.Some(EditorLocation(
+            path=String.from(&source.path()), span=location.span)),
+        None => Option<EditorLocation>.None,
+    }
+}
+
+fn source_is_stdlib(session: AnalysisSession&, source: SourceId) -> bool {
+    let index = 0u64;
+    while index < session.len() {
+        match session.unit(UnitId(index)) {
+            Some(unit) if unit.source == source => return unit.is_stdlib,
+            _ => {},
+        }
+        index += 1u64;
+    }
+    false
+}
+
+fn index_declarations(session: AnalysisSession&) {
+    let index = 0u64;
+    while index < session.symbols.symbol_count() {
+        let symbol_id = SymbolId(index);
+        let symbol = session.symbols.symbol_at(index).unwrap();
+        match &symbol.span {
+            Some(location) => session.editor_facts.record_declaration(symbol_id, *location),
+            None => {},
+        }
+        index += 1u64;
+    }
+}
+
+// The layout provider borrows the backend session only during this synchronous analysis.
+fn analyze_full(session: AnalysisSession&, raw_pointers: bool, options: AnalysisOptions)
+-> Result<AnalysisReport, EditorFailure> {
+    let backend = match BackendSession.new(session, BackendOptions(raw_pointers, 0u8)) {
+        Ok(value) => value,
+        Err(error) => return Result<AnalysisReport, EditorFailure>.Err(EditorFailure.Backend(error)),
+    };
+    defer backend.drop();
+
+    options.recover = true;
+    options.sizes = Option<TypeSizeProvider&>.Some(backend.size_provider());
+    match session.analyze_report(options) {
+        Ok(report) => Result<AnalysisReport, EditorFailure>.Ok(report),
+        Err(error) => {
+            if error.kind == AnalysisErrorKind.Internal {
+                return Result<AnalysisReport, EditorFailure>.Err(EditorFailure.Analysis(error));
+            }
+            let report = AnalysisReport.new();
+            report.failed_stage = error.diagnostic.stage;
+            report.diagnostics.push(error.diagnostic);
+            Result<AnalysisReport, EditorFailure>.Ok(report)
+        },
+    }
+}
+
+impl EditorEngine {
+    // Each call builds a new session, so partially mutated syntax and semantic state is never reused.
+    static pub fn analyze(inputs: FrozenInputs&, options: EditorOptions)
+    -> Result<EditorSnapshot, EditorFailure> {
+        let raw_pointers = options.raw_pointers;
+        let mode = options.mode;
+        let allow_ffi = options.allow_ffi;
+        let trust = options.trust;
+        let packages = options.packages;
+        let analysis_options = options.analysis;
+        let versions = copy_versions(&inputs.documents);
+        let versions_transferred = false;
+        defer { if !versions_transferred { versions.drop(); } };
+        let session = match AnalysisSession.prepare_documents_editor(&inputs.documents, trust, packages,
+            raw_pointers, allow_ffi) {
+            Ok(value) => value,
+            Err(error) => return Result<EditorSnapshot, EditorFailure>.Err(EditorFailure.Analysis(error)),
+        };
+        let transferred = false;
+        defer { if !transferred { session.drop(); } };
+
+        let report = Option<AnalysisReport>.None;
+        if mode == EditorMode.Full && !session.diagnostics.has_errors() {
+            report = match analyze_full(&session, raw_pointers, analysis_options) {
+                Ok(value) => Option<AnalysisReport>.Some(value),
+                Err(error) => return Result<EditorSnapshot, EditorFailure>.Err(error),
+            };
+        }
+
+        index_declarations(&session);
+
+        let snapshot = EditorSnapshot(
+            session=session,
+            report=report,
+            versions=versions,
+            configuration_identity=String.from(&inputs.configuration_identity.as_str()),
+            mode=mode,
+            revision=inputs.revision,
+            topology_revision=inputs.topology_revision,
+        );
+        transferred = true;
+        versions_transferred = true;
+        Result<EditorSnapshot, EditorFailure>.Ok(snapshot)
+    }
+}
+
+impl Drop for FrozenInputs {
+    pub fn drop() {
+        for document in self.documents { document.drop(); }
+        self.documents.drop();
+        self.configuration_identity.drop();
+    }
+}

@@ -193,6 +193,12 @@ impl ExprChecker {
     pub fn block(block: Block&) -> Result<HirId, AnalysisError> {
         let previous = self.scope;
         self.scope = self.ctx.session.symbols.create_scope(Option<ScopeId>.Some(previous))?;
+        let scope_span = block.span;
+        match block.data.end {
+            Some(end) => { scope_span.end = end; },
+            None => {},
+        }
+        self.ctx.session.editor_facts.record_scope(self.ctx.span(self.unit, scope_span), self.scope);
         defer self.scope = previous;
         let statements = Vec<HirId>.new();
         let accepted = false;

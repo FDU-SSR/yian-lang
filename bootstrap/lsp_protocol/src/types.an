@@ -1,0 +1,438 @@
+from std.core.string import String;
+from std.core.vec import Vec;
+from std.core.option import Option;
+from std.core.drop import Drop;
+from json.value import Value, Number, Object;
+
+pub struct Position { pub line: u64, pub character: u64 }
+pub struct Range { pub start: Position, pub end: Position }
+pub struct Location { pub uri: String, pub range: Range }
+pub struct TextEdit { pub range: Range, pub new_text: String }
+pub struct TextDocumentIdentifier { pub uri: String }
+pub struct VersionedDocumentIdentifier { pub uri: String, pub version: i64 }
+pub struct TextDocumentItem { pub uri: String, pub language_id: String, pub version: i64, pub text: String }
+pub struct TextDocumentPositionParams { pub text_document: TextDocumentIdentifier, pub position: Position }
+pub struct ContentChangeEvent { pub text: String }
+pub struct ReferenceContext { pub include_declaration: bool }
+pub struct ReferenceParams {
+    pub text_document: TextDocumentIdentifier,
+    pub position: Position,
+    pub context: ReferenceContext,
+}
+pub struct RenameParams {
+    pub text_document: TextDocumentIdentifier,
+    pub position: Position,
+    pub new_name: String,
+}
+pub struct FormattingOptions { pub tab_size: u64, pub insert_spaces: bool }
+pub struct DocumentFormattingParams {
+    pub text_document: TextDocumentIdentifier,
+    pub options: FormattingOptions,
+}
+pub struct CompletionContext {
+    pub trigger_kind: u64,
+    pub trigger_character: Option<String>,
+}
+pub struct CompletionParams {
+    pub text_document: TextDocumentIdentifier,
+    pub position: Position,
+    pub context: Option<CompletionContext>,
+}
+pub struct SignatureHelpContext {
+    pub trigger_kind: u64,
+    pub trigger_character: Option<String>,
+    pub is_retrigger: bool,
+    pub active_signature_help: Option<Value>,
+}
+pub struct SignatureHelpParams {
+    pub text_document: TextDocumentIdentifier,
+    pub position: Position,
+    pub context: SignatureHelpContext,
+}
+
+pub fn decode_bool_field(object: Object&, key: str) -> Option<bool> {
+    match object.get(key) {
+        Some(value) => match value {
+            Boolean(flag) => Option<bool>.Some(*flag),
+            _ => Option<bool>.None,
+        },
+        None => Option<bool>.None,
+    }
+}
+
+fn string_field(object: Object&, key: str) -> Option<String> {
+    match object.get(key) {
+        Some(value) => match value.as_string() {
+            Some(text) => Option<String>.Some(String.from(&text)),
+            None => Option<String>.None,
+        },
+        None => Option<String>.None,
+    }
+}
+
+fn signed_field(object: Object&, key: str) -> Option<i64> {
+    match object.get(key) {
+        Some(value) => match value {
+            Number(number) => match number {
+                Signed(number) => Option<i64>.Some(*number),
+                Unsigned(number) if *number <= 9223372036854775807u64 => Option<i64>.Some(i64(*number)),
+                _ => Option<i64>.None,
+            },
+            _ => Option<i64>.None,
+        },
+        None => Option<i64>.None,
+    }
+}
+
+fn unsigned_field(object: Object&, key: str) -> Option<u64> {
+    match object.get(key) {
+        Some(value) => match value {
+            Number(number) => match number {
+                Unsigned(number) => Option<u64>.Some(*number),
+                Signed(number) if *number >= 0i64 => Option<u64>.Some(u64(*number)),
+                _ => Option<u64>.None,
+            },
+            _ => Option<u64>.None,
+        },
+        None => Option<u64>.None,
+    }
+}
+
+impl Position {
+    static pub fn from_json(value: Value&) -> Option<Self> {
+        let object = match value.as_object() { Some(object) => object, None => return Option<Self>.None };
+        let line = match unsigned_field(object, "line") { Some(value) => value, None => return Option<Self>.None };
+        let character = match unsigned_field(object, "character") { Some(value) => value, None => return Option<Self>.None };
+        Option<Self>.Some(Self(line=line, character=character))
+    }
+
+    pub fn to_json() -> Value {
+        let object = Object.new();
+        let _ = object.insert("line", Value.Number(Number.Unsigned(self.line)));
+        let _ = object.insert("character", Value.Number(Number.Unsigned(self.character)));
+        Value.Object(object)
+    }
+}
+
+impl Range {
+    static pub fn from_json(value: Value&) -> Option<Self> {
+        let object = match value.as_object() { Some(object) => object, None => return Option<Self>.None };
+        let start_value = match object.get("start") { Some(value) => value, None => return Option<Self>.None };
+        let end_value = match object.get("end") { Some(value) => value, None => return Option<Self>.None };
+        let start = match Position.from_json(start_value) { Some(value) => value, None => return Option<Self>.None };
+        let end = match Position.from_json(end_value) { Some(value) => value, None => return Option<Self>.None };
+        Option<Self>.Some(Self(start=start, end=end))
+    }
+
+    pub fn to_json() -> Value {
+        let object = Object.new();
+        let start = self.start.to_json();
+        let end = self.end.to_json();
+        let _ = object.insert("start", start);
+        let _ = object.insert("end", end);
+        Value.Object(object)
+    }
+}
+
+impl Location {
+    pub fn to_json() -> Value {
+        let object = Object.new();
+        let _ = object.insert("uri", Value.String(self.uri.clone()));
+        let range = self.range.to_json();
+        let _ = object.insert("range", range);
+        Value.Object(object)
+    }
+}
+
+impl TextEdit {
+    pub fn to_json() -> Value {
+        let object = Object.new();
+        let range = self.range.to_json();
+        let _ = object.insert("range", range);
+        let _ = object.insert("newText", Value.String(self.new_text.clone()));
+        Value.Object(object)
+    }
+}
+
+pub fn decode_range(value: Value&) -> Option<Range> {
+    Range.from_json(value)
+}
+
+pub fn encode_range(range: Range&) -> Value {
+    range.to_json()
+}
+
+impl Location {
+    pub fn drop() { self.uri.drop(); }
+}
+
+impl TextEdit { pub fn drop() { self.new_text.drop(); } }
+impl TextDocumentIdentifier { pub fn drop() { self.uri.drop(); } }
+impl VersionedDocumentIdentifier { pub fn drop() { self.uri.drop(); } }
+impl TextDocumentItem {
+    pub fn drop() { self.uri.drop(); self.language_id.drop(); self.text.drop(); }
+}
+impl TextDocumentPositionParams {
+    pub fn drop() { self.text_document.drop(); }
+}
+
+impl ReferenceParams {
+    pub fn drop() { self.text_document.drop(); }
+}
+
+impl TextDocumentIdentifier {
+    static pub fn from_json(value: Value&) -> Option<Self> {
+        let object = match value.as_object() { Some(object) => object, None => return Option<Self>.None };
+        match string_field(object, "uri") {
+            Some(uri) => Option<Self>.Some(Self(uri=uri)),
+            None => Option<Self>.None,
+        }
+    }
+}
+
+impl VersionedDocumentIdentifier {
+    static pub fn from_json(value: Value&) -> Option<Self> {
+        let object = match value.as_object() { Some(object) => object, None => return Option<Self>.None };
+        let uri = match string_field(object, "uri") { Some(value) => value, None => return Option<Self>.None };
+        let version = match signed_field(object, "version") {
+            Some(value) => value,
+            None => { uri.drop(); return Option<Self>.None; },
+        };
+        Option<Self>.Some(Self(uri=uri, version=version))
+    }
+}
+
+impl TextDocumentItem {
+    static pub fn from_json(value: Value&) -> Option<Self> {
+        let object = match value.as_object() { Some(object) => object, None => return Option<Self>.None };
+        let uri = match string_field(object, "uri") { Some(value) => value, None => return Option<Self>.None };
+        let language_id = match string_field(object, "languageId") {
+            Some(value) => value,
+            None => { uri.drop(); return Option<Self>.None; },
+        };
+        let version = match signed_field(object, "version") {
+            Some(value) => value,
+            None => { uri.drop(); language_id.drop(); return Option<Self>.None; },
+        };
+        let text = match string_field(object, "text") {
+            Some(value) => value,
+            None => { uri.drop(); language_id.drop(); return Option<Self>.None; },
+        };
+        Option<Self>.Some(Self(uri=uri, language_id=language_id, version=version, text=text))
+    }
+}
+
+impl TextDocumentPositionParams {
+    static pub fn from_json(value: Value&) -> Option<Self> {
+        let object = match value.as_object() { Some(object) => object, None => return Option<Self>.None };
+        let document_value = match object.get("textDocument") { Some(value) => value, None => return Option<Self>.None };
+        let position_value = match object.get("position") { Some(value) => value, None => return Option<Self>.None };
+        let document = match TextDocumentIdentifier.from_json(document_value) {
+            Some(value) => value,
+            None => return Option<Self>.None,
+        };
+        let position = match Position.from_json(position_value) {
+            Some(value) => value,
+            None => { document.drop(); return Option<Self>.None; },
+        };
+        Option<Self>.Some(Self(text_document=document, position=position))
+    }
+}
+
+impl ContentChangeEvent {
+    static pub fn from_json(value: Value&) -> Option<Self> {
+        let object = match value.as_object() { Some(object) => object, None => return Option<Self>.None };
+        match string_field(object, "text") {
+            Some(text) => Option<Self>.Some(Self(text=text)),
+            None => Option<Self>.None,
+        }
+    }
+
+    pub fn drop() { self.text.drop(); }
+}
+
+impl ReferenceParams {
+    static pub fn from_json(value: Value&) -> Option<Self> {
+        let object = match value.as_object() { Some(object) => object, None => return Option<Self>.None };
+        let document_value = match object.get("textDocument") { Some(value) => value, None => return Option<Self>.None };
+        let position_value = match object.get("position") { Some(value) => value, None => return Option<Self>.None };
+        let context_value = match object.get("context") { Some(value) => value, None => return Option<Self>.None };
+        let document = match TextDocumentIdentifier.from_json(document_value) {
+            Some(value) => value,
+            None => return Option<Self>.None,
+        };
+        let position = match Position.from_json(position_value) {
+            Some(value) => value,
+            None => { document.drop(); return Option<Self>.None; },
+        };
+        let context_object = match context_value.as_object() {
+            Some(value) => value,
+            None => { document.drop(); return Option<Self>.None; },
+        };
+        let include_declaration = match decode_bool_field(context_object, "includeDeclaration") {
+            Some(value) => value,
+            None => { document.drop(); return Option<Self>.None; },
+        };
+        Option<Self>.Some(Self(
+            text_document=document,
+            position=position,
+            context=ReferenceContext(include_declaration=include_declaration)))
+    }
+}
+
+impl RenameParams {
+    static pub fn from_json(value: Value&) -> Option<Self> {
+        let object = match value.as_object() { Some(object) => object, None => return Option<Self>.None };
+        let document_value = match object.get("textDocument") { Some(value) => value, None => return Option<Self>.None };
+        let position_value = match object.get("position") { Some(value) => value, None => return Option<Self>.None };
+        let document = match TextDocumentIdentifier.from_json(document_value) {
+            Some(value) => value,
+            None => return Option<Self>.None,
+        };
+        let position = match Position.from_json(position_value) {
+            Some(value) => value,
+            None => { document.drop(); return Option<Self>.None; },
+        };
+        let new_name = match string_field(object, "newName") {
+            Some(value) => value,
+            None => { document.drop(); return Option<Self>.None; },
+        };
+        Option<Self>.Some(Self(text_document=document, position=position, new_name=new_name))
+    }
+
+    pub fn drop() {
+        self.text_document.drop();
+        self.new_name.drop();
+    }
+}
+
+impl FormattingOptions {
+    static pub fn from_json(value: Value&) -> Option<Self> {
+        let object = match value.as_object() { Some(object) => object, None => return Option<Self>.None };
+        let tab_size = match unsigned_field(object, "tabSize") { Some(value) => value, None => return Option<Self>.None };
+        let insert_spaces = match decode_bool_field(object, "insertSpaces") { Some(value) => value, None => return Option<Self>.None };
+        Option<Self>.Some(Self(tab_size=tab_size, insert_spaces=insert_spaces))
+    }
+}
+
+impl DocumentFormattingParams {
+    static pub fn from_json(value: Value&) -> Option<Self> {
+        let object = match value.as_object() { Some(object) => object, None => return Option<Self>.None };
+        let document_value = match object.get("textDocument") { Some(value) => value, None => return Option<Self>.None };
+        let options_value = match object.get("options") { Some(value) => value, None => return Option<Self>.None };
+        let document = match TextDocumentIdentifier.from_json(document_value) {
+            Some(value) => value,
+            None => return Option<Self>.None,
+        };
+        let options = match FormattingOptions.from_json(options_value) {
+            Some(value) => value,
+            None => { document.drop(); return Option<Self>.None; },
+        };
+        Option<Self>.Some(Self(text_document=document, options=options))
+    }
+
+    pub fn drop() { self.text_document.drop(); }
+}
+
+fn optional_trigger_character(object: Object&) -> Option<Option<String>> {
+    match object.get("triggerCharacter") {
+        None => Option<Option<String>>.Some(Option<String>.None),
+        Some(value) => match value {
+            String(text) => Option<Option<String>>.Some(Option<String>.Some(String.from(&text.as_str()))),
+            _ => Option<Option<String>>.None,
+        },
+    }
+}
+
+impl CompletionContext {
+    static pub fn from_json(value: Value&) -> Option<Self> {
+        let object = match value.as_object() { Some(object) => object, None => return Option<Self>.None };
+        let trigger_kind = match unsigned_field(object, "triggerKind") { Some(value) => value, None => return Option<Self>.None };
+        let trigger_character = match optional_trigger_character(object) { Some(value) => value, None => return Option<Self>.None };
+        Option<Self>.Some(Self(trigger_kind=trigger_kind, trigger_character=trigger_character))
+    }
+
+    pub fn drop() {
+        match &self.trigger_character { Some(value) => value.drop(), None => {}, }
+    }
+}
+
+impl CompletionParams {
+    static pub fn from_json(value: Value&) -> Option<Self> {
+        let base = match TextDocumentPositionParams.from_json(value) {
+            Some(value) => value,
+            None => return Option<Self>.None,
+        };
+        let object = match value.as_object() {
+            Some(value) => value,
+            None => { base.text_document.drop(); return Option<Self>.None; },
+        };
+        let context = match object.get("context") {
+            Some(context_value) => match CompletionContext.from_json(context_value) {
+                Some(context) => Option<CompletionContext>.Some(context),
+                None => { base.text_document.drop(); return Option<Self>.None; },
+            },
+            None => Option<CompletionContext>.None,
+        };
+        Option<Self>.Some(Self(
+            text_document=base.text_document,
+            position=base.position,
+            context=context))
+    }
+
+    pub fn drop() {
+        self.text_document.drop();
+        match &self.context { Some(value) => value.drop(), None => {}, }
+    }
+}
+
+impl SignatureHelpContext {
+    static pub fn from_json(value: Value&) -> Option<Self> {
+        let object = match value.as_object() { Some(object) => object, None => return Option<Self>.None };
+        let trigger_kind = match unsigned_field(object, "triggerKind") { Some(value) => value, None => return Option<Self>.None };
+        let trigger_character = match optional_trigger_character(object) { Some(value) => value, None => return Option<Self>.None };
+        let is_retrigger = match decode_bool_field(object, "isRetrigger") {
+            Some(value) => value, None => {
+                match &trigger_character { Some(text) => text.drop(), None => {}, }
+                return Option<Self>.None;
+            }
+        };
+        let active_signature_help = match object.get("activeSignatureHelp") {
+            Some(value) => Option<Value>.Some(value.clone()),
+            None => Option<Value>.None,
+        };
+        Option<Self>.Some(Self(trigger_kind, trigger_character, is_retrigger, active_signature_help))
+    }
+
+    pub fn drop() {
+        match &self.trigger_character { Some(value) => value.drop(), None => {}, }
+        match &self.active_signature_help { Some(value) => value.drop(), None => {}, }
+    }
+}
+
+impl SignatureHelpParams {
+    static pub fn from_json(value: Value&) -> Option<Self> {
+        let base = match TextDocumentPositionParams.from_json(value) {
+            Some(value) => value,
+            None => return Option<Self>.None,
+        };
+        let object = match value.as_object() {
+            Some(value) => value,
+            None => { base.text_document.drop(); return Option<Self>.None; },
+        };
+        let context_value = match object.get("context") {
+            Some(value) => value,
+            None => { base.text_document.drop(); return Option<Self>.None; },
+        };
+        let context = match SignatureHelpContext.from_json(context_value) {
+            Some(value) => value,
+            None => { base.text_document.drop(); return Option<Self>.None; },
+        };
+        Option<Self>.Some(Self(base.text_document, base.position, context))
+    }
+
+    pub fn drop() {
+        self.text_document.drop();
+        self.context.drop();
+    }
+}

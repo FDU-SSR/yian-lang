@@ -10,6 +10,8 @@ int64_t yian_io_error_message(int32_t error, uint8_t *buffer, uint64_t capacity)
 int64_t yian_io_open(const char *path, uint32_t options);
 int64_t yian_io_read(int32_t fd, uint8_t *buffer, uint64_t length);
 int64_t yian_io_write(int32_t fd, const uint8_t *buffer, uint64_t length);
+int32_t yian_io_nonblocking_begin(int32_t fd, int32_t *original_flags);
+int32_t yian_io_nonblocking_end(int32_t fd, int32_t original_flags);
 int32_t yian_io_close(int32_t fd);
 int64_t yian_io_seek(int32_t fd, int64_t offset, int32_t origin);
 int32_t yian_io_set_len(int32_t fd, uint64_t length);

@@ -1,9 +1,10 @@
-from compiler.common.ids import NameId, SymbolId, ScopeId;
+from compiler.common.ids import NameId, SymbolId, ScopeId, SourceId;
 from compiler.analysis.symbol.model import Symbol, SymbolKind;
 from std.collections.hash_set import HashSet;
 from compiler.diagnostics.model import AnalysisError;
 from std.collections.arena import Arena;
 from std.collections.hash_map import HashMap;
+from std.collections.sort import sort_by;
 from std.core.clone import Clone;
 from std.core.drop import Drop;
 from std.core.iter import Iterator, IntoIterator;
@@ -11,6 +12,10 @@ from std.core.ops import Index;
 from std.core.option import Option;
 from std.core.result import Result;
 from std.core.vec import Vec;
+
+fn symbol_id_less(left: SymbolId&, right: SymbolId&) -> bool {
+    left.index < right.index
+}
 
 pub struct Scope {
     parent: Option<ScopeId>,
@@ -69,6 +74,10 @@ impl SymbolStore {
         self.symbols.get(id.index)
     }
 
+    pub fn symbol_count() -> u64 { self.symbols.len() }
+
+    pub fn symbol_at(index: u64) -> Option<Symbol&> { self.symbols.get(index) }
+
     fn add_scope(scope: Scope) -> ScopeId {
         let id = ScopeId(self.scopes.len());
         self.scopes.alloc(scope);
@@ -124,6 +133,53 @@ impl SymbolStore {
         }
 
         Option<SymbolId>.None
+    }
+
+    // Return only the innermost visible binding for each name at the cursor.
+    pub fn visible_symbols_at(scope: ScopeId, source: SourceId, row: u64, column: u64)
+    -> Result<Vec<SymbolId>, AnalysisError> {
+        let result = Vec<SymbolId>.new();
+        let names = HashSet<NameId>.new();
+        defer names.drop();
+        let current = Option<ScopeId>.Some(scope);
+        let visited_scopes = 0u64;
+
+        while current.is_some() {
+            let id = *current.unwrap();
+            if id.index >= self.scopes.len() || visited_scopes >= self.scopes.len() {
+                result.drop();
+                return Result<Vec<SymbolId>, AnalysisError>.Err(AnalysisError.internal("invalid scope chain"));
+            }
+            visited_scopes += 1u64;
+            let record = *self.scopes.get(id.index).unwrap();
+
+            for entry in record.names.entries() {
+                let symbol = match self.get(*entry[1]) {
+                    Some(value) => value,
+                    None => continue,
+                };
+                let declared = match symbol.kind {
+                    SymbolKind.Variable | SymbolKind.Parameter => match &symbol.span {
+                        Some(location) => location.source == source && (
+                            location.span.start.row < row ||
+                            (location.span.start.row == row && location.span.start.column <= column)),
+                        None => true,
+                    },
+                    _ => true,
+                };
+                if !declared || names.contains(entry[0]) {
+                    continue;
+                }
+
+                names.insert(*entry[0]);
+                result.push(*entry[1]);
+            }
+
+            current = record.parent;
+        }
+
+        sort_by(result.as_slice(), symbol_id_less);
+        Result<Vec<SymbolId>, AnalysisError>.Ok(result)
     }
 
     // A closure shares lexical type identities without granting access to uncaptured variables.

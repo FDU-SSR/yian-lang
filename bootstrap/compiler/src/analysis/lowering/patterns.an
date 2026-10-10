@@ -9,6 +9,7 @@ from compiler.analysis.hir.node import HirKind, Match as HirMatch, MatchArm, Pat
 from compiler.analysis.constant.evaluate import ConstantEvaluator;
 from compiler.analysis.constant.interval import Boundary, scalar_key;
 from compiler.common.ids import PatternId, TypeId, HirId, ScopeId, SymbolId, NameId, DefId;
+from compiler.analysis.editor_facts import EditorMemberKind;
 from compiler.common.location import SourceSpan;
 from compiler.frontend.ast.node import Pattern, PatternArguments, PatternLet as SyntaxPatternLet, Literal;
 from compiler.frontend.source import Span;
@@ -219,6 +220,12 @@ impl ExprChecker {
                             Enum(body) => {
                                 for variant in body.variants {
                                     if variant.name == interned {
+                                        match &variant.span {
+                                            Some(target) => self.ctx.session.editor_facts.record_member_reference(
+                                                EditorMemberKind.Variant, interned, self.ctx.span(self.unit, name.span),
+                                                *target, expected),
+                                            None => {},
+                                        };
                                         return Result<PatternId, AnalysisError>.Ok(self.pattern_node(span, expected, PatternKind.EnumPattern(EnumPattern(*variant, Option<Vec<(u64, PatternId)>>.None))));
                                     }
                                 }
@@ -326,6 +333,13 @@ impl ExprChecker {
                                 continue;
                             }
 
+                            match &variant.span {
+                                Some(target) => self.ctx.session.editor_facts.record_member_reference(
+                                    EditorMemberKind.Variant, interned, self.ctx.span(self.unit, name.span),
+                                    *target, expected),
+                                None => {},
+                            };
+
                             let types = Vec<TypeId>.new();
                             defer types.drop();
                             let descriptors = payload_fields(self.ctx, variant.payload)?;
@@ -373,6 +387,13 @@ impl ExprChecker {
                                                         return Result<PatternId, AnalysisError>.Err(self.error(value.span, "duplicate enum pattern field"));
                                                     }
                                                 }
+
+                                                match &field.span {
+                                                    Some(target) => self.ctx.session.editor_facts.record_member_reference(
+                                                        EditorMemberKind.Field, field.name,
+                                                        self.ctx.span(self.unit, value.data.name.span), *target, field.type_id),
+                                                    None => {},
+                                                };
 
                                                 fields.push((field.index, self.pattern(value.data.pattern, types[field.index], borrowed)?));
                                                 found = true;
@@ -429,6 +450,12 @@ impl ExprChecker {
 
                                             self.check_field_access(expected, *field, value.data.name.span)?;
                                             let type_id = substitute(&self.ctx.session.types, field.type_id, &substitutions)?;
+                                            match &field.span {
+                                                Some(target) => self.ctx.session.editor_facts.record_member_reference(
+                                                    EditorMemberKind.Field, field.name,
+                                                    self.ctx.span(self.unit, value.data.name.span), *target, type_id),
+                                                None => {},
+                                            };
                                             fields.push((field.index, self.pattern(value.data.pattern, type_id, borrowed)?));
                                             found = true;
                                         }

@@ -82,6 +82,21 @@ int64_t yian_io_write(int32_t fd, const uint8_t *b, uint64_t n) {
     return error ? -error : r;
 }
 
+/* The caller owns the guard and must restore the exact flags before releasing it. */
+int32_t yian_io_nonblocking_begin(int32_t fd, int32_t *original_flags) {
+    if (original_flags == NULL) return -EINVAL;
+    int flags = fcntl(fd, F_GETFL);
+    if (flags < 0) return -errno;
+    if (fcntl(fd, F_SETFL, flags | O_NONBLOCK) < 0) return -errno;
+    *original_flags = flags;
+    return 0;
+}
+
+int32_t yian_io_nonblocking_end(int32_t fd, int32_t original_flags) {
+    if (fcntl(fd, F_SETFL, original_flags) < 0) return -errno;
+    return 0;
+}
+
 int32_t yian_io_close(int32_t fd) {
     return close(fd) < 0 ? -errno : 0;
 }

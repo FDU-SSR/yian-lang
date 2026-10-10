@@ -1,0 +1,108 @@
+from std.core.string import String;
+from std.core.vec import Vec;
+from std.core.option import Option;
+from std.core.result import Result;
+from std.core.drop import Drop;
+from std.core.ops import Index;
+
+pub enum UriErrorKind { NotFileUri, RelativePath, InvalidEscape, InvalidUtf8, UnsupportedAuthority }
+pub struct UriError { pub kind: UriErrorKind }
+
+impl UriError {
+    static fn new(kind: UriErrorKind) -> Self { Self(kind=kind) }
+}
+
+fn unreserved(byte: u8) -> bool {
+    (byte >= 65u8 && byte <= 90u8) ||
+    (byte >= 97u8 && byte <= 122u8) ||
+    (byte >= 48u8 && byte <= 57u8) ||
+    byte == 45u8 || byte == 46u8 || byte == 95u8 || byte == 126u8
+}
+
+fn hex_digit(value: u8) -> char {
+    if value < 10u8 { char(48u8 + value) } else { char(55u8 + value) }
+}
+
+fn hex_value(value: u8) -> Option<u8> {
+    if value >= 48u8 && value <= 57u8 { Option<u8>.Some(value - 48u8) } elif value >= 65u8 && value <= 70u8 { Option<u8>.Some(value - 55u8) } elif value >= 97u8 && value <= 102u8 { Option<u8>.Some(value - 87u8) } else { Option<u8>.None }
+}
+
+// URI conversion is lexical only; path existence and normalization belong to fs.resolve.
+pub fn path_to_uri(path: str) -> Result<String, UriError> {
+    let bytes = path.as_slice();
+    if bytes.len() == 0u64 || bytes[0] != 47u8 {
+        return Result<String, UriError>.Err(UriError.new(UriErrorKind.RelativePath));
+    }
+
+    let output = String.new();
+    output.push_str("file://");
+    for byte in bytes {
+        if unreserved(*byte) || *byte == 47u8 { output.push(char(*byte)); } else {
+            output.push('%');
+            output.push(hex_digit(*byte >> 4u8));
+            output.push(hex_digit(*byte & 15u8));
+        }
+    }
+    Result<String, UriError>.Ok(output)
+}
+
+pub fn uri_to_path(uri: str) -> Result<String, UriError> {
+    if !uri.starts_with("file://") {
+        return Result<String, UriError>.Err(UriError.new(UriErrorKind.NotFileUri));
+    }
+
+    let bytes = uri.as_slice();
+    let start = 7u64;
+    let path_start = start;
+    if start >= bytes.len() {
+        return Result<String, UriError>.Err(UriError.new(UriErrorKind.NotFileUri));
+    }
+    if bytes[start] != 47u8 {
+        let slash = start;
+        while slash < bytes.len() && bytes[slash] != 47u8 { slash += 1u64; }
+        let authority = str.from_slice_unchecked(bytes[start..slash]);
+        if authority != "localhost" {
+            return Result<String, UriError>.Err(UriError.new(UriErrorKind.UnsupportedAuthority));
+        }
+        path_start = slash;
+    }
+    if path_start >= bytes.len() || bytes[path_start] != 47u8 {
+        return Result<String, UriError>.Err(UriError.new(UriErrorKind.NotFileUri));
+    }
+
+    let decoded = Vec<u8>.new();
+    let index = path_start;
+    while index < bytes.len() {
+        let byte = bytes[index];
+        if byte == 37u8 {
+            if index + 2u64 >= bytes.len() {
+                decoded.drop();
+                return Result<String, UriError>.Err(UriError.new(UriErrorKind.InvalidEscape));
+            }
+            let high = match hex_value(bytes[index + 1u64]) {
+                Some(value) => value,
+                None => { decoded.drop(); return Result<String, UriError>.Err(UriError.new(UriErrorKind.InvalidEscape)); },
+            };
+            let low = match hex_value(bytes[index + 2u64]) {
+                Some(value) => value,
+                None => { decoded.drop(); return Result<String, UriError>.Err(UriError.new(UriErrorKind.InvalidEscape)); },
+            };
+            decoded.push((high << 4u8) | low);
+            index += 3u64;
+        } else {
+            if byte == 63u8 || byte == 35u8 {
+                decoded.drop();
+                return Result<String, UriError>.Err(UriError.new(UriErrorKind.InvalidEscape));
+            }
+            decoded.push(byte);
+            index += 1u64;
+        }
+    }
+
+    let text = match str.from_slice(decoded.as_slice()) {
+        Some(text) => String.from(&text),
+        None => { decoded.drop(); return Result<String, UriError>.Err(UriError.new(UriErrorKind.InvalidUtf8)); },
+    };
+    decoded.drop();
+    Result<String, UriError>.Ok(text)
+}

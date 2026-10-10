@@ -1,0 +1,44 @@
+pub enum LspErrorCode {
+    ParseError,
+    InvalidRequest,
+    MethodNotFound,
+    InvalidParams,
+    InternalError,
+    ServerNotInitialized,
+    RequestCancelled,
+    ContentModified,
+    RequestFailed,
+    Unknown { value: i64 },
+}
+
+impl LspErrorCode {
+    pub fn value() -> i64 {
+        match self {
+            ParseError => -32700i64,
+            InvalidRequest => -32600i64,
+            MethodNotFound => -32601i64,
+            InvalidParams => -32602i64,
+            InternalError => -32603i64,
+            ServerNotInitialized => -32002i64,
+            RequestCancelled => -32800i64,
+            ContentModified => -32801i64,
+            RequestFailed => -32803i64,
+            Unknown(value) => *value,
+        }
+    }
+
+    static pub fn from_value(value: i64) -> Self {
+        match value {
+            -32700 => Self.ParseError,
+            -32600 => Self.InvalidRequest,
+            -32601 => Self.MethodNotFound,
+            -32602 => Self.InvalidParams,
+            -32603 => Self.InternalError,
+            -32002 => Self.ServerNotInitialized,
+            -32800 => Self.RequestCancelled,
+            -32801 => Self.ContentModified,
+            -32803 => Self.RequestFailed,
+            _ => Self.Unknown(value),
+        }
+    }
+}

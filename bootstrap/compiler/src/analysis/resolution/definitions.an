@@ -7,6 +7,7 @@ from compiler.analysis.ty.model import DefinitionBody, DefinitionHeader, Nominal
 from compiler.analysis.ty.validation import contains_ffi;
 from compiler.common.ids import TypeId, NameId, UnitId, ScopeId;
 from compiler.common.location import SourceSpan;
+from compiler.analysis.editor_facts import EditorMemberKind;
 from compiler.frontend.ast.node import Parameter as SyntaxParameter, GenericParam;
 from compiler.frontend.ast.atoms import AttrKind;
 from compiler.diagnostics.model import DiagnosticCode, AnalysisError;
@@ -169,6 +170,9 @@ pub fn resolve_definitions(ctx: ResolutionContext&) -> Result<(), AnalysisError>
                     }
 
                     values.push(StructField(name, type_id, access, values.len(), Option<SourceSpan>.Some(ctx.span(unit, field.span))));
+                    ctx.session.editor_facts.record_member_declaration(
+                        EditorMemberKind.Field, name, ctx.span(unit, field.data.name.span),
+                        ctx.span(unit, field.span), type_id);
                 }
 
                 accepted = true;
@@ -216,6 +220,9 @@ pub fn resolve_definitions(ctx: ResolutionContext&) -> Result<(), AnalysisError>
                         }
 
                         payloads.push(StructField(field_name, type_id, AccessMode.Public, payloads.len(), Option<SourceSpan>.Some(ctx.span(unit, field.span))));
+                        ctx.session.editor_facts.record_member_declaration(
+                            EditorMemberKind.Field, field_name, ctx.span(unit, field.data.name.span),
+                            ctx.span(unit, field.span), type_id);
                     }
 
                     let payload = Option<TypeId>.None;
@@ -238,6 +245,10 @@ pub fn resolve_definitions(ctx: ResolutionContext&) -> Result<(), AnalysisError>
                     }
 
                     values.push(EnumVariant(name, payload, values.len(), Option<SourceSpan>.Some(ctx.span(unit, variant.span))));
+                    let owner_type = ctx.session.symbols.get(declaration.symbol).unwrap().type_id;
+                    ctx.session.editor_facts.record_member_declaration(
+                        EditorMemberKind.Variant, name, ctx.span(unit, variant.data.name.span),
+                        ctx.span(unit, variant.span), owner_type);
                 }
 
                 accepted = true;

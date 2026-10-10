@@ -14,6 +14,8 @@ extern "C" {
     fn yian_io_open(path: cptr<c_char>, options: u32) -> i64;
     fn yian_io_read(fd: i32, buffer: cptr<u8>, length: u64) -> i64;
     fn yian_io_write(fd: i32, buffer: cptr<u8>, length: u64) -> i64;
+    fn yian_io_nonblocking_begin(fd: i32, original_flags: cptr<i32>) -> i32;
+    fn yian_io_nonblocking_end(fd: i32, original_flags: i32) -> i32;
     fn yian_io_close(fd: i32) -> i32;
     fn yian_io_seek(fd: i32, offset: i64, origin: i32) -> i64;
     fn yian_io_set_len(fd: i32, length: u64) -> i32;
@@ -230,12 +232,40 @@ impl Drop for File { pub fn drop() { match self.close() { Ok(_) => {}, Err(error
 pub struct Stdin {}
 pub struct Stdout {}
 pub struct Stderr {}
+// This guard borrows a process standard descriptor and restores its prior flags.
+pub struct NonblockingGuard { descriptor: i32, original_flags: i32, active: bool }
 impl Stdin { static pub fn new() -> Self { Self() } }
 impl Stdout { static pub fn new() -> Self { Self() } }
 impl Stderr { static pub fn new() -> Self { Self() } }
+impl Stdin { pub ffi fn nonblocking() -> Result<NonblockingGuard, IoError> { NonblockingGuard.begin(0i32) } }
+impl Stdout { pub ffi fn nonblocking() -> Result<NonblockingGuard, IoError> { NonblockingGuard.begin(1i32) } }
+impl Stderr { pub ffi fn nonblocking() -> Result<NonblockingGuard, IoError> { NonblockingGuard.begin(2i32) } }
 impl Drop for Stdin { pub fn drop() {} }
 impl Drop for Stdout { pub fn drop() {} }
 impl Drop for Stderr { pub fn drop() {} }
+impl NonblockingGuard {
+    static pub ffi fn begin(descriptor: i32) -> Result<Self, IoError> {
+        let original_flags = 0i32;
+        let status = yian_io_nonblocking_begin(descriptor, @ffi_addr(&original_flags));
+        if status < 0 { return Result<Self, IoError>.Err(IoError.from_os_error(-status, "set descriptor nonblocking")); }
+        Result<Self, IoError>.Ok(Self(descriptor=descriptor, original_flags=original_flags, active=true))
+    }
+
+    pub fn fd() -> i32 { self.descriptor }
+
+    pub ffi fn restore() -> Result<(), IoError> {
+        if !self.active { return Result<(), IoError>.Ok(()); }
+        let status = yian_io_nonblocking_end(self.descriptor, self.original_flags);
+        if status < 0 { return Result<(), IoError>.Err(IoError.from_os_error(-status, "restore descriptor flags")); }
+        self.active = false;
+        Result<(), IoError>.Ok(())
+    }
+}
+impl Drop for NonblockingGuard {
+    pub fn drop() {
+        match self.restore() { Ok(_) => {}, Err(error) => error.drop(), }
+    }
+}
 impl Read for Stdin { pub fn read(buffer: u8[]) -> Result<u64, IoError> { read_fd(0, buffer) } }
 impl Write for Stdout {
     pub fn write(data: u8[]) -> Result<u64, IoError> { write_fd(1, data) }

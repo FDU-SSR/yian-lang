@@ -482,6 +482,20 @@ def __variants(
                 module=module,
             )
         )
+        if variant.payload_type is not None:
+            declarations.extend(
+                Declaration(
+                    name=field.name,
+                    kind=DeclarationKind.FIELD,
+                    path=path,
+                    span=field.span,
+                    container=f"{container}.{variant.name}",
+                    type_name=type_ctx.get_name(field.type_id),
+                    module=module,
+                    public=True,
+                )
+                for field in type_ctx.get_struct_fields(variant.payload_type)
+            )
     return declarations
 
 

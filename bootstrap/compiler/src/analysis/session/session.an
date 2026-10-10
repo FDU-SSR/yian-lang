@@ -1,6 +1,7 @@
 from compiler.common.ids import SourceId, UnitId;
 from compiler.analysis.definition.registry import DefinitionRegistry;
 from compiler.analysis.definition.worklist import DefinitionWorklist;
+from compiler.analysis.editor_facts import EditorFacts;
 from compiler.analysis.hir.store import HirStore;
 from compiler.analysis.names import NameInterner;
 from compiler.analysis.symbol.scope import SymbolStore;
@@ -47,6 +48,7 @@ pub struct AnalysisSession {
     pub symbols: SymbolStore,
     pub hir: HirStore,
     pub definitions: DefinitionRegistry,
+    pub editor_facts: EditorFacts,
     pub worklist: DefinitionWorklist,
     pub impls: ImplRegistry,
     pub diagnostics: DiagnosticSink,
@@ -60,12 +62,12 @@ impl AnalysisSession {
     // Package metadata and source trust transfer into this owner at construction.
     static pub fn new(trust: SourceTrust, packages: Option<PackageMap>, raw_pointers: bool) -> Self {
         Self(SourceManager.new(), NameInterner.new(), Arena<CompilationUnit>.new(), TypeStore.new(),
-            SymbolStore.new(), HirStore.new(), DefinitionRegistry.new(), DefinitionWorklist.new(),
+            SymbolStore.new(), HirStore.new(), DefinitionRegistry.new(), EditorFacts.new(), DefinitionWorklist.new(),
             ImplRegistry.new(), DiagnosticSink.new(), packages, trust, raw_pointers, AnalysisPhase.Prepared)
     }
 
     // A lexed file transfers here; later preparation stages mutate the session-owned payload.
-    fn accept(prepared: PreparedFile, permissions: SourcePermissions) -> UnitId {
+    pub fn accept(prepared: PreparedFile, permissions: SourcePermissions) -> UnitId {
         let id = UnitId(self.units.len());
         self.units.alloc(CompilationUnit(id, prepared.source, prepared,
             permissions.is_stdlib, permissions.allows_restricted, permissions.allows_ffi));
@@ -105,6 +107,7 @@ impl Drop for AnalysisSession {
         self.diagnostics.drop();
         self.worklist.drop();
         self.definitions.drop();
+        self.editor_facts.drop();
         self.impls.drop();
         self.hir.drop();
         self.symbols.drop();

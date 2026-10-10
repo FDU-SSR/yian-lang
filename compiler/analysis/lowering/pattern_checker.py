@@ -225,6 +225,7 @@ class PatternChecker:
             if field is None:
                 raise AnalysisError(f"Unknown field '{entry.name.name}' in pattern", entry.span)
             self.__op_builder.check_field_visible(ty, field, entry.span)
+            self.__ctx.names.record(entry.name.span, field, field.type_id)
             checked.append((field.index, self.__check_pattern(entry.pattern, field.type_id, False, by_ref, bindings, seen, reuse)))
         if not rest and len(used) != len(all_fields):
             raise AnalysisError("Field pattern must list every field or end with '..'", span)

@@ -9,6 +9,7 @@ from compiler.analysis.ty.display import type_text;
 from compiler.analysis.ty.model import StructField, AccessMode, EnumVariant;
 from compiler.analysis.hir.node import HirKind, StructConstruct, VariantConstruct, FieldAccess, TupleAccess, Unary;
 from compiler.common.ids import TypeId, HirId, NameId, DefId;
+from compiler.analysis.editor_facts import EditorMemberKind;
 from compiler.frontend.ast.node import Argument;
 from compiler.frontend.ast.operator import UnaryOperator;
 from compiler.frontend.source import Span;
@@ -89,6 +90,15 @@ impl ExprChecker {
             let value = self.expression(args[index].data.value)?;
             let expected = substitute(&self.ctx.session.types, field.type_id, &substitutions)?;
 
+            match &args[index].data.name {
+                Some(name) => match &field.span {
+                    Some(target) => self.ctx.session.editor_facts.record_member_reference(
+                        EditorMemberKind.Field, field.name, self.ctx.span(self.unit, name.span), *target, expected),
+                    None => {},
+                },
+                None => {},
+            };
+
             if !has_literal(self.ctx, self.type_of(value)) && !self.match_argument(expected, default_type(self.ctx, self.type_of(value)), &substitutions) {
                 self.coerce(value, expected)?;
             }
@@ -143,7 +153,8 @@ impl ExprChecker {
         Result<HirId, AnalysisError>.Ok(self.node(span, instance, false, HirKind.StructConstruct(StructConstruct(instance, values))))
     }
 
-    pub fn variant(span: Span, type_id: TypeId, name: NameId, args: Vec<Argument&>&) -> Result<Option<HirId>, AnalysisError> {
+    pub fn variant(span: Span, name_span: Span, type_id: TypeId, name: NameId,
+        args: Vec<Argument&>&) -> Result<Option<HirId>, AnalysisError> {
         if args.len() != 0 {
             let named = args[0].data.name.is_some();
 
@@ -167,6 +178,12 @@ impl ExprChecker {
             if variant.name != name {
                 continue;
             }
+
+            match &variant.span {
+                Some(target) => self.ctx.session.editor_facts.record_member_reference(
+                    EditorMemberKind.Variant, name, self.ctx.span(self.unit, name_span), *target, type_id),
+                None => {},
+            };
 
             let substitutions = instance_substitutions(self.ctx, type_id)?;
             defer substitutions.drop();
@@ -216,6 +233,16 @@ impl ExprChecker {
                 }
 
                 let target = substitute(&self.ctx.session.types, expected[field].type_id, &substitutions)?;
+
+                match &args[index].data.name {
+                    Some(name) => match &expected[field].span {
+                        Some(location) => self.ctx.session.editor_facts.record_member_reference(
+                            EditorMemberKind.Field, expected[field].name, self.ctx.span(self.unit, name.span),
+                            *location, target),
+                        None => {},
+                    },
+                    None => {},
+                };
 
                 if !infer(&self.ctx.session.types, target, default_type(self.ctx, self.type_of(value)), &substitutions) {
                     self.coerce(value, target)?;
@@ -267,7 +294,7 @@ impl ExprChecker {
         Result<Option<HirId>, AnalysisError>.Ok(Option<HirId>.None)
     }
 
-    pub fn field(span: Span, receiver: HirId, name: str) -> Result<HirId, AnalysisError> {
+    pub fn field(span: Span, name_span: Span, receiver: HirId, name: str) -> Result<HirId, AnalysisError> {
         let value = receiver;
         let type_id = self.type_of(receiver);
 
@@ -302,6 +329,14 @@ impl ExprChecker {
                             if field.name == interned {
                                 self.check_field_access(type_id, *field, span)?;
                                 let field_type = substitute(&self.ctx.session.types, field.type_id, &substitutions)?;
+
+                                match &field.span {
+                                    Some(target) => self.ctx.session.editor_facts.record_member_reference(
+                                        EditorMemberKind.Field, field.name, self.ctx.span(self.unit, name_span),
+                                        *target, field_type),
+                                    None => {},
+                                };
+
                                 let copy = StructField(field.name, field_type, field.access, field.index, field.span);
                                 return Result<HirId, AnalysisError>.Ok(self.node(span, field_type, self.ctx.session.hir.require(value)?.is_place, HirKind.FieldAccess(FieldAccess(value, copy))));
                             }
@@ -321,7 +356,7 @@ impl ExprChecker {
                         let empty = Vec<Argument&>.new();
                         defer empty.drop();
 
-                        match self.variant(span, type_id, interned, &empty)? {
+                        match self.variant(span, name_span, type_id, interned, &empty)? {
                             Some(id) => return Result<HirId, AnalysisError>.Ok(id),
                             None => {},
                         }

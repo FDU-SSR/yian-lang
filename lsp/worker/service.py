@@ -6,6 +6,7 @@ import logging
 import copy
 import hashlib
 import json
+import os
 import time
 from collections import OrderedDict
 from pathlib import Path
@@ -101,6 +102,7 @@ class WorkerService:
         self.__syntax_cache_bytes = 0
         self.__query_cache: OrderedDict[str, tuple[JsonValue, int]] = OrderedDict()
         self.__query_cache_bytes = 0
+        self.__query_cache_enabled = os.environ.get("YIAN_LSP_DISABLE_QUERY_CACHE") != "1"
 
     def handle(
         self,
@@ -258,9 +260,16 @@ class WorkerService:
         analysis_elapsed_ms = (time.perf_counter() - analysis_started) * 1000
         queries = QueryContext(result)
         index_started = time.perf_counter()
+        snapshot_navigator = None
         if full and queries.index is not None:
             _ = queries.index.declarations
-        index_elapsed_ms = (time.perf_counter() - index_started) * 1000
+        declaration_index_elapsed_ms = (time.perf_counter() - index_started) * 1000
+        query_index_started = time.perf_counter()
+        if full and queries.index is not None:
+            snapshot_navigator = Navigator(queries, std_root=workspace.std_root)
+            snapshot_navigator.prepare_query_indexes()
+        query_index_elapsed_ms = (time.perf_counter() - query_index_started) * 1000
+        index_elapsed_ms = declaration_index_elapsed_ms + query_index_elapsed_ms
         versions = {document.path.resolve(): document.version for document in documents}
         snapshot = workspace.accept(
             workspace.revision,
@@ -270,8 +279,8 @@ class WorkerService:
         if snapshot is None:
             raise OperationFailure(-32801, "analysis result became stale")
         self.__snapshot_revision = revision
-        self.__navigator = None
-        self.__navigator_generation = -1
+        self.__navigator = snapshot_navigator
+        self.__navigator_generation = snapshot.generation if snapshot_navigator is not None else -1
         serialization_started = time.perf_counter()
         response = self.__analysis_result(snapshot, cached=False)
         serialization_elapsed_ms = (time.perf_counter() - serialization_started) * 1000
@@ -281,7 +290,9 @@ class WorkerService:
         timings.update({
             "input_freeze_ms": freeze_elapsed_ms,
             "analysis_total_ms": analysis_elapsed_ms,
-            "declaration_index_ms": index_elapsed_ms,
+            "analysis_index_ms": index_elapsed_ms,
+            "declaration_index_ms": declaration_index_elapsed_ms,
+            "query_index_ms": query_index_elapsed_ms,
             "diagnostic_serialization_ms": serialization_elapsed_ms,
         })
         response["analysis_elapsed_ms"] = analysis_elapsed_ms
@@ -342,20 +353,21 @@ class WorkerService:
         raw_params = require_object(payload.get("params"), field="params")
         snapshot = self.__current_snapshot(revision)
         key = f"{self.__epoch}:{revision}:{method}:{json.dumps(raw_params, sort_keys=True, separators=(',', ':'))}"
-        cached = self.__cache_get(self.__query_cache, key)
+        cached = self.__cache_get(self.__query_cache, key) if self.__query_cache_enabled else None
         if cached is not None:
             return {"value": cached, "cached": True}
         query_started = time.perf_counter()
         value = self.__dispatch_query(method, raw_params, snapshot)
         query_elapsed_ms = (time.perf_counter() - query_started) * 1000
-        self.__cache_put(
-            self.__query_cache,
-            key,
-            value,
-            _MAX_QUERY_CACHE_ENTRIES,
-            _MAX_QUERY_CACHE_BYTES,
-            syntax=False,
-        )
+        if self.__query_cache_enabled:
+            self.__cache_put(
+                self.__query_cache,
+                key,
+                value,
+                _MAX_QUERY_CACHE_ENTRIES,
+                _MAX_QUERY_CACHE_BYTES,
+                syntax=False,
+            )
         return {"value": value, "cached": False, "query_elapsed_ms": query_elapsed_ms}
 
     def __dispatch_query(
@@ -409,7 +421,14 @@ class WorkerService:
                 return None
             path, row, column = located
             return self.__unstructure(completion_list(
-                complete(context, path, row, column, std_root=self.__require_workspace().std_root),
+                complete(
+                    context,
+                    path,
+                    row,
+                    column,
+                    std_root=self.__require_workspace().std_root,
+                    navigator=navigator,
+                ),
                 navigator,
             ))
 
@@ -420,7 +439,9 @@ class WorkerService:
                 return None
             path, row, column = located
             info = signature_info(
-                context, path, row, column, std_root=self.__require_workspace().std_root
+                context, path, row, column,
+                std_root=self.__require_workspace().std_root,
+                navigator=navigator,
             )
             return None if info is None else self.__unstructure(signature_help(info))
 
@@ -437,6 +458,7 @@ class WorkerService:
                 column,
                 include_declaration=request.context.include_declaration,
                 std_root=self.__require_workspace().std_root,
+                navigator=navigator,
             )
             return None if found is None else self.__unstructure(locations(found, navigator))
 
@@ -447,13 +469,18 @@ class WorkerService:
                 return None
             path, row, column = located
             found = find_references(
-                context, path, row, column, std_root=self.__require_workspace().std_root
+                context, path, row, column,
+                std_root=self.__require_workspace().std_root,
+                navigator=navigator,
             )
             if found is None:
                 return None
             same_file = ReferenceResult(
                 target=found.target,
-                sites=tuple(site for site in found.sites if site.span.path.resolve() == path.resolve()),
+                sites=tuple(
+                    site for site in found.sites
+                    if navigator.canonical_path(site.span.path) == navigator.canonical_path(path)
+                ),
             )
             return self.__unstructure(document_highlights(same_file, navigator))
 
@@ -464,7 +491,8 @@ class WorkerService:
                 return None
             path, row, column = located
             found = find_references(
-                context, path, row, column, std_root=self.__require_workspace().std_root
+                context, path, row, column, std_root=self.__require_workspace().std_root,
+                navigator=navigator,
             )
             if found is None:
                 return None
@@ -485,6 +513,7 @@ class WorkerService:
                 column,
                 request.new_name,
                 std_root=self.__require_workspace().std_root,
+                navigator=navigator,
             )
             if not outcome.ok:
                 raise OperationFailure(-32803, outcome.refusal or "rename was refused")
@@ -511,18 +540,19 @@ class WorkerService:
             else self.__require_workspace().documents.text(path)
         )
         key = f"format:{uri}:{hashlib.sha256(text.encode('utf-8')).hexdigest()}"
-        cached = self.__cache_get(self.__query_cache, key)
+        cached = self.__cache_get(self.__query_cache, key) if self.__query_cache_enabled else None
         if cached is not None:
             return {"value": cached, "cached": True}
         value = self.__unstructure(document_edits(text, path))
-        self.__cache_put(
-            self.__query_cache,
-            key,
-            value,
-            _MAX_QUERY_CACHE_ENTRIES,
-            _MAX_QUERY_CACHE_BYTES,
-            syntax=False,
-        )
+        if self.__query_cache_enabled:
+            self.__cache_put(
+                self.__query_cache,
+                key,
+                value,
+                _MAX_QUERY_CACHE_ENTRIES,
+                _MAX_QUERY_CACHE_BYTES,
+                syntax=False,
+            )
         return {"value": value, "cached": False}
 
     def __syntax(self, payload: JsonObject, revision: int) -> JsonObject:

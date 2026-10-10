@@ -181,23 +181,35 @@ PRIMITIVE_TYPE_NAMES = (
 
 
 def complete(
-    context: QueryContext, path: Path, row: int, col: int, *, std_root: Path | None = None
+    context: QueryContext,
+    path: Path,
+    row: int,
+    col: int,
+    *,
+    std_root: Path | None = None,
+    navigator: Navigator | None = None,
 ) -> CompletionResult:
     """Candidates for the position ``(row, col)`` in *path*.
 
     *row* and *col* are 0-based; columns count code points.
     """
-    navigator = Navigator(context, std_root=std_root)
+    navigator = navigator or Navigator(context, std_root=std_root)
     text = navigator.text_of(path)
     tokens = navigator.tokens_of(path)
     prefix, prefix_span = __prefix_at(path, text, row, col)
+    if not context.result.ok():
+        # A failed semantic pass can leave callable declarations only partly
+        # resolved. Match the native editor API and offer names without claiming
+        # semantic kinds or signatures from that partial state.
+        return CompletionResult(items=__lexical_items(tokens, prefix), span=prefix_span)
+
     if not navigator.view.has_symbols(path):
         # The analysis never reached a symbol table — a syntax error stops the
         # pipeline before resolution.  The names in the file itself are still a
         # better answer than nothing while the user is mid-expression, as long as
         # nothing is claimed about what they mean (fallback candidates).
         return CompletionResult(items=__lexical_items(tokens, prefix), span=prefix_span)
-    completion_context = __context_at(path, tokens, row, col)
+    completion_context = __context_at(tokens, row, col)
     if completion_context == __CONTEXT_MEMBER:
         items = __member_items(navigator, path, row, col)
     elif completion_context == __CONTEXT_TYPE:
@@ -235,12 +247,21 @@ def __lexical_items(
 
 
 def signature_help(
-    context: QueryContext, path: Path, row: int, col: int, *, std_root: Path | None = None
+    context: QueryContext,
+    path: Path,
+    row: int,
+    col: int,
+    *,
+    std_root: Path | None = None,
+    navigator: Navigator | None = None,
 ) -> SignatureInfo | None:
     """Signature help for the call the position is inside, if any."""
-    navigator = Navigator(context, std_root=std_root)
+    if not context.result.ok():
+        return None
+
+    navigator = navigator or Navigator(context, std_root=std_root)
     tokens = navigator.tokens_of(path)
-    call = __call_at(path, tokens, row, col)
+    call = __call_at(tokens, row, col)
     if call is None:
         return None
     callee_span, active_parameter = call
@@ -328,9 +349,9 @@ def __receiver_reference(
     return None
 
 
-def __context_at(path: Path, tokens: tuple[Tok.Token, ...], row: int, col: int) -> str:
+def __context_at(tokens: tuple[Tok.Token, ...], row: int, col: int) -> str:
     """Classify the position from the tokens before it."""
-    before = __tokens_before(path, tokens, row, col)
+    before = __tokens_before(tokens, row, col)
     if not before:
         return __CONTEXT_VALUE
     statement = __statement_tokens(before)
@@ -356,14 +377,12 @@ def __context_at(path: Path, tokens: tuple[Tok.Token, ...], row: int, col: int) 
     return __CONTEXT_VALUE
 
 
-def __tokens_before(
-    path: Path, tokens: tuple[Tok.Token, ...], row: int, col: int
-) -> list[Tok.Token]:
+def __tokens_before(tokens: tuple[Tok.Token, ...], row: int, col: int) -> list[Tok.Token]:
+    # The token tuple already belongs to one path, selected by the snapshot view.
     return [
         token
         for token in tokens
-        if token.span.path.resolve() == path.resolve()
-        and (token.span.end.row, token.span.end.col) <= (row, col)
+        if (token.span.end.row, token.span.end.col) <= (row, col)
     ]
 
 
@@ -456,7 +475,7 @@ def __member_items(
     if not view.has_types:
         return ()
     tokens = view.tokens_of(path)
-    before = __tokens_before(path, tokens, row, col)
+    before = __tokens_before(tokens, row, col)
     if not before or not isinstance(before[-1], Tok.Punctuator):
         return ()
     dot = before[-1]
@@ -479,7 +498,9 @@ def __member_items(
     resolved_ty = view.type_of(resolved)
     if isinstance(resolved_ty, Type.StructType) and not static:
         for field in view.fields_of(resolved):
-            if field.access_mode is Type.AccessMode.Private and not __visible_here(field.span, path):
+            if field.access_mode is Type.AccessMode.Private and not __visible_here(
+                field.span, path, navigator
+            ):
                 continue
             items.setdefault(
                 field.name,
@@ -530,7 +551,7 @@ def __import_name_items(
     """
     view = navigator.view
     tokens = view.tokens_of(path)
-    statement = __statement_tokens(__tokens_before(path, tokens, row, col))
+    statement = __statement_tokens(__tokens_before(tokens, row, col))
     dotted = __dotted_path(statement)
     if dotted is None:
         return ()
@@ -653,7 +674,7 @@ def __callable_type_id(target: NameTarget | None, expression_type: int | None) -
 
 
 def __call_at(
-    path: Path, tokens: tuple[Tok.Token, ...], row: int, col: int
+    tokens: tuple[Tok.Token, ...], row: int, col: int
 ) -> tuple[SrcSpan, int] | None:
     """The callee's name span and the argument index, for the call being written.
 
@@ -663,7 +684,7 @@ def __call_at(
     depth = 0
     arguments = 0
     open_index: int | None = None
-    before = __tokens_before(path, tokens, row, col)
+    before = __tokens_before(tokens, row, col)
     for index in range(len(before) - 1, -1, -1):
         token = before[index]
         if not isinstance(token, Tok.Punctuator):
@@ -702,6 +723,6 @@ def __position(path: Path, row: int, col: int) -> SrcPosition:
     return SrcPosition(row, col, path)
 
 
-def __visible_here(span: SrcSpan | None, path: Path) -> bool:
+def __visible_here(span: SrcSpan | None, path: Path, navigator: Navigator) -> bool:
     """True when a private declaration is in the file being completed."""
-    return span is not None and span.path.resolve() == path.resolve()
+    return span is not None and navigator.canonical_path(span.path) == navigator.canonical_path(path)

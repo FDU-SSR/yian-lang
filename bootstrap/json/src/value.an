@@ -55,6 +55,19 @@ impl Object {
         self.members.push(Member(key=String.from(&key), value=value));
         Option<Value>.None
     }
+    // Remove a member while transferring its value to the caller.
+    pub fn remove(key: str) -> Option<Value> {
+        let i: u64 = 0;
+        while i < self.members.len() {
+            if self.members[i].key.as_str() == key {
+                let member = self.members.remove(i);
+                member.key.drop();
+                return Option<Value>.Some(member.value);
+            }
+            i += 1u64;
+        }
+        Option<Value>.None
+    }
     pub fn iter() -> ObjectIter { ObjectIter(object=self, index=0u64) }
 }
 

@@ -330,13 +330,18 @@ class WorkerSupervisor:
                 result = response.get("result")
                 if not isinstance(result, dict):
                     raise WorkerFailure("worker response result must be an object")
-                self.__emit("worker_operation_finished", {
+                finished_fields: JsonObject = {
                     "operation": operation,
                     "revision": self.__revision,
                     "elapsed_ns": time.monotonic_ns() - operation_started,
                     "worker_elapsed_ms": response.get("elapsed_ms", 0),
                     "cache_hit": result.get("cached") is True,
-                })
+                }
+                if operation == "query":
+                    finished_fields["method"] = payload.get("method")
+                elif operation == "format":
+                    finished_fields["method"] = "textDocument/formatting"
+                self.__emit("worker_operation_finished", finished_fields)
                 if operation == "sync":
                     self.__synced_revision = self.__revision
                     self.__synced_topology_revision = self.__topology_revision

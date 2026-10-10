@@ -53,6 +53,7 @@ impl ExprChecker {
             Some(value) => self.local_type(*value)?, None => self.ctx.primitives.void
         };
         let scope = self.ctx.session.symbols.create_scope(Option<ScopeId>.Some(self.ctx.scopes[self.unit.index]))?;
+        self.ctx.session.editor_facts.record_scope(self.ctx.span(self.unit, span), scope);
         self.ctx.session.symbols.inherit_types(scope, self.scope)?;
 
         for capture in *captures {
