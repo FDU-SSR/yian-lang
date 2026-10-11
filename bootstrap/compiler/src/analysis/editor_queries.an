@@ -10,7 +10,9 @@ from compiler.diagnostics.model import AnalysisError;
 from compiler.frontend.ast.node import GenericParam, ItemData;
 from compiler.common.ids import SourceId, TypeId, UnitId, SymbolId, ImplId, NameId;
 from compiler.frontend.source import Position, Span;
+from compiler.frontend.lex.lexer import Lexer;
 from compiler.frontend.lex.token import Token, TokenPayload, PunctuatorKind, KeywordKind;
+from compiler.frontend.lex.token import drop_tokens;
 from std.collections.hash_map import HashMap;
 from std.core.convert import From;
 from std.core.text import LineIndex, TextPosition;
@@ -119,7 +121,8 @@ fn is_punctuator(token: Token&, expected: PunctuatorKind) -> bool {
 
 fn completion_position(
     snapshot: EditorSnapshot&,
-    unit: CompilationUnit&,
+    source: SourceId,
+    tokens: Vec<Token>&,
     row: u64,
     column: u64,
 ) -> CompletionPosition {
@@ -127,7 +130,7 @@ fn completion_position(
     let replace = Option<EditorLocation>.None;
     let prefix_token = Option<u64>.None;
     let last_before = Option<u64>.None;
-    let text = match snapshot.source_text(unit.source) {
+    let text = match snapshot.source_text(source) {
         Some(value) => value,
         None => return CompletionPosition(prefix, replace, Option<u64>.None, CompletionContext.Value),
     };
@@ -135,8 +138,8 @@ fn completion_position(
     defer line_index.drop();
 
     let index = 0u64;
-    while index < unit.prepared.tokens.len() {
-        let token = &unit.prepared.tokens[index];
+    while index < tokens.len() {
+        let token = &tokens[index];
         let is_before = token.span.start.row < row ||
         (token.span.start.row == row && token.span.start.column < column);
         if is_before { last_before = Option<u64>.Some(index); }
@@ -151,7 +154,7 @@ fn completion_position(
                     prefix.push_str(*typed);
                     prefix_token = Option<u64>.Some(index);
 
-                    let path = snapshot.source_path(unit.source).unwrap();
+                    let path = snapshot.source_path(source).unwrap();
                     let span = Span(start=token.span.start, end=Position(row=row, column=column));
                     replace = Option<EditorLocation>.Some(EditorLocation(
                         path=String.from(path), span=span));
@@ -175,7 +178,7 @@ fn completion_position(
     let statement_index = anchor;
     while statement_index != 0u64 {
         statement_index -= 1u64;
-        if is_punctuator(&unit.prepared.tokens[statement_index], PunctuatorKind.Semicolon) {
+        if is_punctuator(&tokens[statement_index], PunctuatorKind.Semicolon) {
             statement_start = statement_index + 1u64;
             break;
         }
@@ -185,7 +188,7 @@ fn completion_position(
     let import_index = Option<u64>.None;
     let scan = statement_start;
     while scan < anchor {
-        match unit.prepared.tokens[scan].kind() {
+        match tokens[scan].kind() {
             Keyword(value) => {
                 if *value == KeywordKind.From { from_index = Option<u64>.Some(scan); }
                 if *value == KeywordKind.Import { import_index = Option<u64>.Some(scan); }
@@ -208,9 +211,9 @@ fn completion_position(
                     _ => Option<u64>.Some(anchor - 1u64),
                 };
                 match previous {
-                    Some(index) if is_punctuator(&unit.prepared.tokens[index], PunctuatorKind.Dot) =>
+                    Some(index) if is_punctuator(&tokens[index], PunctuatorKind.Dot) =>
                     CompletionContext.Member,
-                    Some(index) if is_type_introducer(&unit.prepared.tokens[index]) => CompletionContext.Type,
+                    Some(index) if is_type_introducer(&tokens[index]) => CompletionContext.Type,
                     _ => CompletionContext.Value,
                 }
             },
@@ -223,7 +226,7 @@ fn completion_position(
         let nested = 0u64;
         while index != 0u64 {
             index -= 1u64;
-            let token = &unit.prepared.tokens[index];
+            let token = &tokens[index];
             match token.kind() {
                 Punctuator(kind) => match *kind {
                     RParen | RBracket | RAngle => { nested += 1u64; },
@@ -479,10 +482,10 @@ fn append_primitive_candidates(items: Vec<EditorCompletionItem>&, prefix: str) {
 
 fn lexical_completions(
     items: Vec<EditorCompletionItem>&,
-    unit: CompilationUnit&,
+    tokens: Vec<Token>&,
     prefix: str,
 ) {
-    for token in unit.prepared.tokens {
+    for token in *tokens {
         match token.kind() {
             Identifier(name) if name.as_str().starts_with(prefix) =>
             append_completion(items, name.as_str(), EditorCompletionKind.Text,
@@ -490,6 +493,40 @@ fn lexical_completions(
             _ => {},
         }
     }
+}
+
+fn lexical_completion_result(
+    snapshot: EditorSnapshot&,
+    source: SourceId,
+    row: u64,
+    column: u64,
+) -> EditorCompletionResult {
+    let text = match snapshot.source_text(source) {
+        Some(value) => value,
+        None => return EditorCompletionResult(
+            Vec<EditorCompletionItem>.new(), Option<EditorLocation>.None),
+    };
+    let tokens = match Lexer.new(text).run() {
+        Ok(value) => value,
+        Err(error) => {
+            error.drop();
+            return EditorCompletionResult(
+                Vec<EditorCompletionItem>.new(), Option<EditorLocation>.None);
+        },
+    };
+    defer drop_tokens(&tokens);
+
+    let position = completion_position(snapshot, source, &tokens, row, column);
+    defer position.drop();
+    let items = Vec<EditorCompletionItem>.new();
+    lexical_completions(&items, &tokens, position.prefix.as_str());
+
+    let replace = match &position.replace {
+        Some(location) => Option<EditorLocation>.Some(EditorLocation(
+            path=String.from(&location.path.as_str()), span=location.span)),
+        None => Option<EditorLocation>.None,
+    };
+    EditorCompletionResult(items, replace)
 }
 
 fn method_is_static(snapshot: EditorSnapshot&, method: TypeId) -> bool {
@@ -918,10 +955,11 @@ pub fn completion_at(
 ) -> Result<EditorCompletionResult, AnalysisError> {
     let unit = match unit_for_source(snapshot, source) {
         Some(value) => value,
-        None => return Result<EditorCompletionResult, AnalysisError>.Err(
-            AnalysisError.internal("completion source is not in the editor snapshot")),
+        // Recovered syntax errors keep the source but omit its parsed compilation unit.
+        None => return Result<EditorCompletionResult, AnalysisError>.Ok(
+            lexical_completion_result(snapshot, source, row, column)),
     };
-    let position = completion_position(snapshot, unit, row, column);
+    let position = completion_position(snapshot, source, &unit.prepared.tokens, row, column);
     let items = Vec<EditorCompletionItem>.new();
     let accepted = false;
     defer {
@@ -932,7 +970,7 @@ pub fn completion_at(
     };
 
     if !snapshot.semantic_complete() {
-        lexical_completions(&items, unit, position.prefix.as_str());
+        lexical_completions(&items, &unit.prepared.tokens, position.prefix.as_str());
     } else {
         match position.context {
             Member => { append_member_completions(snapshot, unit, &items, &position)?; },

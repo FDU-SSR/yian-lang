@@ -1444,7 +1444,14 @@ impl WorkerState {
                 let column = position.column;
                 match completion_at(snapshot, source, row, column) {
                     Ok(result) => Result<Value, WorkerFailure>.Ok(completion_value(snapshot, result)),
-                    Err(error) => { error.drop(); Result<Value, WorkerFailure>.Err(WorkerFailure.new(-32603i64, "completion query failed")) },
+                    Err(error) => {
+                        let message = String.from(&"completion query failed: ");
+                        message.push_str(error.diagnostic.message.as_str());
+                        error.drop();
+                        let failure = WorkerFailure.new(-32603i64, message.as_str());
+                        message.drop();
+                        Result<Value, WorkerFailure>.Err(failure)
+                    },
                 }
             },
             "textDocument/signatureHelp" => {
