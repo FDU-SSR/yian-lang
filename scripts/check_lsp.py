@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Replay LSP behavior and measure the Python server through stdio JSON-RPC."""
+"""Replay and measure the native YIAN language server over stdio JSON-RPC."""
 
 from __future__ import annotations
 
@@ -385,14 +385,12 @@ def __command(template: list[str], root: Path, raw: bool) -> list[str]:
 
 
 def __default_command() -> list[str]:
-    return [
-        sys.executable,
-        "-m",
-        "lsp.main",
-        "--stdio",
-        "--compiler-root",
-        "{compiler_root}",
-    ]
+    executable = os.environ.get("YIAN_LSP_BIN") or shutil.which("yian-lsp")
+    if executable is None:
+        raise ValueError(
+            "native yian-lsp is not installed; run scripts/install_lsp.sh"
+        )
+    return [executable, "--stdio", "--compiler-root", "{compiler_root}"]
 
 
 def __observe(client: StdioSession, scenario: Scenario) -> dict[str, Json]:
@@ -674,9 +672,20 @@ def __replace_artifact_paths(value: Json, replacements: dict[str, str]) -> Json:
 
 def __source_fingerprint() -> dict[str, Json]:
     files = [
-        *sorted((ROOT / "compiler").rglob("*.py")),
+        *sorted((ROOT / "lsp").rglob("*.an")),
+        *sorted((ROOT / "bootstrap" / "compiler" / "src").rglob("*.an")),
+        *sorted((ROOT / "bootstrap" / "anx" / "src").rglob("*.an")),
+        *sorted((ROOT / "bootstrap" / "json" / "src").rglob("*.an")),
+        *sorted((ROOT / "bootstrap" / "jsonrpc" / "src").rglob("*.an")),
+        *sorted((ROOT / "bootstrap" / "lsp_protocol" / "src").rglob("*.an")),
         *sorted((ROOT / "lib" / "src").rglob("*.an")),
-        *sorted((ROOT / "lsp").rglob("*.py")),
+        *sorted((ROOT / "runtime" / "src").rglob("*.c")),
+        ROOT / "lsp" / "package.anx",
+        ROOT / "bootstrap" / "compiler" / "package.anx",
+        ROOT / "bootstrap" / "anx" / "package.anx",
+        ROOT / "bootstrap" / "json" / "package.anx",
+        ROOT / "bootstrap" / "jsonrpc" / "package.anx",
+        ROOT / "bootstrap" / "lsp_protocol" / "package.anx",
         ROOT / "scripts" / "check_lsp.py",
         *sorted((ROOT / "tests" / "unit").glob("test_lsp_*.py")),
         ROOT / "tests" / "unit" / "test_shared_analysis.py",
@@ -696,9 +705,8 @@ def __source_fingerprint() -> dict[str, Json]:
     }
 
 
-def __environment(root: Path, trace_path: Path | None, profile_path: Path | None) -> dict[str, str]:
+def __environment(trace_path: Path | None, profile_path: Path | None) -> dict[str, str]:
     environment = os.environ.copy()
-    environment["PYTHONPATH"] = str(root)
     environment.pop("YIAN_LSP_TRACE_FILE", None)
     environment.pop("YIAN_LSP_PROFILE_FILE", None)
     if trace_path is not None:
@@ -724,10 +732,9 @@ def __run_session(
     scenario_dir.mkdir(parents=True)
     scenario = __make_scenario(scenario_name, scenario_dir)
     trace_path = scenario_dir / "trace.jsonl" if tracing else None
-    profile_path = scenario_dir / "worker.prof" if profile else None
+    profile_path = scenario_dir / "native-profile.jsonl" if profile else None
     command = __command(template, server_root, raw)
     environment = __environment(
-        server_root,
         trace_path,
         profile_path,
     )
@@ -780,7 +787,6 @@ def __run_session(
         "environment": {
             key: environment[key]
             for key in (
-                "PYTHONPATH",
                 "YIAN_LSP_TRACE_FILE",
                 "YIAN_LSP_PROFILE_FILE",
                 "YIAN_LSP_DISABLE_QUERY_CACHE",
@@ -830,8 +836,7 @@ def __run_session(
 def __profile_format(path: Path | None) -> str | None:
     if path is None or not path.exists():
         return None
-    with path.open("rb") as stream:
-        return "native-operation-trace" if stream.read(1) == b"{" else "cprofile"
+    return "native-operation-trace"
 
 
 def __read_trace(path: Path) -> list[Json]:
@@ -857,7 +862,7 @@ def __run_control_probe(
     scenario = __make_scenario(scenario_name, scenario_dir)
     trace_path = scenario_dir / "trace.jsonl"
     command = __command(template, server_root, raw)
-    environment = __environment(server_root, trace_path, None)
+    environment = __environment(trace_path, None)
     client = StdioSession(command, cwd=server_root, environment=environment, timeout=timeout)
     response_ms: list[float] = []
     error_codes: list[int] = []
@@ -954,7 +959,7 @@ def __run_cache_probe(
     scenario = __make_scenario(scenario_name, scenario_dir)
     trace_path = scenario_dir / "trace.jsonl"
     command = __command(template, server_root, raw)
-    environment = __environment(server_root, trace_path, None)
+    environment = __environment(trace_path, None)
     query_cache_disabled = environment.get("YIAN_LSP_DISABLE_QUERY_CACHE") == "1"
     client = StdioSession(command, cwd=server_root, environment=environment, timeout=timeout)
     specs = __query_specs(scenario)
@@ -984,6 +989,10 @@ def __run_cache_probe(
         and event.get("event") == "worker_operation_finished"
         and event.get("operation") in ("query", "format")
     ]
+    cache_metrics_available = any(
+        isinstance(event.get("cache_hit"), bool)
+        for event in query_operations
+    )
     by_method: dict[str, list[dict[str, Json]]] = {}
     for event in query_operations:
         method = event.get("method")
@@ -992,8 +1001,14 @@ def __run_cache_probe(
     method_counts: dict[str, Json] = {}
     for method, events in by_method.items():
         method_counts[method] = {
-            "hit_count": sum(1 for event in events if event.get("cache_hit") is True),
-            "miss_count": sum(1 for event in events if event.get("cache_hit") is False),
+            "hit_count": (
+                sum(1 for event in events if event.get("cache_hit") is True)
+                if cache_metrics_available else None
+            ),
+            "miss_count": (
+                sum(1 for event in events if event.get("cache_hit") is False)
+                if cache_metrics_available else None
+            ),
             "operation_count": len(events),
         }
     analysis_timing_sample = next(
@@ -1012,11 +1027,14 @@ def __run_cache_probe(
         "shutdown_ms": client.shutdown_ms,
         "query_cache_disabled": query_cache_disabled,
         "query_cache_policy": query_cache_policy,
-        "hit_count": sum(
-            1 for event in query_operations if event.get("cache_hit") is True
+        "cache_metrics_available": cache_metrics_available,
+        "hit_count": (
+            sum(1 for event in query_operations if event.get("cache_hit") is True)
+            if cache_metrics_available else None
         ),
-        "miss_count": sum(
-            1 for event in query_operations if event.get("cache_hit") is False
+        "miss_count": (
+            sum(1 for event in query_operations if event.get("cache_hit") is False)
+            if cache_metrics_available else None
         ),
         "query_operation_count": len(query_operations),
         "methods": method_counts,
@@ -1061,7 +1079,7 @@ def __run_memory_probe(
     scenario_dir.mkdir(parents=True)
     scenario = __make_scenario("standalone", scenario_dir)
     command = __command(template, server_root, raw)
-    environment = __environment(server_root, None, None)
+    environment = __environment(None, None)
     client = StdioSession(command, cwd=server_root, environment=environment, timeout=timeout)
     samples: list[Json] = []
     maximum_workers = 0
@@ -1278,7 +1296,6 @@ def __run_benchmark(
     analysis_samples: int,
     query_samples: int,
     *,
-    candidate: bool,
     memory_samples: int,
     query_cache_policy: str,
     profile: bool = False,
@@ -1311,7 +1328,7 @@ def __run_benchmark(
     scenario_dir.mkdir(parents=True)
     scenario = __make_scenario(scenario_name, scenario_dir)
     command = __command(template, server_root, raw)
-    environment = __environment(server_root, None, None)
+    environment = __environment(None, None)
     client = StdioSession(command, cwd=server_root, environment=environment, timeout=timeout)
     syntax_samples: list[float] = []
     analysis_samples_ms: list[float] = []
@@ -1349,45 +1366,44 @@ def __run_benchmark(
     cache_probe = None
     profile_run = None
     memory_probe = None
-    if candidate:
-        control_probe = __run_control_probe(
+    control_probe = __run_control_probe(
+        template,
+        server_root,
+        scenario_name,
+        raw,
+        parent,
+        timeout,
+    )
+    cache_probe = __run_cache_probe(
+        template,
+        server_root,
+        scenario_name,
+        raw,
+        parent,
+        timeout,
+        query_cache_policy,
+    )
+    if profile:
+        profile_run = __run_session(
             template,
             server_root,
             scenario_name,
             raw,
-            parent,
+            parent / "profile-run",
             timeout,
+            profile=True,
+            tracing=False,
+            functional=True,
         )
-        cache_probe = __run_cache_probe(
+    if scenario_name == "standalone" and not raw:
+        memory_probe = __run_memory_probe(
             template,
             server_root,
-            scenario_name,
             raw,
             parent,
             timeout,
-            query_cache_policy,
+            memory_samples,
         )
-        if profile:
-            profile_run = __run_session(
-                template,
-                server_root,
-                scenario_name,
-                raw,
-                parent / "profile-run",
-                timeout,
-                profile=True,
-                tracing=False,
-                functional=True,
-            )
-        if scenario_name == "standalone" and not raw:
-            memory_probe = __run_memory_probe(
-                template,
-                server_root,
-                raw,
-                parent,
-                timeout,
-                memory_samples,
-            )
 
     return {
         "pointer_mode": "raw" if raw else "fat",
@@ -1398,7 +1414,6 @@ def __run_benchmark(
         "environment": {
             key: environment[key]
             for key in (
-                "PYTHONPATH",
                 "YIAN_LSP_TRACE_FILE",
                 "YIAN_LSP_PROFILE_FILE",
                 "YIAN_LSP_DISABLE_QUERY_CACHE",
@@ -1408,7 +1423,7 @@ def __run_benchmark(
         "cold_sessions": cold_records,
         "formal_measurement_instrumentation": {
             "trace": False,
-            "cprofile": False,
+            "native_profile": False,
         },
         "shutdown_ms": client.shutdown_ms,
         "control_probe": control_probe,
@@ -1455,7 +1470,11 @@ def __run_benchmark(
             "p95": __percentile(distinct_query_ms, 0.95),
         },
         "query_cache_observations": {
-            "policy": query_cache_policy if candidate else None,
+            "policy": query_cache_policy,
+            "metrics_available": (
+                False if cache_probe is None
+                else cache_probe["cache_metrics_available"]
+            ),
             "hit_count": None if cache_probe is None else cache_probe["hit_count"],
             "miss_count": None if cache_probe is None else cache_probe["miss_count"],
             "query_operation_count": (
@@ -1481,11 +1500,29 @@ def __parse_command(value: str | None, *, default: list[str]) -> list[str]:
 
 def __run_infrastructure(args: argparse.Namespace) -> int:
     """Run the library-level checks that underpin the native LSP integration."""
+    prefix = args.prefix.expanduser().resolve()
+    native_bin = prefix / "bin"
+    environment = os.environ.copy()
+    environment["PATH"] = str(native_bin) + os.pathsep + environment.get("PATH", "")
+    environment["YIANC"] = str(native_bin / "yianc")
+    environment["YIAN_LSP_BIN"] = str(native_bin / "yian-lsp")
     commands = [
-        [sys.executable, "scripts/run_tests.py", "--suite", "bootstrap", "--implementation", "both", "-q"],
+        [
+            sys.executable,
+            "scripts/run_tests.py",
+            "--suite",
+            "bootstrap",
+            "--implementation",
+            "both",
+            "--prefix",
+            str(prefix),
+            "-q",
+        ],
+        ["bash", "scripts/install_lsp.sh", "--prefix", str(prefix)],
         [sys.executable, "-m", "unittest", "discover", "-s", "tests/unit", "-v"],
         [sys.executable, "-m", "compiler.format", "--verify", "bootstrap/compiler/src"],
         [sys.executable, "-m", "compiler.format", "--check", "bootstrap/compiler/src"],
+        [str(native_bin / "anx"), "fmt", "--check", str(ROOT / "lsp")],
         [sys.executable, "runtime/build.py", "--check"],
         [sys.executable, "runtime/build.py", "--asan"],
     ]
@@ -1498,6 +1535,7 @@ def __run_infrastructure(args: argparse.Namespace) -> int:
             completed = subprocess.run(
                 command,
                 cwd=ROOT,
+                env=environment,
                 capture_output=True,
                 text=True,
                 errors="replace",
@@ -1550,10 +1588,11 @@ def __run_infrastructure(args: argparse.Namespace) -> int:
         ).stdout.strip(),
         "source_worktree": __source_fingerprint(),
         "environment": {
-            "python": sys.executable,
-            "python_version": sys.version,
+            "harness_runtime": sys.executable,
+            "harness_runtime_version": sys.version,
             "platform": sys.platform,
             "cwd": str(Path.cwd()),
+            "install_prefix": str(prefix),
         },
         "results": results,
         "ok": failures == 0,
@@ -1571,8 +1610,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--mode", choices=("check", "benchmark", "profile", "infrastructure"), default="check")
     parser.add_argument("--server-command", help="server command as a JSON string array")
     parser.add_argument("--server-root", type=Path, default=ROOT)
-    parser.add_argument("--reference-command", help="optional reference command as a JSON string array")
-    parser.add_argument("--reference-root", type=Path)
+    parser.add_argument("--prefix", type=Path, default=Path(os.environ.get("YIAN_INSTALL_PREFIX", Path.home() / ".local")))
     parser.add_argument(
         "--scenario",
         choices=("standalone", "json-project", "compiler-project"),
@@ -1585,10 +1623,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--query-samples", type=int, default=100)
     parser.add_argument("--memory-samples", type=int, default=100)
     parser.add_argument(
-        "--candidate-cache-policy",
-        choices=("enabled", "disabled", "unavailable"),
-        default="enabled",
-        help="declare whether the candidate exposes query-cache hit telemetry",
+        "--query-cache-policy",
+        choices=("enabled", "disabled", "absent", "unavailable"),
+        default="absent",
+        help="declare whether query caching is enabled, disabled, absent, or unmeasured (default: absent)",
     )
     parser.add_argument("--timeout", type=float, default=120.0)
     parser.add_argument("--infrastructure-timeout", type=float, default=1800.0)
@@ -1601,16 +1639,12 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         command = __parse_command(args.server_command, default=__default_command())
-        reference_command = __parse_command(args.reference_command, default=__default_command()) \
-            if args.reference_command is not None or args.reference_root is not None else None
     except ValueError as error:
         parser.error(str(error))
     if min(args.cold_samples, args.analysis_samples, args.query_samples, args.memory_samples) < 1:
         parser.error("sample counts must be positive")
     scenarios = args.scenario or ["standalone", "json-project", "compiler-project"]
-    roots: list[tuple[str, Path, list[str]]] = [("candidate", args.server_root.resolve(), command)]
-    if reference_command is not None:
-        roots.append(("reference", (args.reference_root or args.server_root).resolve(), reference_command))
+    server_root = args.server_root.resolve()
     modes = (False, True) if args.pointer_mode == "both" else (args.pointer_mode == "raw",)
     report: dict[str, Json] = {
         "format": 1,
@@ -1624,17 +1658,13 @@ def main(argv: list[str] | None = None) -> int:
         ).stdout.strip(),
         "source_worktree": __source_fingerprint(),
         "environment": {
-            "python": sys.executable,
-            "python_version": sys.version,
+            "harness_runtime": sys.executable,
+            "harness_runtime_version": sys.version,
             "platform": sys.platform,
             "cwd": str(Path.cwd()),
         },
-        "server_commands": {
-            "candidate": command,
-            "candidate_root": str(args.server_root.resolve()),
-            "reference": reference_command,
-            "reference_root": None if args.reference_root is None else str(args.reference_root.resolve()),
-        },
+        "server_command": command,
+        "server_root": str(server_root),
         "scenarios": scenarios,
         "pointer_modes": ["fat", "raw"] if args.pointer_mode == "both" else [args.pointer_mode],
         "servers": [],
@@ -1645,102 +1675,149 @@ def main(argv: list[str] | None = None) -> int:
         temporary_root = Path(temporary)
         for scenario_name in scenarios:
             for raw in modes:
-                compared: dict[str, Json] = {}
-                for role, root, template in roots:
-                    role_dir = temporary_root / role / scenario_name / ("raw" if raw else "fat")
-                    role_dir.mkdir(parents=True)
-                    try:
-                        if args.mode == "check":
-                            record = __run_session(
-                                template,
-                                root,
-                                scenario_name,
-                                raw,
-                                role_dir / "functional",
-                                args.timeout,
-                            )
-                            record = cast(dict[str, Json], record)
+                run_dir = temporary_root / scenario_name / ("raw" if raw else "fat")
+                run_dir.mkdir(parents=True)
+                try:
+                    if args.mode == "check":
+                        record = __run_session(
+                            command,
+                            server_root,
+                            scenario_name,
+                            raw,
+                            run_dir / "functional",
+                            args.timeout,
+                        )
+                    else:
+                        record = __run_benchmark(
+                            command,
+                            server_root,
+                            scenario_name,
+                            raw,
+                            run_dir,
+                            args.timeout,
+                            args.cold_samples,
+                            args.analysis_samples,
+                            args.query_samples,
+                            memory_samples=args.memory_samples,
+                            query_cache_policy=args.query_cache_policy,
+                            profile=args.mode == "profile",
+                        )
+                    record = cast(dict[str, Json], record)
+                    if record.get("error") is not None or record.get("exit_status") != 0:
+                        failures += 1
+                    query_errors = record.get("query_failures")
+                    if isinstance(query_errors, list) and query_errors:
+                        failures += 1
+                    if args.mode in ("benchmark", "profile"):
+                        probe = record.get("control_probe")
+                        if not isinstance(probe, dict):
+                            failures += 1
                         else:
-                            record = __run_benchmark(
-                                template,
-                                root,
-                                scenario_name,
-                                raw,
-                                role_dir,
-                                args.timeout,
-                                args.cold_samples,
-                                args.analysis_samples,
-                                args.query_samples,
-                                candidate=role == "candidate",
-                                memory_samples=args.memory_samples,
-                                query_cache_policy=args.candidate_cache_policy,
-                                profile=args.mode == "profile" and role == "candidate",
-                            )
-                        compared[role] = cast(Json, record)
-                        if record.get("error") is not None or record.get("exit_status") != 0:
-                            failures += 1
-                        query_errors = record.get("query_failures")
-                        if isinstance(query_errors, list) and query_errors:
-                            failures += 1
-                        if args.mode in ("benchmark", "profile") and role == "candidate":
-                            probe = record.get("control_probe")
-                            if not isinstance(probe, dict):
+                            p95 = probe.get("p95_ms")
+                            codes = probe.get("response_error_codes")
+                            if (
+                                probe.get("worker_busy_through_probe") is not True
+                                or not isinstance(p95, (int, float))
+                                or p95 > 100
+                                or not isinstance(codes, list)
+                                or len(codes) != 20
+                                or any(code != -32601 for code in codes)
+                            ):
+                                failures += 1
+                            if probe.get("exit_status") != 0:
+                                failures += 1
+                            cache_probe = record.get("cache_probe")
+                            if not isinstance(cache_probe, dict):
                                 failures += 1
                             else:
-                                p95 = probe.get("p95_ms")
-                                codes = probe.get("response_error_codes")
-                                if (
-                                    probe.get("worker_busy_through_probe") is not True
-                                    or not isinstance(p95, (int, float))
-                                    or p95 > 100
-                                    or not isinstance(codes, list)
-                                    or len(codes) != 20
-                                    or any(code != -32601 for code in codes)
-                                ):
-                                    failures += 1
-                                if probe.get("exit_status") != 0:
-                                    failures += 1
-                                cache_probe = record.get("cache_probe")
-                                if not isinstance(cache_probe, dict):
-                                    failures += 1
+                                hits = cache_probe.get("hit_count")
+                                misses = cache_probe.get("miss_count")
+                                cache_disabled = cache_probe.get("query_cache_disabled") is True
+                                cache_policy = cache_probe.get("query_cache_policy")
+                                cache_metrics_available = (
+                                    cache_probe.get("cache_metrics_available") is True
+                                )
+                                operation_count = cache_probe.get("query_operation_count")
+                                if cache_policy == "unavailable":
+                                    if (
+                                        cache_metrics_available
+                                        or hits is not None
+                                        or misses is not None
+                                        or not isinstance(operation_count, int)
+                                        or operation_count < 1
+                                    ):
+                                        failures += 1
+                                elif cache_policy == "absent":
+                                    if (
+                                        not cache_metrics_available
+                                        or hits != 0
+                                        or not isinstance(misses, int)
+                                        or misses < 1
+                                        or not isinstance(operation_count, int)
+                                        or operation_count < 1
+                                    ):
+                                        failures += 1
                                 else:
-                                    hits = cache_probe.get("hit_count")
-                                    misses = cache_probe.get("miss_count")
-                                    cache_disabled = cache_probe.get("query_cache_disabled") is True
-                                    cache_policy = cache_probe.get("query_cache_policy")
                                     hits_valid = (
                                         hits == 0 if cache_disabled or cache_policy == "disabled"
-                                        else True if cache_policy == "unavailable"
-                                        else hits >= 1 if isinstance(hits, int)
+                                        else isinstance(hits, int) and hits >= 1
+                                        if cache_policy == "enabled"
                                         else False
                                     )
                                     if (
-                                        cache_probe.get("exit_status") != 0
+                                        not cache_metrics_available
                                         or not isinstance(hits, int)
                                         or not hits_valid
                                         or not isinstance(misses, int)
                                         or misses < 1
                                     ):
                                         failures += 1
-                                    method_counts = cache_probe.get("methods")
-                                    measured_methods = record.get("query_methods")
-                                    if not isinstance(method_counts, dict) or not isinstance(measured_methods, dict):
-                                        failures += 1
-                                    else:
-                                        for method_report in measured_methods.values():
-                                            method = method_report.get("method") if isinstance(method_report, dict) else None
-                                            method_cache = method_counts.get(method) if isinstance(method, str) else None
-                                            method_hits = (
-                                                method_cache.get("hit_count")
-                                                if isinstance(method_cache, dict)
-                                                else None
-                                            )
+                                if cache_probe.get("exit_status") != 0:
+                                    failures += 1
+                                method_counts = cache_probe.get("methods")
+                                measured_methods = record.get("query_methods")
+                                if not isinstance(method_counts, dict) or not isinstance(measured_methods, dict):
+                                    failures += 1
+                                else:
+                                    for method_report in measured_methods.values():
+                                        method = method_report.get("method") if isinstance(method_report, dict) else None
+                                        method_cache = method_counts.get(method) if isinstance(method, str) else None
+                                        method_hits = (
+                                            method_cache.get("hit_count")
+                                            if isinstance(method_cache, dict)
+                                            else None
+                                        )
+                                        method_operations = (
+                                            method_cache.get("operation_count")
+                                            if isinstance(method_cache, dict)
+                                            else None
+                                        )
+                                        if cache_policy == "unavailable":
+                                            if (
+                                                not isinstance(method_cache, dict)
+                                                or method_hits is not None
+                                                or method_cache.get("miss_count") is not None
+                                                or not isinstance(method_operations, int)
+                                                or method_operations < 1
+                                            ):
+                                                failures += 1
+                                        elif cache_policy == "absent":
+                                            if (
+                                                not isinstance(method_cache, dict)
+                                                or method_hits != 0
+                                                or not isinstance(method_cache.get("miss_count"), int)
+                                                or method_cache["miss_count"] < 1
+                                                or not isinstance(method_operations, int)
+                                                or method_operations < 1
+                                            ):
+                                                failures += 1
+                                        else:
                                             method_hits_valid = (
                                                 method_hits == 0
                                                 if cache_disabled or cache_policy == "disabled"
-                                                else True
-                                                if cache_policy == "unavailable"
                                                 else isinstance(method_hits, int) and method_hits >= 1
+                                                if cache_policy == "enabled"
+                                                else False
                                             )
                                             if (
                                                 not isinstance(method_cache, dict)
@@ -1750,83 +1827,54 @@ def main(argv: list[str] | None = None) -> int:
                                                 or method_cache["miss_count"] < 1
                                             ):
                                                 failures += 1
-                                if args.mode == "profile":
-                                    profile_run = record.get("profile_run")
-                                    if (
-                                        not isinstance(profile_run, dict)
-                                        or profile_run.get("error") is not None
-                                        or profile_run.get("profile_path") is None
-                                    ):
-                                        failures += 1
-                                if scenario_name == "standalone" and not raw:
-                                    memory_probe = record.get("memory_probe")
-                                    worker_count = (
-                                        memory_probe.get("maximum_live_workers")
-                                        if isinstance(memory_probe, dict)
-                                        else None
-                                    )
-                                    if (
-                                        not isinstance(memory_probe, dict)
-                                        or memory_probe.get("exit_status") != 0
-                                        or memory_probe.get("sample_count") != args.memory_samples
-                                        or not isinstance(worker_count, int)
-                                        or worker_count > 1
-                                    ):
-                                        failures += 1
-                        if (
-                            args.mode == "check"
-                            and role == "candidate"
-                            and record.get("observations", {}).get(
-                                "did_close_clears_diagnostics"
-                            ) is not True
-                        ):
-                            failures += 1
-                    except Exception as error:
-                        failures += 1
-                        compared[role] = {"error": f"{type(error).__name__}: {error}"}
-                result: dict[str, Json] = {
-                    "scenario": scenario_name,
-                    "pointer_mode": "raw" if raw else "fat",
-                    "servers": compared,
-                }
-                if args.mode == "check" and "reference" in compared:
-                    candidate_record = compared.get("candidate")
-                    reference_record = compared.get("reference")
-                    candidate_observations = (
-                        cast(dict[str, Json], candidate_record).get("comparison_observations")
-                        if isinstance(candidate_record, dict) else None
-                    )
-                    reference_observations = (
-                        cast(dict[str, Json], reference_record).get("comparison_observations")
-                        if isinstance(reference_record, dict) else None
-                    )
-                    result["equal"] = candidate_observations == reference_observations
-                    if candidate_observations != reference_observations:
-                        failures += 1
-                    candidate_features = (
-                        cast(dict[str, Json], candidate_record).get("observations")
-                        if isinstance(candidate_record, dict) else None
-                    )
-                    reference_features = (
-                        cast(dict[str, Json], reference_record).get("observations")
-                        if isinstance(reference_record, dict) else None
-                    )
+                            if args.mode == "profile":
+                                profile_run = record.get("profile_run")
+                                if (
+                                    not isinstance(profile_run, dict)
+                                    or profile_run.get("error") is not None
+                                    or profile_run.get("profile_path") is None
+                                ):
+                                    failures += 1
+                            if scenario_name == "standalone" and not raw:
+                                memory_probe = record.get("memory_probe")
+                                worker_count = (
+                                    memory_probe.get("maximum_live_workers")
+                                    if isinstance(memory_probe, dict)
+                                    else None
+                                )
+                                if (
+                                    not isinstance(memory_probe, dict)
+                                    or memory_probe.get("exit_status") != 0
+                                    or memory_probe.get("sample_count") != args.memory_samples
+                                    or not isinstance(worker_count, int)
+                                    or worker_count > 1
+                                ):
+                                    failures += 1
                     if (
-                        isinstance(candidate_features, dict)
-                        and isinstance(reference_features, dict)
-                        and candidate_features.get("did_close_clears_diagnostics") is not
-                        reference_features.get("did_close_clears_diagnostics")
+                        args.mode == "check"
+                        and record.get("observations", {}).get(
+                            "did_close_clears_diagnostics"
+                        ) is not True
                     ):
-                        result["explicit_policy_difference"] = (
-                            "candidate clears diagnostics immediately on didClose; "
-                            "the reference leaves closed-document diagnostics to the client"
-                        )
+                        failures += 1
+                    result: dict[str, Json] = {
+                        "scenario": scenario_name,
+                        "pointer_mode": "raw" if raw else "fat",
+                        "server": record,
+                    }
+                except Exception as error:
+                    failures += 1
+                    result = {
+                        "scenario": scenario_name,
+                        "pointer_mode": "raw" if raw else "fat",
+                        "error": f"{type(error).__name__}: {error}",
+                    }
                 server_reports.append(result)
         artifact_dir = args.report.parent / f"{args.report.stem}.artifacts"
         replacements: dict[str, str] = {}
         artifacts: list[Path] = []
         for path in temporary_root.rglob("*"):
-            if path.is_file() and path.suffix in (".jsonl", ".prof"):
+            if path.is_file() and path.suffix == ".jsonl":
                 artifacts.append(path)
         if artifacts:
             artifact_dir.mkdir(parents=True, exist_ok=True)

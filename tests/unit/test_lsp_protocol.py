@@ -5,21 +5,21 @@ from __future__ import annotations
 import json
 import os
 import select
+import shutil
 import signal
 import subprocess
-import sys
 import tempfile
 import threading
 import time
 import unittest
 from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
-from typing import cast
-
-from lsp.ipc.types import JsonObject, JsonValue
+from typing import TypeAlias, cast
 
 
 ROOT = Path(__file__).resolve().parents[2]
+JsonObject: TypeAlias = dict[str, "JsonValue"]
+JsonValue: TypeAlias = None | bool | int | float | str | list["JsonValue"] | JsonObject
 MessagePredicate = Callable[[JsonObject], bool]
 
 
@@ -33,14 +33,14 @@ class StdioClient:
         cwd: Path = ROOT,
         environment: Mapping[str, str] | None = None,
     ) -> None:
-        self.command = list(command or [
-            sys.executable,
-            "-m",
-            "lsp.main",
-            "--stdio",
-            "--compiler-root",
-            str(ROOT),
-        ])
+        if command is None:
+            executable = os.environ.get("YIAN_LSP_BIN") or shutil.which("yian-lsp")
+            if executable is None:
+                raise FileNotFoundError(
+                    "native yian-lsp is not installed; run scripts/install_lsp.sh"
+                )
+            command = [executable, "--stdio", "--compiler-root", str(ROOT)]
+        self.command = list(command)
         child_environment = os.environ.copy()
         if environment is not None:
             child_environment.update(environment)
@@ -387,6 +387,48 @@ class LspProtocolTests(unittest.TestCase):
                 self.assertIsInstance(edits, list)
                 self.assertTrue(edits)
                 self.assertIn("fn main()", edits[0]["newText"])
+            finally:
+                client.shutdown()
+
+    def test_cancelled_semantic_request_returns_cancelled_error(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "main.an"
+            text = "fn main() { let value: i32 = 1; value; }\n"
+            source.write_text(text, encoding="utf-8")
+            uri = source.as_uri()
+            client = StdioClient()
+            try:
+                self.__initialize(client, root)
+                client.send({
+                    "jsonrpc": "2.0",
+                    "method": "textDocument/didOpen",
+                    "params": {
+                        "textDocument": {
+                            "uri": uri,
+                            "languageId": "yian",
+                            "version": 1,
+                            "text": text,
+                        }
+                    },
+                })
+                client.send({
+                    "jsonrpc": "2.0",
+                    "id": 7,
+                    "method": "textDocument/definition",
+                    "params": {
+                        "textDocument": {"uri": uri},
+                        "position": {"line": 0, "character": text.index("value;")},
+                    },
+                })
+                client.send({
+                    "jsonrpc": "2.0",
+                    "method": "$/cancelRequest",
+                    "params": {"id": 7},
+                })
+
+                response = client.until(lambda message: message.get("id") == 7)
+                self.assertEqual(response.get("error", {}).get("code"), -32800)
             finally:
                 client.shutdown()
 
