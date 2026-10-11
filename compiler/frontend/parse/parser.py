@@ -19,11 +19,15 @@ def ch_parse(): return CompilerLog.get("parse")
 
 
 class Parser:
-    def __init__(self, tokens: list[Token]):
-        self.__stream = TokenStream(tokens)
+    def __init__(self, tokens: list[Token], *, editor: bool = False):
+        self.__stream = TokenStream(tokens, editor=editor)
 
         self.__type_parser = TypeParser(self.__stream)
         self.__expr_parser = ExprParser(self.__stream, self.__type_parser)
+
+    @property
+    def errors(self) -> tuple[ParseError, ...]:
+        return tuple(self.__stream.errors)
 
     def parse(self) -> AST.Program:
         """
@@ -32,38 +36,49 @@ class Parser:
         items: list[AST.ProgramItem] = []
 
         while not self.__stream.at_end():
-            attrs = self.__stream.consume_attrs()
-            match self.__stream.peek():
-                case Keyword(KeywordKind.Import, _):
-                    if attrs:
-                        raise ParseError("Attributes are not allowed on import statements", attrs[0].span)
-                    items.extend(self.__parse_import())
-                case Keyword(KeywordKind.From, _):
-                    if attrs:
-                        raise ParseError("Attributes are not allowed on import statements", attrs[0].span)
-                    items.extend(self.__parse_import())
-                case Keyword(KeywordKind.Typedef, _):
-                    items.append(self.__parse_alias(attrs=attrs))
-                case Keyword(KeywordKind.Opaque, _):
-                    items.append(self.__parse_opaque_type(attrs))
-                case Keyword(KeywordKind.Extern, _):
-                    items.append(self.__parse_extern_block(attrs))
-                case Keyword(KeywordKind.Impl, _):
-                    if attrs:
-                        raise ParseError("Attributes are not allowed on impl blocks", attrs[0].span)
-                    items.append(self.__parse_impl())
-                case Keyword(KeywordKind.Struct, _):
-                    items.append(self.__parse_struct(attrs=attrs))
-                case Keyword(KeywordKind.Enum, _):
-                    items.append(self.__parse_enum(attrs=attrs))
-                case Keyword(KeywordKind.Trait, _):
-                    items.append(self.__parse_trait(attrs=attrs))
-                case Keyword(KeywordKind.Fn, _):
-                    items.append(self.__parse_func_def(attrs=attrs))
-                case Keyword(KeywordKind.Const, _):
-                    items.append(self.__parse_const_def(attrs=attrs))
-                case _:
-                    raise ParseError(f"Expected a declaration keyword (fn, const, struct, enum, trait, impl, typedef, opaque, extern, import, from) but got '{self.__stream.peek()}'", self.__stream.peek().span)
+            mark = self.__stream.mark()
+            try:
+                attrs = self.__stream.consume_attrs()
+                match self.__stream.peek():
+                    case Keyword(KeywordKind.Import, _):
+                        if attrs:
+                            raise ParseError("Attributes are not allowed on import statements", attrs[0].span)
+                        items.extend(self.__parse_import())
+                    case Keyword(KeywordKind.From, _):
+                        if attrs:
+                            raise ParseError("Attributes are not allowed on import statements", attrs[0].span)
+                        items.extend(self.__parse_import())
+                    case Keyword(KeywordKind.Typedef, _):
+                        items.append(self.__parse_alias(attrs=attrs))
+                    case Keyword(KeywordKind.Opaque, _):
+                        items.append(self.__parse_opaque_type(attrs))
+                    case Keyword(KeywordKind.Extern, _):
+                        items.append(self.__parse_extern_block(attrs))
+                    case Keyword(KeywordKind.Impl, _):
+                        if attrs:
+                            raise ParseError("Attributes are not allowed on impl blocks", attrs[0].span)
+                        items.append(self.__parse_impl())
+                    case Keyword(KeywordKind.Struct, _):
+                        items.append(self.__parse_struct(attrs=attrs))
+                    case Keyword(KeywordKind.Enum, _):
+                        items.append(self.__parse_enum(attrs=attrs))
+                    case Keyword(KeywordKind.Trait, _):
+                        items.append(self.__parse_trait(attrs=attrs))
+                    case Keyword(KeywordKind.Fn, _):
+                        items.append(self.__parse_func_def(attrs=attrs))
+                    case Keyword(KeywordKind.Const, _):
+                        items.append(self.__parse_const_def(attrs=attrs))
+                    case _:
+                        raise ParseError(f"Expected a declaration keyword (fn, const, struct, enum, trait, impl, typedef, opaque, extern, import, from) but got '{self.__stream.peek()}'", self.__stream.peek().span)
+            except ParseError as error:
+                if not self.__stream.editor:
+                    raise
+                self.__stream.errors.append(error)
+                self.__stream.synchronize(TERM_SEMICOLON | TERM_RBRACE)
+                if not self.__stream.at_end() and not self.__stream.declaration_boundary():
+                    self.__stream.advance()
+                if self.__stream.mark() == mark and not self.__stream.at_end():
+                    self.__stream.advance()
             if items:
                 ch_parse().trace(lambda: f"parsed {type(items[-1]).__name__}")
 
@@ -90,6 +105,7 @@ class Parser:
         return AST.ExternBlock(span=start.span, attrs=attrs, abi=abi.value, functions=functions)
 
     def __parse_extern_function(self) -> AST.ExternFuncDecl:
+        problems = len(self.__stream.errors)
         self.__stream.consume_keyword(KeywordKind.Fn)
         name = self.__stream.consume_identifier()
         self.__stream.consume_punctuator(PunctuatorKind.LParen)
@@ -101,7 +117,8 @@ class Parser:
             self.__stream.advance()
             ret_type = self.__parse_type()
         self.__stream.consume_punctuator(PunctuatorKind.Semicolon)
-        return AST.ExternFuncDecl(span=name.span, name=name, params=params, ret_type=ret_type)
+        return AST.ExternFuncDecl(span=name.span, name=name, params=params, ret_type=ret_type,
+                                  signature_recovered=len(self.__stream.errors) != problems)
 
     def __parse_import(self) -> list[AST.Import]:
         result: list[AST.Import] = []
@@ -312,6 +329,7 @@ class Parser:
         return AST.TraitDef(span=name.span, attrs=attrs, name=name, generics=generics, items=items)
 
     def __parse_method_decl(self) -> AST.MethodDecl:
+        problems = len(self.__stream.errors)
         attrs = self.__stream.consume_attrs()
 
         self.__stream.consume_keyword(KeywordKind.Fn)
@@ -329,7 +347,8 @@ class Parser:
         else:
             ret_type = None
 
-        return AST.MethodDecl(span=name.span, attrs=attrs, name=name, generics=generics, params=params, ret_type=ret_type)
+        return AST.MethodDecl(span=name.span, attrs=attrs, name=name, generics=generics, params=params, ret_type=ret_type,
+                              signature_recovered=len(self.__stream.errors) != problems)
 
     def __parse_method_def(self, decl: AST.MethodDecl | None = None) -> AST.MethodDef:
         if decl is None:

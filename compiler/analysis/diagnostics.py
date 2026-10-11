@@ -114,6 +114,7 @@ class Diagnostic:
     #: True when the message reports a recovery rather than a hard failure; the
     # editor renders these as warnings.
     recovered: bool = False
+    stage: Stage | None = None
 
 
 #: ``AX`` codes the *compiler* reuses for source-level import failures.  ``AX``
@@ -178,6 +179,7 @@ def diagnostic_from_error(
         message=message,
         span=span,
         recovered=recovered,
+        stage=stage,
     )
 
 

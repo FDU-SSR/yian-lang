@@ -70,6 +70,11 @@ class DefinitionState:
         self.__current_span: SrcSpan = SrcSpan.empty()
         # callback to report discovered reachable definition type ids
         self.__def_reporter: Callable[[int], None] | None = None
+        self.editor_errors: list[AnalysisError] = []
+
+    @property
+    def editor_recovery(self) -> bool:
+        return self.__semantic.editor_recovery
 
     @property
     def type_ctx(self) -> TypeCtx:
@@ -193,6 +198,8 @@ class DefinitionState:
         )
         self.__facts[def_type_id] = facts
         self.__current = facts
+        if self.editor_recovery:
+            self.names.definition_context = def_type_id
 
         # reset flow state
         self.__locals = []

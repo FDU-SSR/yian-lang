@@ -6,6 +6,8 @@ from compiler.analysis.editor import EditorDocumentSymbolKind, EditorEngine, Edi
 from compiler.analysis.editor import EditorImportQuickFix, EditorPrepareRenameResult, EditorRenameResult, EditorTextEdit;
 from compiler.analysis.editor_facts import EditorMemberKind;
 from compiler.analysis.editor_queries import EditorCompletionKind, EditorCompletionResult, EditorSignatureHelp, completion_at, signature_help_at;
+from compiler.analysis.editor.availability import QueryCompleteness;
+from compiler.analysis.editor.signatures import query_signature;
 from compiler.analysis.editor_tokens import EditorSemanticKind, semantic_tokens;
 from compiler.common.ids import SourceId, SymbolId, UnitId;
 from compiler.diagnostics.model import Diagnostic, DiagnosticLocation, Severity;
@@ -395,6 +397,7 @@ fn completion_kind_value(kind: EditorCompletionKind) -> u64 {
         EditorCompletionKind.Module | EditorCompletionKind.Package => 9u64,
         EditorCompletionKind.Variant => 20u64,
         EditorCompletionKind.Primitive => 14u64,
+        EditorCompletionKind.TypeParameter => 25u64,
         EditorCompletionKind.Text => 1u64,
     }
 }
@@ -663,7 +666,7 @@ fn document_symbols_value(snapshot: EditorSnapshot&, source: SourceId)
 
 fn completion_value(snapshot: EditorSnapshot&, completion: EditorCompletionResult) -> Value {
     let output = Object.new();
-    json_put(&output, "isIncomplete", Value.Boolean(false));
+    json_put(&output, "isIncomplete", Value.Boolean(completion.completeness == QueryCompleteness.Partial));
     let items = Vec<Value>.with_capacity(completion.items.len());
     for item in completion.items {
         let inserted = String.from(&item.label.as_str());
@@ -1459,9 +1462,14 @@ impl WorkerState {
                 let source = position.source;
                 let row = position.row;
                 let column = position.column;
-                match signature_help_at(snapshot, source, row, column) {
-                    Some(value) => Result<Value, WorkerFailure>.Ok(signature_value(value)),
-                    None => Result<Value, WorkerFailure>.Ok(Value.Null),
+                match query_signature(snapshot, source, row, column) {
+                    Ok(Value(value, _)) => Result<Value, WorkerFailure>.Ok(signature_value(value)),
+                    Ok(Unavailable(_)) => Result<Value, WorkerFailure>.Ok(Value.Null),
+                    Err(error) => {
+                        let failure = WorkerFailure.new(-32603i64, error.diagnostic.message.as_str());
+                        error.drop();
+                        Result<Value, WorkerFailure>.Err(failure)
+                    },
                 }
             },
             "textDocument/semanticTokens/full" => {

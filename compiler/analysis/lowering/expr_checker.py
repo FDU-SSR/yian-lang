@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from compiler.analysis.error import AnalysisError
+from compiler.analysis.error import AnalysisError, EditorIncomplete
 from compiler.analysis.lowering.assign_check import build_assign
 from compiler.analysis.lowering.builtin_dispatcher import BuiltinDispatcher
 from compiler.analysis.lowering.call_dispatcher import CallDispatcher
@@ -19,6 +19,8 @@ from compiler.frontend.parse import ast_type as ASTTy
 from compiler.frontend.parse.ast_type import (BinaryConstExpr, GenericConstExpr,
                                               LiteralConstExpr, UnaryConstExpr)
 from compiler.frontend.parse.operator import UnaryOperator
+from compiler.frontend.parse.ast_traversal import AstVisitor
+from compiler.analysis.symbol.context import SymbolCtx
 from compiler.utils.log import CompilerLog
 
 # Lazy channel accessors — called at runtime, after CompilerLog is initialised.
@@ -32,12 +34,20 @@ def ch_coerce():
     return CompilerLog.get("type_check.coerce")
 
 
-class ExprChecker:
-    """Expression checker and lowering facade.
+class _UnavailableBindings(AstVisitor):
+    """A failed binding preserves its names for lexical shadowing, without types."""
 
-    For now this is a minimal stub. Concrete implementations should perform
-    semantic checks and return `HIR.Expr` carrying HIR nodes and type ids.
-    """
+    def __init__(self, symbols: SymbolCtx) -> None:
+        self.symbols = symbols
+
+    def enter_pattern(self, pattern: AST.Pattern) -> bool:
+        if isinstance(pattern, (AST.NamePattern, AST.BindPattern)):
+            self.symbols.block_unavailable(pattern.name.name, pattern.name.span)
+        return True
+
+
+class ExprChecker:
+    """Type checking and HIR construction with opt-in editor statement recovery."""
 
     def __init__(self, ctx: DefinitionState):
         self.__ctx = ctx
@@ -49,9 +59,42 @@ class ExprChecker:
         self.__defer_depth = 0
 
     def value(self, expr: AST.Expr) -> HIR.Expr:
+        if self.__ctx.editor_recovery and expr.syntax_recovered:
+            if isinstance(expr, AST.Call):
+                self.value(expr.callee)
+                for argument in expr.args:
+                    self.value(argument.value)
+            elif isinstance(expr, AST.MethodCall):
+                self.value(expr.receiver)
+                for argument in expr.args:
+                    self.value(argument.value)
+            elif isinstance(expr, AST.Binary):
+                self.value(expr.left)
+                self.value(expr.right)
+            elif isinstance(expr, (AST.Array, AST.Tuple)):
+                for element in expr.elements:
+                    self.value(element)
+            elif isinstance(expr, AST.ArrayRepeat):
+                self.value(expr.element)
+                self.value(expr.count)
+            raise EditorIncomplete("Incomplete editor expression", expr.span)
+        result = self.__value(expr)
+        if self.__ctx.editor_recovery and not self.__ctx.type_ctx.editor_type_available(result.type_id):
+            raise EditorIncomplete("Unresolved editor type", expr.span)
+        if expr.syntax_span is not None:
+            self.__ctx.names.record_expression(
+                expr.syntax_span or expr.span, result.type_id, result.is_place, isinstance(result, HIR.Ty),
+            )
+        return result
+
+    def __value(self, expr: AST.Expr) -> HIR.Expr:
         """Evaluate an expression and return its value (HIR.Expr)."""
         ch_expr().trace(lambda: f"value({type(expr).__name__})")
         match expr:
+            case AST.Recovery():
+                for child in expr.children:
+                    self.value(child)
+                raise EditorIncomplete("Incomplete editor expression", expr.span)
             # --- control-flow / statement-like expressions ---
             case AST.Block():
                 return self.check_block(expr)
@@ -644,10 +687,47 @@ class ExprChecker:
     def check_block(self, ast_block: AST.Block) -> HIR.Block:
         self.__ctx.enter_scope()
         stmts: list[HIR.Expr] = []
+        symbols = self.__ctx.symbol_ctx
+        assert symbols is not None
         try:
+            first_error: AnalysisError | None = None
             for stmt in ast_block.stmts:
-                stmts.append(self.value(stmt))
+                checkpoint = symbols.checkpoint() if self.__ctx.editor_recovery else None
+                loop_counts = [len(frame.break_value_type_ids) for frame in self.__ctx.loop_stack]
+                try:
+                    stmts.append(self.value(stmt))
+                except AnalysisError as error:
+                    if not self.__ctx.editor_recovery:
+                        raise
+                    if checkpoint is not None:
+                        symbols.restore(checkpoint)
+                    for frame, count in zip(self.__ctx.loop_stack, loop_counts):
+                        del frame.break_value_type_ids[count:]
+                    failed_statement = stmt.expr if isinstance(stmt, AST.Semi) else stmt
+                    if isinstance(failed_statement, AST.VarDecl):
+                        available = False
+                        if not isinstance(failed_statement.var_type, ASTTy.DeducedType):
+                            try:
+                                type_id = self.__ctx.resolve_type(failed_statement.var_type)
+                                if self.__ctx.type_ctx.editor_type_available(type_id) and not isinstance(self.__ctx.type_ctx[type_id], Type.TraitType):
+                                    self.__ctx.declare_local(failed_statement.name, type_id)
+                                    available = True
+                            except AnalysisError:
+                                pass
+                        if not available:
+                            symbols.block_unavailable(failed_statement.name.name, failed_statement.name.span)
+                    elif isinstance(failed_statement, AST.PatternLet):
+                        _UnavailableBindings(symbols).visit_pattern(failed_statement.pattern)
+                    elif isinstance(failed_statement, AST.Recovery):
+                        for binding in failed_statement.bindings:
+                            symbols.block_unavailable(binding.name, binding.span)
+                    self.__ctx.editor_errors.append(error)
+                    first_error = first_error or error
+            if first_error is not None:
+                raise first_error
         finally:
+            if self.__ctx.editor_recovery:
+                self.__ctx.names.record_scope(ast_block.full_span() or ast_block.span, symbols)
             self.__ctx.exit_scope()
         block_type_id = stmts[-1].type_id if stmts else TypeCtx.void_id
         return HIR.Block(span=ast_block.span, stmts=stmts, type_id=block_type_id, is_place=False)

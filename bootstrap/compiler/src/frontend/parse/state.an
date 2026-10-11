@@ -1,5 +1,5 @@
 from compiler.frontend.ast.arena import AstArena, AstTree;
-from compiler.frontend.ast.node import Identifier, IdentifierData, Program;
+from compiler.frontend.ast.node import Identifier, IdentifierData, Program, Expr;
 from compiler.frontend.lex.token import Token, KeywordKind, PunctuatorKind;
 from compiler.frontend.source import Position, Span;
 from std.core.convert import From;
@@ -27,13 +27,72 @@ pub struct Parser {
     pub arena: AstArena,
     failed: bool,
     problem: ParseError,
+    pub editor: bool,
+    pub problems: Vec<ParseError>,
 }
 
 impl Parser {
     static pub fn new(tokens: Vec<Token>&) -> Self {
         let zero = Position(row=0, column=0);
         Self(tokens=tokens, index=0, arena=AstArena.new(), failed=false,
-            problem=ParseError(message=String.new(), span=Span(start=zero, end=zero)))
+            problem=ParseError(message=String.new(), span=Span(start=zero, end=zero)),
+            editor=false, problems=Vec<ParseError>.new())
+    }
+
+    static pub fn new_editor(tokens: Vec<Token>&) -> Self {
+        let parser = Self.new(tokens);
+        parser.editor = true;
+        parser
+    }
+
+    pub fn extent(expr: Expr&, start: Position) {
+        if self.editor && self.index != 0 {
+            expr.syntax_span = Option<Span>.Some(Span(start, self.previous_span().end));
+        }
+    }
+
+    // Transfer the diagnostic before resuming; all speculative nodes remain arena-owned.
+    pub fn save_problem() {
+        if self.failed {
+            self.problems.push(self.problem);
+            self.problem.message = String.new();
+            self.failed = false;
+        }
+    }
+
+    pub fn synchronize() {
+        self.save_problem();
+        let depth = 0u64;
+        while !self.at_end() {
+            if self.declaration_boundary() { break; }
+            if depth == 0 && (self.at_punct(PunctuatorKind.Semicolon) || self.at_punct(PunctuatorKind.RBrace)) {
+                break;
+            }
+            if self.at_punct(PunctuatorKind.LBrace) { depth += 1; }
+            if self.at_punct(PunctuatorKind.RBrace) && depth != 0 { depth -= 1; }
+            self.advance();
+        }
+    }
+
+    // Keep the separator or close token for the list owner; discard only the damaged element.
+    pub fn synchronize_list(close: PunctuatorKind) {
+        self.save_problem();
+        let depth = 0u64;
+        while !self.at_end() {
+            if self.declaration_boundary() { break; }
+            if depth == 0 && (self.at_punct(close) || self.at_punct(PunctuatorKind.Comma) ||
+                self.at_punct(PunctuatorKind.LBrace) || self.at_punct(PunctuatorKind.RBrace) ||
+                self.at_punct(PunctuatorKind.Semicolon)) { break; }
+
+            if self.at_punct(PunctuatorKind.LParen) || self.at_punct(PunctuatorKind.LBracket) ||
+            self.at_punct(PunctuatorKind.LAngle) { depth += 1u64; }
+            if self.at_punct(PunctuatorKind.RParen) || self.at_punct(PunctuatorKind.RBracket) ||
+            self.at_punct(PunctuatorKind.RAngle) {
+                if depth == 0 { break; }
+                depth -= 1u64;
+            }
+            self.advance();
+        }
     }
 
     pub fn peek() -> Token& { &self.tokens[self.index] }
@@ -96,6 +155,24 @@ impl Parser {
 
     pub fn at_keyword(word: KeywordKind) -> bool { self.peek().is_keyword(word) }
 
+    // A named function is a declaration boundary, never an unfinished list element.
+    pub fn declaration_boundary() -> bool {
+        if !self.editor { return false; }
+        let ahead = 0u64;
+        while self.peek_at(ahead).is_keyword(KeywordKind.Pub) ||
+        self.peek_at(ahead).is_keyword(KeywordKind.Ffi) || self.peek_at(ahead).is_keyword(KeywordKind.Static) {
+            let is_pub = self.peek_at(ahead).is_keyword(KeywordKind.Pub);
+            ahead += 1u64;
+            if is_pub && self.peek_at(ahead).is_punct(PunctuatorKind.LParen) {
+                if !self.peek_at(ahead + 1u64).is_keyword(KeywordKind.Ffi) ||
+                !self.peek_at(ahead + 2u64).is_punct(PunctuatorKind.RParen) { return false; }
+                ahead += 3u64;
+            }
+        }
+        self.peek_at(ahead).is_keyword(KeywordKind.Fn) && self.peek_at(ahead + 1u64).is_identifier() &&
+        (self.peek_at(ahead + 2u64).is_punct(PunctuatorKind.LParen) || self.peek_at(ahead + 2u64).is_punct(PunctuatorKind.LAngle))
+    }
+
     pub fn take_punct(symbol: PunctuatorKind) -> Span {
         let span = self.peek().span;
         if self.failed {
@@ -114,6 +191,10 @@ impl Parser {
         message.push('\'');
         self.error(message.as_str(), span);
         message.drop();
+        if self.editor && (symbol == PunctuatorKind.RParen || symbol == PunctuatorKind.RBracket ||
+            symbol == PunctuatorKind.RAngle || symbol == PunctuatorKind.RBrace || symbol == PunctuatorKind.Semicolon) {
+            self.save_problem();
+        }
         return span;
     }
 
@@ -192,5 +273,7 @@ impl Drop for Parser {
     pub fn drop() {
         self.arena.drop();
         self.problem.drop();
+        for problem in self.problems { problem.drop(); }
+        self.problems.drop();
     }
 }

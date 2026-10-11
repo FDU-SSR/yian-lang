@@ -32,9 +32,20 @@ pub struct ResolvedName {
     pub symbol: SymbolId,
     pub location: SourceSpan,
     pub type_id: TypeId,
+    pub context: Option<TypeId>,
+    pub available: bool,
 }
 
 pub enum EditorMemberKind { Field, Variant, Method }
+
+pub struct ExpressionFact {
+    pub location: SourceSpan,
+    pub type_id: TypeId,
+    pub is_place: bool,
+    pub is_static: bool,
+    pub available: bool,
+    pub context: Option<TypeId>,
+}
 
 pub struct ResolvedMember {
     pub name: NameId,
@@ -43,11 +54,15 @@ pub struct ResolvedMember {
     pub declaration: SourceSpan,
     pub type_id: TypeId,
     pub is_declaration: bool,
+    pub available: bool,
+    pub context: Option<TypeId>,
 }
 
 struct ScopeRegion {
     span: SourceSpan,
     scope: ScopeId,
+    context: Option<TypeId>,
+    available: bool,
 }
 
 // The snapshot owns one ordered fact list and indexes both query directions.
@@ -62,6 +77,12 @@ pub struct EditorFacts {
     members_by_declaration: HashMap<NamePosition, Vec<u64>>,
     methods_by_definition: HashMap<DefId, SourceSpan>,
     scopes_by_source: HashMap<SourceId, Vec<ScopeRegion>>,
+    expressions: Vec<ExpressionFact>,
+    expression_ends: HashMap<NamePosition, u64>,
+    pub definition_context: Option<TypeId>,
+    pub reference_facts_complete: bool,
+    incomplete_symbols: HashMap<SymbolId, bool>,
+    incomplete_members: HashMap<NamePosition, bool>,
 }
 
 impl EditorFacts {
@@ -71,18 +92,55 @@ impl EditorFacts {
             HashMap<SymbolId, Vec<u64>>.new(),
             Vec<ResolvedMember>.new(), HashMap<NamePosition, u64>.new(),
             HashMap<NamePosition, Vec<u64>>.new(), HashMap<DefId, SourceSpan>.new(),
-            HashMap<SourceId, Vec<ScopeRegion>>.new())
+            HashMap<SourceId, Vec<ScopeRegion>>.new(), Vec<ExpressionFact>.new(), HashMap<NamePosition, u64>.new(), Option<TypeId>.None, true,
+            HashMap<SymbolId, bool>.new(), HashMap<NamePosition, bool>.new())
     }
 
-    // Repeated lowering of one source span keeps the first fact instead of duplicating references.
+    pub fn record_expression(location: SourceSpan, type_id: TypeId, is_place: bool, is_static: bool) {
+        let key = NamePosition(location.source, location.span.end.row, location.span.end.column);
+        let value = ExpressionFact(location, type_id, is_place, is_static, true, self.definition_context);
+        match self.expression_ends.get(&key) {
+            Some(index) => {
+                let previous = &self.expressions[*index];
+                if previous.location.span.start.row == location.span.start.row && previous.location.span.start.column == location.span.start.column {
+                    if previous.type_id != type_id || previous.is_static != is_static || previous.is_place != is_place { previous.available = false; }
+                } elif location.span.start.row < previous.location.span.start.row ||
+                (location.span.start.row == previous.location.span.start.row && location.span.start.column < previous.location.span.start.column) {
+                    *previous = value;
+                }
+                self.expressions.push(value);
+            },
+            None => {
+                self.expression_ends.insert(key, self.expressions.len());
+                self.expressions.push(value);
+            },
+        }
+    }
+
+    pub fn expression_ending_at(source: SourceId, row: u64, column: u64) -> Option<ExpressionFact&> {
+        match self.expression_ends.get(&NamePosition(source, row, column)) {
+            Some(index) if self.expressions[*index].available => Option<ExpressionFact&>.Some(&self.expressions[*index]),
+            _ => Option<ExpressionFact&>.None,
+        }
+    }
+
+    // Keep instance provenance. Conflicting projections are never treated as one reliable fact.
     pub fn record(symbol: SymbolId, location: SourceSpan, type_id: TypeId) {
         let key = NamePosition(location.source, location.span.start.row, location.span.start.column);
-        if self.by_position.contains(&key) {
+        if let Some(index) = self.by_position.get(&key) {
+            let previous = &self.names[*index];
+            if previous.symbol != symbol || previous.type_id != type_id {
+                previous.available = false;
+                self.reference_facts_complete = false;
+                self.incomplete_symbols.insert(previous.symbol, true);
+                self.incomplete_symbols.insert(symbol, true);
+                self.names.push(ResolvedName(symbol, location, type_id, self.definition_context, false));
+            }
             return;
         }
 
         let index = self.names.len();
-        self.names.push(ResolvedName(symbol, location, type_id));
+        self.names.push(ResolvedName(symbol, location, type_id, self.definition_context, true));
         let column = location.span.start.column;
         while column <= location.span.end.column {
             self.by_position.insert(NamePosition(location.source, location.span.start.row, column), index);
@@ -102,8 +160,8 @@ impl EditorFacts {
     pub fn at(source: SourceId, row: u64, column: u64) -> Option<ResolvedName&> {
         let key = NamePosition(source, row, column);
         match self.by_position.get(&key) {
-            Some(index) => self.names.get(*index),
-            None => Option<ResolvedName&>.None,
+            Some(index) if self.names[*index].available => self.names.get(*index),
+            _ => Option<ResolvedName&>.None,
         }
     }
 
@@ -170,16 +228,26 @@ impl EditorFacts {
         if self.member_positions.contains(&key) {
             return;
         }
-        self.index_member(ResolvedMember(name, kind, location, target_span, type_id, true));
+        self.index_member(ResolvedMember(name, kind, location, target_span, type_id, true, true, self.definition_context));
     }
 
     pub fn record_member_reference(kind: EditorMemberKind, name: NameId,
         location: SourceSpan, declaration: SourceSpan, type_id: TypeId) {
         let key = Self.member_key(location);
-        if self.member_positions.contains(&key) {
+        if let Some(index) = self.member_positions.get(&key) {
+            let previous = &self.members[*index];
+            if previous.type_id != type_id || previous.declaration.source != declaration.source ||
+            previous.declaration.span.start.row != declaration.span.start.row ||
+            previous.declaration.span.start.column != declaration.span.start.column {
+                previous.available = false;
+                self.reference_facts_complete = false;
+                self.incomplete_members.insert(Self.member_key(previous.declaration), true);
+                self.incomplete_members.insert(Self.member_key(declaration), true);
+                self.members.push(ResolvedMember(name, kind, location, declaration, type_id, false, false, self.definition_context));
+            }
             return;
         }
-        self.index_member(ResolvedMember(name, kind, location, declaration, type_id, false));
+        self.index_member(ResolvedMember(name, kind, location, declaration, type_id, false, true, self.definition_context));
     }
 
     pub fn record_method_declaration(definition: DefId, name: NameId,
@@ -195,10 +263,19 @@ impl EditorFacts {
         }
     }
 
+    // Unrelated generic instance conflicts do not invalidate a complete local reference set.
+    pub fn symbol_references_complete(symbol: SymbolId) -> bool {
+        !self.incomplete_symbols.contains(&symbol)
+    }
+
+    pub fn member_references_complete(declaration: SourceSpan) -> bool {
+        !self.incomplete_members.contains(&Self.member_key(declaration))
+    }
+
     pub fn member_at(source: SourceId, row: u64, column: u64) -> Option<ResolvedMember&> {
         match self.member_positions.get(&NamePosition(source, row, column)) {
-            Some(index) => self.members.get(*index),
-            None => Option<ResolvedMember&>.None,
+            Some(index) if self.members[*index].available => self.members.get(*index),
+            _ => Option<ResolvedMember&>.None,
         }
     }
 
@@ -224,7 +301,7 @@ impl EditorFacts {
             Some(indices) => {
                 for index in *indices {
                     let member = &self.members[*index];
-                    if include_declaration || !member.is_declaration {
+                    if member.available && (include_declaration || !member.is_declaration) {
                         result.push(member.location);
                     }
                 }
@@ -235,12 +312,32 @@ impl EditorFacts {
     }
 
     // Regions are recorded as scopes are created; the narrowest containing span wins.
+    static fn same_context(left: Option<TypeId>, right: Option<TypeId>) -> bool {
+        match left {
+            Some(value) => match right { Some(other) => value == other, None => false },
+            None => right.is_none(),
+        }
+    }
+
     pub fn record_scope(location: SourceSpan, scope: ScopeId) {
         match self.scopes_by_source.get(&location.source) {
-            Some(regions) => regions.push(ScopeRegion(location, scope)),
+            Some(regions) => {
+                let available = true;
+                for region in *regions {
+                    if region.span.span.start.row == location.span.start.row &&
+                    region.span.span.start.column == location.span.start.column &&
+                    region.span.span.end.row == location.span.end.row &&
+                    region.span.span.end.column == location.span.end.column &&
+                    !Self.same_context(region.context, self.definition_context) {
+                        region.available = false;
+                        available = false;
+                    }
+                }
+                regions.push(ScopeRegion(location, scope, self.definition_context, available));
+            },
             None => {
                 let regions = Vec<ScopeRegion>.new();
-                regions.push(ScopeRegion(location, scope));
+                regions.push(ScopeRegion(location, scope, self.definition_context, true));
                 self.scopes_by_source.insert(location.source, regions);
             },
         }
@@ -272,7 +369,7 @@ impl EditorFacts {
         match self.scopes_by_source.get(&source) {
             Some(regions) => {
                 for region in *regions {
-                    if !Self.contains(region.span, row, column) {
+                    if !region.available || !Self.contains(region.span, row, column) {
                         continue;
                     }
 
@@ -296,7 +393,7 @@ impl EditorFacts {
         match self.by_symbol.get(&symbol) {
             Some(indices) => {
                 for index in *indices {
-                    result.push(self.names[*index].location);
+                    if self.names[*index].available { result.push(self.names[*index].location); }
                 }
             },
             None => {},
@@ -329,5 +426,9 @@ impl Drop for EditorFacts {
         self.parameter_declarations.drop();
         self.by_position.drop();
         self.names.drop();
+        self.expressions.drop();
+        self.expression_ends.drop();
+        self.incomplete_symbols.drop();
+        self.incomplete_members.drop();
     }
 }

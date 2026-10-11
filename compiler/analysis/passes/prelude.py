@@ -57,6 +57,19 @@ def __build_existing_imports(program: AST.Program) -> set[tuple[tuple[str, ...],
     return existing
 
 
+def __bound_names(program: AST.Program) -> set[str]:
+    """Written module bindings take precedence over implicit imports."""
+    names: set[str] = set()
+    for item in program.items:
+        if isinstance(item, AST.Import):
+            names.add(item.alias.name if item.alias is not None else item.target.name)
+        elif isinstance(item, (AST.FuncDef, AST.ConstDef, AST.Alias, AST.OpaqueTypeDef, AST.StructDef, AST.EnumDef, AST.TraitDef)):
+            names.add(item.name.name)
+        elif isinstance(item, AST.ExternBlock):
+            names.update(function.name.name for function in item.functions)
+    return names
+
+
 def inject_prelude(units: Iterable[UnitData]) -> None:
     """Inject prelude imports into non-stdlib programs.
 
@@ -84,11 +97,12 @@ def inject_prelude(units: Iterable[UnitData]) -> None:
         src_file = unit.path
         program = unit.program
         existing = __build_existing_imports(program)
+        bound = __bound_names(program)
 
         prelude_imports: list[AST.Import] = []
         for paths, target_name in PRELUDE_IMPORTS:
             path_tuple = tuple(paths)
-            if (path_tuple, target_name) in existing:
+            if target_name in bound or (path_tuple, target_name) in existing:
                 continue
 
             span = __make_span(src_file)

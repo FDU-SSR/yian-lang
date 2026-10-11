@@ -33,13 +33,17 @@ pub typedef TypeGenericParam = Node<TypeGenericParamData>;
 pub typedef ConstGenericParam = Node<ConstGenericParamData>;
 pub typedef FieldInfo = Node<FieldInfoData>;
 pub typedef VariantInfo = Node<VariantInfoData>;
-pub typedef MethodDecl = Node<MethodDeclData>;
+pub struct MethodDecl { pub data: MethodDeclData, pub span: Span, pub signature_recovered: bool }
+impl Drop for MethodDecl { pub fn drop() { self.data.drop(); } }
 pub typedef MethodDef = Node<MethodDefData>;
-pub typedef ExternFuncDecl = Node<ExternFuncDeclData>;
+pub struct ExternFuncDecl { pub data: ExternFuncDeclData, pub span: Span, pub signature_recovered: bool }
+impl Drop for ExternFuncDecl { pub fn drop() { self.data.drop(); } }
 pub typedef ImplCondition = Node<ImplConditionData>;
 pub typedef CaptureItem = Node<CaptureItemData>;
 pub typedef FieldPattern = Node<FieldPatternData>;
-pub typedef Expr = Node<ExprData>;
+// Editor extents are independent of the spans used by compiler diagnostics.
+pub struct Expr { pub data: ExprData, pub span: Span, pub syntax_span: Option<Span>, pub syntax_recovered: bool }
+impl Drop for Expr { pub fn drop() { self.data.drop(); } }
 pub typedef TypeSyntax = Node<TypeData>;
 pub typedef ConstExpr = Node<ConstExprData>;
 pub typedef Pattern = Node<PatternData>;
@@ -269,6 +273,7 @@ pub enum TypeSource {
 
 // Expression and statement syntax data; all child expressions refer to Expr nodes.
 pub enum ExprData {
+    Recovery { children: Vec<Expr&>, bindings: Vec<Identifier&> },
     Identifier { name: Identifier& },
     Literal { literal: Literal },
     Binary { op: BinaryOperator, left: Expr&, right: Expr& },
@@ -308,6 +313,7 @@ pub enum ExprData {
 impl Drop for ExprData {
     pub fn drop() {
         match self {
+            Recovery(children, bindings) => { children.drop(); bindings.drop(); },
             Identifier(name) => {},
             Literal(literal) => {},
             Binary(op, left, right) => {},

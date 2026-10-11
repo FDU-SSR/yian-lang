@@ -1,4 +1,4 @@
-from compiler.frontend.ast.node import Expr, ExprData, Block, BlockData, Argument, ArgumentData, Identifier, GenericArgument, TypeSyntax, TypeData, Condition, LetConditionData, ElifBranch, ElifBranchData, MatchArm, MatchArmData, PatternLet, PatternLetData, CaptureItem, CaptureItemData, Literal, StrLiteralData, Parameter;
+from compiler.frontend.ast.node import Expr, ExprData, Block, BlockData, Argument, ArgumentData, Identifier, IdentifierData, GenericArgument, TypeSyntax, TypeData, Condition, LetConditionData, ElifBranch, ElifBranchData, MatchArm, MatchArmData, PatternLet, PatternLetData, CaptureItem, CaptureItemData, Literal, StrLiteralData, Parameter;
 from compiler.frontend.ast.atoms import BuiltinKind, MatchArmOrigin;
 from compiler.frontend.ast.operator import BinaryOperator, UnaryOperator;
 from compiler.frontend.lex.token import KeywordKind, PunctuatorKind;
@@ -18,6 +18,7 @@ from std.core.vec import Vec;
 // Consume only operators whose left binding power meets min_bp; right binding power sets the recursive boundary.
 fn expr_bp(parser: Parser&, min_bp: i32) -> Option<Expr&> {
     parser.ready()?;
+    let start = parser.peek().span.start;
 
     let lhs = prefix(parser)?;
 
@@ -34,6 +35,7 @@ fn expr_bp(parser: Parser&, min_bp: i32) -> Option<Expr&> {
         lhs = parser.arena.alloc_expr(ExprData.Binary(op=op, left=lhs, right=rhs), lhs.span + rhs.span);
     }
 
+    parser.extent(lhs, start);
     Option<Expr&>.Some(val=lhs)
 }
 
@@ -53,7 +55,15 @@ fn prefix(parser: Parser&) -> Option<Expr&> {
     if parser.at_keyword(KeywordKind.Dyn) {
         return dyn_expr(parser);
     }
-    postfix(parser, primary(parser)?)
+    let problem_count = parser.problems.len();
+    let expression = primary(parser)?;
+    if parser.editor && parser.problems.len() != problem_count {
+        match expression.data {
+            Array(_) | Tuple(_) | TypeItem(_, _) | ArrayRepeat(_, _) => { expression.syntax_recovered = true; },
+            _ => {},
+        }
+    }
+    postfix(parser, expression)
 }
 
 // Probe type syntax after expression failure; if it is not a complete type, reparse to retain the expression diagnostic.
@@ -221,6 +231,7 @@ fn identifier_expr(parser: Parser&) -> Option<Expr&> {
     defer generics.drop();
 
     while !parser.at_punct(PunctuatorKind.RAngle) {
+        if parser.editor && (parser.at_end() || parser.at_punct(PunctuatorKind.RBrace) || parser.at_punct(PunctuatorKind.Semicolon)) { break; }
         generics.push(parse_generic_arg(parser)?);
         if !parser.at_punct(PunctuatorKind.Comma) {
             break;
@@ -257,6 +268,7 @@ fn parenthesized_expr(parser: Parser&) -> Option<Expr&> {
     members.push(first);
 
     while !parser.at_punct(PunctuatorKind.RParen) {
+        if parser.editor && (parser.at_end() || parser.at_punct(PunctuatorKind.RBrace) || parser.at_punct(PunctuatorKind.Semicolon)) { break; }
         members.push(parse_expr(parser)?);
         if !parser.at_punct(PunctuatorKind.Comma) {
             break;
@@ -297,6 +309,7 @@ fn array_expr(parser: Parser&) -> Option<Expr&> {
         parser.advance();
 
         while !parser.at_punct(PunctuatorKind.RBracket) {
+            if parser.editor && (parser.at_end() || parser.at_punct(PunctuatorKind.RBrace) || parser.at_punct(PunctuatorKind.Semicolon)) { break; }
             members.push(parse_expr(parser)?);
             if !parser.at_punct(PunctuatorKind.Comma) {
                 break;
@@ -331,7 +344,18 @@ fn arguments(parser: Parser&) -> Option<Vec<Argument&>> {
     defer args.drop();
 
     while !parser.at_punct(PunctuatorKind.RParen) {
-        args.push(argument(parser)?);
+        if parser.editor && (parser.at_end() || parser.at_punct(PunctuatorKind.RBrace)) { break; }
+        match argument(parser) {
+            Some(value) => args.push(value),
+            None => {
+                if !parser.editor { return Option<Vec<Argument&>>.None; }
+                parser.save_problem();
+                while !parser.at_end() && !parser.at_punct(PunctuatorKind.RParen) &&
+                !parser.at_punct(PunctuatorKind.RBrace) && !parser.at_punct(PunctuatorKind.Comma) {
+                    parser.advance();
+                }
+            },
+        }
         if !parser.at_punct(PunctuatorKind.Comma) {
             break;
         }
@@ -347,7 +371,16 @@ fn arguments(parser: Parser&) -> Option<Vec<Argument&>> {
 // Generic arguments after a dot require a method call; without generics or an argument list, produce field access.
 fn member_expr(parser: Parser&, receiver: Expr&) -> Option<Expr&> {
     parser.advance();
-    let name = parser.identifier()?;
+    let name = match parser.identifier() {
+        Some(value) => value,
+        None => {
+            if !parser.editor { return Option<Expr&>.None; }
+            parser.save_problem();
+            let children = Vec<Expr&>.new();
+            children.push(receiver);
+            return Option<Expr&>.Some(parser.arena.alloc_expr(ExprData.Recovery(children, Vec<Identifier&>.new()), receiver.span));
+        },
+    };
     let generics = Vec<TypeSyntax&>.new();
     defer generics.drop();
     let generic_call = parser.at_punct(PunctuatorKind.LAngle);
@@ -376,8 +409,11 @@ fn member_expr(parser: Parser&, receiver: Expr&) -> Option<Expr&> {
 
 fn postfix(parser: Parser&, initial: Expr&) -> Option<Expr&> {
     let expr = initial;
+    let start = initial.span.start;
+    parser.extent(expr, start);
 
     loop {
+        let problem_count = parser.problems.len();
         if parser.at_punct(PunctuatorKind.Question) {
             let span = expr.span + parser.take_punct(PunctuatorKind.Question);
             expr = parser.arena.alloc_expr(ExprData.TryExpr(operand=expr), span);
@@ -396,6 +432,8 @@ fn postfix(parser: Parser&, initial: Expr&) -> Option<Expr&> {
         } else {
             break;
         }
+        parser.extent(expr, start);
+        if parser.editor && parser.problems.len() != problem_count { expr.syntax_recovered = true; }
     }
 
     Option<Expr&>.Some(val=expr)
@@ -451,19 +489,31 @@ pub fn parse_block(parser: Parser&) -> Option<Block&> {
     defer stmts.drop();
 
     while !parser.at_punct(PunctuatorKind.RBrace) && !parser.at_end() {
-        let statement = if parser.at_keyword(KeywordKind.Defer) {
-            let span = parser.take_keyword(KeywordKind.Defer);
-            let action = parse_expr(parser)?;
-            parser.take_punct(PunctuatorKind.Semicolon);
-            parser.ready()?;
-            parser.arena.alloc_expr(ExprData.Defer(action=action), span)
-        } else {
-            let expr = parse_expr(parser)?;
-            if parser.at_punct(PunctuatorKind.Semicolon) {
-                parser.advance();
-                parser.arena.alloc_expr(ExprData.Semi(expr=expr), expr.span)
-            } else { expr }
+        if parser.declaration_boundary() { break; }
+        let mark = parser.mark();
+        let bindings = Vec<Identifier&>.new();
+        let is_binding = parser.editor && parser.at_keyword(KeywordKind.Let) && parser.peek_at(1).is_identifier();
+        if is_binding {
+            let token = parser.peek_at(1);
+            match token.kind() {
+                Identifier(name) => bindings.push(parser.arena.alloc_identifier(IdentifierData(String.from(&name.as_str()), false), token.span)),
+                _ => {},
+            }
+        }
+        let recovery = false;
+        let statement = match block_statement(parser) {
+            Some(value) => value,
+            None => {
+                if !parser.editor { return Option<Block&>.None; }
+                let span = parser.peek().span;
+                recovery = true;
+                parser.synchronize();
+                if parser.at_punct(PunctuatorKind.Semicolon) { parser.advance(); }
+                if parser.mark() == mark && !parser.at_end() && !parser.at_punct(PunctuatorKind.RBrace) { parser.advance(); }
+                parser.arena.alloc_expr(ExprData.Recovery(Vec<Expr&>.new(), bindings), span)
+            },
         };
+        if !recovery { bindings.drop(); }
         stmts.push(statement);
     }
 
@@ -471,6 +521,23 @@ pub fn parse_block(parser: Parser&) -> Option<Block&> {
     parser.ready()?;
 
     Option<Block&>.Some(val=parser.arena.alloc_block(BlockData(stmts=stmts.take(), end=Option<Position>.Some(val=close.end), parameter_bindings=Vec<PatternLet&>.new()), open))
+}
+
+fn block_statement(parser: Parser&) -> Option<Expr&> {
+    let statement = if parser.at_keyword(KeywordKind.Defer) {
+        let span = parser.take_keyword(KeywordKind.Defer);
+        let action = parse_expr(parser)?;
+        parser.take_punct(PunctuatorKind.Semicolon);
+        parser.ready()?;
+        parser.arena.alloc_expr(ExprData.Defer(action=action), span)
+    } else {
+        let expr = parse_expr(parser)?;
+        if parser.at_punct(PunctuatorKind.Semicolon) {
+            parser.advance();
+            parser.arena.alloc_expr(ExprData.Semi(expr=expr), expr.span)
+        } else { expr }
+    };
+    Option<Expr&>.Some(statement)
 }
 
 fn return_expr(parser: Parser&) -> Option<Expr&> {

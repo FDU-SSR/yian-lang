@@ -201,7 +201,7 @@ def __ast_value(value: AstInput) -> JsonValue:
         field_values.append(["suffix", value.suffix or ""])
     else:
         for item in fields(value):
-            if item.name == "span":
+            if item.name in ("span", "signature_recovered"):
                 continue
             field_values.append([item.name, __ast_value(cast(AstInput, getattr(value, item.name)))])
     return {

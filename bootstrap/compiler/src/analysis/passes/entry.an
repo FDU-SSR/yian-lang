@@ -33,6 +33,9 @@ fn main_in(ctx: ResolutionContext&, unit: UnitId) -> Option<Declaration&> {
 }
 
 fn register(ctx: ResolutionContext&, declaration: Declaration&) -> Result<Option<TypeId>, AnalysisError> {
+    if ctx.session.editor_recovery && !ctx.session.types.definition(*declaration.definition.unwrap()).unwrap().is_complete() {
+        return Result<Option<TypeId>, AnalysisError>.Ok(Option<TypeId>.None);
+    }
     match &declaration.item.data {
         FuncDef(_, _, generics, _, _, _) => {
             if generics.len() != 0 {

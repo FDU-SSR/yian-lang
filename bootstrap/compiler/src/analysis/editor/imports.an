@@ -1,0 +1,213 @@
+from std.core.drop import Drop;
+from compiler.analysis.editor import EditorSnapshot;
+from compiler.analysis.session.session import CompilationUnit;
+from compiler.analysis.symbol.model import SymbolKind;
+from compiler.common.ids import SourceId, UnitId, SymbolId;
+from compiler.frontend.lex.token import PunctuatorKind, KeywordKind;
+from std.core.convert import From;
+from std.core.option import Option;
+from std.core.string import String;
+from std.core.vec import Vec;
+
+from compiler.analysis.editor.query_model import EditorCompletionKind, EditorCompletionItem;
+from compiler.analysis.editor.candidates import append_completion, symbol_completion, push_completion;
+
+fn module_name(snapshot: EditorSnapshot&, source: SourceId) -> Option<String> {
+    let path = match snapshot.source_path(source) {
+        Some(value) => value,
+        None => return Option<String>.None,
+    };
+    let package_name = Option<str>.None;
+    let relative_start = 0u64;
+
+    match snapshot.session().package_map() {
+        Some(packages) => match packages.package_of(path) {
+            Some(package) => {
+                package_name = Option<str>.Some(package.name.as_str());
+                relative_start = package.source_root.as_str().as_slice().len() + 1u64;
+            },
+            None => {},
+        },
+        None => {},
+    }
+
+    let bytes = path.as_slice();
+    let file_start = relative_start;
+    let scan = file_start;
+    if package_name.is_none() {
+        while scan < bytes.len() {
+            if bytes[scan] == b'/' { file_start = scan + 1u64; }
+            scan += 1u64;
+        }
+    }
+
+    let end = bytes.len();
+    if end < file_start || end - file_start < 3u64 ||
+    str.from_slice_unchecked(bytes[(end - 3u64)..end]) != ".an" {
+        return Option<String>.None;
+    }
+    end -= 3u64;
+
+    let result = String.new();
+    match package_name {
+        Some(name) => { result.push_str(name); result.push('.'); },
+        None => {},
+    }
+
+    let segment_start = file_start;
+    let index = file_start;
+    while index < end {
+        if bytes[index] == b'/' {
+            result.push_str(str.from_slice_unchecked(bytes[segment_start..index]));
+            result.push('.');
+            segment_start = index + 1u64;
+        }
+        index += 1u64;
+    }
+    result.push_str(str.from_slice_unchecked(bytes[segment_start..end]));
+    Option<String>.Some(result)
+}
+
+pub fn append_import_path_candidates(
+    snapshot: EditorSnapshot&,
+    items: Vec<EditorCompletionItem>&,
+    prefix: str,
+) {
+    match snapshot.session().package_map() {
+        Some(packages) => {
+            let index = 0u64;
+            while index < packages.len() {
+                match packages.at(index) {
+                    Some(package) if package.name.as_str().starts_with(prefix) =>
+                    append_completion(items, package.name.as_str(), EditorCompletionKind.Package,
+                        Option<String>.None, Vec<String>.new()),
+                    _ => {},
+                }
+                index += 1u64;
+            }
+        },
+        None => {},
+    }
+
+    let index = 0u64;
+    while index < snapshot.session().len() {
+        match snapshot.session().unit(UnitId(index)) {
+            Some(unit) => match module_name(snapshot, unit.source) {
+                Some(name) => {
+                    if name.as_str().starts_with(prefix) {
+                        append_completion(items, name.as_str(), EditorCompletionKind.Module,
+                            Option<String>.None, Vec<String>.new());
+                    }
+                    name.drop();
+                },
+                None => {},
+            },
+            None => {},
+        }
+        index += 1u64;
+    }
+}
+
+fn import_target_unit(snapshot: EditorSnapshot&, unit: CompilationUnit&, row: u64, column: u64) -> Option<UnitId> {
+    let from = Option<u64>.None;
+    let import = Option<u64>.None;
+    let index = 0u64;
+    while index < unit.prepared.tokens.len() {
+        let position = unit.prepared.tokens[index].span.start;
+        if position.row > row || (position.row == row && position.column >= column) {
+            break;
+        }
+        match unit.prepared.tokens[index].kind() {
+            Keyword(value) => {
+                if *value == KeywordKind.From { from = Option<u64>.Some(index); }
+                if *value == KeywordKind.Import { import = Option<u64>.Some(index); }
+            },
+            Punctuator(Semicolon) => {
+                from = Option<u64>.None;
+                import = Option<u64>.None;
+            },
+            _ => {},
+        }
+        index += 1u64;
+    }
+
+    let from_index = match from {
+        Some(value) => value,
+        None => return Option<UnitId>.None,
+    };
+    let import_index = match import {
+        Some(value) => value,
+        None => return Option<UnitId>.None,
+    };
+    let requested = String.new();
+    index = from_index + 1u64;
+    while index < import_index {
+        let token = &unit.prepared.tokens[index];
+        match token.kind() {
+            Identifier(name) => requested.push_str(name.as_str()),
+            Punctuator(kind) if *kind == PunctuatorKind.Dot => requested.push('.'),
+            _ => {},
+        }
+        index += 1u64;
+    }
+
+    let unit_index = 0u64;
+    while unit_index < snapshot.session().len() {
+        match snapshot.session().unit(UnitId(unit_index)) {
+            Some(candidate) => match module_name(snapshot, candidate.source) {
+                Some(name) => {
+                    let matches = name.as_str() == requested.as_str();
+                    name.drop();
+                    if matches {
+                        requested.drop();
+                        return Option<UnitId>.Some(candidate.id);
+                    }
+                },
+                None => {},
+            },
+            None => {},
+        }
+        unit_index += 1u64;
+    }
+
+    requested.drop();
+    Option<UnitId>.None
+}
+
+fn importable_symbol(snapshot: EditorSnapshot&, symbol_id: SymbolId, unit: UnitId, prefix: str)
+-> Option<EditorCompletionItem> {
+    let symbol = match snapshot.session().symbols.get(symbol_id) {
+        Some(value) => value,
+        None => return Option<EditorCompletionItem>.None,
+    };
+    if symbol.unit != unit || !symbol.is_public ||
+    (symbol.kind != SymbolKind.Function && symbol.kind != SymbolKind.Constant &&
+        symbol.kind != SymbolKind.Alias && symbol.kind != SymbolKind.Type) {
+        return Option<EditorCompletionItem>.None;
+    }
+
+    symbol_completion(snapshot, symbol_id, prefix)
+}
+
+pub fn append_import_name_candidates(
+    snapshot: EditorSnapshot&,
+    unit: CompilationUnit&,
+    items: Vec<EditorCompletionItem>&,
+    prefix: str,
+    row: u64,
+    column: u64,
+) {
+    let target = match import_target_unit(snapshot, unit, row, column) {
+        Some(value) => value,
+        None => { return; },
+    };
+
+    let index = 0u64;
+    while index < snapshot.session().symbols.symbol_count() {
+        match importable_symbol(snapshot, SymbolId(index), target, prefix) {
+            Some(item) => push_completion(items, item),
+            None => {},
+        }
+        index += 1u64;
+    }
+}

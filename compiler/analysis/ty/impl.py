@@ -487,41 +487,23 @@ class ImplRegistry:
                 self.__trait_generic_impl_cache.append(impl)
 
     def methods_of(self, type_id: int) -> tuple[tuple[str, int], ...]:
-        """Methods that can apply to *type_id*, as ``(name, method type id)``.
-
-        Unlike :meth:`iter_candidate_impls`, which is the raw candidate pool
-        ``method_lookup`` filters per name through inference, this drops impls
-        whose target cannot be the receiver at all: an `impl<T> Vec<T>` must not
-        put `push` on a `Point`.  Conditional generic impls are still offered —
-        deciding those needs the per-name inference, which completion
-        deliberately does not run for every candidate.
-        """
-        methods: dict[str, int] = {}
-        receiver = type_id
+        """Enumerate signatures after receiver inference and trait obligations succeed."""
+        methods: dict[str, list[tuple[int, int]]] = {}
         for impl in self.iter_candidate_impls(type_id):
-            if not self.__covers(impl, receiver):
+            inference = GenericInference(self.__ctx, impl.span)
+            try:
+                inference.constrain(impl.target, type_id)
+                substitutions = self.infer_condition_substs(impl, inference.substitutions(), impl.span)
+                if substitutions is None or not self.check_conditions(impl, substitutions):
+                    continue
+            except AnalysisError:
                 continue
             for name, method_id in impl.methods.items():
-                methods.setdefault(name, method_id)
-        return tuple(methods.items())
-
-    def __covers(self, impl: Impl, receiver: int) -> bool:
-        """Whether *impl* could be the impl of *receiver* at all."""
-        target = impl.target
-        target_ty = self.__ctx[target]
-        receiver_ty = self.__ctx[receiver]
-        if isinstance(target_ty, Type.GenericType):
-            # `impl<T> Trait for T`: a trait impl covers every type; an inherent
-            # one cannot, since there is no concrete type to attach it to.
-            return impl.trait is not None
-        if isinstance(target_ty, (Type.StructType, Type.EnumType, Type.TraitType)):
-            return (
-                isinstance(receiver_ty, type(target_ty))
-                and receiver_ty.custom_def is target_ty.custom_def
-            )
-        if isinstance(target_ty, (Type.PointerType, Type.RefType, Type.SliceType, Type.ArrayType, Type.TupleType)):
-            return isinstance(receiver_ty, type(target_ty))
-        return self.__ctx.is_same_type(target, receiver)
+                rank = 2 if impl.trait is None else 0 if impl.automatic else 1
+                methods.setdefault(name, []).append((rank, self.__ctx.instantiate(method_id, substitutions)))
+        return tuple((name, type_id) for name, candidates in methods.items()
+                     for rank, type_id in dict.fromkeys(candidates)
+                     if rank == max(candidate[0] for candidate in candidates))
 
     def iter_candidate_impls(self, type_id: int) -> list[Impl]:
         """Return the impls that could potentially match the given type_id.

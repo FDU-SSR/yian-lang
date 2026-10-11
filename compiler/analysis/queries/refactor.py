@@ -19,6 +19,7 @@ from typing import TYPE_CHECKING
 
 from compiler.analysis.diagnostics import Diagnostic
 from compiler.analysis.queries.context import QueryContext
+from compiler.analysis.queries.availability import Completeness
 from compiler.analysis.queries.navigation import Navigator, Target
 from compiler.analysis.queries.view import AnalysisView
 from compiler.frontend.lex import token as Tok
@@ -55,6 +56,7 @@ class ReferenceResult:
 
     target: Target
     sites: tuple[ReferenceSite, ...]
+    completeness: Completeness = Completeness.COMPLETE
 
 
 @dataclass(frozen=True)
@@ -278,7 +280,9 @@ def __references_at(
         declaration = navigator.declaration_for(target)
         if declaration is not None and declaration.span is not None:
             sites.append(ReferenceSite(span=declaration.span, declaration=True))
-    return ReferenceResult(target=target, sites=tuple(__sorted_sites(sites, navigator)))
+    return ReferenceResult(target=target, sites=tuple(__sorted_sites(sites, navigator)),
+                           completeness=Completeness.COMPLETE if navigator.view.semantic_complete and navigator.references_consistent(target)
+                           else Completeness.PARTIAL)
 
 
 def prepare_rename(
@@ -297,6 +301,8 @@ def prepare_rename(
         return PrepareRenameResult(refusal="nothing to rename here")
 
     target = resolution.target
+    if not context.result.ok() or not active_navigator.references_consistent(target):
+        return PrepareRenameResult(target=target, refusal="reference facts are incomplete; rename is unavailable")
     if target.stdlib:
         return PrepareRenameResult(
             target=target,

@@ -22,8 +22,8 @@ from compiler.analysis.diagnostics import (
     format_source_error,
 )
 from compiler.analysis.documents import DocumentStore
-from compiler.analysis.error import AnalysisError
-from compiler.analysis.facts.names import NameRef
+from compiler.analysis.error import AnalysisError, EditorIncomplete
+from compiler.analysis.facts.names import NameRef, ExpressionFact, ScopeFact
 from compiler.analysis.resolution.aliases import AliasInfo
 from compiler.analysis.symbol.symbol import AliasDefId
 from compiler.analysis.lowering.state import DefinitionState
@@ -41,8 +41,10 @@ from compiler.analysis.ty.context import TypeCtx
 from compiler.analysis.unit.def_point import DefPoint
 from compiler.analysis.unit.unit_data import UnitData
 from compiler.error import CompilerError
+from compiler.frontend.lex import token as Tok
 from compiler.frontend.lex.lexer import LexError, Lexer
 from compiler.frontend.lex.token import Token
+from compiler.frontend.lex.position import SrcSpan
 from compiler.frontend.parse import ast as AST
 from compiler.frontend.parse.error import ParseError
 from compiler.frontend.parse.parser import Parser
@@ -109,6 +111,12 @@ class AnalysisResult:
     generated_def_points: Mapping[int, DefPoint] = field(default_factory=dict[int, DefPoint])
     procedures: tuple[tuple[int, AST.Block, int], ...] = ()
     name_refs: tuple[NameRef, ...] = ()
+    expression_facts: tuple[ExpressionFact, ...] = ()
+    conflicting_expression_spans: tuple[SrcSpan, ...] = ()
+    scope_facts: tuple[ScopeFact, ...] = ()
+    editor_recovery: bool = False
+    contextual_name_refs: tuple[NameRef, ...] = ()
+    reference_facts_complete: bool = True
     aliases: Mapping[AliasDefId, AliasInfo] = field(default_factory=dict[AliasDefId, AliasInfo])
     entry_type_id: int | None = None
     unit_names: Mapping[int, str] = field(default_factory=dict[int, str])
@@ -187,6 +195,7 @@ class AnalysisSession:
         entry_optional: bool = True,
         recover: bool = True,
         capture_ast_dump: bool = False,
+        editor_recovery: bool = False,
     ) -> AnalysisResult:
         """Analyze *paths* and return diagnostics plus the resolved state.
 
@@ -204,38 +213,76 @@ class AnalysisSession:
         sources = {path: self.__text(store, path) for path in src_files}
         timings: dict[str, float] = {}
 
-        started = time.perf_counter()
-        tokens = self.__lex(src_files, sources)
-        if isinstance(tokens, AnalysisResult):
-            return self.__mark_syntax(tokens, syntax_only)
-        timings["lex"] = time.perf_counter() - started
-        # Kept for the stages that can still fail: a file the parser rejects has
-        # no symbol table, but its tokens are what a degraded completion or
-        # semantic pass works from.
-        lexed = {path: tuple(tokens[index]) for index, path in enumerate(src_files)}
-        started = time.perf_counter()
-        programs = self.__parse(tokens, sources)
-        if isinstance(programs, AnalysisResult):
-            return self.__mark_syntax(self.__with_tokens(programs, lexed), syntax_only)
-        timings["parse"] = time.perf_counter() - started
+        frontend_diagnostics: list[Diagnostic] = []
+        if editor_recovery:
+            started = time.perf_counter()
+            tokens: list[list[Tok.Token]] = []
+            programs: list[AST.Program] = []
+            for path in src_files:
+                lexer = Lexer(path, text=sources[path])
+                try:
+                    lexer.lex()
+                except LexError as error:
+                    frontend_diagnostics.append(diagnostic_from_error(error, stage=Stage.LEX))
+                    # An unsafe lexical suffix is never interpreted as source.
+                    prefix = lexer.export()
+                    unfinished: list[int] = []
+                    for index, token in enumerate(prefix):
+                        if isinstance(token, Tok.FStrStart):
+                            unfinished.append(index)
+                        elif isinstance(token, Tok.FStrEnd) and unfinished:
+                            unfinished.pop()
+                    if unfinished:
+                        del prefix[unfinished[0]:]
+                    prefix.append(Tok.Punctuator(Tok.PunctuatorKind.EOF, error.span))
+                source_tokens = lexer.export()
+                tokens.append(source_tokens)
+                parser = Parser(source_tokens, editor=True)
+                program = parser.parse()
+                frontend_diagnostics.extend(diagnostic_from_error(error, stage=Stage.PARSE) for error in parser.errors)
+                try:
+                    Desugar(program).run()
+                except ANALYSIS_ERRORS as error:
+                    frontend_diagnostics.append(diagnostic_from_error(error, stage=Stage.DESUGAR))
+                    program = AST.Program(span=program.span, items=[])
+                programs.append(program)
+            timings["editor_frontend"] = time.perf_counter() - started
+            lexed = {path: tuple(tokens[index]) for index, path in enumerate(src_files)}
+        else:
+            started = time.perf_counter()
+            lex_result = self.__lex(src_files, sources)
+            if isinstance(lex_result, AnalysisResult):
+                return self.__mark_syntax(lex_result, syntax_only)
+            tokens = lex_result
+            timings["lex"] = time.perf_counter() - started
+            # Kept for the stages that can still fail: a file the parser rejects has
+            # no symbol table, but its tokens are what a degraded completion or
+            # semantic pass works from.
+            lexed = {path: tuple(tokens[index]) for index, path in enumerate(src_files)}
+            started = time.perf_counter()
+            parse_result = self.__parse(tokens, sources)
+            if isinstance(parse_result, AnalysisResult):
+                return self.__mark_syntax(self.__with_tokens(parse_result, lexed), syntax_only)
+            programs = parse_result
+            timings["parse"] = time.perf_counter() - started
 
-        started = time.perf_counter()
-        try:
-            for program in programs:
-                Desugar(program).run()
-        except ANALYSIS_ERRORS as error:
-            return self.__mark_syntax(
-                self.__with_tokens(self.__failed(error, Stage.DESUGAR, sources), lexed),
-                syntax_only,
-            )
-        timings["desugar"] = time.perf_counter() - started
+            started = time.perf_counter()
+            try:
+                for program in programs:
+                    Desugar(program).run()
+            except ANALYSIS_ERRORS as error:
+                return self.__mark_syntax(
+                    self.__with_tokens(self.__failed(error, Stage.DESUGAR, sources), lexed),
+                    syntax_only,
+                )
+            timings["desugar"] = time.perf_counter() - started
         ast_dump = format_ast_output(src_files, programs) if capture_ast_dump else None
 
         if syntax_only:
             # Everything the front end can decide, and nothing that needs the
             # program's names or types.
             return AnalysisResult(
-                diagnostics=(),
+                diagnostics=tuple(frontend_diagnostics),
                 sources=sources,
                 tokens=lexed,
                 programs=tuple(programs),
@@ -267,12 +314,19 @@ class AnalysisSession:
             return self.__with_tokens(self.__failed(error, Stage.PRELUDE, sources, units, ast_dump=ast_dump), lexed)
 
         started = time.perf_counter()
-        try:
-            check_restricted_ops(units.values())
-        except ANALYSIS_ERRORS as error:
-            return self.__with_tokens(
-                self.__failed(error, Stage.RESTRICTED_OPS, sources, units, ast_dump=ast_dump), lexed
-            )
+        if editor_recovery:
+            for unit in units.values():
+                try:
+                    check_restricted_ops((unit,))
+                except ANALYSIS_ERRORS as error:
+                    frontend_diagnostics.append(diagnostic_from_error(error, stage=Stage.RESTRICTED_OPS))
+        else:
+            try:
+                check_restricted_ops(units.values())
+            except ANALYSIS_ERRORS as error:
+                return self.__with_tokens(
+                    self.__failed(error, Stage.RESTRICTED_OPS, sources, units, ast_dump=ast_dump), lexed
+                )
         timings["restricted_ops"] = time.perf_counter() - started
 
         type_ctx = TypeCtx(raw_pointers=self.__raw_pointers)
@@ -286,6 +340,10 @@ class AnalysisSession:
             source_trust.stdlib_root,
             type_size,
         )
+        semantic.editor_recovery = editor_recovery
+        if editor_recovery:
+            semantic.editor_syntax_regions = tuple(diagnostic.span for diagnostic in frontend_diagnostics
+                                                   if diagnostic.stage is Stage.PARSE)
         resolver = GlobalResolve(semantic)
 
         def __semantic_failure(error: Exception, stage: Stage) -> AnalysisResult:
@@ -294,6 +352,13 @@ class AnalysisSession:
             )
             result.aliases = semantic.aliases.snapshot()
             result.name_refs = semantic.names.entries()
+            result.contextual_name_refs = semantic.names.contextual_entries()
+            result.reference_facts_complete = not semantic.names.has_conflicts()
+            result.expression_facts = semantic.names.expression_entries()
+            result.conflicting_expression_spans = semantic.names.expression_conflicts
+            result.scope_facts = tuple(semantic.names.scopes)
+            result.editor_recovery = editor_recovery
+            result.diagnostics = tuple(frontend_diagnostics) + result.diagnostics
             return result
 
         started = time.perf_counter()
@@ -301,12 +366,16 @@ class AnalysisSession:
             resolver.run()
         except ANALYSIS_ERRORS as error:
             return __semantic_failure(error, Stage.RESOLVE)
+        frontend_diagnostics.extend(diagnostic_from_error(error, stage=Stage.RESOLVE) for error in semantic.editor_errors
+                                    if not isinstance(error, EditorIncomplete))
         timings["global_resolve"] = time.perf_counter() - started
 
         try:
             type_ctx.finalize()
         except ANALYSIS_ERRORS as error:
-            return __semantic_failure(error, Stage.FINALIZE)
+            if not editor_recovery:
+                return __semantic_failure(error, Stage.FINALIZE)
+            frontend_diagnostics.append(diagnostic_from_error(error, stage=Stage.FINALIZE))
 
         started = time.perf_counter()
         checker = TypeCheck(
@@ -342,7 +411,7 @@ class AnalysisSession:
         if assignment_errors and not recover:
             return __semantic_failure(assignment_errors[0], Stage.DEFINITE_ASSIGNMENT)
 
-        diagnostics = list(checker.export_diagnostics())
+        diagnostics = list(frontend_diagnostics) + list(checker.export_diagnostics())
         diagnostics.extend(diagnostic_from_error(error, stage=Stage.MATCH_COVERAGE) for error in coverage_errors)
         diagnostics.extend(coverage.warnings())
         diagnostics.extend(
@@ -365,6 +434,12 @@ class AnalysisSession:
             generated_def_points=generated,
             procedures=semantic.procedures.entries(),
             name_refs=semantic.names.entries(),
+            contextual_name_refs=semantic.names.contextual_entries(),
+            reference_facts_complete=not semantic.names.has_conflicts(),
+            expression_facts=semantic.names.expression_entries(),
+            conflicting_expression_spans=semantic.names.expression_conflicts,
+            scope_facts=tuple(semantic.names.scopes),
+            editor_recovery=editor_recovery,
             aliases=semantic.aliases.snapshot(),
             entry_type_id=checker.entry_type_id,
             unit_names=unit_names,

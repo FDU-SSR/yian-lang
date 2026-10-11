@@ -34,8 +34,46 @@ impl ExprChecker {
     }
 
     pub fn expression(expr: Expr&) -> Result<HirId, AnalysisError> {
+        if self.ctx.session.editor_recovery && expr.syntax_recovered {
+            match &expr.data {
+                Call(callee, arguments) => {
+                    self.expression(*callee)?;
+                    for argument in *arguments { self.expression(argument.data.value)?; }
+                },
+                MethodCall(receiver, _, _, arguments) => {
+                    self.expression(*receiver)?;
+                    for argument in *arguments { self.expression(argument.data.value)?; }
+                },
+                Binary(_, left, right) => { self.expression(*left)?; self.expression(*right)?; },
+                Array(elements) | Tuple(elements) | Recovery(elements, _) => { for element in *elements { self.expression(*element)?; } },
+                ArrayRepeat(element, count) => { self.expression(*element)?; self.expression(*count)?; },
+                _ => {},
+            }
+            let error = self.error(expr.span, "Incomplete editor expression");
+            error.kind = AnalysisErrorKind.EditorIncomplete;
+            return Result<HirId, AnalysisError>.Err(error);
+        }
         match self.lower_expression(expr) {
-            Ok(value) => Result<HirId, AnalysisError>.Ok(value),
+            Ok(value) => {
+                if self.ctx.session.editor_recovery {
+                    match self.ctx.session.types.require(self.type_of(value))? {
+                        Nominal(id, _) if !self.ctx.session.types.definition(*id).unwrap().is_complete() => {
+                            let error = self.error(expr.span, "Unresolved editor declaration");
+                            error.kind = AnalysisErrorKind.EditorIncomplete;
+                            return Result<HirId, AnalysisError>.Err(error);
+                        },
+                        _ => {},
+                    }
+                }
+                if self.ctx.session.editor_recovery && expr.syntax_span.is_some() {
+                    let node = self.ctx.session.hir.require(value)?;
+                    let span = match expr.syntax_span { Some(extent) => extent, None => expr.span };
+                    let is_static = match &node.kind { Ty => true, _ => false };
+                    self.ctx.session.editor_facts.record_expression(self.ctx.span(self.unit, span),
+                        node.type_id, node.is_place, is_static);
+                }
+                Result<HirId, AnalysisError>.Ok(value)
+            },
             Err(problem) => Result<HirId, AnalysisError>.Err(problem.with_location(self.ctx.span(self.unit, expr.span))),
         }
     }
@@ -44,6 +82,12 @@ impl ExprChecker {
         let span = expr.span;
 
         match &expr.data {
+            Recovery(children, bindings) => {
+                for child in *children { self.expression(*child)?; }
+                let error = self.error(span, "Incomplete editor expression");
+                error.kind = AnalysisErrorKind.EditorIncomplete;
+                Result<HirId, AnalysisError>.Err(error)
+            },
             Literal(value) => self.literal(span, value),
             Tuple(elements) => self.tuple(span, elements),
             Array(elements) => self.array(span, elements),

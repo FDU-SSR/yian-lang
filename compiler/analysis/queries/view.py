@@ -28,7 +28,8 @@ from compiler.analysis.queries.index import (
     DeclarationIndex,
 )
 from compiler.analysis.queries.context import QueryContext
-from compiler.analysis.facts.names import NameRef
+from compiler.analysis.queries.availability import Completeness
+from compiler.analysis.facts.names import ExpressionFact, NameRef, ScopeFact
 from compiler.analysis.symbol.symbol import AliasSymbol, Symbol
 from compiler.analysis.resolution.aliases import AliasInfo
 from compiler.analysis.ty import ty as Type
@@ -45,9 +46,8 @@ __all__ = ["AnalysisView"]
 class AnalysisView:
     """Facts about one analysis result, for readers that must not guess.
 
-    A view holds references only; it is created per request, so it stays valid
-    exactly as long as the snapshot it was built from (a stale
-    snapshot is not something to query, it is something to replace).
+    A view holds references and indexes for one snapshot. Its caches are released
+    with that snapshot and cannot be used to interpret another revision.
     """
 
     def __init__(self, context: QueryContext) -> None:
@@ -75,7 +75,64 @@ class AnalysisView:
         self.__declarations: dict[tuple[Path, int, int], Declaration] | None = None
         self.__references_by_path: dict[Path, tuple[NameRef, ...]] | None = None
         self.__unchecked_names: dict[str, tuple[SrcSpan, ...]] | None = None
+        self._expression_ends: dict[tuple[Path, int, int], ExpressionFact | None] | None = None
+        self.__scopes_by_path: dict[Path, list[ScopeFact]] = {}
+        for scope in result.scope_facts:
+            self.__scopes_by_path.setdefault(self.canonical_path(scope.span.path), []).append(scope)
+        self.__receiver_types: dict[int, tuple[int, ...]] = {}
         self.__lines_by_path: dict[Path, tuple[str, ...]] = {}
+
+    @property
+    def reference_completeness(self) -> Completeness:
+        return Completeness.COMPLETE if self.__result.ok() and self.__result.reference_facts_complete else Completeness.PARTIAL
+
+    @property
+    def semantic_complete(self) -> bool:
+        return self.__result.ok()
+
+    @property
+    def editor_recovery(self) -> bool:
+        return self.__result.editor_recovery
+
+    def expression_ending_at(self, path: Path, row: int, column: int) -> ExpressionFact | None:
+        self.__prepare_expression_index()
+        assert self._expression_ends is not None
+        return self._expression_ends.get((self.canonical_path(path), row, column))
+
+    def __prepare_expression_index(self) -> None:
+        if self._expression_ends is None:
+            self._expression_ends = {}
+            for fact in self.__result.expression_facts:
+                key = (self.canonical_path(fact.span.path), fact.span.end.row, fact.span.end.col)
+                previous = self._expression_ends.get(key)
+                if previous is None or (fact.span.start.row, fact.span.start.col) < (previous.span.start.row, previous.span.start.col):
+                    self._expression_ends[key] = fact
+            for span in self.__result.conflicting_expression_spans:
+                self._expression_ends[(self.canonical_path(span.path), span.end.row, span.end.col)] = None
+
+    def visible_bindings_at(self, path: Path, row: int, column: int) -> tuple[Symbol | AliasSymbol, ...] | None:
+        """Use the narrowest checked scope, including failed binding barriers."""
+        canonical = self.canonical_path(path)
+        candidates = [fact for fact in self.__scopes_by_path.get(canonical, ())
+                      if (fact.span.start.row, fact.span.start.col) <= (row, column)
+                      and (row, column) <= (fact.span.end.row, fact.span.end.col)]
+        if not candidates:
+            return None
+        scope = max(candidates, key=lambda fact: (fact.span.start.row, fact.span.start.col,
+                                                 -fact.span.end.row, -fact.span.end.col))
+        items, _ = scope.symbols.visible_at(row, column)
+        for other in candidates:
+            if other.span != scope.span or other.context == scope.context:
+                continue
+            alternatives, _ = other.symbols.visible_at(row, column)
+            items = tuple(item for item in items if any(
+                candidate.name == item.name and (
+                    isinstance(item, Symbol) and isinstance(candidate, Symbol)
+                    and (candidate.kind, candidate.type_id) == (item.kind, item.type_id)
+                    or isinstance(item, AliasSymbol) and isinstance(candidate, AliasSymbol)
+                    and candidate.alias_id == item.alias_id
+                ) for candidate in alternatives))
+        return items
 
     def canonical_path(self, path: Path) -> Path:
         """Normalize a snapshot path once; query loops reuse the stored result."""
@@ -91,6 +148,7 @@ class AnalysisView:
         self.__references_by_path_map()
         self.__declaration_map()
         self.__unchecked_name_map()
+        self.__prepare_expression_index()
 
     def identifier_name_at(self, span: SrcSpan) -> str | None:
         """Read the exact spelling for a recorded name, caching each file's lines."""
@@ -334,13 +392,26 @@ class AnalysisView:
 
     def type_of(self, type_id: int) -> Type.Ty | None:
         """The type a type id stands for, or ``None`` when it is unknown."""
+        if self.__type_ctx is None or type_id not in self.__type_ctx or not self.__type_ctx.editor_type_available(type_id):
+            return None
+        return self.__type_ctx[type_id]
+
+    def classification_type(self, type_id: int) -> Type.Ty | None:
+        """Declaration identity can be known before its payload is complete."""
         if self.__type_ctx is None or type_id not in self.__type_ctx:
             return None
         return self.__type_ctx[type_id]
 
+    def conflicting_references(self) -> tuple[NameRef, ...]:
+        """Instance facts omitted from the reliable projection, retaining their identities."""
+        projected = {(self.canonical_path(reference.span.path), reference.span.start.row, reference.span.start.col)
+                     for reference in self.name_refs()}
+        return tuple(reference for reference in self.__result.contextual_name_refs
+                     if (self.canonical_path(reference.span.path), reference.span.start.row, reference.span.start.col) not in projected)
+
     def type_name(self, type_id: int | None) -> str | None:
         """The rendered name of a type, as the compiler would print it."""
-        if type_id is None or self.__type_ctx is None:
+        if type_id is None or self.__type_ctx is None or not self.__type_ctx.editor_type_available(type_id):
             return None
         return self.__type_ctx.get_name(type_id)
 
@@ -351,9 +422,27 @@ class AnalysisView:
             return None
         return self.__type_ctx.try_deref(type_id)
 
+    def receiver_types(self, type_id: int) -> tuple[int, ...]:
+        if self.__type_ctx is None:
+            return ()
+        cached = self.__receiver_types.get(type_id)
+        if cached is not None:
+            return cached
+        result: list[int] = []
+        current = type_id
+        budget = sum(1 for _ in self.__type_ctx.items())
+        while current not in result and len(result) <= budget:
+            result.append(current)
+            inner = self.deref_type(current)
+            if inner is None:
+                break
+            current = inner
+        self.__receiver_types[type_id] = tuple(result)
+        return tuple(result)
+
     def fields_of(self, type_id: int) -> tuple[Type.StructField, ...]:
         """The instantiated fields of a struct type."""
-        if self.__type_ctx is None:
+        if self.__type_ctx is None or not self.__type_ctx.editor_type_available(type_id):
             return ()
         if not isinstance(self.type_of(type_id), Type.StructType):
             return ()
@@ -370,12 +459,10 @@ class AnalysisView:
     def methods_of(self, type_id: int) -> tuple[tuple[str, int], ...]:
         """Methods whose receiver can be this type, as ``(name, type id)``.
 
-        This is the filtered view the editor wants: an ``impl<T> Vec<T>`` does
-        not put ``push`` on a ``Point``.  Conditional generic impls are still
-        offered — deciding those needs per-name inference, which completion
-        deliberately does not run for every candidate.
+        Receiver inference and constraints use the semantic impl matcher. Failed
+        candidates retain no substitutions or query facts in other candidates.
         """
-        if self.__type_ctx is None:
+        if self.__type_ctx is None or not self.__type_ctx.editor_type_available(type_id):
             return ()
         return tuple(self.__type_ctx.methods_of(type_id))
 

@@ -10,9 +10,9 @@ from compiler.analysis.ty.validation import contains_ffi;
 from compiler.common.ids import UnitId, ScopeId, TypeId, DefId, NameId, SymbolId;
 from compiler.common.location import SourceSpan;
 from compiler.analysis.editor_facts import EditorMemberKind;
-from compiler.frontend.ast.node import MethodDecl, Block;
+from compiler.frontend.ast.node import Item, MethodDecl, Block;
 from compiler.frontend.ast.atoms import AttrKind;
-from compiler.diagnostics.model import DiagnosticCode, AnalysisError;
+from compiler.diagnostics.model import DiagnosticCode, AnalysisError, AnalysisErrorKind, AnalysisStage;
 from std.collections.hash_map import HashMap;
 from std.core.clone import Clone;
 from std.core.drop import Drop;
@@ -38,6 +38,11 @@ fn bind_self(ctx: ResolutionContext&, unit: UnitId, scope: ScopeId, type_id: Typ
 }
 
 pub fn resolve_method(ctx: ResolutionContext&, unit: UnitId, parent: ScopeId, receiver: TypeId, previous: Vec<TypeId>&, syntax: MethodDecl&, body: Option<Block&>, trait_member: bool) -> Result<TypeId, AnalysisError> {
+    if syntax.signature_recovered {
+        let error = ctx.error(unit, syntax.span, DiagnosticCode.Syntax, "unfinished method signature");
+        error.kind = AnalysisErrorKind.EditorIncomplete;
+        return Result<TypeId, AnalysisError>.Err(error);
+    }
     let seen = Vec<AttrKind>.new();
     defer seen.drop();
 
@@ -194,69 +199,83 @@ pub fn resolve_impls(ctx: ResolutionContext&) -> Result<(), AnalysisError> {
         let root = ctx.session.unit(unit).unwrap().prepared.tree.unwrap().root;
 
         for item in root.data.items {
-            match &item.data {
-                Impl(generics, target, trait_type, items, conditions) => {
-                    let scope = ctx.session.symbols.create_scope(Option<ScopeId>.Some(ctx.scopes[index]))?;
-                    let generic_ids = collect_generics(ctx, unit, scope, generics)?;
-                    let methods = HashMap<NameId, TypeId>.new();
-                    let obligations = Vec<ImplCondition>.new();
-                    let accepted = false;
-                    defer {
-                        if !accepted {
-                            generic_ids.drop();
-                            methods.drop();
-                            drop_conditions(&obligations);
-                        }
-                    };
-                    annotations(ctx, unit, scope, generics)?;
-                    let receiver = resolve_type(ctx, unit, scope, *target)?;
-                    bind_self(ctx, unit, scope, receiver)?;
-                    let trait_id = match trait_type {
-                        Some(value) => Option<TypeId>.Some(resolve_type(ctx, unit, scope, *value)?),
-                        None => Option<TypeId>.None,
-                    };
-
-                    for condition in *conditions {
-                        let name = ctx.session.names.intern(condition.data.name.data.name.as_str());
-                        let symbol = match ctx.session.symbols.lookup(scope, name) {
-                            Some(value) => value,
-                            None => return Result<(), AnalysisError>.Err(ctx.error(unit, condition.span, DiagnosticCode.Undefined, "unknown impl condition parameter")),
-                        };
-                        let traits = Vec<TypeId>.new();
-                        let moved = false;
-                        defer {
-                            if !moved {
-                                traits.drop();
-                            }
-                        };
-
-                        for syntax in condition.data.traits {
-                            traits.push(resolve_type(ctx, unit, scope, *syntax)?);
-                        }
-
-                        moved = true;
-                        obligations.push(ImplCondition(ctx.session.symbols.get(symbol).unwrap().type_id, traits));
+            match resolve_impl(ctx, unit, *item) {
+                Ok(_) => {},
+                Err(error) => {
+                    if !ctx.session.editor_recovery || error.kind == AnalysisErrorKind.Internal { return Result<(), AnalysisError>.Err(error); }
+                    if error.kind == AnalysisErrorKind.EditorIncomplete { error.drop(); } else {
+                        error.diagnostic.stage = Option<AnalysisStage>.Some(AnalysisStage.Resolve);
+                        ctx.session.diagnostics.push_unique(error.diagnostic);
                     }
-
-                    for method in *items {
-                        let name = ctx.session.names.intern(method.data.decl.data.name.data.name.as_str());
-
-                        if methods.contains(&name) {
-                            return Result<(), AnalysisError>.Err(ctx.error(unit, method.span, DiagnosticCode.Duplicate, "duplicate impl method"));
-                        }
-
-                        methods.insert(name, resolve_method(ctx, unit, scope, receiver, &generic_ids, method.data.decl, Option<Block&>.Some(method.data.body), trait_id.is_some())?);
-                    }
-
-                    accepted = true;
-                    ctx.session.impls.register(ImplRecord(ctx.span(unit, item.span), generic_ids, receiver, trait_id, obligations, methods, false));
                 },
-                _ => {},
             }
         }
 
         index += 1;
     }
 
+    Result<(), AnalysisError>.Ok(())
+}
+
+fn resolve_impl(ctx: ResolutionContext&, unit: UnitId, item: Item&) -> Result<(), AnalysisError> {
+    match &item.data {
+        Impl(generics, target, trait_type, items, conditions) => {
+            let scope = ctx.session.symbols.create_scope(Option<ScopeId>.Some(ctx.scopes[unit.index]))?;
+            let generic_ids = collect_generics(ctx, unit, scope, generics)?;
+            let methods = HashMap<NameId, TypeId>.new();
+            let obligations = Vec<ImplCondition>.new();
+            let accepted = false;
+            defer {
+                if !accepted {
+                    generic_ids.drop();
+                    methods.drop();
+                    drop_conditions(&obligations);
+                }
+            };
+            annotations(ctx, unit, scope, generics)?;
+            let receiver = resolve_type(ctx, unit, scope, *target)?;
+            bind_self(ctx, unit, scope, receiver)?;
+            let trait_id = match trait_type {
+                Some(value) => Option<TypeId>.Some(resolve_type(ctx, unit, scope, *value)?),
+                None => Option<TypeId>.None,
+            };
+
+            for condition in *conditions {
+                let name = ctx.session.names.intern(condition.data.name.data.name.as_str());
+                let symbol = match ctx.session.symbols.lookup(scope, name) {
+                    Some(value) => value,
+                    None => return Result<(), AnalysisError>.Err(ctx.error(unit, condition.span, DiagnosticCode.Undefined, "unknown impl condition parameter")),
+                };
+                let traits = Vec<TypeId>.new();
+                let moved = false;
+                defer {
+                    if !moved {
+                        traits.drop();
+                    }
+                };
+
+                for syntax in condition.data.traits {
+                    traits.push(resolve_type(ctx, unit, scope, *syntax)?);
+                }
+
+                moved = true;
+                obligations.push(ImplCondition(ctx.session.symbols.get(symbol).unwrap().type_id, traits));
+            }
+
+            for method in *items {
+                let name = ctx.session.names.intern(method.data.decl.data.name.data.name.as_str());
+
+                if methods.contains(&name) {
+                    return Result<(), AnalysisError>.Err(ctx.error(unit, method.span, DiagnosticCode.Duplicate, "duplicate impl method"));
+                }
+
+                methods.insert(name, resolve_method(ctx, unit, scope, receiver, &generic_ids, method.data.decl, Option<Block&>.Some(method.data.body), trait_id.is_some())?);
+            }
+
+            accepted = true;
+            ctx.session.impls.register(ImplRecord(ctx.span(unit, item.span), generic_ids, receiver, trait_id, obligations, methods, false));
+        },
+        _ => {},
+    }
     Result<(), AnalysisError>.Ok(())
 }

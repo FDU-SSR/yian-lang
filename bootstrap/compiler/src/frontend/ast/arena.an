@@ -5,6 +5,7 @@ from std.core.ops import Index;
 from std.core.vec import Vec;
 
 from std.collections.arena import Arena;
+from std.core.option import Option;
 from std.core.iter import IntoIterator;
 
 // Payload cleanup is separate from storage cleanup across all node categories.
@@ -168,7 +169,7 @@ impl AstArena {
     }
 
     pub fn alloc_method_decl(data: MethodDeclData, span: Span) -> MethodDecl& {
-        return self.method_decl.alloc(MethodDecl(data=data, span=span));
+        return self.method_decl.alloc(MethodDecl(data=data, span=span, signature_recovered=false));
     }
 
     pub fn alloc_method_def(data: MethodDefData, span: Span) -> MethodDef& {
@@ -176,7 +177,7 @@ impl AstArena {
     }
 
     pub fn alloc_extern_func_decl(data: ExternFuncDeclData, span: Span) -> ExternFuncDecl& {
-        return self.extern_func_decl.alloc(ExternFuncDecl(data=data, span=span));
+        return self.extern_func_decl.alloc(ExternFuncDecl(data=data, span=span, signature_recovered=false));
     }
 
     pub fn alloc_impl_condition(data: ImplConditionData, span: Span) -> ImplCondition& {
@@ -192,7 +193,7 @@ impl AstArena {
     }
 
     pub fn alloc_expr(data: ExprData, span: Span) -> Expr& {
-        return self.expr.alloc(Expr(data=data, span=span));
+        return self.expr.alloc(Expr(data=data, span=span, syntax_span=Option<Span>.None, syntax_recovered=false));
     }
 
     pub fn alloc_type_syntax(data: TypeData, span: Span) -> TypeSyntax& {

@@ -3,7 +3,7 @@ from compiler.common.ids import UnitId, SymbolId;
 from compiler.common.location import SourceSpan;
 from compiler.frontend.ast.node import Identifier;
 from compiler.frontend.source import Span;
-from compiler.diagnostics.model import DiagnosticCode, AnalysisError;
+from compiler.diagnostics.model import DiagnosticCode, AnalysisError, AnalysisErrorKind, AnalysisStage;
 from std.core.drop import Drop;
 from std.core.fs import canonicalize;
 from std.core.iter import Iterator, IntoIterator;
@@ -153,16 +153,37 @@ pub fn resolve_imports(ctx: ResolutionContext&) -> Result<(), AnalysisError> {
             for item in root.data.items {
                 match &item.data {
                     Import(paths, target, alias, _) => {
-                        let destination = target_unit(ctx, unit, paths, item.span)?;
+                        let destination = match target_unit(ctx, unit, paths, item.span) {
+                            Ok(value) => value,
+                            Err(error) => {
+                                if !ctx.session.editor_recovery || error.kind == AnalysisErrorKind.Internal { return Result<(), AnalysisError>.Err(error); }
+                                error.diagnostic.stage = Option<AnalysisStage>.Some(AnalysisStage.Resolve);
+                                ctx.session.diagnostics.push_unique(error.diagnostic);
+                                continue;
+                            },
+                        };
                         let alias_name = match alias {
                             Some(value) => value.data.name.as_str(),
                             None => target.data.name.as_str(),
                         };
 
-                        if !bind_import(ctx, unit, destination, target.data.name.as_str(), alias_name, target.span)? {
+                        let bound = match bind_import(ctx, unit, destination, target.data.name.as_str(), alias_name, target.span) {
+                            Ok(value) => value,
+                            Err(error) => {
+                                if !ctx.session.editor_recovery || error.kind == AnalysisErrorKind.Internal { return Result<(), AnalysisError>.Err(error); }
+                                error.diagnostic.stage = Option<AnalysisStage>.Some(AnalysisStage.Resolve);
+                                ctx.session.diagnostics.push_unique(error.diagnostic);
+                                continue;
+                            },
+                        };
+                        if !bound {
                             if round == ctx.session.len() {
-                                return Result<(), AnalysisError>.Err(AnalysisError.named(DiagnosticCode.ImportNotFound,
-                                    Option<SourceSpan>.Some(ctx.span(unit, target.span)), "Symbol '", target.data.name.as_str(), "' is not found in the imported unit"));
+                                let error = AnalysisError.named(DiagnosticCode.ImportNotFound,
+                                    Option<SourceSpan>.Some(ctx.span(unit, target.span)), "Symbol '", target.data.name.as_str(), "' is not found in the imported unit");
+                                if !ctx.session.editor_recovery { return Result<(), AnalysisError>.Err(error); }
+                                error.diagnostic.stage = Option<AnalysisStage>.Some(AnalysisStage.Resolve);
+                                ctx.session.diagnostics.push_unique(error.diagnostic);
+                                continue;
                             }
 
                             missing = true;
@@ -228,10 +249,9 @@ fn inject_prelude(ctx: ResolutionContext&) -> Result<(), AnalysisError> {
 
                 for item in record.prepared.tree.unwrap().root.data.items {
                     match &item.data {
-                        Import(paths, target, _, _) => {
-                            if target.data.name.as_str() == entry[1] && target_unit(ctx, unit, paths, item.span)? == destination {
-                                explicit = true;
-                            }
+                        Import(_, target, alias, _) => {
+                            let binding = match alias { Some(value) => value.data.name.as_str(), None => target.data.name.as_str() };
+                            if binding == entry[1] { explicit = true; }
                         },
                         _ => {},
                     }

@@ -17,8 +17,15 @@ if TYPE_CHECKING:
     from compiler.frontend.lex.token import Literal as LexLiteral
 
 
+class ExpressionSyntax:
+    """Editor extent is separate from diagnostic spans and serialization fields."""
+
+    syntax_span: SrcSpan | None = None
+    syntax_recovered: bool = False
+
+
 @dataclass
-class Identifier:
+class Identifier(ExpressionSyntax):
     span: SrcSpan
     name: str
     synthetic: bool = False
@@ -171,6 +178,7 @@ class ExternFuncDecl:
     name: Identifier
     params: list[VarInfo]
     ret_type: ASTType | None
+    signature_recovered: bool = field(default=False, repr=False, compare=False)
 
 
 @dataclass
@@ -298,6 +306,7 @@ class MethodDecl:
     generics: list[GenericParam]
     params: list[VarInfo | PatternParam]
     ret_type: ASTType | None
+    signature_recovered: bool = field(default=False, repr=False, compare=False)
 
     def __repr__(self) -> str:
         attrs_str = " ".join(str(attr) for attr in self.attrs)
@@ -308,7 +317,7 @@ class MethodDecl:
 
 
 @dataclass
-class Block:
+class Block(ExpressionSyntax):
     span: SrcSpan
     stmts: list[Expr]
     #: Position just past the closing ``}``, recorded by the parser.  ``None``
@@ -330,7 +339,7 @@ class Block:
 
 
 @dataclass
-class Semi:
+class Semi(ExpressionSyntax):
     span: SrcSpan
     expr: Expr
 
@@ -339,7 +348,7 @@ class Semi:
 
 
 @dataclass
-class VarDecl:
+class VarDecl(ExpressionSyntax):
     span: SrcSpan
     name: Identifier
     var_type: ASTType
@@ -353,7 +362,7 @@ class VarDecl:
 
 
 @dataclass
-class PatternLet:
+class PatternLet(ExpressionSyntax):
     span: SrcSpan
     pattern: Pattern
     var_type: ASTType
@@ -370,7 +379,7 @@ class LetCondition:
 
 
 @dataclass
-class Return:
+class Return(ExpressionSyntax):
     span: SrcSpan
     expr: Expr | None
 
@@ -380,7 +389,7 @@ class Return:
 
 
 @dataclass
-class If:
+class If(ExpressionSyntax):
     span: SrcSpan
     condition: Expr | LetCondition
     then_branch: Block
@@ -394,7 +403,7 @@ class If:
 
 
 @dataclass
-class ComptimeIf:
+class ComptimeIf(ExpressionSyntax):
     span: SrcSpan
     condition: Expr
     then_branch: Block
@@ -405,7 +414,7 @@ class ComptimeIf:
 
 
 @dataclass
-class CompileConfig:
+class CompileConfig(ExpressionSyntax):
     span: SrcSpan
     name: str
 
@@ -414,7 +423,7 @@ class CompileConfig:
 
 
 @dataclass
-class For:
+class For(ExpressionSyntax):
     span: SrcSpan
     pattern: Pattern
     iterable: Expr
@@ -425,7 +434,7 @@ class For:
 
 
 @dataclass
-class While:
+class While(ExpressionSyntax):
     span: SrcSpan
     condition: Expr | LetCondition
     body: Block
@@ -435,7 +444,7 @@ class While:
 
 
 @dataclass
-class Loop:
+class Loop(ExpressionSyntax):
     span: SrcSpan
     body: Block
 
@@ -444,7 +453,7 @@ class Loop:
 
 
 @dataclass
-class Match:
+class Match(ExpressionSyntax):
     span: SrcSpan
     expr: Expr
     arms: list[MatchArm]
@@ -471,7 +480,7 @@ class MatchArm:
 
 
 @dataclass
-class Break:
+class Break(ExpressionSyntax):
     span: SrcSpan
     expr: Expr | None = None
 
@@ -481,7 +490,7 @@ class Break:
 
 
 @dataclass
-class Continue:
+class Continue(ExpressionSyntax):
     span: SrcSpan
 
     def __repr__(self) -> str:
@@ -489,7 +498,7 @@ class Continue:
 
 
 @dataclass
-class Defer:
+class Defer(ExpressionSyntax):
     span: SrcSpan
     action: Expr
 
@@ -498,7 +507,7 @@ class Defer:
 
 
 @dataclass
-class Assert:
+class Assert(ExpressionSyntax):
     span: SrcSpan
     condition: Expr
     message: Expr | None
@@ -509,7 +518,7 @@ class Assert:
 
 
 @dataclass
-class Delete:
+class Delete(ExpressionSyntax):
     span: SrcSpan
     target: Expr
 
@@ -589,7 +598,7 @@ class SequencePattern:
 
 
 @dataclass
-class Binary:
+class Binary(ExpressionSyntax):
     span: SrcSpan
     op: BinaryOperator
     left: Expr
@@ -603,7 +612,7 @@ class Binary:
 
 
 @dataclass
-class Unary:
+class Unary(ExpressionSyntax):
     span: SrcSpan
     op: UnaryOperator
     operand: Expr
@@ -626,7 +635,7 @@ class Arg:
 
 
 @dataclass
-class Call:
+class Call(ExpressionSyntax):
     """
     Could be:
 
@@ -646,7 +655,7 @@ class Call:
 
 
 @dataclass
-class Builtin:
+class Builtin(ExpressionSyntax):
     """One instruction in the reserved ``@`` namespace."""
 
     span: SrcSpan
@@ -661,7 +670,7 @@ class Builtin:
 
 
 @dataclass
-class MethodCall:
+class MethodCall(ExpressionSyntax):
     span: SrcSpan
     receiver: Expr
     method_name: Identifier
@@ -690,7 +699,7 @@ TypeSource: TypeAlias = ASTType | ArgumentType | CallableReturnType
 
 
 @dataclass
-class TraitCall:
+class TraitCall(ExpressionSyntax):
     """A trait-qualified static call with explicit or inferred type sources."""
 
     span: SrcSpan
@@ -702,13 +711,13 @@ class TraitCall:
 
 
 @dataclass
-class TryExpr:
+class TryExpr(ExpressionSyntax):
     span: SrcSpan
     operand: Expr
 
 
 @dataclass
-class FieldAccess:
+class FieldAccess(ExpressionSyntax):
     span: SrcSpan
     receiver: Expr
     field_name: Identifier
@@ -718,7 +727,7 @@ class FieldAccess:
 
 
 @dataclass
-class DynValue:
+class DynValue(ExpressionSyntax):
     span: SrcSpan
     value: Expr
 
@@ -727,7 +736,7 @@ class DynValue:
 
 
 @dataclass
-class DynBuffer:
+class DynBuffer(ExpressionSyntax):
     span: SrcSpan
     size: Expr
     element: Expr
@@ -737,7 +746,7 @@ class DynBuffer:
 
 
 @dataclass
-class TypeItem:
+class TypeItem(ExpressionSyntax):
     """
     Represents stuff like `Option<T>`, `Foo<i32*, String>`, etc.
     """
@@ -752,7 +761,7 @@ class TypeItem:
 
 
 @dataclass
-class Tuple:
+class Tuple(ExpressionSyntax):
     span: SrcSpan
     elements: list[Expr]
 
@@ -762,7 +771,7 @@ class Tuple:
 
 
 @dataclass
-class Array:
+class Array(ExpressionSyntax):
     span: SrcSpan
     elements: list[Expr]
 
@@ -772,7 +781,7 @@ class Array:
 
 
 @dataclass
-class ArrayRepeat:
+class ArrayRepeat(ExpressionSyntax):
     span: SrcSpan
     element: Expr
     count: Expr
@@ -782,7 +791,7 @@ class ArrayRepeat:
 
 
 @dataclass
-class Literal:
+class Literal(ExpressionSyntax):
     span: SrcSpan
     literal: LexLiteral
 
@@ -819,7 +828,7 @@ class CaptureItem:
 
 
 @dataclass
-class ClosureExpr:
+class ClosureExpr(ExpressionSyntax):
     """Closure expression: |captures| (params) -> R { body }."""
 
     span: SrcSpan
@@ -835,6 +844,15 @@ class ClosureExpr:
         return f"|{captures_str}| ({params_str}){ret_str} {{ ... }}"
 
 
+@dataclass
+class Recovery(ExpressionSyntax):
+    """Unfinished editor syntax owns only already parsed children, never a fake name."""
+
+    span: SrcSpan
+    children: list[Expr]
+    bindings: list[Identifier] = field(default_factory=list[Identifier])
+
+
 Expr: TypeAlias = (
     Binary | Unary | FieldAccess
     | Call | Builtin | MethodCall | TraitCall | TryExpr
@@ -847,7 +865,7 @@ Expr: TypeAlias = (
     | Return | Break | Continue | Defer | Assert
     | Delete
     | Semi
-    | ClosureExpr | CompileConfig
+    | ClosureExpr | CompileConfig | Recovery
 )
 
 Pattern: TypeAlias = (

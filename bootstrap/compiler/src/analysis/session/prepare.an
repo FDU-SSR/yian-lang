@@ -5,10 +5,14 @@ from compiler.config import FrontendPhase;
 from compiler.diagnostics.model import DiagnosticCode, Diagnostic, Severity, AnalysisError, AnalysisStage;
 from compiler.diagnostics.render import detach;
 from compiler.frontend.prepare import PreparedFile, prepare_file, PreparationError, PreparationStage;
+from compiler.frontend.lex.lexer import Lexer;
+from compiler.frontend.diagnostics import lex_code;
+from compiler.frontend.ast.arena import AstTree;
 from compiler.frontend.source import collect_sources, SourceDocument;
 from compiler.package.model import PackageMap;
 from compiler.package.provenance import SourceTrust;
 from std.core.drop import Drop;
+from std.core.convert import From;
 from std.core.iter import Iterator, IntoIterator;
 from std.core.option import Option;
 from std.core.result import Result;
@@ -90,20 +94,29 @@ impl AnalysisSession {
         while source_index < session.sources.len() {
             let source = SourceId(source_index);
             let file = session.sources.file(source_index);
-            match prepare_file(source, file.path(), file.text(), FrontendPhase.Tokens) {
-                Ok(value) => {
-                    prepared.push(Option<PreparedFile>.Some(value));
-                    valid.push(true);
+            let scanned = Lexer.new(file.text()).run_editor();
+            defer scanned.drop();
+            match scanned.error.take() {
+                Some(error) => {
+                    defer error.drop();
+                    session.record_editor_preparation_error(source, PreparationError(
+                        PreparationStage.Lex, lex_code(error.message()), String.from(&error.message()), error.span()));
                 },
-                Err(error) => session.record_editor_preparation_error(source, error),
+                None => {},
             }
+            prepared.push(Option<PreparedFile>.Some(PreparedFile(source, scanned.take_tokens(), Option<AstTree>.None)));
+            valid.push(true);
             source_index += 1u64;
         }
 
         let index = 0u64;
         while index < prepared.len() {
-            match prepared[index].unwrap().parse() {
-                Ok(_) => {},
+            match prepared[index].unwrap().parse_editor() {
+                Ok(errors) => {
+                    let source = prepared[index].unwrap().source;
+                    for error in errors { session.record_editor_preparation_error(source, *error); }
+                    errors.drop();
+                },
                 Err(error) => {
                     valid[index] = false;
                     let source = prepared[index].unwrap().source;

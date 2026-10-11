@@ -5,7 +5,7 @@ from compiler.common.ids import UnitId, ScopeId, TypeId, DefId, SymbolId;
 from compiler.common.location import SourceSpan;
 from compiler.frontend.ast.node import Item, Identifier, GenericParam, Attr;
 from compiler.frontend.ast.atoms import AttrKind;
-from compiler.diagnostics.model import DiagnosticCode, AnalysisError;
+from compiler.diagnostics.model import DiagnosticCode, AnalysisError, AnalysisErrorKind, AnalysisStage;
 from std.core.drop import Drop;
 from std.core.iter import Iterator, IntoIterator;
 from std.core.option import Option;
@@ -161,36 +161,14 @@ pub fn collect_declarations(ctx: ResolutionContext&) -> Result<(), AnalysisError
         let root = prepared.prepared.tree.unwrap().root;
 
         for item in root.data.items {
-            match &item.data {
-                FuncDef(attrs, name, generics, _, _, _) => {
-                    collect_named(ctx, unit, *item, *name, attrs, generics, SymbolKind.Function, Option<NominalKind>.Some(NominalKind.Function), false)?;
-                },
-                StructDef(attrs, name, generics, _) => {
-                    collect_named(ctx, unit, *item, *name, attrs, generics, SymbolKind.Type, Option<NominalKind>.Some(NominalKind.Struct), false)?;
-                },
-                EnumDef(attrs, name, generics, _) => {
-                    collect_named(ctx, unit, *item, *name, attrs, generics, SymbolKind.Type, Option<NominalKind>.Some(NominalKind.Enum), false)?;
-                },
-                TraitDef(attrs, name, generics, _) => {
-                    collect_named(ctx, unit, *item, *name, attrs, generics, SymbolKind.Type, Option<NominalKind>.Some(NominalKind.Trait), false)?;
-                },
-                Alias(attrs, name, generics, _) => {
-                    collect_named(ctx, unit, *item, *name, attrs, generics, SymbolKind.Alias, Option<NominalKind>.None, false)?;
-                },
-                ConstDef(attrs, name, _, _) => {
-                    collect_named(ctx, unit, *item, *name, attrs, &empty, SymbolKind.Constant, Option<NominalKind>.None, false)?;
-                },
-                OpaqueTypeDef(attrs, name) => {
-                    collect_named(ctx, unit, *item, *name, attrs, &empty, SymbolKind.Type, Option<NominalKind>.None, true)?;
-                },
-                Import(_, _, _, _) => {},
-                Impl(_, _, _, _, _) => {},
-                ExternBlock(attrs, _, functions) => {
-                    attributes(ctx, unit, *item, attrs, false, true)?;
-
-                    for function in *functions {
-                        collect_named(ctx, unit, *item, function.data.name, attrs, &empty, SymbolKind.Function, Option<NominalKind>.Some(NominalKind.Function), true)?;
+            match collect_item(ctx, unit, *item, &empty) {
+                Ok(_) => {},
+                Err(error) => {
+                    if !ctx.session.editor_recovery || error.kind == AnalysisErrorKind.Internal {
+                        return Result<(), AnalysisError>.Err(error);
                     }
+                    error.diagnostic.stage = Option<AnalysisStage>.Some(AnalysisStage.Resolve);
+                    ctx.session.diagnostics.push_unique(error.diagnostic);
                 },
             }
         }
@@ -198,5 +176,41 @@ pub fn collect_declarations(ctx: ResolutionContext&) -> Result<(), AnalysisError
         unit_index += 1;
     }
 
+    Result<(), AnalysisError>.Ok(())
+}
+
+fn collect_item(ctx: ResolutionContext&, unit: UnitId, item: Item&, empty: Vec<GenericParam>&) -> Result<(), AnalysisError> {
+    match &item.data {
+        FuncDef(attrs, name, generics, _, _, _) => {
+            collect_named(ctx, unit, item, *name, attrs, generics, SymbolKind.Function, Option<NominalKind>.Some(NominalKind.Function), false)?;
+        },
+        StructDef(attrs, name, generics, _) => {
+            collect_named(ctx, unit, item, *name, attrs, generics, SymbolKind.Type, Option<NominalKind>.Some(NominalKind.Struct), false)?;
+        },
+        EnumDef(attrs, name, generics, _) => {
+            collect_named(ctx, unit, item, *name, attrs, generics, SymbolKind.Type, Option<NominalKind>.Some(NominalKind.Enum), false)?;
+        },
+        TraitDef(attrs, name, generics, _) => {
+            collect_named(ctx, unit, item, *name, attrs, generics, SymbolKind.Type, Option<NominalKind>.Some(NominalKind.Trait), false)?;
+        },
+        Alias(attrs, name, generics, _) => {
+            collect_named(ctx, unit, item, *name, attrs, generics, SymbolKind.Alias, Option<NominalKind>.None, false)?;
+        },
+        ConstDef(attrs, name, _, _) => {
+            collect_named(ctx, unit, item, *name, attrs, empty, SymbolKind.Constant, Option<NominalKind>.None, false)?;
+        },
+        OpaqueTypeDef(attrs, name) => {
+            collect_named(ctx, unit, item, *name, attrs, empty, SymbolKind.Type, Option<NominalKind>.None, true)?;
+        },
+        Import(_, _, _, _) => {},
+        Impl(_, _, _, _, _) => {},
+        ExternBlock(attrs, _, functions) => {
+            attributes(ctx, unit, item, attrs, false, true)?;
+
+            for function in *functions {
+                collect_named(ctx, unit, item, function.data.name, attrs, empty, SymbolKind.Function, Option<NominalKind>.Some(NominalKind.Function), true)?;
+            }
+        },
+    }
     Result<(), AnalysisError>.Ok(())
 }

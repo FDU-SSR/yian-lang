@@ -87,6 +87,7 @@ class Navigator:
         self.__stdlib_by_path: dict[Path, bool] = {}
         self.__target_cache: dict[tuple[type, int], Target | None] = {}
         self.__references_by_target: dict[tuple[Path, int, int], tuple[NameRef, ...]] | None = None
+        self.__incomplete_targets: set[tuple[Path, int, int]] = set()
 
     @property
     def view(self) -> AnalysisView:
@@ -327,6 +328,11 @@ class Navigator:
         index = self.__references_by_target
         return () if index is None else index.get(self.span_key(target.span), ())
 
+    def references_consistent(self, target: Target) -> bool:
+        """A conflict in another declaration does not corrupt this target's index."""
+        self.__build_reference_index()
+        return self.span_key(target.span) not in self.__incomplete_targets
+
     def __build_reference_index(self) -> None:
         if self.__references_by_target is None:
             grouped: dict[tuple[Path, int, int], list[NameRef]] = {}
@@ -337,6 +343,10 @@ class Navigator:
             self.__references_by_target = {
                 key: tuple(references) for key, references in grouped.items()
             }
+            for reference in self.__view.conflicting_references():
+                span = self.target_span(reference.target)
+                if span is not None:
+                    self.__incomplete_targets.add(self.span_key(span))
 
     def declaration_for(self, target: Target) -> Declaration | None:
         """Find the indexed declaration at a resolved target site in constant time."""

@@ -23,6 +23,7 @@ class ExprParser:
     def __parse_expr_bp(self, min_bp: int) -> AST.Expr:
         """Pratt parser for expressions with operator precedence."""
         # parse the left-hand side (LHS) of the expression
+        start = self.__stream.peek().span
         lhs = self.__parse_prefix()
 
         while True:
@@ -40,6 +41,7 @@ class ExprParser:
             rhs = self.__parse_expr_bp(op.rbp)
             lhs = AST.Binary(span=lhs.span + rhs.span, op=op, left=lhs, right=rhs)
 
+        lhs.syntax_span = start + self.__stream.previous_span()
         return lhs
 
     def __parse_prefix(self) -> AST.Expr:
@@ -58,7 +60,12 @@ class ExprParser:
             return self.__parse_dyn()
 
         # parse a primary expression
+        problem_count = len(self.__stream.errors)
         expr = self.__parse_primary()
+        if self.__stream.editor and len(self.__stream.errors) != problem_count and isinstance(
+            expr, (AST.Array, AST.ArrayRepeat, AST.Tuple, AST.TypeItem),
+        ):
+            expr.syntax_recovered = True
         return self.__parse_postfix(expr)
 
     def __parse_dyn(self) -> AST.Expr:
@@ -396,8 +403,11 @@ class ExprParser:
 
     def __parse_postfix(self, expr: AST.Expr) -> AST.Expr:
         """Parses postfix expressions (e.g., function calls, field access)."""
+        expr.syntax_span = expr.span + self.__stream.previous_span()
+        start = expr.syntax_span or expr.span
         # absorb postfix as long as possible
         while True:
+            problem_count = len(self.__stream.errors)
             token = self.__stream.peek()
             match token:
                 case Tok.Punctuator(kind=Tok.PunctuatorKind.Question):
@@ -415,7 +425,16 @@ class ExprParser:
                     # field access or method call
                     self.__stream.consume_punctuator(Tok.PunctuatorKind.Dot)
 
-                    field_or_method_name = self.__stream.consume_identifier()
+                    try:
+                        field_or_method_name = self.__stream.consume_identifier()
+                    except ParseError as error:
+                        if not self.__stream.editor:
+                            raise
+                        self.__stream.errors.append(error)
+                        # The receiver remains real; no missing member is invented.
+                        recovered = AST.Recovery(span=expr.span, children=[expr])
+                        recovered.syntax_span = start + self.__stream.previous_span()
+                        return recovered
                     next_token = self.__stream.peek()
                     match next_token:
                         case Tok.Punctuator(kind=Tok.PunctuatorKind.LParen):
@@ -451,6 +470,10 @@ class ExprParser:
 
                 case _:
                     return expr
+
+            if self.__stream.editor and len(self.__stream.errors) != problem_count:
+                expr.syntax_recovered = True
+            expr.syntax_span = start + self.__stream.previous_span()
 
     def __parse_builtin(self) -> AST.Expr:
         """Parse the shared ``@name<types>(values)`` instruction form."""
@@ -538,7 +561,30 @@ class ExprParser:
         by the last item (``Semi`` → void, bare expr → the expr's type).
         """
         span = self.__stream.consume_punctuator(Tok.PunctuatorKind.LBrace).span
-        stmts = list(self.__stream.consume_until(self.__parse_expr_stmt, TERM_RBRACE))
+        if not self.__stream.editor:
+            stmts = list(self.__stream.consume_until(self.__parse_expr_stmt, TERM_RBRACE))
+        else:
+            stmts: list[AST.Expr] = []
+            while not self.__stream.at_end():
+                token = self.__stream.peek()
+                if isinstance(token, Tok.Punctuator) and token.kind == Tok.PunctuatorKind.RBrace:
+                    break
+                if self.__stream.declaration_boundary():
+                    break
+                mark = self.__stream.mark()
+                binding = self.__stream.peek_nth(1) if isinstance(token, Tok.Keyword) and token.kind == Tok.KeywordKind.Let else None
+                try:
+                    stmts.append(self.__parse_expr_stmt())
+                except ParseError as error:
+                    self.__stream.errors.append(error)
+                    bindings = [AST.Identifier(binding.span, binding.name)] if isinstance(binding, Tok.Identifier) else []
+                    stmts.append(AST.Recovery(span=token.span, children=[], bindings=bindings))
+                    self.__stream.synchronize(TERM_RBRACE | frozenset({Tok.PunctuatorKind.Semicolon}))
+                    boundary = self.__stream.peek()
+                    if isinstance(boundary, Tok.Punctuator) and boundary.kind == Tok.PunctuatorKind.Semicolon:
+                        self.__stream.advance()
+                    if self.__stream.mark() == mark and not self.__stream.at_end():
+                        self.__stream.advance()
         # The closing brace is ours to see: record where the block ends so a
         # consumer can ask for the body's extent instead of scanning tokens.
         close = self.__stream.consume_punctuator(Tok.PunctuatorKind.RBrace).span

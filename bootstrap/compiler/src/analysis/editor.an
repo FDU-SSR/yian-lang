@@ -3,6 +3,9 @@ from compiler.analysis.session.output import AnalysisOptions, AnalysisReport;
 from compiler.codegen.session import BackendSession, BackendOptions;
 from compiler.codegen.error import CodegenError;
 from compiler.analysis.constant.evaluate import TypeSizeProvider;
+from compiler.analysis.editor.availability import DocumentState, DefinitionState, BodyState;
+from compiler.analysis.definition.worklist import WorkState;
+from compiler.analysis.ty.substitution import has_generic;
 from compiler.analysis.editor_facts import EditorMemberKind, ResolvedMember, ResolvedName;
 from compiler.analysis.symbol.model import Symbol, SymbolKind;
 from compiler.analysis.symbol.scope import VisibleSymbol;
@@ -11,7 +14,7 @@ from compiler.analysis.ty.model import StructField, EnumVariant, TypeData, Defin
 from compiler.analysis.ty.queries import struct_fields, enum_variants;
 from compiler.common.ids import SourceId, UnitId, SymbolId, ScopeId, DefId, TypeId;
 from compiler.common.location import SourceSpan;
-from compiler.diagnostics.model import Diagnostic, DiagnosticLocation, AnalysisError, AnalysisErrorKind;
+from compiler.diagnostics.model import Diagnostic, DiagnosticLocation, AnalysisError, AnalysisErrorKind, AnalysisStage;
 from compiler.format.api import format_text;
 from compiler.frontend.ast.node import Item, ItemData, MethodDecl, MethodDef, TypeSyntax, Identifier, Parameter, Pattern, PatternArguments, PatternLet, ExternFuncDecl, Expr;
 from compiler.frontend.ast.traversal import AstVisitor, walk_program;
@@ -329,11 +332,24 @@ fn document_symbol_detail(
 
     match document_symbol_for_name(session, unit, name, kind) {
         Some(symbol_id) => match session.symbols.get(symbol_id) {
-            Some(symbol) => Option<String>.Some(stored_type_text(
+            Some(symbol) if editor_type_complete(session, symbol.type_id) => Option<String>.Some(stored_type_text(
                 &session.types, &session.names, symbol.type_id)),
-            None => Option<String>.None,
+            _ => Option<String>.None,
         },
         None => Option<String>.None,
+    }
+}
+
+// A declaration name survives signature failure, but its semantic payload does not.
+fn editor_type_complete(session: AnalysisSession&, type_id: TypeId) -> bool {
+    match session.types.get(type_id) {
+        Some(Nominal(definition, _)) => match session.types.definition(*definition) {
+            Some(record) => record.is_complete(),
+            None => false,
+        },
+        Some(TypeData.Error) => false,
+        None => false,
+        _ => true,
     }
 }
 
@@ -365,6 +381,9 @@ fn append_struct_document_symbols(
     type_id: TypeId,
     container: str,
 ) -> Result<(), AnalysisError> {
+    if !editor_type_complete(session, type_id) {
+        return Result<(), AnalysisError>.Ok(());
+    }
     let fields = struct_fields(&session.types, type_id)?;
     defer fields.drop();
 
@@ -422,6 +441,9 @@ fn append_enum_document_symbols(
     type_id: TypeId,
     container: str,
 ) -> Result<(), AnalysisError> {
+    if !editor_type_complete(session, type_id) {
+        return Result<(), AnalysisError>.Ok(());
+    }
     let variants = enum_variants(&session.types, type_id)?;
     defer variants.drop();
 
@@ -822,6 +844,7 @@ pub struct EditorSnapshot {
     session: AnalysisSession,
     report: Option<AnalysisReport>,
     versions: Vec<Option<i64>>,
+    document_states: Vec<DocumentState>,
     pub configuration_identity: String,
     pub mode: EditorMode,
     pub revision: u64,
@@ -829,6 +852,53 @@ pub struct EditorSnapshot {
 }
 
 impl EditorSnapshot {
+    // State and recovery regions are frozen once, alongside the semantic indexes.
+    pub fn document_state(source: SourceId) -> Option<DocumentState&> {
+        self.document_states.get(source.index)
+    }
+
+    pub fn definition_state(type_id: TypeId) -> Option<DefinitionState> {
+        let id = match self.session.types.get(type_id) { Some(Nominal(id, _)) => *id, _ => return Option<DefinitionState>.None };
+        let available = self.session.types.definition(id).unwrap().is_complete();
+        let body = match self.session.worklist.state(type_id) {
+            Some(WorkState.Complete) => BodyState.Complete,
+            Some(WorkState.Failed) => BodyState.Failed,
+            _ => if available && has_generic(&self.session.types, type_id) { BodyState.Uninstantiated } else { BodyState.Unreached },
+        };
+        Option<DefinitionState>.Some(DefinitionState(available, body))
+    }
+
+    fn freeze_document_states() {
+        let index = 0u64;
+        while index < self.session.source_manager().len() {
+            let source = SourceId(index);
+            let state = DocumentState(true, true, false, Vec<Span>.new(), Option<Position>.None);
+            let unit_index = 0u64;
+            while unit_index < self.session.len() {
+                if self.session.unit(UnitId(unit_index)).unwrap().source == source { state.declarations_available = true; break; }
+                unit_index += 1;
+            }
+            let diagnostic_index = 0u64;
+            while diagnostic_index < self.diagnostic_count() {
+                let diagnostic = self.diagnostic(diagnostic_index).unwrap();
+                diagnostic_index += 1;
+                let span = match &diagnostic.location { Some(Source(location)) if location.source == source => location.span, _ => { continue; } };
+                match diagnostic.stage {
+                    Some(AnalysisStage.Lex) => {
+                        state.lexical_complete = false;
+                        state.syntax_complete = false;
+                        state.recovery_regions.push(span);
+                        if state.lexical_stop.is_none() { state.lexical_stop = Option<Position>.Some(span.start); }
+                    },
+                    Some(AnalysisStage.Parse) => { state.syntax_complete = false; state.recovery_regions.push(span); },
+                    _ => {},
+                }
+            }
+            self.document_states.push(state);
+            index += 1;
+        }
+    }
+
     pub fn session() -> AnalysisSession& { &self.session }
 
     // Source text and resolved paths belong to the session; the version vector copies input metadata.
@@ -1034,7 +1104,13 @@ impl EditorSnapshot {
         }
 
         match self.resolved_member_at(source, row, column) {
-            Some(member) => return prepare_member_rename(self, member),
+            Some(member) => {
+                if !self.session.editor_facts.member_references_complete(member.declaration) {
+                    return EditorPrepareRenameResult(Option<EditorLocation>.None, Option<String>.None,
+                        Option<String>.Some(String.from(&"reference facts conflict; rename is unavailable")));
+                }
+                return prepare_member_rename(self, member);
+            },
             None => {},
         }
 
@@ -1051,6 +1127,11 @@ impl EditorSnapshot {
                 Option<String>.Some(String.from(&"nothing to rename here"))),
         };
         let symbol_name = self.session.names.text(symbol.name);
+
+        if !self.session.editor_facts.symbol_references_complete(symbol_id) {
+            return EditorPrepareRenameResult(Option<EditorLocation>.None, Option<String>.None,
+                Option<String>.Some(String.from(&"reference facts conflict; rename is unavailable")));
+        }
 
         match self.session.unit(symbol.unit) {
             Some(unit) if unit.is_stdlib => {
@@ -1117,7 +1198,12 @@ impl EditorSnapshot {
         }
 
         match self.resolved_member_at(source, row, column) {
-            Some(member) => return rename_member(self, member, new_name),
+            Some(member) => {
+                if !self.session.editor_facts.member_references_complete(member.declaration) {
+                    return refuse_rename("reference facts conflict; rename is unavailable");
+                }
+                return rename_member(self, member, new_name);
+            },
             None => {},
         }
 
@@ -1129,6 +1215,9 @@ impl EditorSnapshot {
             Some(value) => value,
             None => return refuse_rename("nothing to rename here"),
         };
+        if !self.session.editor_facts.symbol_references_complete(symbol_id) {
+            return refuse_rename("reference facts conflict; rename is unavailable");
+        }
         let symbol_name = self.session.names.text(symbol.name);
 
         match self.session.unit(symbol.unit) {
@@ -1298,7 +1387,7 @@ impl EditorSnapshot {
                 return Result<Vec<EditorDocumentSymbol>, AnalysisError>.Ok(result);
             },
         };
-        let include_members = self.semantic_complete();
+        let include_members = true;
 
         for item in tree.root.data.items {
             match &item.data {
@@ -1322,7 +1411,7 @@ impl EditorSnapshot {
                     document_symbol_detail(&self.session, unit, name.data.name.as_str(), SymbolKind.Alias),
                     Option<String>.None,
                 ),
-                StructDef(_, name, _, _) => {
+                StructDef(_, name, _, fields) => {
                     let text = name.data.name.as_str();
                     append_document_symbol(
                         &result,
@@ -1340,6 +1429,14 @@ impl EditorSnapshot {
                                 Some(symbol) => {
                                     append_struct_document_symbols(
                                         &result, &self.session, source, symbol.type_id, text)?;
+                                    if !editor_type_complete(&self.session, symbol.type_id) {
+                                        for field in *fields {
+                                            let field_name = &field.data.name;
+                                            append_document_symbol(&result, &self.session, source,
+                                                field_name.data.name.as_str(), EditorDocumentSymbolKind.Field,
+                                                field_name.span, Option<String>.None, Option<String>.Some(String.from(&text)));
+                                        }
+                                    }
                                 },
                                 None => {},
                             },
@@ -1347,7 +1444,7 @@ impl EditorSnapshot {
                         }
                     }
                 },
-                EnumDef(_, name, _, _) => {
+                EnumDef(_, name, _, variants) => {
                     let text = name.data.name.as_str();
                     append_document_symbol(
                         &result,
@@ -1365,6 +1462,14 @@ impl EditorSnapshot {
                                 Some(symbol) => {
                                     append_enum_document_symbols(
                                         &result, &self.session, source, symbol.type_id, text)?;
+                                    if !editor_type_complete(&self.session, symbol.type_id) {
+                                        for variant in *variants {
+                                            let variant_name = &variant.data.name;
+                                            append_document_symbol(&result, &self.session, source,
+                                                variant_name.data.name.as_str(), EditorDocumentSymbolKind.Variant,
+                                                variant_name.span, Option<String>.None, Option<String>.Some(String.from(&text)));
+                                        }
+                                    }
                                 },
                                 None => {},
                             },
@@ -1513,7 +1618,7 @@ impl EditorSnapshot {
 
     pub fn semantic_complete() -> bool {
         match &self.report {
-            Some(report) => report.output.is_some(),
+            Some(report) => report.output.is_some() && !self.session.diagnostics.has_errors(),
             None => false,
         }
     }
@@ -1523,6 +1628,8 @@ impl Drop for EditorSnapshot {
     pub fn drop() {
         match &self.report { Some(report) => report.drop(), None => {}, }
         self.versions.drop();
+        for state in self.document_states { state.drop(); }
+        self.document_states.drop();
         self.session.drop();
         self.configuration_identity.drop();
     }
@@ -1776,7 +1883,8 @@ impl EditorEngine {
         defer { if !transferred { session.drop(); } };
 
         let report = Option<AnalysisReport>.None;
-        if mode == EditorMode.Full && !session.diagnostics.has_errors() {
+        session.editor_recovery = true;
+        if mode == EditorMode.Full {
             report = match analyze_full(&session, raw_pointers, analysis_options) {
                 Ok(value) => Option<AnalysisReport>.Some(value),
                 Err(error) => return Result<EditorSnapshot, EditorFailure>.Err(error),
@@ -1789,11 +1897,13 @@ impl EditorEngine {
             session=session,
             report=report,
             versions=versions,
+            document_states=Vec<DocumentState>.new(),
             configuration_identity=String.from(&inputs.configuration_identity.as_str()),
             mode=mode,
             revision=inputs.revision,
             topology_revision=inputs.topology_revision,
         );
+        snapshot.freeze_document_states();
         transferred = true;
         versions_transferred = true;
         Result<EditorSnapshot, EditorFailure>.Ok(snapshot)

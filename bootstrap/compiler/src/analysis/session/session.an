@@ -1,10 +1,11 @@
-from compiler.common.ids import SourceId, UnitId;
+from compiler.common.ids import SourceId, UnitId, TypeId;
 from compiler.analysis.definition.registry import DefinitionRegistry;
 from compiler.analysis.definition.worklist import DefinitionWorklist;
 from compiler.analysis.editor_facts import EditorFacts;
 from compiler.analysis.hir.store import HirStore;
 from compiler.analysis.names import NameInterner;
 from compiler.analysis.symbol.scope import SymbolStore;
+from compiler.analysis.symbol.model import SymbolKind;
 from compiler.analysis.ty.impl_registry import ImplRegistry;
 from compiler.analysis.ty.store import TypeStore;
 from compiler.diagnostics.model import DiagnosticSink;
@@ -55,6 +56,7 @@ pub struct AnalysisSession {
     packages: Option<PackageMap>,
     trust: SourceTrust,
     pub raw_pointers: bool,
+    pub editor_recovery: bool,
     phase: AnalysisPhase,
 }
 
@@ -63,7 +65,7 @@ impl AnalysisSession {
     static pub fn new(trust: SourceTrust, packages: Option<PackageMap>, raw_pointers: bool) -> Self {
         Self(SourceManager.new(), NameInterner.new(), Arena<CompilationUnit>.new(), TypeStore.new(),
             SymbolStore.new(), HirStore.new(), DefinitionRegistry.new(), EditorFacts.new(), DefinitionWorklist.new(),
-            ImplRegistry.new(), DiagnosticSink.new(), packages, trust, raw_pointers, AnalysisPhase.Prepared)
+            ImplRegistry.new(), DiagnosticSink.new(), packages, trust, raw_pointers, false, AnalysisPhase.Prepared)
     }
 
     // A lexed file transfers here; later preparation stages mutate the session-owned payload.
@@ -95,6 +97,22 @@ impl AnalysisSession {
             Some(value) => Option<PackageMap&>.Some(value),
             None => Option<PackageMap&>.None,
         }
+    }
+
+    // Intrinsic identity lives in the session, so editor queries need no resolver.
+    pub fn intrinsic_type(name: str) -> Option<TypeId> {
+        let index = 0u64;
+        while index < self.symbols.symbol_count() {
+            let symbol = self.symbols.symbol_at(index).unwrap();
+            index += 1;
+            if symbol.kind == SymbolKind.Type && self.unit(symbol.unit).unwrap().is_stdlib && self.names.text(symbol.name) == name {
+                match self.types.get(symbol.type_id) {
+                    Some(Nominal(_, _)) => return Option<TypeId>.Some(symbol.type_id),
+                    _ => {},
+                }
+            }
+        }
+        Option<TypeId>.None
     }
 
     pub fn stdlib_root() -> str {

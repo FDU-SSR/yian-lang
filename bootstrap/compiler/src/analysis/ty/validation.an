@@ -9,7 +9,7 @@ from compiler.analysis.ty.trait_object import object_methods;
 from compiler.analysis.ty.display import type_text;
 from compiler.common.ids import TypeId;
 from compiler.common.location import SourceSpan;
-from compiler.diagnostics.model import AnalysisError, DiagnosticCode;
+from compiler.diagnostics.model import AnalysisError, AnalysisErrorKind, DiagnosticCode;
 from std.core.drop import Drop;
 from std.core.iter import Iterator, IntoIterator;
 from std.core.option import Option;
@@ -74,6 +74,7 @@ pub fn validate_unsized(ctx: ResolutionContext&) -> Result<(), AnalysisError> {
             },
             Nominal(id, _) => {
                 let definition = ctx.session.types.definition(*id).unwrap();
+                if ctx.session.editor_recovery && !definition.is_complete() { continue; }
                 let span = definition.header().span;
                 match definition.body()? {
                     Struct(body) => {
@@ -200,6 +201,11 @@ fn validate_inner(ctx: ResolutionContext&, type_id: TypeId, span: SourceSpan, vi
 
     match ctx.session.types.require(type_id)? {
         Nominal(id, _) => {
+            if ctx.session.editor_recovery && !ctx.session.types.definition(*id).unwrap().is_complete() {
+                let error = AnalysisError.user(DiagnosticCode.Type, Option<SourceSpan>.Some(span), "Unresolved editor declaration");
+                error.kind = AnalysisErrorKind.EditorIncomplete;
+                return Result<(), AnalysisError>.Err(error);
+            }
             if ctx.session.types.definition(*id).unwrap().header().kind == NominalKind.Trait {
                 return Result<(), AnalysisError>.Err(AnalysisError.user(DiagnosticCode.Type, Option<SourceSpan>.Some(span), "trait types are unsized; use 'Trait&' for a trait object"));
             }
@@ -280,6 +286,7 @@ pub fn validate_declarations(ctx: ResolutionContext&) -> Result<(), AnalysisErro
         match ctx.session.types.require(type_id)? {
             Nominal(id, arguments) => {
                 let header = *ctx.session.types.definition(*id).unwrap();
+                if ctx.session.editor_recovery && !header.is_complete() { index += 1; continue; }
                 let span = header.header().span;
                 let argument = 0u64;
 

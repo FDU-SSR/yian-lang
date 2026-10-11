@@ -26,9 +26,53 @@ EMPTY_SET: frozenset[Tok.PunctuatorKind] = frozenset()
 
 
 class TokenStream:
-    def __init__(self, tokens: list[Token]):
+    def __init__(self, tokens: list[Token], *, editor: bool = False):
         self.__tokens = tokens
         self.__index = 0
+        self.editor = editor
+        self.errors: list[ParseError] = []
+
+    def previous_span(self):
+        return self.__tokens[max(0, self.__index - 1)].span
+
+    def declaration_boundary(self) -> bool:
+        """A named function cannot be an element of an unfinished argument list."""
+        ahead = 0
+        token: Tok.Token | None = self.peek()
+        while isinstance(token, Tok.Keyword) and token.kind in (Tok.KeywordKind.Pub, Tok.KeywordKind.Ffi, Tok.KeywordKind.Static):
+            ahead += 1
+            attribute_open = self.peek_nth(ahead)
+            if token.kind is Tok.KeywordKind.Pub and isinstance(attribute_open, Tok.Punctuator) and attribute_open.kind is Tok.PunctuatorKind.LParen:
+                ffi = self.peek_nth(ahead + 1)
+                close = self.peek_nth(ahead + 2)
+                if not (isinstance(ffi, Tok.Keyword) and ffi.kind is Tok.KeywordKind.Ffi and
+                        isinstance(close, Tok.Punctuator) and close.kind is Tok.PunctuatorKind.RParen):
+                    return False
+                ahead += 3
+            token = self.peek_nth(ahead)
+        name = self.peek_nth(ahead + 1)
+        opening = self.peek_nth(ahead + 2)
+        return (isinstance(token, Tok.Keyword) and token.kind is Tok.KeywordKind.Fn
+                and isinstance(name, Tok.Identifier) and isinstance(opening, Tok.Punctuator)
+                and opening.kind in (Tok.PunctuatorKind.LParen, Tok.PunctuatorKind.LAngle))
+
+    def synchronize(self, terminators: frozenset[Tok.PunctuatorKind]) -> None:
+        """Consume one damaged region without interpreting strings or comments."""
+        depth = 0
+        while not self.at_end():
+            if self.editor and self.declaration_boundary():
+                return
+            token = self.peek()
+            if isinstance(token, Tok.Punctuator):
+                if depth == 0 and token.kind in terminators:
+                    return
+                if token.kind in (Tok.PunctuatorKind.LParen, Tok.PunctuatorKind.LBracket, Tok.PunctuatorKind.LBrace):
+                    depth += 1
+                elif token.kind in (Tok.PunctuatorKind.RParen, Tok.PunctuatorKind.RBracket, Tok.PunctuatorKind.RBrace):
+                    if depth == 0:
+                        return
+                    depth -= 1
+            self.advance()
 
     def at_end(self) -> bool:
         token = self.peek()
@@ -75,6 +119,13 @@ class TokenStream:
     def consume_punctuator(self, expected_kind: Tok.PunctuatorKind) -> Tok.Punctuator:
         token = self.peek()
         if not isinstance(token, Tok.Punctuator) or token.kind != expected_kind:
+            if self.editor and expected_kind in (
+                Tok.PunctuatorKind.RParen, Tok.PunctuatorKind.RBracket,
+                Tok.PunctuatorKind.RAngle, Tok.PunctuatorKind.RBrace,
+                Tok.PunctuatorKind.Semicolon,
+            ):
+                self.errors.append(ParseError(f"Expected punctuator '{expected_kind}' but got '{token}'", token.span))
+                return Tok.Punctuator(expected_kind, token.span)
             raise ParseError(f"Expected punctuator '{expected_kind}' but got '{token}'", token.span)
         self.advance()
         return token
@@ -109,7 +160,17 @@ class TokenStream:
         items: list[ItemType] = []
         token = self.peek()
         while not (isinstance(token, Tok.Punctuator) and token.kind in terminators):
-            items.append(item_parser())
+            if self.editor and (self.at_end() or self.declaration_boundary() or isinstance(token, Tok.Punctuator) and token.kind in (
+                Tok.PunctuatorKind.RBrace, Tok.PunctuatorKind.Semicolon,
+            )):
+                break
+            try:
+                items.append(item_parser())
+            except ParseError as error:
+                if not self.editor:
+                    raise
+                self.errors.append(error)
+                self.synchronize(terminators | separators)
 
             token = self.peek()
             if isinstance(token, Tok.Punctuator) and token.kind in separators:
@@ -126,11 +187,28 @@ class TokenStream:
             token = self.peek()
             if isinstance(token, Tok.Punctuator) and token.kind in terminators:
                 break
-            items.append(item_parser())
+            if self.editor and self.at_end():
+                break
+            mark = self.mark()
+            try:
+                items.append(item_parser())
+            except ParseError as error:
+                if not self.editor:
+                    raise
+                self.errors.append(error)
+                self.synchronize(terminators | TERM_SEMICOLON)
+                boundary = self.peek()
+                if isinstance(boundary, Tok.Punctuator) and boundary.kind == Tok.PunctuatorKind.Semicolon:
+                    self.advance()
+                if self.mark() == mark and not self.at_end():
+                    self.advance()
         return items
 
     def consume_identifier(self) -> AST.Identifier:
         """Consumes and returns the next token if it is an identifier/keyword, otherwise raises an error."""
+        token = self.peek()
+        if self.editor and not isinstance(token, (Tok.Identifier, Tok.Keyword)):
+            raise ParseError(f"Expected identifier or keyword but got '{token}'", token.span)
         token = self.next()
         match token:
             case Tok.Keyword(kind=Tok.KeywordKind.IsRawMode, span=span):

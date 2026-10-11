@@ -663,6 +663,41 @@ impl Lexer {
     // Transfer the token container on success; local cleanup releases scanned tokens on errors.
     pub fn run() -> Result<Vec<Token>, LexError> {
         defer self.drop();
+        self.scan()
+    }
+
+    // Preserve only complete preceding tokens; the damaged lexical suffix stays unavailable.
+    pub fn run_editor() -> EditorLexResult {
+        defer self.drop();
+        match self.scan() {
+            Ok(tokens) => EditorLexResult(tokens, Option<LexError>.None),
+            Err(error) => {
+                let tokens = self.tokens;
+                self.tokens = Vec<Token>.new();
+                // Discard an unfinished format string as one lexical region, including
+                // interpolation markers; its partial contents are never normal code.
+                let pending = Vec<u64>.new();
+                defer pending.drop();
+                let index = 0u64;
+                while index < tokens.len() {
+                    match tokens[index].kind() {
+                        FStrStart => pending.push(index),
+                        FStrEnd if pending.len() != 0 => { pending.pop(); },
+                        _ => {},
+                    }
+                    index += 1;
+                }
+                if pending.len() != 0 {
+                    while tokens.len() > pending[0] { tokens.pop().unwrap().drop(); }
+                }
+                let end = error.span().start;
+                tokens.push(Token.new(TokenPayload.EndOfFile, Span(end, end)));
+                EditorLexResult(tokens, Option<LexError>.Some(error))
+            },
+        }
+    }
+
+    fn scan() -> Result<Vec<Token>, LexError> {
 
         loop {
             let skipped = self.skip_ignored()?;
@@ -693,6 +728,27 @@ impl Lexer {
                 return Result<Vec<Token>, LexError>.Ok(val=output);
             }
         }
+    }
+}
+
+pub struct EditorLexResult {
+    pub tokens: Vec<Token>,
+    pub error: Option<LexError>,
+}
+
+impl EditorLexResult {
+    pub fn take_tokens() -> Vec<Token> {
+        let tokens = self.tokens;
+        self.tokens = Vec<Token>.new();
+        tokens
+    }
+}
+
+impl Drop for EditorLexResult {
+    pub fn drop() {
+        for token in self.tokens { token.drop(); }
+        self.tokens.drop();
+        match &self.error { Some(error) => error.drop(), None => {}, }
     }
 }
 

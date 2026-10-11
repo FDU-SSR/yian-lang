@@ -152,9 +152,6 @@ fn classify_identifier(snapshot: EditorSnapshot&, source: SourceId, row: u64, co
 pub fn semantic_tokens(snapshot: EditorSnapshot&, source: SourceId)
 -> Result<Vec<EditorSemanticToken>, AnalysisError> {
     let result = Vec<EditorSemanticToken>.new();
-    if !snapshot.semantic_complete() {
-        return Result<Vec<EditorSemanticToken>, AnalysisError>.Ok(result);
-    }
 
     let unit = match unit_for_source(snapshot, source) {
         Some(value) => value,

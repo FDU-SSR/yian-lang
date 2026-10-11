@@ -1,0 +1,358 @@
+from std.core.convert import From;
+from std.core.drop import Drop;
+from compiler.analysis.editor import EditorSnapshot;
+from compiler.analysis.ty.model import Parameter;
+from compiler.analysis.ty.callable import store_signature;
+from compiler.analysis.ty.display import stored_type_text;
+from compiler.analysis.ty.members import unique_method, receiver_types;
+from compiler.diagnostics.model import AnalysisError;
+from compiler.common.ids import SourceId, TypeId, UnitId;
+from compiler.frontend.lex.token import Token, PunctuatorKind;
+from std.core.option import Option;
+from std.core.result import Result;
+from std.core.string import String;
+from std.core.vec import Vec;
+
+from compiler.analysis.editor.query_model import CallFrame, EditorSignatureHelp;
+from compiler.analysis.editor.availability import QueryCompleteness, QueryResult, UnavailableReason;
+
+fn call_frames(tokens: Vec<Token>&, row: u64, column: u64) -> Vec<CallFrame> {
+    let frames = Vec<CallFrame>.new();
+    let index = 0u64;
+
+    while index < tokens.len() {
+        let token = &tokens[index];
+        if token.span.start.row > row ||
+        (token.span.start.row == row && token.span.start.column >= column) {
+            break;
+        }
+
+        match token.kind() {
+            Punctuator(kind) => match *kind {
+                LParen => frames.push(CallFrame(open_token=index, active_parameter=0u64,
+                    brackets=0u64, braces=0u64, angles=0u64)),
+                RParen => {
+                    if frames.len() != 0u64 { frames.pop(); }
+                },
+                LBracket => {
+                    if frames.len() != 0u64 { frames[frames.len() - 1u64].brackets += 1u64; }
+                },
+                RBracket => {
+                    if frames.len() != 0u64 && frames[frames.len() - 1u64].brackets != 0u64 {
+                        frames[frames.len() - 1u64].brackets -= 1u64;
+                    }
+                },
+                LBrace => {
+                    if frames.len() != 0u64 { frames[frames.len() - 1u64].braces += 1u64; }
+                },
+                RBrace => {
+                    if frames.len() != 0u64 && frames[frames.len() - 1u64].braces != 0u64 {
+                        frames[frames.len() - 1u64].braces -= 1u64;
+                    }
+                },
+                LAngle => {
+                    if frames.len() != 0u64 { frames[frames.len() - 1u64].angles += 1u64; }
+                },
+                RAngle => {
+                    if frames.len() != 0u64 && frames[frames.len() - 1u64].angles != 0u64 {
+                        frames[frames.len() - 1u64].angles -= 1u64;
+                    }
+                },
+                Comma => {
+                    if frames.len() != 0u64 {
+                        let frame = frames.len() - 1u64;
+                        if frames[frame].brackets == 0u64 && frames[frame].braces == 0u64 &&
+                        frames[frame].angles == 0u64 {
+                            frames[frame].active_parameter += 1u64;
+                        }
+                    }
+                },
+                _ => {},
+            },
+            _ => {},
+        }
+
+        index += 1u64;
+    }
+
+    frames
+}
+
+fn callee_token(tokens: Vec<Token>&, open_token: u64) -> Option<u64> {
+    if open_token == 0u64 { return Option<u64>.None; }
+
+    let index = open_token - 1u64;
+    match tokens[index].kind() {
+        Identifier(_) => return Option<u64>.Some(index),
+        Punctuator(kind) if *kind == PunctuatorKind.RAngle => {
+            let depth = 1u64;
+            while index != 0u64 {
+                index -= 1u64;
+                match tokens[index].kind() {
+                    Punctuator(value) => {
+                        if *value == PunctuatorKind.RAngle {
+                            depth += 1u64;
+                        } elif *value == PunctuatorKind.LAngle {
+                            depth -= 1u64;
+                            if depth == 0u64 && index != 0u64 {
+                                let name_index = index - 1u64;
+                                match tokens[name_index].kind() {
+                                    Identifier(_) => return Option<u64>.Some(name_index),
+                                    _ => return Option<u64>.None,
+                                }
+                            }
+                        }
+                    },
+                    _ => {},
+                }
+            }
+            Option<u64>.None
+        },
+        _ => Option<u64>.None,
+    }
+}
+
+fn append_parameter(
+    snapshot: EditorSnapshot&,
+    parameters: Vec<String>&,
+    label: String&,
+    parameter: Parameter&,
+    index: u64,
+) {
+    let name = snapshot.session().names.text(parameter.name);
+    let type_text = stored_type_text(&snapshot.session().types, &snapshot.session().names, parameter.type_id);
+
+    if index != 0u64 {
+        label.push_str(", ");
+    }
+    label.push_str(name);
+    label.push_str(": ");
+    label.push_str(type_text.as_str());
+
+    let parameter_label = String.from(&name);
+    parameters.push(parameter_label);
+    type_text.drop();
+}
+
+pub fn signature_for_type(
+    snapshot: EditorSnapshot&,
+    type_id: TypeId,
+    symbol_name: str,
+    active_parameter: u64,
+) -> Option<EditorSignatureHelp> {
+    let label = String.new();
+    let parameter_labels = Vec<String>.new();
+    let result_type = Option<TypeId>.None;
+    let parameter_count = 0u64;
+    let valid = false;
+
+    match snapshot.session().types.get(type_id) {
+        Some(Nominal(definition, _)) => {
+            let record = match snapshot.session().types.definition(*definition) {
+                Some(value) => value,
+                None => { label.drop(); parameter_labels.drop(); return Option<EditorSignatureHelp>.None; },
+            };
+            if record.is_complete() {
+                match record.body() {
+                    Ok(Function(_)) | Ok(Method(_)) => {},
+                    _ => { label.drop(); parameter_labels.drop(); return Option<EditorSignatureHelp>.None; },
+                }
+                let callable = match store_signature(&snapshot.session().types, type_id) {
+                    Ok(value) => value,
+                    Err(error) => { error.drop(); label.drop(); parameter_labels.drop(); return Option<EditorSignatureHelp>.None; },
+                };
+                defer callable.drop();
+                result_type = Option<TypeId>.Some(callable.result);
+                parameter_count = callable.parameters.len();
+                valid = true;
+                label.push_str("fn ");
+                label.push_str(snapshot.session().names.text(record.header().name));
+                label.push('(');
+                let index = 0u64;
+                for parameter in callable.parameters {
+                    append_parameter(snapshot, &parameter_labels, &label, parameter, index);
+                    index += 1u64;
+                }
+                label.push_str(") -> ");
+            }
+        },
+        Some(FunctionPointer(parameter_types, result)) => {
+            result_type = Option<TypeId>.Some(*result);
+            parameter_count = parameter_types.len();
+            valid = true;
+            label.push_str("fn ");
+            label.push_str(symbol_name);
+            label.push('(');
+            let index = 0u64;
+            for parameter_type in *parameter_types {
+                if index != 0u64 { label.push_str(", "); }
+                let type_text = stored_type_text(&snapshot.session().types,
+                    &snapshot.session().names, *parameter_type);
+                label.push_str(type_text.as_str());
+                parameter_labels.push(String.from(&"_"));
+                type_text.drop();
+                index += 1u64;
+            }
+            label.push_str(") -> ");
+        },
+        Some(Closure(_, parameters, result, _, _, _)) => {
+            result_type = Option<TypeId>.Some(*result);
+            parameter_count = parameters.len();
+            valid = true;
+            label.push_str("fn ");
+            label.push_str(symbol_name);
+            label.push('(');
+            let index = 0u64;
+            for parameter in *parameters {
+                append_parameter(snapshot, &parameter_labels, &label, parameter, index);
+                index += 1u64;
+            }
+            label.push_str(") -> ");
+        },
+        _ => {},
+    }
+
+    if !valid {
+        label.drop();
+        parameter_labels.drop();
+        return Option<EditorSignatureHelp>.None;
+    }
+
+    let result_id = match result_type {
+        Some(value) => value,
+        None => {
+            label.drop();
+            for item in parameter_labels { item.drop(); }
+            parameter_labels.drop();
+            return Option<EditorSignatureHelp>.None;
+        },
+    };
+    let result_text = stored_type_text(&snapshot.session().types, &snapshot.session().names, result_id);
+    label.push_str(result_text.as_str());
+    result_text.drop();
+
+    if parameter_count == 0u64 {
+        active_parameter = 0u64;
+    } elif active_parameter >= parameter_count {
+        active_parameter = parameter_count - 1u64;
+    }
+
+    Option<EditorSignatureHelp>.Some(EditorSignatureHelp(
+        label=label,
+        parameter_labels=parameter_labels,
+        active_parameter=active_parameter,
+        ))
+}
+
+// Signature help uses the analyzed callee identity and the nearest open call frame.
+pub fn signature_help_at(
+    snapshot: EditorSnapshot&,
+    source: SourceId,
+    row: u64,
+    column: u64,
+) -> Option<EditorSignatureHelp> {
+
+    let session = snapshot.session();
+    let unit_index = 0u64;
+    let tokens = Option<Vec<Token>&>.None;
+    while unit_index < session.len() {
+        let unit = match session.unit(UnitId(unit_index)) {
+            Some(value) => value,
+            None => return Option<EditorSignatureHelp>.None,
+        };
+        if unit.source == source {
+            tokens = Option<Vec<Token>&>.Some(&unit.prepared.tokens);
+            break;
+        }
+        unit_index += 1u64;
+    }
+
+    let source_tokens = match tokens {
+        Some(value) => value,
+        None => return Option<EditorSignatureHelp>.None,
+    };
+    let frames = call_frames(source_tokens, row, column);
+    defer frames.drop();
+    if frames.len() == 0u64 { return Option<EditorSignatureHelp>.None; }
+
+    let frame_index = frames.len();
+    while frame_index != 0u64 {
+        frame_index -= 1u64;
+        let frame = frames[frame_index];
+        let name_index = match callee_token(source_tokens, frame.open_token) {
+            Some(value) => value,
+            None => continue,
+        };
+        let name_token = &source_tokens[name_index];
+        let reference = match snapshot.resolved_name_at(source, name_token.span.start.row, name_token.span.start.column) {
+            Some(value) => value,
+            None => continue,
+        };
+        let symbol = match session.symbols.get(reference.symbol) {
+            Some(value) => value,
+            None => continue,
+        };
+        let help = signature_for_type(snapshot, reference.type_id,
+            session.names.text(symbol.name), frame.active_parameter);
+        if help.is_some() { return help; }
+    }
+
+    Option<EditorSignatureHelp>.None
+}
+
+// Incomplete arguments do not invalidate a unique receiver-resolved declaration.
+pub fn query_signature(snapshot: EditorSnapshot&, source: SourceId, row: u64, column: u64)
+-> Result<QueryResult<EditorSignatureHelp>, AnalysisError> {
+    if let Some(state) = snapshot.document_state(source) {
+        if let Some(stop) = state.lexical_stop {
+            if row > stop.row || (row == stop.row && column >= stop.column) {
+                return Result<QueryResult<EditorSignatureHelp>, AnalysisError>.Ok(
+                    QueryResult<EditorSignatureHelp>.Unavailable(UnavailableReason.Syntax));
+            }
+        }
+    }
+
+    if let Some(help) = signature_help_at(snapshot, source, row, column) {
+        return Result<QueryResult<EditorSignatureHelp>, AnalysisError>.Ok(
+            QueryResult<EditorSignatureHelp>.Value(help, QueryCompleteness.Complete));
+    }
+    let index = 0u64;
+    while index < snapshot.session().len() {
+        let unit = *snapshot.session().unit(UnitId(index)).unwrap();
+        index += 1;
+        if unit.source != source { continue; }
+        let tokens: Vec<Token>& = &unit.prepared.tokens;
+        let frames = call_frames(tokens, row, column);
+        defer frames.drop();
+        if frames.len() == 0 { break; }
+        let frame = frames[frames.len() - 1];
+        let token_index = match callee_token(tokens, frame.open_token) { Some(value) => value, None => { break; } };
+        let token = &tokens[token_index];
+        if let Some(member) = snapshot.resolved_member_at(source, token.span.start.row, token.span.start.column) {
+            if let Some(help) = signature_for_type(snapshot, member.type_id, snapshot.session().names.text(member.name), frame.active_parameter) {
+                return Result<QueryResult<EditorSignatureHelp>, AnalysisError>.Ok(
+                    QueryResult<EditorSignatureHelp>.Value(help, QueryCompleteness.Complete));
+            }
+        }
+        if token_index < 2 { break; }
+        match tokens[token_index - 1].kind() { Punctuator(Dot) => {}, _ => { break; } };
+        let end = tokens[token_index - 2].span.end;
+        let receiver = match snapshot.session().editor_facts.expression_ending_at(source, end.row, end.column) {
+            Some(value) => value, None => { break; },
+        };
+        let name = match token.kind() { Identifier(value) => snapshot.session().names.intern(value.as_str()), _ => { break; } };
+        let receivers = Vec<TypeId>.new();
+        if receiver.is_static { receivers.push(receiver.type_id); } else { receivers.drop(); receivers = receiver_types(snapshot.session(), receiver.type_id)?; }
+        defer receivers.drop();
+        for target in receivers {
+            if let Some(method) = unique_method(snapshot.session(), *target, receiver.is_static, name)? {
+                if let Some(help) = signature_for_type(snapshot, method, snapshot.session().names.text(name), frame.active_parameter) {
+                    return Result<QueryResult<EditorSignatureHelp>, AnalysisError>.Ok(
+                        QueryResult<EditorSignatureHelp>.Value(help, QueryCompleteness.Complete));
+                }
+            }
+        }
+    }
+    Result<QueryResult<EditorSignatureHelp>, AnalysisError>.Ok(
+        QueryResult<EditorSignatureHelp>.Unavailable(UnavailableReason.Declaration))
+}

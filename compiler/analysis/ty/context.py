@@ -32,6 +32,8 @@ class TypeCtx(IntrinsicIds):
         self.__formatter = TypeFormatter(self)
 
         self.__impl_registry = ImplRegistry(self)
+        self.__editor_unavailable: set[int] = set()
+
 
         # Caches for hot-path type queries — the type_id fully encodes the
         # generic instantiation, so the cache key is just the type_id.
@@ -51,6 +53,26 @@ class TypeCtx(IntrinsicIds):
         self.__memoize_enabled = False
         self.__method_lookup_cache: dict[tuple[object, ...], LookupResult | None | _AmbiguousMethod] = {}
         self.__deref_chain_cache: dict[int, tuple[int, ...]] = {}
+
+    def mark_editor_unavailable(self, type_id: int) -> None:
+        ty = self[type_id]
+        if isinstance(ty, Type.CustomType):
+            self.__editor_unavailable.add(id(ty.custom_def))
+
+    def mark_editor_complete(self, type_id: int) -> None:
+        ty = self[type_id]
+        if isinstance(ty, Type.CustomType):
+            self.__editor_unavailable.discard(id(ty.custom_def))
+
+    def editor_type_available(self, type_id: int) -> bool:
+        if type_id not in self.__space:
+            return False
+        ty = self[type_id]
+        if isinstance(ty, Type.CustomType) and id(ty.custom_def) in self.__editor_unavailable:
+            return False
+        if isinstance(ty, (Type.FunctionType, Type.MethodType)) and ty.custom_def.return_type not in self.__space:
+            return False
+        return not isinstance(ty, Type.ErrorType)
 
     @property
     def raw_pointers(self) -> bool:
@@ -259,17 +281,17 @@ class TypeCtx(IntrinsicIds):
         return None
 
 
-    def alloc_struct(self, name: str, span: SrcSpan) -> int:
-        return self.__space.alloc_struct(name, span)
+    def alloc_struct(self, name: str, span: SrcSpan, *, intrinsic: bool = False) -> int:
+        return self.__space.alloc_struct(name, span, intrinsic=intrinsic)
 
     def alloc_unnamed_struct(self, owner: str, field_names: list[str], field_types: list[int], generics: Sequence[int], span: SrcSpan, field_spans: list[SrcSpan] | None = None) -> int:
         return self.__space.alloc_unnamed_struct(owner, field_names, field_types, generics, span, field_spans)
 
-    def alloc_enum(self, name: str, span: SrcSpan) -> int:
-        return self.__space.alloc_enum(name, span)
+    def alloc_enum(self, name: str, span: SrcSpan, *, intrinsic: bool = False) -> int:
+        return self.__space.alloc_enum(name, span, intrinsic=intrinsic)
 
-    def alloc_trait(self, name: str, span: SrcSpan) -> int:
-        return self.__space.alloc_trait(name, span)
+    def alloc_trait(self, name: str, span: SrcSpan, *, intrinsic: bool = False) -> int:
+        return self.__space.alloc_trait(name, span, intrinsic=intrinsic)
 
     def alloc_method(self, name: str, span: SrcSpan) -> int:
         return self.__space.alloc_method(name, span)
@@ -308,16 +330,11 @@ class TypeCtx(IntrinsicIds):
         return type_ops.is_integer_type(self, type_id, include_literals)
 
     def methods_of(self, type_id: int) -> Sequence[tuple[str, int]]:
-        """Methods that can apply to *type_id*, as ``(name, method type id)``.
-
-        Impls whose target cannot be this receiver are filtered out, so completion
-        does not offer a generic type's methods on an unrelated one.  A
-        conditional generic impl can still be listed; evaluating its conditions
-        per name is what :meth:`method_lookup` does, and completion trades that
-        precision for listing every reachable member.
-        """
+        """Enumerate declared trait methods or inferred, constraint-checked impl methods."""
         ty = self[type_id]
         if isinstance(ty, Type.SelfType):
+            return tuple(self.get_trait_methods(ty.trait_type_id).items())
+        if isinstance(ty, Type.TraitObjectType):
             return tuple(self.get_trait_methods(ty.trait_type_id).items())
         return self.__impl_registry.methods_of(type_id)
 
@@ -537,6 +554,8 @@ class TypeCtx(IntrinsicIds):
     def __check_unsized_trait_values(self) -> None:
         """Reject trait markers in runtime value positions; only Trait& is sized."""
         def contains_unsized_trait(type_id: int, visiting: set[int]) -> bool:
+            if not self.editor_type_available(type_id):
+                return False
             if type_id in visiting:
                 return False
             visiting.add(type_id)
@@ -561,6 +580,8 @@ class TypeCtx(IntrinsicIds):
             return False
 
         for _, ty in list(self.__space.items()):
+            if not self.editor_type_available(ty.type_id):
+                continue
             if isinstance(ty, (Type.ArrayType, Type.TupleType, Type.PointerType, Type.RefType, Type.FunctionPointerType)):
                 if contains_unsized_trait(ty.type_id, set()):
                     raise AnalysisError(
@@ -606,6 +627,8 @@ class TypeCtx(IntrinsicIds):
         in_stack: set[int] = set()
 
         def visit(type_id: int) -> None:
+            if not self.editor_type_available(type_id):
+                return
             if type_id in in_stack:
                 chain = " -> ".join(self.get_name(tid) for tid in stack) + f" -> {self.get_name(type_id)}"
                 raise CompilerError(f"Self-referential type detected: {chain}")

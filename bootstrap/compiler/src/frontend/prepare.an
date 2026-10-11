@@ -70,6 +70,27 @@ impl PreparedFile {
         Result<(), PreparationError>.Ok(())
     }
 
+    // Transfer the recovered tree and its diagnostics independently.
+    pub fn parse_editor() -> Result<Vec<PreparationError>, PreparationError> {
+        let parser = Parser.new_editor(&self.tokens);
+        defer parser.drop();
+        let tree = match parse_program(&parser) {
+            Ok(value) => value,
+            Err(error) => {
+                defer error.drop();
+                return Result<Vec<PreparationError>, PreparationError>.Err(PreparationError(
+                    PreparationStage.Parse, parse_code(error.message()), String.from(&error.message()), error.span()));
+            },
+        };
+        self.tree = Option<AstTree>.Some(tree);
+        let errors = Vec<PreparationError>.new();
+        for problem in parser.problems {
+            errors.push(PreparationError(PreparationStage.Parse, parse_code(problem.message()),
+                String.from(&problem.message()), problem.span()));
+        }
+        Result<Vec<PreparationError>, PreparationError>.Ok(errors)
+    }
+
     pub fn desugar(path: str) -> Result<(), PreparationError> {
         // Mutate the owned tree; an arena shallow copy would retain stale allocation metadata.
         match desugar(self.tree.unwrap(), path) {

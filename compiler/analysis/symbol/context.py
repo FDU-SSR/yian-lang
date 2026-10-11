@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from compiler.analysis.symbol.symbol import AliasDefId, AliasSymbol, Symbol, SymbolAttribute, SymbolKind
 from compiler.analysis.ty.intrinsics import IntrinsicIds
@@ -13,16 +13,17 @@ class Scope:
     symbols: dict[str, int]  # name -> symbol_id
     parent: Scope | None
     shared: bool = False  # symbols dict may be shared with another context
+    unavailable: dict[str, SrcSpan] = field(default_factory=dict[str, SrcSpan])
 
     def clone(self) -> Scope:
         """Clones the scope, creating a new instance with the same symbols and parent."""
-        return Scope(symbols=self.symbols.copy(), parent=self.parent.clone() if self.parent else None)
+        return Scope(symbols=self.symbols.copy(), parent=self.parent.clone() if self.parent else None, unavailable=self.unavailable.copy())
 
     def clone_shared(self) -> Scope:
         """Clone the scope chain while sharing each symbols dictionary."""
         self.shared = True
         parent = self.parent.clone_shared() if self.parent else None
-        return Scope(symbols=self.symbols, parent=parent, shared=True)
+        return Scope(symbols=self.symbols, parent=parent, shared=True, unavailable=self.unavailable.copy())
 
 
 class SymbolCtx:
@@ -84,6 +85,37 @@ class SymbolCtx:
         if self.__current_scope.shared:
             self.__current_scope.symbols = self.__current_scope.symbols.copy()
             self.__current_scope.shared = False
+
+    def checkpoint(self) -> Scope:
+        return Scope(self.__current_scope.symbols.copy(), self.__current_scope.parent,
+                     unavailable=self.__current_scope.unavailable.copy())
+
+    def restore(self, checkpoint: Scope) -> None:
+        self.__current_scope = checkpoint
+
+    def block_unavailable(self, name: str, span: SrcSpan) -> None:
+        """Keep a failed binding's shadowing without inventing a symbol or type."""
+        self.__current_scope.unavailable[name] = span
+
+    def visible_at(self, row: int, column: int) -> tuple[tuple[Symbol | AliasSymbol, ...], tuple[str, ...]]:
+        items: list[Symbol | AliasSymbol] = []
+        seen: set[str] = set()
+        blocked: list[str] = []
+        scope = self.__current_scope
+        while scope is not None:
+            for name, span in scope.unavailable.items():
+                if (span.start.row, span.start.col) <= (row, column) and name not in seen:
+                    seen.add(name)
+                    blocked.append(name)
+            for name, symbol_id in scope.symbols.items():
+                symbol = self.__all_symbols[symbol_id]
+                if scope.parent is not None and symbol.span is not None and (symbol.span.start.row, symbol.span.start.col) > (row, column):
+                    continue
+                if name not in seen:
+                    seen.add(name)
+                    items.append(symbol)
+            scope = scope.parent
+        return tuple(items), tuple(blocked)
 
     def enter_scope(self) -> None:
         """Enters a new scope."""
@@ -183,6 +215,8 @@ class SymbolCtx:
         """Looks up a symbol by name in the current scope and its parents."""
         scope = self.__current_scope
         while scope is not None:
+            if name in scope.unavailable:
+                return None
             if name in scope.symbols:
                 return self.__all_symbols[scope.symbols[name]]
             scope = scope.parent

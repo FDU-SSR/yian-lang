@@ -148,6 +148,11 @@ class AstVisitor:
             case AST.ArrayRepeat():
                 self.visit_expr(expr.element)
                 self.visit_expr(expr.count)
+            case AST.Recovery():
+                for child in expr.children:
+                    self.visit_expr(child)
+                for name in expr.bindings:
+                    self.visit_expr(name)
             case AST.Identifier() | AST.Literal() | AST.TypeItem() | AST.CompileConfig() | AST.Continue():
                 pass
             case _:
@@ -377,6 +382,10 @@ class AstRewriter:
             case AST.ArrayRepeat():
                 expr.element = self.rewrite_expr(expr.element)
                 expr.count = self.rewrite_expr(expr.count)
+            case AST.Recovery():
+                expr.children = [self.rewrite_expr(child) for child in expr.children]
+                for name in expr.bindings:
+                    self.rewrite_expr(name)
             case AST.Identifier() | AST.Literal() | AST.TypeItem() | AST.CompileConfig() | AST.Continue():
                 pass
             case _:

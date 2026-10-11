@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
 from typing import TYPE_CHECKING
+import time
 
 from compiler.analysis.documents import Document, DocumentStore
 from compiler.analysis.queries.context import QueryContext
@@ -131,6 +132,10 @@ class EditorSnapshot:
         if navigator is None:
             return None
         return navigator.resolve(path, row, column)
+
+    def prepare_queries(self) -> None:
+        """Freeze shared read-only indexes once; this cost belongs to snapshot creation."""
+        self.__navigator_for(None)
 
     def __navigator_for(self, std_root: Path | None) -> Navigator | None:
         """Reuse the snapshot's path, declaration, and reference indexes."""
@@ -260,9 +265,7 @@ class EditorSnapshot:
         )
 
     def semantic_tokens_at(self, path: Path) -> tuple[SemanticToken, ...]:
-        """Classify only identifiers resolved by this complete snapshot."""
-        if not self.semantic_complete:
-            return ()
+        """Classify reliable identifiers in the current snapshot."""
         navigator = self.__navigator_for(None)
         if navigator is None:
             return ()
@@ -282,9 +285,15 @@ class EditorEngine:
             documents=inputs.document_store(),
             syntax_only=mode is EditorMode.SYNTAX,
             recover=True,
+            editor_recovery=True,
         )
+        started = time.perf_counter()
         queries = None if mode is EditorMode.SYNTAX else QueryContext(result)
-        return EditorSnapshot(inputs, mode, result, queries)
+        snapshot = EditorSnapshot(inputs, mode, result, queries)
+        if queries is not None:
+            snapshot.prepare_queries()
+        result.timings = {**result.timings, "editor_query_indexes": time.perf_counter() - started}
+        return snapshot
 
 
 __all__ = ["EditorEngine", "EditorMode", "EditorSnapshot", "FrozenInputs"]

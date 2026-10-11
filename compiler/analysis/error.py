@@ -11,3 +11,7 @@ class AnalysisError(ValueError):
 
 class ComptimeConditionError(AnalysisError):
     """A compile-time condition cannot be evaluated to a boolean value."""
+
+
+class EditorIncomplete(AnalysisError):
+    """Abort an unfinished body without duplicating its frontend diagnostic."""

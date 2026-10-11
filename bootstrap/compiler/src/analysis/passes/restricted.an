@@ -5,7 +5,7 @@ from compiler.common.traversal import WalkControl;
 from compiler.frontend.ast.node import Expr;
 from compiler.frontend.ast.atoms import BuiltinKind;
 from compiler.frontend.ast.walk import TryAstVisitor, try_walk_program;
-from compiler.diagnostics.model import DiagnosticCode, AnalysisError;
+from compiler.diagnostics.model import DiagnosticCode, AnalysisError, AnalysisErrorKind, AnalysisStage;
 from std.core.option import Option;
 from std.core.result import Result;
 
@@ -49,7 +49,15 @@ pub fn check_restricted(session: AnalysisSession&) -> Result<(), AnalysisError> 
 
         if !unit.allows_restricted {
             let visitor = RestrictedVisitor(unit.source);
-            try_walk_program<AnalysisError>(unit.prepared.tree.unwrap().root, &visitor)?;
+            match try_walk_program<AnalysisError>(unit.prepared.tree.unwrap().root, &visitor) {
+                Ok(_) => {},
+                Err(error) => {
+                    if !session.editor_recovery || error.kind == AnalysisErrorKind.Internal {
+                        return Result<(), AnalysisError>.Err(error);
+                    }
+                    session.diagnostics.push_unique(error.with_stage(AnalysisStage.Restricted).diagnostic);
+                },
+            }
         }
 
         index += 1;

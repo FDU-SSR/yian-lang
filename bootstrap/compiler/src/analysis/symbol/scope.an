@@ -1,4 +1,5 @@
 from compiler.common.ids import NameId, SymbolId, ScopeId, SourceId;
+from compiler.common.location import SourceSpan;
 from compiler.analysis.symbol.model import Symbol, SymbolKind;
 from std.collections.hash_set import HashSet;
 from compiler.diagnostics.model import AnalysisError;
@@ -15,12 +16,13 @@ from std.core.vec import Vec;
 pub struct Scope {
     parent: Option<ScopeId>,
     names: HashMap<NameId, SymbolId>,
-    ordered_names: Vec<NameId>
+    ordered_names: Vec<NameId>,
+    unavailable: HashMap<NameId, SourceSpan>,
 }
 
 impl Scope {
     static fn new(parent: Option<ScopeId>) -> Self {
-        Self(parent, HashMap<NameId, SymbolId>.new(), Vec<NameId>.new())
+        Self(parent, HashMap<NameId, SymbolId>.new(), Vec<NameId>.new(), HashMap<NameId, SourceSpan>.new())
     }
 
     pub fn get(name: NameId) -> Option<SymbolId> {
@@ -41,7 +43,7 @@ impl Scope {
     }
 
     fn snapshot() -> Self {
-        Self(self.parent, self.names.clone(), self.ordered_names.clone())
+        Self(self.parent, self.names.clone(), self.ordered_names.clone(), self.unavailable.clone())
     }
 }
 
@@ -49,6 +51,7 @@ impl Drop for Scope {
     pub fn drop() {
         self.names.drop();
         self.ordered_names.drop();
+        self.unavailable.drop();
     }
 }
 
@@ -91,6 +94,24 @@ impl SymbolStore {
         self.scopes.get(id.index)
     }
 
+    // Checkpoints own only maps; symbols and their identities stay session-owned.
+    pub fn checkpoint(id: ScopeId) -> Result<Scope, AnalysisError> {
+        match self.scope(id) {
+            Some(scope) => Result<Scope, AnalysisError>.Ok(scope.snapshot()),
+            None => Result<Scope, AnalysisError>.Err(AnalysisError.internal("invalid scope checkpoint")),
+        }
+    }
+
+    pub fn restore(id: ScopeId, checkpoint: Scope) {
+        let scope = *self.scope(id).unwrap();
+        scope.drop();
+        *scope = checkpoint;
+    }
+
+    pub fn block_unavailable(id: ScopeId, name: NameId, span: SourceSpan) {
+        self.scope(id).unwrap().unavailable.insert(name, span);
+    }
+
     // Parents must already exist, so append-only creation cannot introduce cycles.
     pub fn create_scope(parent: Option<ScopeId>) -> Result<ScopeId, AnalysisError> {
         match parent {
@@ -127,6 +148,7 @@ impl SymbolStore {
             }
 
             let found = (*self.scopes.get(id.index).unwrap()).get(name);
+            if self.scopes.get(id.index).unwrap().unavailable.contains(&name) { return Option<SymbolId>.None; }
 
             if found.is_some() {
                 return found;
@@ -158,6 +180,14 @@ impl SymbolStore {
             visited_scopes += 1u64;
             let record = *self.scopes.get(id.index).unwrap();
 
+            for entry in record.unavailable.entries() {
+                let location = entry[1];
+                if location.source == source && (location.span.start.row < row ||
+                    (location.span.start.row == row && location.span.start.column <= column)) {
+                    names.insert(*entry[0]);
+                }
+            }
+
             for name in record.ordered_names {
                 let symbol_id = match record.get(*name) {
                     Some(value) => value,
@@ -169,7 +199,7 @@ impl SymbolStore {
                 };
                 let local_value = record.parent.is_some() &&
                 (symbol.kind == SymbolKind.Variable || symbol.kind == SymbolKind.Parameter);
-                if record.parent.is_some() && !local_value {
+                if record.parent.is_some() && !local_value && symbol.kind != SymbolKind.Type {
                     continue;
                 }
                 let declared = if local_value {

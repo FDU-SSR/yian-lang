@@ -353,6 +353,11 @@ class AstTreeFormatter(TreeFormatter):
                 return self.__export_closure_expr(expr, guides, is_last)
             case AST.CompileConfig():
                 return self.__export_compile_config(expr, guides, is_last)
+            case AST.Recovery():
+                res = self.render_line(guides, is_last, "Recovery")
+                for index, child in enumerate(expr.children):
+                    res += self.__export_expr_child("Child", child, guides, is_last, index == len(expr.children) - 1)
+                return res
             case AST.TryExpr():
                 res = self.render_line(guides, is_last, "TryExpr")
                 return res + self.__export_expr_child("Operand", expr.operand, guides, is_last, True)

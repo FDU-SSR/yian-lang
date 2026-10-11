@@ -6,12 +6,12 @@ This is the first pass of the analysis phase.
 from __future__ import annotations
 
 import sys
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 from compiler.analysis.state import SemanticState
-from compiler.analysis.error import AnalysisError
+from compiler.analysis.error import AnalysisError, EditorIncomplete
 from compiler.analysis.resolution.enum_equality import build_unit_enum_equality_body
 from compiler.analysis.source_provenance import default_stdlib_root
 from compiler.analysis.symbol.symbol import AliasSymbol, SymbolAttribute, SymbolKind
@@ -44,7 +44,7 @@ class GlobalResolve:
 
     def run(self) -> None:
         for unit in self.__ctx.unit_datas.values():
-            self.__check_ffi_declarations(unit)
+            self.__attempt(lambda: self.__check_ffi_declarations(unit))
         for unit in self.__ctx.unit_datas.values():
             self.__collect_symbols(unit)
 
@@ -60,27 +60,42 @@ class GlobalResolve:
                         self.__ctx.aliases.bind_scope(symbol.alias_id, unit.symbol_ctx)
 
         for unit, parameters, generic_ids in self.__const_annotations:
-            scope = unit.symbol_ctx.clone()
-            scope.enter_scope()
-            for parameter, generic_id in zip(parameters, generic_ids):
-                kind = SymbolKind.ConstGeneric if isinstance(parameter, AST.ConstGenericParam) else SymbolKind.Type
-                if scope.add_symbol(parameter.name.name, kind, generic_id, span=parameter.name.span) is None:
-                    raise AnalysisError(f"Duplicate generic parameter: {parameter.name.name}", parameter.name.span)
-            for parameter, generic_id in zip(parameters, generic_ids):
-                if isinstance(parameter, AST.ConstGenericParam):
-                    generic = self.__ctx.type_ctx[generic_id]
-                    assert isinstance(generic, Type.ConstGenericType)
-                    generic.value_type = self.__ctx.resolve_type_in(parameter.value_type, scope)
-            scope.exit_scope()
-        self.__ctx.aliases.resolve_all()
+            try:
+                scope = unit.symbol_ctx.clone()
+                scope.enter_scope()
+                for parameter, generic_id in zip(parameters, generic_ids):
+                    kind = SymbolKind.ConstGeneric if isinstance(parameter, AST.ConstGenericParam) else SymbolKind.Type
+                    if scope.add_symbol(parameter.name.name, kind, generic_id, span=parameter.name.span) is None:
+                        raise AnalysisError(f"Duplicate generic parameter: {parameter.name.name}", parameter.name.span)
+                for parameter, generic_id in zip(parameters, generic_ids):
+                    if isinstance(parameter, AST.ConstGenericParam):
+                        generic = self.__ctx.type_ctx[generic_id]
+                        assert isinstance(generic, Type.ConstGenericType)
+                        generic.value_type = self.__ctx.resolve_type_in(parameter.value_type, scope)
+                scope.exit_scope()
+            except AnalysisError as error:
+                if not self.__ctx.editor_recovery:
+                    raise
+                self.__ctx.editor_errors.append(error)
+        self.__attempt(self.__ctx.aliases.resolve_all)
 
         for unit in self.__ctx.unit_datas.values():
             self.__resolve_definitions(unit)
 
-        self.__ctx.evaluate_constants()
+        self.__attempt(self.__ctx.evaluate_constants)
 
-        for source_id, target_id in self.__ctx.type_ctx.check_impls():
-            self.__ctx.procedures.copy(source_id, target_id)
+        def copy_implementations() -> None:
+            for source_id, target_id in self.__ctx.type_ctx.check_impls():
+                self.__ctx.procedures.copy(source_id, target_id)
+        self.__attempt(copy_implementations)
+
+    def __attempt(self, operation: Callable[[], None]) -> None:
+        try:
+            operation()
+        except AnalysisError as error:
+            if not self.__ctx.editor_recovery:
+                raise
+            self.__ctx.editor_errors.append(error)
 
     def import_edges(self) -> dict[int, tuple[int, ...]]:
         """Resolved import edges: unit id → unit ids it imports (deduplicated)."""
@@ -144,107 +159,115 @@ class GlobalResolve:
     def __collect_symbols(self, unit: UnitData) -> None:
         """Collects all global symbols in the unit."""
         for item in unit.items():
-            match item:
-                case AST.OpaqueTypeDef(name=name, attrs=attrs, span=span):
-                    type_id = self.__ctx.type_ctx.alloc_opaque(name.name, span)
-                    if unit.symbol_ctx.add_symbol(name.name, SymbolKind.Type, type_id, self.__convert_attrs(attrs), name.span) is None:
-                        raise AnalysisError(f"Duplicate symbol name: {name.name}", name.span)
-                case AST.ExternBlock(functions=functions, attrs=attrs):
-                    for function in functions:
-                        type_id = self.__ctx.type_ctx.alloc_function(function.name.name, function.span)
-                        if unit.symbol_ctx.add_symbol(function.name.name, SymbolKind.Function, type_id, self.__convert_attrs(attrs), function.name.span) is None:
-                            raise AnalysisError(f"Duplicate symbol name: {function.name.name}", function.name.span)
-                case AST.Alias(name=name, attrs=attrs, span=span):
-                    generics = self.__alloc_generics(unit, item.generics)
-                    alias_id = self.__ctx.aliases.declare(item, generics)
-                    symbol_id = unit.symbol_ctx.add_alias(name.name, alias_id, self.__convert_attrs(attrs), name.span)
-                    if symbol_id is None:
-                        raise AnalysisError(f"Duplicate symbol name: {name.name}", name.span)
+            checkpoint = unit.symbol_ctx.checkpoint() if self.__ctx.editor_recovery else None
+            try:
+                match item:
+                    case AST.OpaqueTypeDef(name=name, attrs=attrs, span=span):
+                        type_id = self.__ctx.type_ctx.alloc_opaque(name.name, span)
+                        if unit.symbol_ctx.add_symbol(name.name, SymbolKind.Type, type_id, self.__convert_attrs(attrs), name.span) is None:
+                            raise AnalysisError(f"Duplicate symbol name: {name.name}", name.span)
+                    case AST.ExternBlock(functions=functions, attrs=attrs):
+                        for function in functions:
+                            type_id = self.__ctx.type_ctx.alloc_function(function.name.name, function.span)
+                            if unit.symbol_ctx.add_symbol(function.name.name, SymbolKind.Function, type_id, self.__convert_attrs(attrs), function.name.span) is None:
+                                raise AnalysisError(f"Duplicate symbol name: {function.name.name}", function.name.span)
+                    case AST.Alias(name=name, attrs=attrs, span=span):
+                        generics = self.__alloc_generics(unit, item.generics)
+                        alias_id = self.__ctx.aliases.declare(item, generics)
+                        symbol_id = unit.symbol_ctx.add_alias(name.name, alias_id, self.__convert_attrs(attrs), name.span)
+                        if symbol_id is None:
+                            raise AnalysisError(f"Duplicate symbol name: {name.name}", name.span)
 
-                case AST.FuncDef(name=name, attrs=attrs, span=span):
-                    # alloc in type space
-                    type_id = self.__ctx.type_ctx.alloc_function(name.name, span)
+                    case AST.FuncDef(name=name, attrs=attrs, span=span):
+                        # alloc in type space
+                        type_id = self.__ctx.type_ctx.alloc_function(name.name, span)
 
-                    # alloc in symbol space
-                    symbol_attrs = self.__convert_attrs(attrs)
-                    symbol_id = unit.symbol_ctx.add_symbol(name.name, SymbolKind.Function, type_id, symbol_attrs, name.span)
-                    if symbol_id is None:
-                        raise AnalysisError(f"Duplicate symbol name: {name.name}", name.span)
-                    symbol = unit.symbol_ctx.get_typed(symbol_id)
+                        # alloc in symbol space
+                        symbol_attrs = self.__convert_attrs(attrs)
+                        symbol_id = unit.symbol_ctx.add_symbol(name.name, SymbolKind.Function, type_id, symbol_attrs, name.span)
+                        if symbol_id is None:
+                            raise AnalysisError(f"Duplicate symbol name: {name.name}", name.span)
+                        symbol = unit.symbol_ctx.get_typed(symbol_id)
 
-                    generics = self.__alloc_generics(unit, item.generics)
-                    ty = self.__ctx.type_ctx[symbol.type_id]
-                    assert isinstance(ty, Type.FunctionType)
-                    self.__ctx.type_ctx.bind_template(symbol.type_id, generics)
+                        generics = self.__alloc_generics(unit, item.generics)
+                        ty = self.__ctx.type_ctx[symbol.type_id]
+                        assert isinstance(ty, Type.FunctionType)
+                        self.__ctx.type_ctx.bind_template(symbol.type_id, generics)
 
-                case AST.ConstDef(name=name, attrs=attrs):
-                    symbol_attrs = self.__convert_attrs(attrs)
-                    symbol_id = unit.symbol_ctx.add_symbol(
-                        name.name,
-                        SymbolKind.Constant,
-                        self.__ctx.type_ctx.error_id,
-                        symbol_attrs,
-                        name.span,
-                    )
-                    if symbol_id is None:
-                        raise AnalysisError(f"Duplicate symbol name: {name.name}", name.span)
-                    symbol = unit.symbol_ctx.get_typed(symbol_id)
-                    symbol.const_origin = (unit.unit_id, symbol_id)
-                    self.__ctx.register_constant(unit.unit_id, symbol_id, item)
+                    case AST.ConstDef(name=name, attrs=attrs):
+                        symbol_attrs = self.__convert_attrs(attrs)
+                        symbol_id = unit.symbol_ctx.add_symbol(
+                            name.name,
+                            SymbolKind.Constant,
+                            self.__ctx.type_ctx.error_id,
+                            symbol_attrs,
+                            name.span,
+                        )
+                        if symbol_id is None:
+                            raise AnalysisError(f"Duplicate symbol name: {name.name}", name.span)
+                        symbol = unit.symbol_ctx.get_typed(symbol_id)
+                        symbol.const_origin = (unit.unit_id, symbol_id)
+                        self.__ctx.register_constant(unit.unit_id, symbol_id, item)
 
-                case AST.StructDef(name=name, attrs=attrs, span=span):
-                    # alloc in type space
-                    type_id = self.__ctx.type_ctx.alloc_struct(name.name, span)
+                    case AST.StructDef(name=name, attrs=attrs, span=span):
+                        # alloc in type space
+                        type_id = self.__ctx.type_ctx.alloc_struct(name.name, span, intrinsic=unit.is_stdlib)
 
-                    # alloc in symbol space
-                    symbol_attrs = self.__convert_attrs(attrs)
-                    symbol_id = unit.symbol_ctx.add_symbol(name.name, SymbolKind.Type, type_id, symbol_attrs, name.span)
-                    if symbol_id is None:
-                        raise AnalysisError(f"Duplicate symbol name: {name.name}", name.span)
-                    symbol = unit.symbol_ctx.get_typed(symbol_id)
+                        # alloc in symbol space
+                        symbol_attrs = self.__convert_attrs(attrs)
+                        symbol_id = unit.symbol_ctx.add_symbol(name.name, SymbolKind.Type, type_id, symbol_attrs, name.span)
+                        if symbol_id is None:
+                            raise AnalysisError(f"Duplicate symbol name: {name.name}", name.span)
+                        symbol = unit.symbol_ctx.get_typed(symbol_id)
 
-                    generics = self.__alloc_generics(unit, item.generics)
-                    ty = self.__ctx.type_ctx[symbol.type_id]
-                    assert isinstance(ty, Type.StructType)
-                    self.__ctx.type_ctx.bind_template(symbol.type_id, generics)
-                    ty.custom_def.unit_id = unit.unit_id
+                        generics = self.__alloc_generics(unit, item.generics)
+                        ty = self.__ctx.type_ctx[symbol.type_id]
+                        assert isinstance(ty, Type.StructType)
+                        self.__ctx.type_ctx.bind_template(symbol.type_id, generics)
+                        ty.custom_def.unit_id = unit.unit_id
 
-                case AST.EnumDef(name=name, attrs=attrs, span=span):
-                    # alloc in type space
-                    type_id = self.__ctx.type_ctx.alloc_enum(name.name, span)
+                    case AST.EnumDef(name=name, attrs=attrs, span=span):
+                        # alloc in type space
+                        type_id = self.__ctx.type_ctx.alloc_enum(name.name, span, intrinsic=unit.is_stdlib)
 
-                    # alloc in symbol space
-                    symbol_attrs = self.__convert_attrs(attrs)
-                    symbol_id = unit.symbol_ctx.add_symbol(name.name, SymbolKind.Type, type_id, symbol_attrs, name.span)
-                    if symbol_id is None:
-                        raise AnalysisError(f"Duplicate symbol name: {name.name}", name.span)
-                    symbol = unit.symbol_ctx.get_typed(symbol_id)
+                        # alloc in symbol space
+                        symbol_attrs = self.__convert_attrs(attrs)
+                        symbol_id = unit.symbol_ctx.add_symbol(name.name, SymbolKind.Type, type_id, symbol_attrs, name.span)
+                        if symbol_id is None:
+                            raise AnalysisError(f"Duplicate symbol name: {name.name}", name.span)
+                        symbol = unit.symbol_ctx.get_typed(symbol_id)
 
-                    generics = self.__alloc_generics(unit, item.generics)
-                    ty = self.__ctx.type_ctx[symbol.type_id]
-                    assert isinstance(ty, Type.EnumType)
-                    self.__ctx.type_ctx.bind_template(symbol.type_id, generics)
-                    ty.custom_def.unit_id = unit.unit_id
+                        generics = self.__alloc_generics(unit, item.generics)
+                        ty = self.__ctx.type_ctx[symbol.type_id]
+                        assert isinstance(ty, Type.EnumType)
+                        self.__ctx.type_ctx.bind_template(symbol.type_id, generics)
+                        ty.custom_def.unit_id = unit.unit_id
 
-                case AST.TraitDef(name=name, attrs=attrs, span=span):
-                    # alloc in type space
-                    type_id = self.__ctx.type_ctx.alloc_trait(name.name, span)
+                    case AST.TraitDef(name=name, attrs=attrs, span=span):
+                        # alloc in type space
+                        type_id = self.__ctx.type_ctx.alloc_trait(name.name, span, intrinsic=unit.is_stdlib)
 
-                    # alloc in symbol space
-                    symbol_attrs = self.__convert_attrs(attrs)
-                    symbol_id = unit.symbol_ctx.add_symbol(name.name, SymbolKind.Type, type_id, symbol_attrs, name.span)
-                    if symbol_id is None:
-                        raise AnalysisError(f"Duplicate symbol name: {name.name}", name.span)
-                    symbol = unit.symbol_ctx.get_typed(symbol_id)
+                        # alloc in symbol space
+                        symbol_attrs = self.__convert_attrs(attrs)
+                        symbol_id = unit.symbol_ctx.add_symbol(name.name, SymbolKind.Type, type_id, symbol_attrs, name.span)
+                        if symbol_id is None:
+                            raise AnalysisError(f"Duplicate symbol name: {name.name}", name.span)
+                        symbol = unit.symbol_ctx.get_typed(symbol_id)
 
-                    generics = self.__alloc_generics(unit, item.generics)
-                    ty = self.__ctx.type_ctx[symbol.type_id]
-                    assert isinstance(ty, Type.TraitType)
-                    self.__ctx.type_ctx.bind_template(symbol.type_id, generics)
+                        generics = self.__alloc_generics(unit, item.generics)
+                        ty = self.__ctx.type_ctx[symbol.type_id]
+                        assert isinstance(ty, Type.TraitType)
+                        self.__ctx.type_ctx.bind_template(symbol.type_id, generics)
 
-                case _:
-                    # other items are ignored in this pass
-                    pass
+                    case _:
+                        # other items are ignored in this pass
+                        pass
+            except AnalysisError as error:
+                if not self.__ctx.editor_recovery:
+                    raise
+                if checkpoint is not None:
+                    unit.symbol_ctx.restore(checkpoint)
+                self.__ctx.editor_errors.append(error)
 
     def __alloc_generics(self, unit: UnitData, item_generics: list[AST.GenericParam]) -> list[int]:
         """Allocate generic parameters from AST GenericParam list.
@@ -268,42 +291,50 @@ class GlobalResolve:
     def __resolve_imports(self, unit: UnitData) -> None:
         """Resolves all import statements in the unit and adds the imported symbols to the symbol context."""
         for item in unit.items():
-            if not isinstance(item, AST.Import):
-                continue
+            checkpoint = unit.symbol_ctx.checkpoint() if self.__ctx.editor_recovery else None
+            try:
+                if not isinstance(item, AST.Import):
+                    continue
 
-            paths = [part.name for part in item.paths]
-            target_unit = self.__resolve_import_path(unit, paths, item.span)
+                paths = [part.name for part in item.paths]
+                target_unit = self.__resolve_import_path(unit, paths, item.span)
 
-            target_symbol = target_unit.symbol_ctx.lookup_exportable(item.target.name)
-            if target_symbol is None:
-                if target_unit.symbol_ctx.lookup_global(item.target.name) is not None:
-                    raise AnalysisError(
-                        f"Symbol '{item.target.name}' exists in the imported unit but is not declared 'pub'",
-                        item.target.span,
+                target_symbol = target_unit.symbol_ctx.lookup_exportable(item.target.name)
+                if target_symbol is None:
+                    if target_unit.symbol_ctx.lookup_global(item.target.name) is not None:
+                        raise AnalysisError(
+                            f"Symbol '{item.target.name}' exists in the imported unit but is not declared 'pub'",
+                            item.target.span,
+                        )
+                    raise AnalysisError(f"Symbol '{item.target.name}' is not found in the imported unit", item.target.span)
+                if target_symbol.kind == SymbolKind.Variable:
+                    raise AnalysisError(f"Cannot import variable '{item.target.name}'", item.target.span)
+                if SymbolAttribute.FfiPublic in target_symbol.attributes and not unit.allows_ffi:
+                    raise AnalysisError(f"Symbol '{item.target.name}' requires FFI permission", item.target.span)
+
+                imported_name = item.alias.name if item.alias is not None else item.target.name
+                import_span = item.alias.span if item.alias is not None else item.target.span
+                if isinstance(target_symbol, AliasSymbol):
+                    unit.symbol_ctx.add_alias(imported_name, target_symbol.alias_id, set(), import_span)
+                    target_type = None
+                else:
+                    unit.symbol_ctx.add_symbol(
+                        imported_name, target_symbol.kind, target_symbol.type_id,
+                        span=import_span, const_origin=target_symbol.const_origin,
                     )
-                raise AnalysisError(f"Symbol '{item.target.name}' is not found in the imported unit", item.target.span)
-            if target_symbol.kind == SymbolKind.Variable:
-                raise AnalysisError(f"Cannot import variable '{item.target.name}'", item.target.span)
-            if SymbolAttribute.FfiPublic in target_symbol.attributes and not unit.allows_ffi:
-                raise AnalysisError(f"Symbol '{item.target.name}' requires FFI permission", item.target.span)
-
-            imported_name = item.alias.name if item.alias is not None else item.target.name
-            import_span = item.alias.span if item.alias is not None else item.target.span
-            if isinstance(target_symbol, AliasSymbol):
-                unit.symbol_ctx.add_alias(imported_name, target_symbol.alias_id, set(), import_span)
-                target_type = None
-            else:
-                unit.symbol_ctx.add_symbol(
-                    imported_name, target_symbol.kind, target_symbol.type_id,
-                    span=import_span, const_origin=target_symbol.const_origin,
-                )
-                target_type = target_symbol.type_id
-            # The written name is a resolved reference of its own, in both forms:
-            # for `import A` it is the name that is bound, and for `import A as B`
-            # the original spelling of `A` appears nowhere else in the file.  An
-            # editor needs it to rename `A` without leaving the import behind.
-            self.__ctx.names.record(item.target.span, target_symbol, target_type)
-            self.__import_edges.setdefault(unit.unit_id, []).append(target_unit.unit_id)
+                    target_type = target_symbol.type_id
+                # The written name is a resolved reference of its own, in both forms:
+                # for `import A` it is the name that is bound, and for `import A as B`
+                # the original spelling of `A` appears nowhere else in the file.  An
+                # editor needs it to rename `A` without leaving the import behind.
+                self.__ctx.names.record(item.target.span, target_symbol, target_type)
+                self.__import_edges.setdefault(unit.unit_id, []).append(target_unit.unit_id)
+            except AnalysisError as error:
+                if not self.__ctx.editor_recovery:
+                    raise
+                if checkpoint is not None:
+                    unit.symbol_ctx.restore(checkpoint)
+                self.__ctx.editor_errors.append(error)
 
     def __resolve_import_path(self, unit: UnitData, paths: list[str], span: SrcSpan) -> UnitData:
         """Resolve an import path to a UnitData, or raise with a diagnostic.
@@ -406,36 +437,72 @@ class GlobalResolve:
     def __resolve_definitions(self, unit: UnitData) -> None:
         """Resolves all definitions in the unit and updates the symbol context and type context with the resolved types."""
         for item in unit.items():
-            if not isinstance(item, AST.Alias):
-                continue
+            checkpoint = unit.symbol_ctx.checkpoint() if self.__ctx.editor_recovery else None
             try:
-                self.__resolve_alias(unit, item)
-            except AnalysisError:
-                pass
+                if not isinstance(item, AST.Alias):
+                    continue
+                try:
+                    self.__resolve_alias(unit, item)
+                except AnalysisError:
+                    pass
+            except AnalysisError as error:
+                if not self.__ctx.editor_recovery:
+                    raise
+                if checkpoint is not None:
+                    unit.symbol_ctx.restore(checkpoint)
+                if isinstance(item, (AST.FuncDef, AST.StructDef, AST.EnumDef, AST.TraitDef)):
+                    symbol = unit.symbol_ctx.lookup_typed(item.name.name)
+                    if symbol is not None:
+                        self.__ctx.type_ctx.mark_editor_unavailable(symbol.type_id)
+                self.__ctx.editor_errors.append(error)
 
         for item in unit.items():
-            match item:
-                case AST.StructDef():
-                    self.__resolve_struct_def(unit, item)
-                case AST.EnumDef():
-                    self.__resolve_enum_def(unit, item)
-                case AST.TraitDef():
-                    self.__resolve_trait_def(unit, item)
-                case _:
-                    pass
+            checkpoint = unit.symbol_ctx.checkpoint() if self.__ctx.editor_recovery else None
+            try:
+                match item:
+                    case AST.StructDef():
+                        self.__resolve_struct_def(unit, item)
+                    case AST.EnumDef():
+                        self.__resolve_enum_def(unit, item)
+                    case AST.TraitDef():
+                        self.__resolve_trait_def(unit, item)
+                    case _:
+                        pass
+            except AnalysisError as error:
+                if not self.__ctx.editor_recovery:
+                    raise
+                if checkpoint is not None:
+                    unit.symbol_ctx.restore(checkpoint)
+                if isinstance(item, (AST.FuncDef, AST.StructDef, AST.EnumDef, AST.TraitDef)):
+                    symbol = unit.symbol_ctx.lookup_typed(item.name.name)
+                    if symbol is not None:
+                        self.__ctx.type_ctx.mark_editor_unavailable(symbol.type_id)
+                self.__ctx.editor_errors.append(error)
 
         for item in unit.items():
-            match item:
-                case AST.ExternBlock():
-                    for function in item.functions:
-                        self.__resolve_extern_decl(unit, function)
-                case AST.FuncDef():
-                    self.__resolve_func_decl(unit, item)
-                case AST.Impl():
-                    self.__resolve_impl(unit, item)
-                case _:
-                    # other items are ignored in this pass
-                    pass
+            checkpoint = unit.symbol_ctx.checkpoint() if self.__ctx.editor_recovery else None
+            try:
+                match item:
+                    case AST.ExternBlock():
+                        for function in item.functions:
+                            self.__resolve_extern_decl(unit, function)
+                    case AST.FuncDef():
+                        self.__resolve_func_decl(unit, item)
+                    case AST.Impl():
+                        self.__resolve_impl(unit, item)
+                    case _:
+                        # other items are ignored in this pass
+                        pass
+            except AnalysisError as error:
+                if not self.__ctx.editor_recovery:
+                    raise
+                if checkpoint is not None:
+                    unit.symbol_ctx.restore(checkpoint)
+                if isinstance(item, (AST.FuncDef, AST.StructDef, AST.EnumDef, AST.TraitDef)):
+                    symbol = unit.symbol_ctx.lookup_typed(item.name.name)
+                    if symbol is not None:
+                        self.__ctx.type_ctx.mark_editor_unavailable(symbol.type_id)
+                self.__ctx.editor_errors.append(error)
 
     def __resolve_alias(self, unit: UnitData, alias: AST.Alias) -> None:
         """Validate the declaration's transparent target template."""
@@ -446,6 +513,10 @@ class GlobalResolve:
     def __resolve_func_decl(self, unit: UnitData, func_def: AST.FuncDef) -> None:
         symbol = unit.symbol_ctx.lookup_typed(func_def.name.name)
         assert symbol is not None
+        if self.__ctx.editor_recovery and not self.__ctx.signature_available(func_def.name.span, func_def.body.span):
+            self.__ctx.type_ctx.mark_editor_unavailable(symbol.type_id)
+            return
+
         ty = self.__ctx.type_ctx[symbol.type_id]
         assert isinstance(ty, Type.FunctionType)
 
@@ -464,6 +535,8 @@ class GlobalResolve:
             ret_type_id = self.__ctx.type_ctx.void_id
         else:
             ret_type_id = self.__ctx.resolve_type_in(func_def.ret_type, unit.symbol_ctx)
+        if self.__ctx.editor_recovery:
+            self.__ctx.names.record_scope(func_def.span + (func_def.body.full_span() or func_def.body.span), unit.symbol_ctx)
         unit.symbol_ctx.exit_scope()
 
         # update the function symbol with the resolved type
@@ -482,6 +555,11 @@ class GlobalResolve:
     def __resolve_extern_decl(self, unit: UnitData, decl: AST.ExternFuncDecl) -> None:
         symbol = unit.symbol_ctx.lookup_typed(decl.name.name)
         assert symbol is not None
+        if self.__ctx.editor_recovery:
+            self.__ctx.type_ctx.mark_editor_unavailable(symbol.type_id)
+        if decl.signature_recovered:
+            self.__ctx.type_ctx.mark_editor_unavailable(symbol.type_id)
+            return
         ty = self.__ctx.type_ctx[symbol.type_id]
         assert isinstance(ty, Type.FunctionType)
         ty.custom_def.parameters = [
@@ -501,6 +579,8 @@ class GlobalResolve:
         if not self.__ctx.type_ctx.is_c_abi_type(ty.custom_def.return_type, result=True):
             raise AnalysisError("extern C return type requires C ABI scalar, cptr<T>, or void", decl.span)
         ty.custom_def.is_extern = True
+        if self.__ctx.editor_recovery:
+            self.__ctx.type_ctx.mark_editor_complete(symbol.type_id)
 
     def __check_yian_signature(self, parameters: list[Type.Parameter], result: int, span: SrcSpan) -> None:
         if any(self.__ctx.type_ctx.contains_ffi_type(item.type_id) for item in parameters) \
@@ -680,6 +760,8 @@ class GlobalResolve:
         unit.symbol_ctx.exit_scope()
 
     def __resolve_method_decl(self, unit: UnitData, decl: AST.MethodDecl, prev_generics: Sequence[int], receiver_type_id: int, is_header: bool) -> int:
+        if decl.signature_recovered:
+            raise EditorIncomplete("unfinished method signature", decl.span)
         if len({attr.kind for attr in decl.attrs}) != len(decl.attrs):
             raise AnalysisError("Duplicate method modifier", decl.span)
         if AST.AttrKind.Pub in {attr.kind for attr in decl.attrs} and AST.AttrKind.PubFfi in {attr.kind for attr in decl.attrs}:
@@ -692,6 +774,8 @@ class GlobalResolve:
             raise AnalysisError("FFI method requires a body", decl.span)
         # alloc in type space
         type_id = self.__ctx.type_ctx.alloc_method(decl.name.name, span=decl.span)
+        if self.__ctx.editor_recovery:
+            self.__ctx.type_ctx.mark_editor_unavailable(type_id)
 
         # alloc in symbol space
         symbol_attrs = self.__convert_attrs(decl.attrs)
@@ -742,5 +826,8 @@ class GlobalResolve:
         if not ty.custom_def.is_ffi or any(attr.kind == AST.AttrKind.Pub for attr in decl.attrs):
             self.__check_yian_signature(parameters, ret_type_id, decl.span)
         self.__ctx.type_ctx.bind_template(type_id, generics)
+
+        if self.__ctx.editor_recovery:
+            self.__ctx.type_ctx.mark_editor_complete(type_id)
 
         return type_id

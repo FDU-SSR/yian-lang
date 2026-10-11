@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from compiler.analysis.lowering.state import DefKind, DefinitionState
 from compiler.analysis.diagnostics import Diagnostic, Stage, diagnostic_from_error
-from compiler.analysis.error import AnalysisError
+from compiler.analysis.error import AnalysisError, EditorIncomplete
 from compiler.analysis.lowering.expr_checker import ExprChecker
 from compiler.analysis.symbol.symbol import SymbolKind
 from compiler.analysis.ty import ty as Type
@@ -88,7 +88,12 @@ class TypeCheck:
 
     def run(self) -> None:
         self.__generating = True
-        self.__find_main()
+        try:
+            self.__find_main()
+        except AnalysisError as error:
+            if not self.__ctx.editor_recovery:
+                raise
+            self.__record(error)
         self.__drain()
 
         self.__check_root_definitions()
@@ -108,9 +113,14 @@ class TypeCheck:
                 if not self.__recover:
                     raise
                 self.__record(error)
+                for local_error in self.__ctx.editor_errors:
+                    self.__record(local_error)
+                self.__ctx.editor_errors.clear()
 
     def __record(self, error: Exception) -> None:
         """Record one recovered error, ignoring a repeat of the same condition."""
+        if isinstance(error, EditorIncomplete):
+            return
         diagnostic = diagnostic_from_error(error, stage=Stage.TYPE_CHECK)
         span = diagnostic.span
         key = (diagnostic.code, str(span.path), span.start.row, span.start.col)
@@ -266,6 +276,8 @@ class TypeCheck:
         assert symbol is not None
 
         main_ty = self.__ctx.type_ctx[symbol.type_id]
+        if self.__ctx.editor_recovery and not self.__ctx.type_ctx.editor_type_available(symbol.type_id):
+            return
         assert isinstance(main_ty, Type.FunctionType)
         ret_ty = main_ty.return_type(self.__ctx.type_ctx)
         if ret_ty != self.__ctx.type_ctx.void_id:

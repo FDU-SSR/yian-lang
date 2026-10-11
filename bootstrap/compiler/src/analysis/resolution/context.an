@@ -32,6 +32,7 @@ pub enum DeclarationState {
     Declared,
     Resolving,
     Complete,
+    Failed,
 }
 
 // Syntax references belong to the session; this record owns no AST resources.
@@ -143,15 +144,7 @@ impl ResolutionContext {
     }
 
     pub fn intrinsic(name: str) -> Option<TypeId> {
-        for declaration in self.declarations {
-            let symbol = *self.session.symbols.get(declaration.symbol).unwrap();
-
-            if self.session.unit(declaration.unit).unwrap().is_stdlib && self.session.names.text(symbol.name) == name {
-                return Option<TypeId>.Some(symbol.type_id);
-            }
-        }
-
-        Option<TypeId>.None
+        self.session.intrinsic_type(name)
     }
 }
 

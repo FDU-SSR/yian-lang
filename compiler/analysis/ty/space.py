@@ -189,11 +189,11 @@ class TypeSpace:
         return function_pointer_ty_id
 
 
-    def alloc_struct(self, name: str, span: SrcSpan) -> int:
+    def alloc_struct(self, name: str, span: SrcSpan, *, intrinsic: bool = False) -> int:
         struct_def = Type.StructDef(name=name, span=span)
         struct_ty = Type.StructType(type_id=-1, custom_def=struct_def)
 
-        if name == "Range":
+        if intrinsic and name == "Range":
             struct_ty.type_id = self.__ctx.Range_id
 
         return self.__add_type(struct_ty)
@@ -213,18 +213,18 @@ class TypeSpace:
         self.bind_template(type_id, generics)
         return type_id
 
-    def alloc_enum(self, name: str, span: SrcSpan) -> int:
+    def alloc_enum(self, name: str, span: SrcSpan, *, intrinsic: bool = False) -> int:
         enum_def = Type.EnumDef(name=name, span=span)
         enum_ty = Type.EnumType(type_id=-1, custom_def=enum_def)
 
-        if name == "Option":
+        if intrinsic and name == "Option":
             enum_ty.type_id = self.__ctx.Option_id
-        elif name == "Result":
+        elif intrinsic and name == "Result":
             enum_ty.type_id = self.__ctx.Result_id
 
         return self.__add_type(enum_ty)
 
-    def alloc_trait(self, name: str, span: SrcSpan) -> int:
+    def alloc_trait(self, name: str, span: SrcSpan, *, intrinsic: bool = False) -> int:
         trait_def = Type.TraitDef(name=name, span=span)
         trait_ty = Type.TraitType(type_id=-1, custom_def=trait_def)
 
@@ -259,7 +259,7 @@ class TypeSpace:
             "ShlAssign": self.__ctx.shl_assign_id,
             "ShrAssign": self.__ctx.shr_assign_id,
         }
-        if name in intrinsic_mapping:
+        if intrinsic and name in intrinsic_mapping:
             trait_ty.type_id = intrinsic_mapping[name]
 
         return self.__add_type(trait_ty)

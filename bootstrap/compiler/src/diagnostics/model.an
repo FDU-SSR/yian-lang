@@ -120,6 +120,7 @@ impl AnalysisStage {
 }
 
 pub enum AnalysisErrorKind {
+    EditorIncomplete,
     User,
     NotConstant,
     NoCandidate,
@@ -179,6 +180,24 @@ pub struct Diagnostic {
 }
 
 impl Diagnostic {
+    // Every owned path and message is copied; session source identities remain borrowed.
+    pub fn copy() -> Self {
+        let primary = match &self.location {
+            Some(Source(value)) => Option<DiagnosticLocation>.Some(DiagnosticLocation.Source(*value)),
+            Some(Detached(path, span)) => Option<DiagnosticLocation>.Some(DiagnosticLocation.Detached(String.from(&path.as_str()), *span)),
+            None => Option<DiagnosticLocation>.None,
+        };
+        let related = Vec<RelatedLocation>.new();
+        for item in self.related {
+            let location = match &item.location {
+                Source(value) => DiagnosticLocation.Source(*value),
+                Detached(path, span) => DiagnosticLocation.Detached(String.from(&path.as_str()), *span),
+            };
+            related.push(RelatedLocation(location, String.from(&item.message.as_str())));
+        }
+        Self(self.code, self.severity, primary, String.from(&self.message.as_str()), related, self.stage, self.recovered)
+    }
+
     static pub fn new(code: DiagnosticCode, severity: Severity, location: Option<SourceSpan>, message: str) -> Self {
         let primary = match location {
             Some(value) => Option<DiagnosticLocation>.Some(DiagnosticLocation.Source(value)),
@@ -284,6 +303,27 @@ pub struct DiagnosticSink {
 }
 
 impl DiagnosticSink {
+    pub fn push_unique(diagnostic: Diagnostic) {
+        for current in self.diagnostics {
+            if current.code == diagnostic.code && current.message.as_str() == diagnostic.message.as_str() {
+                match &current.location {
+                    Some(DiagnosticLocation.Source(left)) => match &diagnostic.location {
+                        Some(DiagnosticLocation.Source(right)) => {
+                            if left.source == right.source && left.span.start.row == right.span.start.row &&
+                            left.span.start.column == right.span.start.column {
+                                diagnostic.drop();
+                                return;
+                            }
+                        },
+                        _ => {},
+                    },
+                    _ => {},
+                }
+            }
+        }
+        self.push(diagnostic);
+    }
+
     static pub fn new() -> Self {
         Self(Arena<Diagnostic>.new())
     }

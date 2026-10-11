@@ -44,11 +44,21 @@ class SemanticState:
         self.__constant_stack: list[tuple[int, int]] = []
         self.procedures = ProcedureRegistry(type_ctx)
         self.names = NameReferences()
+        self.editor_recovery = False
+        self.editor_errors: list[AnalysisError] = []
+        self.editor_syntax_regions: tuple[SrcSpan, ...] = ()
         self.aliases = AliasRegistry(type_ctx, self.resolve_type_in)
         self.__type_resolver = TypeResolver(type_ctx, self.names, self.constant_value, self.aliases)
 
     def resolve_type_in(self, ast_type: ASTType, symbol_ctx: SymbolCtx) -> int:
         return self.__type_resolver.resolve(ast_type, symbol_ctx)
+
+    def signature_available(self, start: SrcSpan, end: SrcSpan) -> bool:
+        """Recovered parameter syntax cannot define a trustworthy callable signature."""
+        return not any(region.path == start.path and
+                       (start.start.row, start.start.col) <= (region.start.row, region.start.col) <=
+                       (end.start.row, end.start.col)
+                       for region in self.editor_syntax_regions)
 
     def resolve_const_expr(self, const_expr: ConstExpr, symbol_ctx: SymbolCtx) -> int:
         return self.__type_resolver.resolve_const_expr(const_expr, symbol_ctx)
