@@ -42,8 +42,10 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import shlex
 import subprocess
 import sys
+import tempfile
 import time
 from dataclasses import dataclass
 from dataclasses import field
@@ -1056,7 +1058,7 @@ def __refresh_native(prefix: Path) -> bool:
     return process.returncode == 0
 
 
-def __make_toolchain(name: str, native_bin: Path) -> Toolchain:
+def __make_toolchain(name: str, native_bin: Path, reference_launcher: Path) -> Toolchain:
     environment = os.environ.copy()
     for variable in ("YIANC", "YIAN_ROOT", "YIAN_LIB"):
         environment.pop(variable, None)
@@ -1066,6 +1068,10 @@ def __make_toolchain(name: str, native_bin: Path) -> Toolchain:
     environment["YIAN_LIB"] = str(LIB_DIR)
 
     if name == "python":
+        # Package commands and nested CLI checks use the same reference compiler.
+        environment["YIANC"] = str(reference_launcher)
+        environment["PATH"] = str(reference_launcher.parent) + os.pathsep + environment.get("PATH", "")
+        environment["PYTHONPATH"] = str(ROOT_DIR) + os.pathsep + environment.get("PYTHONPATH", "")
         return Toolchain(
             name="python",
             compiler=(sys.executable, "-m", "compiler.main"),
@@ -1165,13 +1171,20 @@ def main(argv: list[str] | None = None, *, suite: str = "basic") -> int:
         return 1
 
     exit_code = 0
-    for implementation in implementations:
-        toolchain = __make_toolchain(implementation, native_bin)
-        print(f"\n{'#' * 60}\n# implementation: {implementation}\n{'#' * 60}")
-        for suite_name in suites:
-            if len(suites) > 1:
-                print(f"\n{'#' * 60}\n# suite: {suite_name}\n{'#' * 60}")
-            exit_code |= run_suite(suite_name, args, toolchain)
+    with tempfile.TemporaryDirectory(prefix="yian-reference-compiler-") as temporary:
+        reference_launcher = Path(temporary) / "yianc"
+        reference_launcher.write_text(
+            '#!/bin/sh\nexec ' + shlex.quote(sys.executable) + ' -m compiler.main "$@"\n',
+            encoding="utf-8",
+        )
+        reference_launcher.chmod(0o755)
+        for implementation in implementations:
+            toolchain = __make_toolchain(implementation, native_bin, reference_launcher)
+            print(f"\n{'#' * 60}\n# implementation: {implementation}\n{'#' * 60}")
+            for suite_name in suites:
+                if len(suites) > 1:
+                    print(f"\n{'#' * 60}\n# suite: {suite_name}\n{'#' * 60}")
+                exit_code |= run_suite(suite_name, args, toolchain)
     return exit_code
 
 

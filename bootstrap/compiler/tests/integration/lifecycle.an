@@ -21,7 +21,7 @@ from compiler.analysis.editor_tokens import EditorSemanticKind, EditorSemanticTo
 from compiler.analysis.editor_queries import EditorCompletionKind, completion_at, signature_help_at;
 from compiler.analysis.names import NameInterner;
 from compiler.analysis.symbol.scope import SymbolStore;
-from compiler.common.ids import SourceId, SymbolId;
+from compiler.common.ids import SourceId, SymbolId, UnitId;
 from compiler.package.provenance import SourceTrust;
 from compiler.diagnostics.model import AnalysisStage;
 from compiler.package.model import PackageMap;
@@ -621,8 +621,12 @@ fn editor_frontend_recovery() {
     let syntax_trust = source_trust();
     let syntax_options = editor_options(syntax_trust, Option<PackageMap>.None, EditorMode.Syntax);
     let syntax = EditorEngine.analyze(&inputs, syntax_options).unwrap();
-    assert syntax.diagnostic_count() == 1u64: "syntax snapshots retain recoverable parse diagnostics";
-    assert syntax.session().len() == 1u64: "valid units survive a neighboring syntax error";
+    assert syntax.diagnostic_count() == 2u64: "syntax snapshots retain both unfinished parameter and block diagnostics";
+    assert syntax.session().len() == 2u64: "editor preparation retains valid and recovered units";
+    assert syntax.session().unit(UnitId(0u64)).unwrap().source == SourceId(0u64):
+    "valid units retain their source identity beside a recovered document";
+    assert syntax.session().unit(UnitId(1u64)).unwrap().source == SourceId(1u64):
+    "recovered units retain their own source identity";
     assert syntax.session().source(SourceId(1u64)).unwrap().text().contains("broken"):
     "failed documents remain available through the source manager";
     let syntax_diagnostic = syntax.diagnostic(0u64).unwrap();
@@ -632,13 +636,21 @@ fn editor_frontend_recovery() {
     };
     assert has_parse_stage:
     "frontend diagnostics retain their stage";
+    assert syntax_diagnostic.message.as_str().contains("RParen") &&
+    syntax.diagnostic(1u64).unwrap().message.as_str().contains("RBrace"):
+    "each missing delimiter retains its own parse diagnostic";
     syntax.drop();
 
     let full_trust = source_trust();
     let full_options = editor_options(full_trust, Option<PackageMap>.None, EditorMode.Full);
     let full = EditorEngine.analyze(&inputs, full_options).unwrap();
     assert !full.semantic_complete(): "syntax errors prevent incomplete semantic results from being exported";
-    assert full.diagnostic_count() == 1u64: "full snapshots retain preparation diagnostics";
+    assert full.diagnostic_count() == 2u64: "full snapshots retain both preparation diagnostics";
+    let valid_symbols = full.document_symbols(SourceId(0u64)).unwrap();
+    assert has_document_symbol(valid_symbols, "valid", EditorDocumentSymbolKind.Function, ""):
+    "recovery in another document preserves reliable declaration queries";
+    for symbol in valid_symbols { symbol.drop(); }
+    valid_symbols.drop();
     full.drop();
     inputs.drop();
 }
@@ -716,15 +728,19 @@ fn editor_import_quick_fixes() {
     "the edit removes the invalid name and following separator while preserving the valid import";
 
     let helper_completion = completion_at(snapshot, SourceId(1u64), 0u64, 14u64).unwrap();
-    let offers_helper_without_semantic_claims = false;
+    let offers_reliable_structure = false;
     for item in helper_completion.items {
-        if item.label.as_str() == "Good" && item.kind == EditorCompletionKind.Text {
-            offers_helper_without_semantic_claims = true;
+        if item.label.as_str() == "Good" && item.kind == EditorCompletionKind.Struct {
+            offers_reliable_structure = true;
         }
     }
-    assert offers_helper_without_semantic_claims:
-    "an incomplete snapshot offers lexical completion without semantic claims";
+    assert offers_reliable_structure:
+    "an unrelated invalid import preserves reliable declaration classifications";
     helper_completion.drop();
+    let partial_rename = snapshot.prepare_rename(SourceId(1u64), 0u64, 12u64);
+    assert partial_rename.refusal.is_some():
+    "partial reference information cannot authorize rename edits";
+    partial_rename.drop();
 
     for fix in fixes { fix.drop(); }
     fixes.drop();

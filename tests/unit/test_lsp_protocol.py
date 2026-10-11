@@ -354,13 +354,25 @@ class LspProtocolTests(unittest.TestCase):
             finally:
                 client.shutdown()
 
-    def test_completion_on_document_with_parse_errors_uses_lexical_fallback(self) -> None:
+    def test_completion_on_partial_documents_keeps_semantic_kinds_and_receivers(self) -> None:
+        for raw in (False, True):
+            with self.subTest(raw_pointers=raw):
+                self.__check_partial_completion(raw)
+
+    def __check_partial_completion(self, raw: bool) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             source = root / "main.an"
             invalid = "fn main() { let values = Vec<i32>::new(); }\n"
             source.write_text(invalid, encoding="utf-8")
-            client = StdioClient()
+            executable = os.environ.get("YIAN_LSP_BIN") or shutil.which("yian-lsp")
+            self.assertIsNotNone(executable)
+            if executable is None:
+                return
+            command = [executable, "--stdio", "--compiler-root", str(ROOT)]
+            if raw:
+                command.append("--raw-pointers")
+            client = StdioClient(command)
             uri = source.as_uri()
             try:
                 self.__initialize(client, root)
@@ -396,9 +408,132 @@ class LspProtocolTests(unittest.TestCase):
                 self.assertNotIn("error", response)
                 items = response.get("result", {}).get("items", [])
                 self.assertTrue(any(
-                    item.get("label") == "Vec" and item.get("kind") == 1
+                    item.get("label") == "Vec" and item.get("kind") == 22
                     for item in items
                 ))
+
+                declarations = (
+                    "from std.core.io import print;\n"
+                    "fn helper(value: i32, other: i32) -> i32 { value + other }\n"
+                    "fn make_vec() -> Vec<i32> { Vec<i32>.new() }\n"
+                )
+                request_id = 3
+                cases = [(expression, "") for expression in ("v.p;", "v.", "make_vec().p;", "(v).p;", "v.p; helper(",
+                         "missing; v.p;", "{ let v = missing; v.p; }", "{ let v = ; v.p; }", "{ let v: Vec<i32> = missing; v.p; }", "{ let (v, other) = missing; v.p; }", "[v][0].p;", "v.push(true);", "v.push(",
+                         "v.p; helper([1, 2][0], ", "v.p; helper(helper(1, 2), ", "v.p; helper(1 < 2, ")]
+                cases.extend(("v.p;", suffix) for suffix in (
+                    "struct Broken { field: Missing }\n", "fn broken(value: Missing) {}\n",
+                    "fn unrelated() { missing; }\n", "fn forbidden() { @bitcast<i32>(0); }\n", 'fn damaged() { let value = "unterminated',
+                    "fn damaged(\npub fn recovered() {}\n",
+                    "struct Range {}\nenum Option { Local }\ntrait Add { fn local_add(); }\n",
+                ))
+                cases.append(("v.p; damaged(", "fn damaged(value: i32, broken) {}\n"))
+                cases.append(("v.p; v.damaged(", "impl<T> Vec<T> { pub fn damaged(value: i32, broken) {} }\n"))
+                for version, (expression, suffix) in enumerate(cases, start=2):
+                    with self.subTest(expression=expression, suffix=suffix):
+                        text = declarations + "fn main() { let v = Vec<i32>.new(); " + expression + " }\n" + suffix
+                        client.send({
+                            "jsonrpc": "2.0", "method": "textDocument/didChange",
+                            "params": {"textDocument": {"uri": uri, "version": version},
+                                       "contentChanges": [{"text": text}]},
+                        })
+                        client.until(lambda message: (
+                            message.get("method") == "textDocument/publishDiagnostics"
+                            and message.get("params", {}).get("uri") == uri
+                            and message.get("params", {}).get("version") == version
+                        ))
+                        row = text.splitlines()[3]
+                        column = row.index(expression) + expression.index(".") + 1
+                        if expression.split(".", 1)[1].startswith("p"):
+                            column += 1
+                        client.send({
+                            "jsonrpc": "2.0", "id": request_id, "method": "textDocument/completion",
+                            "params": {"textDocument": {"uri": uri},
+                                       "position": {"line": 3, "character": column}},
+                        })
+                        response = client.until(lambda message: message.get("id") == request_id)
+                        request_id += 1
+                        self.assertNotIn("error", response)
+                        candidates = response.get("result", {}).get("items", [])
+                        self.assertNotIn("print", {item["label"] for item in candidates})
+                        self.assertNotIn("p", {item["label"] for item in candidates})
+                        if "damaged(" in expression:
+                            client.send({
+                                "jsonrpc": "2.0", "id": request_id, "method": "textDocument/signatureHelp",
+                                "params": {"textDocument": {"uri": uri},
+                                           "position": {"line": 3, "character": row.index("damaged(") + 8}},
+                            })
+                            signature = client.until(lambda message: message.get("id") == request_id)
+                            request_id += 1
+                            self.assertNotIn("error", signature)
+                            self.assertIsNone(signature.get("result"))
+                            client.send({
+                                "jsonrpc": "2.0", "id": request_id, "method": "textDocument/completion",
+                                "params": {"textDocument": {"uri": uri},
+                                           "position": {"line": 3, "character": row.index("damaged(") + 7}},
+                            })
+                            completion = client.until(lambda message: message.get("id") == request_id)
+                            request_id += 1
+                            self.assertNotIn("error", completion)
+                            if "v.damaged(" not in expression:
+                                damaged = next(item for item in completion["result"]["items"] if item["label"] == "damaged")
+                                self.assertEqual(damaged.get("kind"), 3)
+                                self.assertNotIn("detail", damaged)
+                                self.assertEqual(damaged.get("insertTextFormat"), 1)
+                                self.assertEqual(damaged.get("insertText"), "damaged")
+                        if "let v = missing" in expression or "let v = ;" in expression or "let (v, other)" in expression:
+                            self.assertEqual(candidates, [])
+                        else:
+                            self.assertTrue(any(item["label"] == "push" and item.get("kind") == 2
+                                                for item in candidates))
+                        for method in ("textDocument/documentSymbol", "textDocument/semanticTokens/full"):
+                            client.send({"jsonrpc": "2.0", "id": request_id, "method": method,
+                                         "params": {"textDocument": {"uri": uri}}})
+                            readonly = client.until(lambda message: message.get("id") == request_id)
+                            request_id += 1
+                            self.assertNotIn("error", readonly)
+                            self.assertTrue(readonly.get("result"))
+                            if method == "textDocument/documentSymbol" and "fn recovered" in suffix:
+                                self.assertIn("recovered", {item["name"] for item in readonly["result"]})
+                        if "push(" in expression:
+                            client.send({
+                                "jsonrpc": "2.0", "id": request_id, "method": "textDocument/signatureHelp",
+                                "params": {"textDocument": {"uri": uri},
+                                           "position": {"line": 3, "character": row.index("push(") + 5}},
+                            })
+                            signature = client.until(lambda message: message.get("id") == request_id)
+                            request_id += 1
+                            self.assertNotIn("error", signature)
+                            payload = signature.get("result")
+                            self.assertIsInstance(payload, dict)
+                            self.assertTrue(payload.get("signatures") if isinstance(payload, dict) else False)
+                            if isinstance(payload, dict) and payload.get("signatures"):
+                                self.assertIn("value: i32", payload["signatures"][0]["label"])
+                        if expression.endswith(", "):
+                            client.send({"jsonrpc": "2.0", "id": request_id, "method": "textDocument/signatureHelp",
+                                         "params": {"textDocument": {"uri": uri},
+                                                    "position": {"line": 3, "character": row.rindex(",") + 1}}})
+                            signature = client.until(lambda message: message.get("id") == request_id)
+                            request_id += 1
+                            payload = signature.get("result")
+                            self.assertIsInstance(payload, dict)
+                            if isinstance(payload, dict):
+                                self.assertEqual(payload.get("activeParameter"), 1)
+                text = "trait EditorTrait { fn push(value: i32); }\nfn query(v: EditorTrait&) { v.p; }\n"
+                client.send({
+                    "jsonrpc": "2.0", "method": "textDocument/didChange",
+                    "params": {"textDocument": {"uri": uri, "version": version + 1},
+                               "contentChanges": [{"text": text}]},
+                })
+                client.send({
+                    "jsonrpc": "2.0", "id": request_id, "method": "textDocument/completion",
+                    "params": {"textDocument": {"uri": uri},
+                               "position": {"line": 1, "character": text.splitlines()[1].index("v.p") + 3}},
+                })
+                response = client.until(lambda message: message.get("id") == request_id)
+                self.assertNotIn("error", response)
+                self.assertTrue(any(item["label"] == "push" and item.get("kind") == 2
+                                    for item in response.get("result", {}).get("items", [])))
             finally:
                 client.shutdown()
 

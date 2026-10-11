@@ -25,7 +25,101 @@ STDLIB = ROOT / "lib" / "src"
 
 
 class SharedAnalysisTests(unittest.TestCase):
-    def test_partial_analysis_uses_lexical_completion_and_disables_signatures(self) -> None:
+    def test_editor_queries_use_reliable_receivers_in_partial_documents(self) -> None:
+        for raw in (False, True):
+            with self.subTest(raw_pointers=raw):
+                self.__check_partial_queries(raw)
+
+    def __check_partial_queries(self, raw: bool) -> None:
+        declarations = (
+            "struct EditorPoint { pub x: i32 }\n"
+            "impl EditorPoint { pub fn push(value: i32) {} }\n"
+            "fn make_point() -> EditorPoint { EditorPoint(1) }\n"
+            "fn helper(value: i32, other: i32) -> i32 { value + other }\n"
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory) / "partial.an"
+            cases = [(expression, "") for expression in ("v.p;", "v.", "make_point().p;", "(v).p;", "[v][0].p;",
+                               "v.p; helper(", "missing; v.p;", "{ let v = missing; v.p; }",
+                               "{ let v = ; v.p; }", "{ let v: EditorPoint = missing; v.p; }", "{ let (v, other) = missing; v.p; }", "v.push(true);", "v.push(",
+                               "v.p; helper([1, 2][0], ", "v.p; helper(helper(1, 2), ", "v.p; helper(1 < 2, ")]
+            cases.extend(("v.p;", suffix) for suffix in (
+                "struct Broken { field: Missing }\n", "fn broken(value: Missing) {}\n",
+                "fn unrelated() { missing; }\n", "fn forbidden() { @bitcast<i32>(0); }\n", 'fn damaged() { let value = "unterminated',
+                "fn damaged(\npub fn recovered() {}\n",
+                "struct Range {}\nenum Option { Local }\ntrait Add { fn local_add(); }\n",
+            ))
+            cases.append(("v.p; damaged(", "fn damaged(value: i32, broken) {}\n"))
+            cases.append(("v.p; v.damaged(", "impl EditorPoint { pub fn damaged(value: i32, broken) {} }\n"))
+            for expression, suffix in cases:
+                with self.subTest(expression=expression, suffix=suffix):
+                    text = declarations + "fn main() { let v = EditorPoint(1); " + expression + " }\n" + suffix
+                    inputs = FrozenInputs.freeze(
+                        (STDLIB, source),
+                        documents=DocumentStore([Document(path=source, text=text, version=1)]),
+                        revision=1, topology_revision=1, configuration_identity="partial",
+                    )
+                    snapshot = EditorEngine(AnalysisSession(
+                        compiler_root=ROOT, type_size_factory=type_size_provider, raw_pointers=raw,
+                    )).analyze(inputs, EditorMode.FULL)
+                    self.assertFalse(snapshot.semantic_complete)
+                    column = text.splitlines()[4].index(expression) + expression.index(".") + 1
+                    if expression.split(".", 1)[1].startswith("p"):
+                        column += 1
+                    result = snapshot.complete_at(source, 4, column)
+                    candidate = next((item for item in result.items if item.label == "push"), None)
+                    if "let v = missing" in expression or "let v = ;" in expression or "let (v, other)" in expression:
+                        self.assertEqual(result.items, ())
+                    else:
+                        self.assertIsNotNone(candidate)
+                        self.assertIs(candidate.kind if candidate else None, CompletionKind.METHOD)
+                    self.assertNotIn("p", {item.label for item in result.items})
+                    self.assertTrue(snapshot.document_symbols_at(source))
+                    if "fn recovered" in suffix:
+                        self.assertIn("recovered", {item.name for item in snapshot.document_symbols_at(source)})
+                    self.assertTrue(snapshot.semantic_tokens_at(source))
+                    self.assertFalse(snapshot.prepare_rename_at(source, 4, 16).ok)
+                    if "push(" in expression:
+                        signature = snapshot.signature_help_at(source, 4, text.splitlines()[4].index("push(") + 5)
+                        self.assertIsNotNone(signature)
+                        self.assertIn("value: i32", signature.signatures[0].label if signature else "")
+                    if "damaged(" in expression:
+                        self.assertIsNone(snapshot.signature_help_at(source, 4, text.splitlines()[4].index("damaged(") + 8))
+                        if "v.damaged(" not in expression:
+                            completion = snapshot.complete_at(source, 4, text.splitlines()[4].index("damaged(") + 7)
+                            damaged = next(item for item in completion.items if item.label == "damaged")
+                            self.assertIs(damaged.kind, CompletionKind.FUNCTION)
+                            self.assertIsNone(damaged.detail)
+                            self.assertFalse(damaged.parameters)
+                    if expression.endswith(", "):
+                        signature = snapshot.signature_help_at(source, 4, text.splitlines()[4].rindex(",") + 1)
+                        self.assertIsNotNone(signature)
+                        self.assertEqual(signature.active_parameter if signature else None, 1)
+                    self.assertIsNotNone(snapshot.queries)
+                    if snapshot.queries is not None:
+                        state = snapshot.queries.documents[source]
+                        self.assertTrue(state.declarations_available)
+                        if expression.endswith(".") or expression.endswith("("):
+                            self.assertFalse(state.syntax_complete)
+                    strict = AnalysisSession(compiler_root=ROOT, type_size_factory=type_size_provider, raw_pointers=raw).analyze(
+                        (STDLIB, source), documents=inputs.document_store(),
+                    )
+                    self.assertFalse(strict.ok())
+
+            text = "trait EditorTrait { fn push(value: i32); }\nfn query(v: EditorTrait&) { v.p; }\n"
+            inputs = FrozenInputs.freeze(
+                (STDLIB, source), documents=DocumentStore([Document(source, text, 2)]),
+                revision=2, topology_revision=1, configuration_identity="trait-members",
+            )
+            snapshot = EditorEngine(AnalysisSession(
+                compiler_root=ROOT, type_size_factory=type_size_provider, raw_pointers=raw,
+            )).analyze(inputs, EditorMode.FULL)
+            column = text.splitlines()[1].index("v.p") + 3
+            completion = snapshot.complete_at(source, 1, column)
+            self.assertTrue(any(item.label == "push" and item.kind is CompletionKind.METHOD
+                                for item in completion.items))
+
+    def test_partial_analysis_preserves_independent_declarations_and_signatures(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             broken = root / "broken.an"
@@ -51,8 +145,10 @@ class SharedAnalysisTests(unittest.TestCase):
             self.assertIn("E304", {item.code for item in snapshot.result.diagnostics})
             completion = snapshot.complete_at(target, 1, 15)
             helper = next(item for item in completion.items if item.label == "helper")
-            self.assertIs(helper.kind, CompletionKind.TEXT)
-            self.assertIsNone(snapshot.signature_help_at(target, 1, 19))
+            self.assertIs(helper.kind, CompletionKind.FUNCTION)
+            signature = snapshot.signature_help_at(target, 1, 19)
+            self.assertIsNotNone(signature)
+            self.assertIn("value: i32", signature.signatures[0].label if signature else "")
 
     def test_frozen_snapshot_import_quick_fix_removes_only_the_invalid_item(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
