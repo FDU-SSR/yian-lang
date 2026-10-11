@@ -354,6 +354,54 @@ class LspProtocolTests(unittest.TestCase):
             finally:
                 client.shutdown()
 
+    def test_completion_on_document_with_parse_errors_uses_lexical_fallback(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "main.an"
+            invalid = "fn main() { let values = Vec<i32>::new(); }\n"
+            source.write_text(invalid, encoding="utf-8")
+            client = StdioClient()
+            uri = source.as_uri()
+            try:
+                self.__initialize(client, root)
+                client.send({
+                    "jsonrpc": "2.0",
+                    "method": "textDocument/didOpen",
+                    "params": {
+                        "textDocument": {
+                            "uri": uri,
+                            "languageId": "yian",
+                            "version": 1,
+                            "text": invalid,
+                        }
+                    },
+                })
+                diagnostic = client.until(lambda message: (
+                    message.get("method") == "textDocument/publishDiagnostics"
+                    and message.get("params", {}).get("uri") == uri
+                    and message.get("params", {}).get("version") == 1
+                ))
+                self.assertTrue(diagnostic["params"]["diagnostics"])
+
+                client.send({
+                    "jsonrpc": "2.0",
+                    "id": 2,
+                    "method": "textDocument/completion",
+                    "params": {
+                        "textDocument": {"uri": uri},
+                        "position": {"line": 0, "character": invalid.index("Vec") + len("Vec")},
+                    },
+                })
+                response = client.until(lambda message: message.get("id") == 2)
+                self.assertNotIn("error", response)
+                items = response.get("result", {}).get("items", [])
+                self.assertTrue(any(
+                    item.get("label") == "Vec" and item.get("kind") == 1
+                    for item in items
+                ))
+            finally:
+                client.shutdown()
+
     def test_formatting_uses_unsaved_text_and_returns_protocol_edits(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
