@@ -7,13 +7,13 @@ PYTHON="${PYTHON:-}"
 
 usage() {
     cat <<'EOF'
-Uninstall native yianc, anx, and yian-lsp binaries.
+Uninstall the native yianc and anx commands.
 
 Usage: scripts/uninstall.sh [options]
 
 Options:
   --prefix PATH  Installation prefix (default: $HOME/.local).
-  --python PATH  Also remove legacy Python yianc/anx/yian-lsp launchers from this interpreter.
+  --python PATH  Also remove legacy Python yianc/anx launchers from this interpreter.
   -h, --help     Show this help.
 EOF
 }
@@ -65,7 +65,7 @@ if [[ ! -f "$MARKER" ]] || ! grep -Fxq 'yian-native-install-v1' "$MARKER"; then
     printf 'No managed native YIAN installation found under %s.\n' "$PREFIX"
 else
     keep_resources=0
-    for command_name in yianc anx yian-lsp; do
+    for command_name in yianc anx; do
         target="$BIN_DIR/$command_name"
         if [[ -e "$target" ]]; then
             expected="$(awk -F= -v name="$command_name" '$1 == name { print $2; exit }' "$MARKER")"
@@ -79,6 +79,11 @@ else
             fi
         fi
     done
+
+    if [[ -e "$BIN_DIR/yian-lsp" || -f "$PREFIX/share/yian-lsp/.native-install" ]]; then
+        printf 'Keeping shared resources because the separately installed yian-lsp may use them.\n' >&2
+        keep_resources=1
+    fi
 
     if [[ "$keep_resources" -eq 0 ]]; then
         rm -rf -- "$DATA_DIR"
@@ -106,5 +111,4 @@ if [[ -n "$PYTHON" ]]; then
     }
     remove_legacy_entrypoint "$PYTHON_SCRIPTS_DIR/yianc" 'from compiler.main import main'
     remove_legacy_entrypoint "$PYTHON_SCRIPTS_DIR/anx" 'from anx.main import main'
-    remove_legacy_entrypoint "$PYTHON_SCRIPTS_DIR/yian-lsp" 'from lsp.main import main'
 fi

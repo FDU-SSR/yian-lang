@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Build and install the native YIAN compiler, package manager, and language server.
+# Build and install the native YIAN compiler and package manager.
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -8,7 +8,7 @@ PREFIX="${PREFIX:-}"
 
 usage() {
     cat <<'EOF'
-Build and install native yianc, anx, and yian-lsp binaries.
+Build and install native yianc and anx binaries.
 
 Usage: scripts/install.sh [options]
 
@@ -20,7 +20,8 @@ Options:
 The install requires Python 3.12+, llvmlite 0.49+, LLVM 22, and a native C
 toolchain. Installed commands are native executables and do not use Python.
 The standard library and runtime are copied under PREFIX/share/yian so the
-commands continue to work after the source checkout is removed.
+commands continue to work after the source checkout is removed. Install the
+language server separately with scripts/install_lsp.sh.
 EOF
 }
 
@@ -73,12 +74,28 @@ BIN_DIR="$PREFIX/bin"
 SHARE_DIR="$PREFIX/share"
 DATA_DIR="$SHARE_DIR/yian"
 MARKER="$DATA_DIR/.native-install"
+LSP_BIN="$BIN_DIR/yian-lsp"
+LSP_DATA_DIR="$SHARE_DIR/yian-lsp"
+LSP_MARKER="$LSP_DATA_DIR/.native-install"
 
 if [[ -e "$DATA_DIR" && ! -f "$MARKER" ]]; then
     die "refusing to replace unmanaged resource directory: $DATA_DIR"
 fi
 if [[ -f "$MARKER" ]] && ! grep -Fxq 'yian-native-install-v1' "$MARKER"; then
     die "unrecognized install marker: $MARKER"
+fi
+
+# Transfer ownership of a previously co-installed server before replacing the
+# shared toolchain marker and resources.
+LEGACY_LSP_HASH=""
+if [[ -f "$MARKER" && -f "$LSP_BIN" ]]; then
+    LEGACY_LSP_HASH="$(awk -F= '$1 == "yian-lsp" { print $2; exit }' "$MARKER")"
+    if [[ -n "$LEGACY_LSP_HASH" ]]; then
+        CURRENT_LSP_HASH="$(sha256sum "$LSP_BIN" | awk '{print $1}')"
+        if [[ "$CURRENT_LSP_HASH" != "$LEGACY_LSP_HASH" ]]; then
+            LEGACY_LSP_HASH=""
+        fi
+    fi
 fi
 
 STAGE_DIR="$(mktemp -d "${TMPDIR:-/tmp}/yian-native-install.XXXXXX")"
@@ -122,17 +139,8 @@ printf 'Building native anx with the new yianc binary...\n'
 run_source_anx "$STAGE_DIR/bin/yianc" build "$ROOT_DIR/bootstrap/anx" -O2
 install -m 0755 "$ROOT_DIR/bootstrap/anx/build/app" "$STAGE_DIR/bin/anx"
 
-printf 'Building native yian-lsp in raw host mode with the native anx and yianc binaries...\n'
-# Keep the long-lived editor host raw; fat metadata exhausts while analyzing compiler-sized workspaces.
-YIAN_ROOT="$ROOT_DIR" \
-YIAN_LIB="$ROOT_DIR/lib/src" \
-YIANC="$STAGE_DIR/bin/yianc" \
-    "$STAGE_DIR/bin/anx" build "$ROOT_DIR/bootstrap/lsp" -O2 --raw-pointers
-install -m 0755 "$ROOT_DIR/bootstrap/lsp/build/app" "$STAGE_DIR/bin/yian-lsp"
-
 "$STAGE_DIR/bin/yianc" --help >/dev/null
 "$STAGE_DIR/bin/anx" --help >/dev/null
-"$STAGE_DIR/bin/yian-lsp" --version >/dev/null
 
 cp -a "$ROOT_DIR/lib/src" "$STAGE_DIR/share/yian/lib/src"
 cp -a "$ROOT_DIR/runtime/src" "$STAGE_DIR/share/yian/runtime/src"
@@ -150,14 +158,13 @@ is_python_entrypoint() {
     grep -Fq -- "$import_line" "$path"
 }
 
-for command_name in yianc anx yian-lsp; do
+for command_name in yianc anx; do
     target="$BIN_DIR/$command_name"
     if [[ -e "$target" && ! -f "$MARKER" ]]; then
         import_line='from compiler.main import main'
-        case "$command_name" in
-            anx) import_line='from anx.main import main' ;;
-            yian-lsp) import_line='from lsp.main import main' ;;
-        esac
+        if [[ "$command_name" == "anx" ]]; then
+            import_line='from anx.main import main'
+        fi
         if ! is_python_entrypoint "$target" "$import_line"; then
             die "refusing to replace an unmanaged command: $target"
         fi
@@ -185,8 +192,19 @@ cp -a "$STAGE_DIR/share/yian" "$DATA_STAGE"
     printf 'yian-native-install-v1\n'
     sha256sum "$STAGE_DIR/bin/yianc" | awk '{print "yianc=" $1}'
     sha256sum "$STAGE_DIR/bin/anx" | awk '{print "anx=" $1}'
-    sha256sum "$STAGE_DIR/bin/yian-lsp" | awk '{print "yian-lsp=" $1}'
 } >"$DATA_STAGE/.native-install"
+
+if [[ -n "$LEGACY_LSP_HASH" && ! -f "$LSP_MARKER" ]]; then
+    mkdir -p "$LSP_DATA_DIR"
+    LSP_MARKER_STAGE="$LSP_DATA_DIR/.native-install.$$"
+    {
+        printf 'yian-lsp-install-v1\n'
+        "$LSP_BIN" --version
+        printf 'sha256=%s\n' "$LEGACY_LSP_HASH"
+    } >"$LSP_MARKER_STAGE"
+    mv "$LSP_MARKER_STAGE" "$LSP_MARKER"
+    printf 'Transferred the managed language server to %s\n' "$LSP_MARKER"
+fi
 
 DATA_BACKUP="$SHARE_DIR/.yian-native-backup.$$"
 if [[ -e "$DATA_DIR" ]]; then
@@ -201,14 +219,11 @@ fi
 
 install -m 0755 "$STAGE_DIR/bin/yianc" "$BIN_DIR/yianc"
 install -m 0755 "$STAGE_DIR/bin/anx" "$BIN_DIR/anx"
-install -m 0755 "$STAGE_DIR/bin/yian-lsp" "$BIN_DIR/yian-lsp"
 
 remove_python_entrypoint "$PYTHON_SCRIPTS_DIR/yianc" 'from compiler.main import main'
 remove_python_entrypoint "$PYTHON_SCRIPTS_DIR/anx" 'from anx.main import main'
-remove_python_entrypoint "$PYTHON_SCRIPTS_DIR/yian-lsp" 'from lsp.main import main'
 remove_python_entrypoint "$BIN_DIR/yianc" 'from compiler.main import main'
 remove_python_entrypoint "$BIN_DIR/anx" 'from anx.main import main'
-remove_python_entrypoint "$BIN_DIR/yian-lsp" 'from lsp.main import main'
 
 if [[ -e "$DATA_BACKUP" ]]; then
     rm -rf -- "$DATA_BACKUP"
@@ -216,10 +231,10 @@ fi
 DATA_BACKUP=""
 DATA_STAGE=""
 
-printf '\nInstalled native commands:\n  %s\n  %s\n  %s\n' "$BIN_DIR/yianc" "$BIN_DIR/anx" "$BIN_DIR/yian-lsp"
+printf '\nInstalled native commands:\n  %s\n  %s\n' "$BIN_DIR/yianc" "$BIN_DIR/anx"
 printf 'Installed resources:\n  %s\n' "$DATA_DIR"
 path_update_needed=0
-for command_name in yianc anx yian-lsp; do
+for command_name in yianc anx; do
     resolved="$(command -v "$command_name" 2>/dev/null || true)"
     if [[ "$resolved" != "$BIN_DIR/$command_name" ]]; then
         path_update_needed=1

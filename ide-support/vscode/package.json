@@ -55,7 +55,7 @@
                 "yian.languageServer.command": {
                     "type": "string",
                     "default": "yian-lsp",
-                    "markdownDescription": "Command that starts the YIAN language server. The default expects `yian-lsp` on `PATH`; set an absolute path when it is installed elsewhere (for example a conda environment's `bin` directory).",
+                    "markdownDescription": "Native command that starts the YIAN language server. The default expects `yian-lsp` on `PATH`; set the installed binary's absolute path when it is elsewhere.",
                     "scope": "machine-overridable"
                 },
                 "yian.languageServer.args": {
@@ -77,7 +77,7 @@
                         "ERROR"
                     ],
                     "default": "",
-                    "markdownDescription": "Log level passed to the language server as `--log-level`. Empty keeps the server's own default (`INFO`, or `$YIAN_LSP_LOG`). `DEBUG` also logs every JSON-RPC payload and analysis timing, which is what a bug report needs.",
+                    "markdownDescription": "Logging threshold passed to the native server as `--log-level`. Empty keeps its default (`INFO`, or `$YIAN_LSP_LOG`).",
                     "scope": "machine-overridable"
                 },
                 "yian.languageServer.logFile": {

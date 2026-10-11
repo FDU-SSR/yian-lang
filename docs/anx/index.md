@@ -19,12 +19,13 @@
 | [03](03.cli.md) | 命令行 | 七个子命令、选项、退出码、构建产物 |
 | [04](04.testing.md) | 项目测试 | `tests/` 布局、期望文件、用例怎么编译 |
 | [05](05.diagnostics.md) | 诊断目录 | `AX001`–`AX015` 的含义与产出方 |
-| [06](06.install.md) | 安装与环境 | `install.sh`、标准库定位、非 editable 安装 |
+| [06](06.install.md) | 安装与环境 | 原生 `yianc`/`anx` 工具链、独立 LSP 安装与共享资源 |
 
 ## 快速上手
 
 ```bash
-scripts/install.sh        # Install yianc,anx,yian-lsp into PATH.
+scripts/install.sh        # Install native yianc/anx and shared resources.
+PATH="$HOME/.local/bin:$PATH" scripts/install_lsp.sh --prefix "$HOME/.local"
 
 anx new demo              # Create a bin project skeleton.
 cd demo

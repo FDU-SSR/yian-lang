@@ -10,7 +10,7 @@ YIAN is a statically typed programming language with a Python compiler, a compil
 | Native compiler | installed `yianc`, `bootstrap/compiler/src/main.an` | Source analysis, CFG/LLVM lowering, native emission |
 | Python package manager | `python -m anx.main`, `anx/main.py` | Reference manifest validation, dependency graph, builds and package tests |
 | Native package manager | installed `anx`, `bootstrap/anx/src/main.an` | Native manifest validation, dependency graph, builds and package tests |
-| Language server | `yian-lsp`, `lsp/main.py` | Editor features backed by Python analysis |
+| Language server | `yian-lsp`, `lsp/src/main.an` | Native stdio LSP backed by the self-hosted compiler and package manager |
 | Standard library | `lib/src/` | Language-level containers, numeric operations, I/O and CLI APIs |
 | Runtime | `runtime/src/` | Allocation, runtime failures and Linux I/O support |
 
@@ -29,12 +29,11 @@ conda run --no-capture-output -n yian-env bash scripts/setup_llvm_toolchain.sh -
 
 `scripts/setup_llvm_toolchain.sh` installs llvmlite into the selected environment. `--with-clang-22` also installs system clang/LLVM packages and switches unversioned commands to 22; `--with-conda-clang` installs the tools into the conda environment. `--check` only reports. Native linking and package C-shim compilation select `YIAN_CC`, then `clang`, then `cc`. `runtime/build.py` uses `clang` and `llvm-ar` on PATH independently of `YIAN_CC`. LLVM consumer packages also validate their native toolchain requirements.
 
-`pyproject.toml` defines the Python packages, the `yian-lsp` console script and strict pyright scope. Its `lsp` extra supplies `pygls`; the compiler and Python package manager can be invoked as modules without console-script launchers. `requirements.txt` also contains benchmark and development dependencies, so it is not the minimal compiler dependency list.
+`pyproject.toml` defines the Python reference compiler and package-manager packages plus their strict pyright scope. The language server is the native YIAN package in `lsp/`, built and installed separately. `requirements.txt` also contains benchmark and development dependencies, so it is not the minimal compiler dependency list.
 
 ```bash
 conda run --no-capture-output -n yian-env bash scripts/install.sh --prefix "$HOME/.local" --python python
-# Install the optional language-server dependency when needed.
-conda run --no-capture-output -n yian-env python -m pip install -e '.[lsp]'
+PATH="$HOME/.local/bin:$PATH" scripts/install_lsp.sh --prefix "$HOME/.local"
 ```
 
 `scripts/install.sh` builds `bootstrap/compiler` with the selected Python reference compiler, then builds `bootstrap/anx` with the resulting native compiler. It installs `yianc`, `anx`, the standard library and runtime resources under the selected prefix. The installed commands do not need a Python environment or the source checkout at run time. The build step requires Python 3.12+, llvmlite 0.49+, LLVM 22 and a native C toolchain. `scripts/uninstall.sh --prefix PATH` removes the managed native installation; `--python PATH` also removes recognized legacy Python launchers.
@@ -120,7 +119,7 @@ lex
 
 Ordinary `sizeof` expressions retain the queried type identity through HIR and CFG; LLVM lowering supplies the size constant. Immediate compile-time size queries use `compiler/target_layout.py` to provide the emitted target's layout. Do not substitute the Python host's object sizes or infer aggregate layout in semantic passes.
 
-`compiler/analysis/session.py` is shared by native builds, analysis-only runs and LSP. Python sessions are reusable and start each analysis from source text. `DocumentStore` supplies in-memory overlays; results contain diagnostics, source snapshots, semantic facts and HIR. Editor callers can request syntax-only analysis or per-definition recovery. Native compilation uses strict failure and distinguishes all checked definitions from definitions selected for code generation.
+`compiler/analysis/session.py` serves Python compiler builds and analysis-only runs. The native language server consumes the corresponding editor-analysis interface in `bootstrap/compiler/`. Both compiler implementations accept in-memory document overlays and produce diagnostics and semantic query data; native compilation uses strict failure and distinguishes all checked definitions from definitions selected for code generation.
 
 ## Native compiler
 
@@ -189,7 +188,7 @@ conda run --no-capture-output -n yian-env python scripts/run_tests.py --implemen
 
 `basic` is the default suite. `-q` prints summaries, `-v` includes failure details, `-f` filters names, and `-x` includes each suite's experimental sources. `--implementation both` is the default and refreshes native binaries before testing; `python` and `native` are diagnostic selections. `--prefix` or `YIAN_INSTALL_PREFIX` selects the install location. `--no-run` uses `-t none` for standalone sources and `anx check` for package fixtures; the bootstrap suite checks packages instead of running their package tests.
 
-`basic` compiles standalone sources in fat and raw pointer modes; `safety` runs the fat-pointer safety regressions; `package` drives `package.anx` fixtures through their selected `anx` command in both pointer modes; `bootstrap` runs package-local tests for `bootstrap/compiler`, `bootstrap/json`, and `bootstrap/toml` in both modes. Each applicable suite runs once with Python `compiler.main`/`anx.main` and once with installed native `yianc`/`anx`. `tests/input/package/<fixture>.command` can select `build`, `check`, `test`, or `graph` with extra arguments such as `graph --json`. `scripts/run_safety_tests.py` is a wrapper for the safety suite and inherits the paired implementation mode.
+`basic` compiles standalone sources in fat and raw pointer modes; `safety` runs the fat-pointer safety regressions; `package` drives `package.anx` fixtures through their selected `anx` command in both pointer modes; `bootstrap` runs package-local tests for `bootstrap/compiler`, `bootstrap/json`, and `bootstrap/toml` in both modes. Each applicable suite runs once with Python `compiler.main`/`anx.main` and once with installed native `yianc`/`anx`. `tests/input/package/<fixture>.command` can select `build`, `check`, `test`, or `graph` with extra arguments such as `graph --json`. `scripts/run_safety_tests.py` is a wrapper for the safety suite and inherits the paired implementation mode. The LSP protocol tests and measurements start the installed native `yian-lsp`; refresh it separately with `scripts/install_lsp.sh`.
 
 Sources are under `tests/<suite>/`; expected results are under `tests/output/<suite>/`. A `.err.an` source must fail compilation, and its `.ans` file contains the required diagnostic substring. For a normal test, `.ans` contains expected stdout; a first line of `Exit code <N>` specifies an expected nonzero exit code. A directory test — a multi-file standalone test or a package fixture — uses `<dir>.ans`, or `<dir>.err.ans` for an expected failure. `tests/input/<suite>/<name>.args` and `.stdin` provide process arguments and standard input.
 
@@ -201,7 +200,7 @@ Test data lives under `tests/`; the runner and other Python tooling live under `
 
 ```bash
 # Python syntax and strict type checking.
-conda run --no-capture-output -n yian-env python -m compileall -q compiler anx lsp scripts
+conda run --no-capture-output -n yian-env python -m compileall -q compiler anx scripts
 conda run --no-capture-output -n yian-env pyright
 
 # Paired Python/native basic, safety, package and bootstrap package tests.
@@ -245,7 +244,7 @@ For compiler or package-manager changes, use the paired runner so the same relev
 - `bootstrap/anx/` is the native package manager, with manifest loading, project graph and paths, build/test/format drivers, and diagnostics. It uses the standard-library process API to invoke the selected compiler and native tools.
 - `bootstrap/ffi/` and `bootstrap/llvm/` are FFI consumer packages; the LLVM package uses LLVM 22 C API bindings and declares its C shim and link components through `[native.llvm]`.
 - `runtime/src/{alloc,runtime,io}.c` provide allocation, runtime failures and synchronous Linux I/O. `runtime/include/` declares the ABI; `compiler/runtime_lib.py` builds runtime objects/archives for Python-generated programs.
-- `lsp/` implements stdio JSON-RPC through `pygls`, document/workspace coordination, diagnostics, semantic tokens, formatting, completion, navigation and refactoring. Source analysis and semantic queries remain in `compiler/analysis/`. stdout belongs to the protocol; logs go to stderr or the configured file.
+- `lsp/` is the native YIAN LSP package. It owns stdio JSON-RPC, document/workspace coordination, diagnostics, semantic tokens, formatting, completion, navigation and refactoring. It depends on `bootstrap/compiler/`, `bootstrap/anx/`, the JSON/RPC packages and shared standard-library resources. stdout belongs to the protocol; logs go to stderr or the configured file.
 - `ide-support/` contains the VS Code extension. `bench/` contains benchmark sources, specifications, runners and result data. Check algorithmic equivalence before comparing C/raw/fat timings; retain the environment and commit context of recorded results.
 - `docs/grammar/`, `docs/manual/`, and `docs/anx/` contain language and tooling documentation; `mkdocs_cn.yml` configures the documentation site. `licenses/` contains license texts.
 
@@ -267,8 +266,8 @@ Assignment, argument passing, and return use shallow value copies. They do not i
 
 ## Conventions and gotchas
 
-- Pyright strict checking covers `compiler/`, `anx/`, and `lsp/`; avoid `Any`, `object`, and `hasattr()`. Keep imports at the top of new files and preserve the existing handler-map dispatch style in the type checker and LLVM translator.
-- Python private names use a **double** leading underscore: module-level functions and constants (`__helper`, `__CONSTANT`), methods (`self.__drain()`), nested helpers, and instance attributes. Use a **single** underscore only where the double form breaks the reference at run time: a name written as `__name` inside a class body is rewritten to `_ClassName__name`, so a *module-level* private that a class body mentions (for example `_SEP` in `compiler/utils/log.py`, `_is_within` in `compiler/analysis/source_provenance.py`) must keep one underscore. A private defined *and* used inside the same class body is `__name` like any other. Audit with `rg -n --glob '*.py' 'def _[^_]|^_[A-Za-z]|(self|cls)\._[^_]' compiler anx lsp scripts`; review matches against the name-mangling exception.
+- Pyright strict checking covers the Python `compiler/` and `anx/` packages; avoid `Any`, `object`, and `hasattr()`. Keep imports at the top of new files and preserve the existing handler-map dispatch style in the type checker and LLVM translator.
+- Python private names use a **double** leading underscore: module-level functions and constants (`__helper`, `__CONSTANT`), methods (`self.__drain()`), nested helpers, and instance attributes. Use a **single** underscore only where the double form breaks the reference at run time: a name written as `__name` inside a class body is rewritten to `_ClassName__name`, so a *module-level* private that a class body mentions (for example `_SEP` in `compiler/utils/log.py`, `_is_within` in `compiler/analysis/source_provenance.py`) must keep one underscore. A private defined *and* used inside the same class body is `__name` like any other. Audit with `rg -n --glob '*.py' 'def _[^_]|^_[A-Za-z]|(self|cls)\._[^_]' compiler anx scripts`; review matches against the name-mangling exception.
 - Organize modules by responsibility and dependency direction. Split long functions at meaningful interfaces, use guard clauses where they reduce nesting, and separate small logical blocks with blank lines. Comments explain ownership, prerequisites, non-obvious choices and algorithmic boundaries rather than restating individual statements.
 - Keep user-program errors distinct from internal invariant failures. Preserve source identity and associated locations through errors; detach each location to owned path data before destroying a session whose diagnostics must outlive it. Never infer analysis error categories from message text outside the frontend compatibility boundary.
 - `bak/` is ignored legacy material and `.conda/` is a local environment; do not modify them without explicit authorization. `build/` directories contain generated compiler/package/test output: regenerate artifacts through the relevant tools, do not hand-edit or commit them as source changes.
