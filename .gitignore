@@ -353,6 +353,7 @@ target
 
 .claude/*
 .omo/*
+/.agent/plans/
 a.out
 opencode.json
 
