@@ -23,8 +23,8 @@ yianc lib/src tests/basic/type/alias/imported_scope/types.an tests/basic/type/al
 
 ### 1.1 工具链要求
 
-编译器源码使用 Python 3.12 的泛型函数语法，需要 Python 3.12+。安装元数据和脚本的
-最低版本检查是 3.11；工具链运行要求以源码语法为准。
+编译器源码使用 Python 3.12 的泛型函数语法，需要 Python 3.12+。安装元数据和安装脚本的
+最低版本要求均为 Python 3.12。
 
 编译器依赖 **LLVM 22**：`llvmlite 0.49`（自带 LLVM 22）、`clang` 22，以及 LLVM 工具（`opt`、`llvm-dis`、`llvm-link`、`llvm-config`）。
 
