@@ -3,8 +3,8 @@
 `anx` 是 YIAN 的项目与包管理工具：创建项目、按包名解析导入、构建/运行/检查、跑项目测试、
 格式化源码、输出依赖图。
 
-仓库同时提供需设置 `PYTHONPATH=python` 的 Python 参考实现 `python -m anx.main` 和从 `bootstrap/anx/` 构建的原生 `anx`；两者保持相同的
-用户命令与包图契约。安装方式见[安装与环境](06.install.md)。
+`anx` 是以 YIAN 编写的原生包管理器，源码位于 `bootstrap/anx/`。它通过 v2 package map 与 Python reference
+compiler、native compiler 交互。安装方式见[安装与环境](06.install.md)。
 
 - 语言语法与模块系统见[语言参考](../grammar/index.md)（其中 `13.modules.md` 讲 `import` 语法）
 - 编译器内部实现见[开发手册](../manual/index.md)（编译器 01–19 章）
@@ -21,7 +21,7 @@
 | [02](02.dependencies.md) | 依赖 | 路径依赖、dev 依赖、可见性、依赖诊断 |
 | [03](03.cli.md) | 命令行 | 七个子命令、选项、退出码、构建产物 |
 | [04](04.testing.md) | 项目测试 | `tests/` 布局、期望文件、用例怎么编译 |
-| [05](05.diagnostics.md) | 诊断目录 | `AX001`–`AX015` 的含义与产出方 |
+| [05](05.diagnostics.md) | 诊断目录 | 当前 anx `AX` 码与 compiler `E` 码的边界 |
 | [06](06.install.md) | 安装与环境 | 原生 `yianc`/`anx` 工具链、独立 LSP 安装与共享资源 |
 
 ## 快速上手

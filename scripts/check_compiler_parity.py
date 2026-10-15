@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Compare compiler behavior in isolated work directories without invoking anx."""
+"""Compare compiler behavior; native anx supplies metadata for package fixtures."""
 
 from __future__ import annotations
 
@@ -12,6 +12,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TypeAlias, cast
@@ -20,10 +21,20 @@ __ROOT = Path(__file__).resolve().parents[1]
 __PYTHON_ROOT = __ROOT / "python"
 sys.path.insert(0, str(__PYTHON_ROOT))
 
-from anx.project import load
 from run_tests import discover_tests
+from yianc.analysis.package_map import PackageMap
 
 Json: TypeAlias = None | bool | int | float | str | list["Json"] | dict[str, "Json"]
+FIXTURE_DEPENDENCIES = {
+    "tests/package/ffi_llvm": ("bootstrap/llvm", "bootstrap/ffi"),
+}
+
+
+@dataclass(frozen=True)
+class FixtureMetadata:
+    package_map: dict[str, Json]
+    source_files: tuple[str, ...]
+    capture_argv: tuple[str, ...]
 
 
 @dataclass(frozen=True)
@@ -55,6 +66,7 @@ class Case:
 class __Arguments(argparse.Namespace):
     reference: str
     bootstrap: str
+    anx: str | None
     build_mode: str
     groups: str
     filter: str
@@ -169,14 +181,127 @@ def __cases() -> list[Case]:
     return cases
 
 
-def __normalize(value: Json, directory: Path) -> Json:
+def __normalize(value: Json, directory: Path, stdlib_root: Path) -> Json:
     if isinstance(value, str):
-        return value.replace(str(directory), "<work>")
+        return value.replace(str(stdlib_root), "<stdlib>").replace(str(directory), "<work>")
     if isinstance(value, list):
-        return [__normalize(item, directory) for item in value]
+        return [__normalize(item, directory, stdlib_root) for item in value]
     if isinstance(value, dict):
-        return {key: __normalize(item, directory) for key, item in value.items()}
+        return {key: __normalize(item, directory, stdlib_root) for key, item in value.items()}
     return value
+
+
+def __capture_native_package_metadata(
+    anx: list[str],
+    fixture: str,
+    directory: Path,
+    root_source_root: Path,
+    root_inputs: Mapping[Path, Path],
+    stdlib_root: Path,
+) -> FixtureMetadata:
+    """Capture the v2 map and compiler inputs for the one LLVM package fixture.
+
+    The native anx check runs against isolated copies with a capture-only
+    compiler. The selected fixture source is then relocated into the parity
+    work directory; dependency and shim paths stay inside the isolated copy.
+    """
+    dependencies = FIXTURE_DEPENDENCIES.get(fixture)
+    if dependencies is None:
+        raise RuntimeError(f"no isolated native anx fixture recipe for {fixture}")
+
+    metadata_root = directory / "native-anx-metadata"
+    project_root = metadata_root / fixture
+    shutil.copytree(
+        __ROOT / fixture,
+        project_root,
+        ignore=shutil.ignore_patterns("build", "__pycache__", ".pytest_cache"),
+    )
+    for dependency in dependencies:
+        shutil.copytree(
+            __ROOT / dependency,
+            metadata_root / dependency,
+            ignore=shutil.ignore_patterns("build", "__pycache__", ".pytest_cache"),
+        )
+
+    capture_path = directory / "native-anx-capture.json"
+    capture_launcher = directory / "native-anx-capture"
+    capture_launcher.write_text(
+        f"#!{sys.executable}\n"
+        "import json, os, sys\n"
+        "with open(os.environ['ANX_CAPTURE_RECORD'], 'w', encoding='utf-8') as stream:\n"
+        "    json.dump({'argv': sys.argv[1:], 'cwd': os.getcwd()}, stream)\n",
+        encoding="utf-8",
+    )
+    capture_launcher.chmod(0o755)
+
+    environment = os.environ.copy()
+    environment["YIAN_ROOT"] = str(__ROOT)
+    environment["YIAN_LIB"] = str(stdlib_root.resolve())
+    environment["YIANC"] = str(capture_launcher)
+    environment["ANX_CAPTURE_RECORD"] = str(capture_path)
+    process = subprocess.run(
+        [*anx, "check", str(project_root)],
+        cwd=directory,
+        env=environment,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if process.returncode != 0:
+        raise RuntimeError(f"native anx metadata check failed: {process.stdout}\n{process.stderr}")
+
+    map_path = project_root / "build" / "pkg.json"
+    if not map_path.is_file() or not capture_path.is_file():
+        raise RuntimeError("native anx metadata check did not produce a package map and capture record")
+    package_map = cast(dict[str, Json], json.loads(map_path.read_text(encoding="utf-8")))
+    captured = cast(dict[str, Json], json.loads(capture_path.read_text(encoding="utf-8")))
+    capture_argv = cast(list[str], captured.get("argv", []))
+    if capture_argv[:4] != ["--packages", str(map_path), "-t", "none"]:
+        raise RuntimeError("native anx did not invoke the capture compiler with a metadata-only check")
+
+    compiler_inputs = [value for value in capture_argv[4:] if value.endswith(".an")]
+    metadata_source_root = (project_root / "src").resolve()
+    root_package = cast(str, package_map.get("root", ""))
+    package_table = cast(dict[str, Json], package_map.get("packages", {}))
+    root_spec = cast(dict[str, Json], package_table.get(root_package, {}))
+    raw_entry = root_spec.get("entry")
+    if not isinstance(raw_entry, str):
+        raise RuntimeError("native anx package map omitted the fixture entry")
+    relative_entry = Path(raw_entry).resolve().relative_to(metadata_source_root)
+    root_source_root = root_source_root.resolve()
+    if not root_source_root.is_dir():
+        raise RuntimeError(f"relocated fixture source root is missing: {root_source_root}")
+    root_spec["sourceRoot"] = str(root_source_root)
+    root_spec["entry"] = str((root_source_root / relative_entry).resolve())
+
+    relocated_inputs: list[str] = []
+    matched_root_inputs: set[Path] = set()
+    for source in compiler_inputs:
+        source_path = Path(source).resolve()
+        try:
+            relative = source_path.relative_to(metadata_source_root)
+        except ValueError:
+            relocated_inputs.append(str(source_path))
+            continue
+        destination = root_inputs.get(relative)
+        if destination is None or not destination.is_file():
+            raise RuntimeError(f"no parity input corresponds to fixture source {relative}")
+        matched_root_inputs.add(relative)
+        relocated_inputs.append(str(destination.resolve()))
+    if matched_root_inputs != set(root_inputs):
+        raise RuntimeError("native anx source selection does not match the parity fixture inputs")
+    if not compiler_inputs or any(not Path(source).is_file() for source in relocated_inputs):
+        raise RuntimeError("native anx produced an empty or incomplete compiler input list")
+
+    parsed_map = PackageMap.from_document(package_map, source="native anx fixture metadata")
+    for package in parsed_map.packages.values():
+        if package.native_llvm is not None and any(not source.is_file() for source in package.native_llvm.sources):
+            raise RuntimeError(f"native anx metadata references a missing LLVM shim in {package.name}")
+    return FixtureMetadata(
+        package_map=package_map,
+        source_files=tuple(relocated_inputs),
+        capture_argv=tuple(capture_argv),
+    )
 
 
 def __run(
@@ -185,6 +310,7 @@ def __run(
     directory: Path,
     raw: bool,
     default_library: Path,
+    anx: list[str] | None,
 ) -> dict[str, Json]:
     sources: list[str] = []
     for path, contents in case.preexisting:
@@ -214,25 +340,29 @@ def __run(
         (directory / "packages.json").write_text(json.dumps(mapping))
         arguments.extend(("--packages", str(directory / "packages.json")))
     if case.fixture:
-        # anx supplies manifest data only; both compilation and native linking are invoked directly.
-        loaded = load(__ROOT / case.fixture, std_root=__ROOT / "lib/src")
-        if loaded.project is None:
-            raise RuntimeError(f"invalid existing package fixture: {case.fixture}")
-        mapping = cast(dict[str, Json], json.loads(json.dumps(loaded.project.compiler_package_map())))
-        packages = cast(dict[str, Json], mapping["packages"])
-        root = cast(str, mapping["root"])
-        entry = cast(dict[str, Json], packages[root])
-        entry["sourceRoot"] = str(Path(sources[0]).parent)
-        entry["entry"] = sources[0]
-        for name, value in packages.items():
-            if name not in (root, "std"):
-                dependency = cast(dict[str, Json], value)
-                sources.append(cast(str, dependency["sourceRoot"]))
+        if anx is None:
+            raise RuntimeError(f"native anx is required for package fixture {case.fixture}")
+        fixture_source_root = Path(case.fixture) / "src"
+        root_inputs = {
+            Path(source).relative_to(fixture_source_root): directory / case.source_prefix / source
+            for source in case.sources
+        }
+        relocated_source_root = directory / case.source_prefix / fixture_source_root
+        metadata = __capture_native_package_metadata(
+            anx,
+            case.fixture,
+            directory,
+            relocated_source_root,
+            root_inputs,
+            default_library,
+        )
+        mapping = metadata.package_map
+        sources = list(metadata.source_files)
         (directory / "packages.json").write_text(json.dumps(mapping))
         arguments.extend(("--packages", str(directory / "packages.json")))
     if raw:
         arguments.append("--raw-pointers")
-    if case.standard_library:
+    if case.standard_library and not case.fixture:
         environment_values = dict(case.environment)
         library_root = __ROOT / "lib/src"
         if environment_values.get("YIAN_LIB") == "" and environment_values.get("YIAN_ROOT") == "":
@@ -245,7 +375,7 @@ def __run(
     for name in ("YIAN_LIB", "YIAN_ROOT", "YIAN_LOG", "YIAN_LOG_FILE", "YIANC"):
         environment.pop(name, None)
     environment["YIAN_ROOT"] = str(__ROOT)
-    environment["YIAN_LIB"] = str(__ROOT / "lib/src")
+    environment["YIAN_LIB"] = str(default_library if case.fixture else __ROOT / "lib/src")
     source_path = str(__PYTHON_ROOT)
     if environment.get("PYTHONPATH"):
         source_path += os.pathsep + environment["PYTHONPATH"]
@@ -298,13 +428,14 @@ def __run(
             result["run"] = {"status": run.returncode, "stdout": run.stdout, "stderr": run.stderr}
         else:
             result["run"] = "missing executable"
-    return {"command": [str(value) for value in command], "observation": __normalize(result, directory), "raw_stdout": process.stdout, "raw_stderr": process.stderr}
+    return {"command": [str(value) for value in command], "observation": __normalize(result, directory, default_library), "raw_stdout": process.stdout, "raw_stderr": process.stderr}
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--reference", default="python", help="Python module (default) or compiler executable path.")
     parser.add_argument("--bootstrap", required=True)
+    parser.add_argument("--anx", help="Native anx executable used only to load package-fixture metadata.")
     parser.add_argument("--build-mode", choices=("fat", "raw", "unspecified"), default="unspecified")
     parser.add_argument("--groups", default="analyze,cli,frontend,format,native,observability")
     parser.add_argument("--filter", default="")
@@ -360,6 +491,14 @@ def main() -> int:
         cases = [case for case in cases if case.name in failed_names]
     if not cases:
         parser.error("no matching cases; an empty selection is not a parity check")
+    anx_command: list[str] | None = None
+    if any(case.fixture for case in cases):
+        if not args.anx:
+            parser.error("--anx PATH is required when the selection includes a package fixture")
+        anx_path = shutil.which(args.anx)
+        if anx_path is None:
+            parser.error(f"native anx not found: {args.anx}")
+        anx_command = [str(Path(anx_path).resolve())]
     revision = subprocess.run(["git", "rev-parse", "HEAD"], cwd=__ROOT, text=True, capture_output=True).stdout.strip()
     changes = subprocess.run(["git", "status", "--porcelain"], cwd=__ROOT, text=True, capture_output=True).stdout
     compiler_hashes = [
@@ -388,8 +527,8 @@ def main() -> int:
                 directories = [Path(temporary) / "reference", Path(temporary) / "bootstrap"]
                 for directory in directories:
                     directory.mkdir()
-                expected = __run(reference, case, directories[0], raw, __ROOT / "lib/src")
-                actual = __run(bootstrap, case, directories[1], raw, bootstrap_library)
+                expected = __run(reference, case, directories[0], raw, __ROOT / "lib/src", anx_command)
+                actual = __run(bootstrap, case, directories[1], raw, bootstrap_library, anx_command)
                 equal = expected["observation"] == actual["observation"]
                 if case.expected_error:
                     observations = [cast(dict[str, Json], item["observation"]) for item in (expected, actual)]

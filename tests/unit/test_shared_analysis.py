@@ -4,15 +4,24 @@ from __future__ import annotations
 
 import json
 import os
+import shlex
 import shutil
 import subprocess
 import sys
 import tempfile
 import unittest
+from contextlib import redirect_stderr
+from io import StringIO
 from pathlib import Path
 from unittest.mock import patch
 
-from anx.project import default_stdlib_root as anx_default_stdlib_root
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts"))
+
+import check_compiler_parity
+import run_tests
+make_toolchain = getattr(run_tests, "__make_toolchain")
+require_native_anx = getattr(run_tests, "__require_native_anx")
+capture_native_package_metadata = getattr(check_compiler_parity, "__capture_native_package_metadata")
 from yianc.analysis.session import AnalysisSession
 from yianc.analysis.documents import Document, DocumentStore
 from yianc.analysis.editor import EditorEngine, EditorMode, FrozenInputs
@@ -23,6 +32,7 @@ from yianc.analysis.queries.navigation import Navigator
 from yianc.analysis.queries.refactor import rename
 from yianc.analysis.queries.semantic import SemanticKind, SemanticModifier
 from yianc.analysis.source_provenance import build_source_trust, resolve_stdlib_root
+from yianc.analysis.package_map import PackageMap
 from yianc.target_layout import type_size_provider
 
 
@@ -36,7 +46,6 @@ class SharedAnalysisTests(unittest.TestCase):
         alternate_lib = alternate / "custom stdlib"
         with patch.dict(os.environ, {"YIAN_LIB": "", "YIAN_ROOT": ""}, clear=True):
             self.assertEqual(resolve_stdlib_root(), STDLIB.resolve())
-            self.assertEqual(anx_default_stdlib_root(), STDLIB)
             self.assertEqual(resolve_stdlib_root(ROOT), (ROOT / "lib" / "src").resolve())
 
         with patch.dict(os.environ, {"YIAN_LIB": str(alternate_lib), "YIAN_ROOT": str(alternate)}, clear=True):
@@ -65,46 +74,142 @@ class SharedAnalysisTests(unittest.TestCase):
             self.assertFalse(trust.allows_restricted_ops(similar_input))
             self.assertFalse(trust.allows_restricted_ops(similar_test))
 
-    def test_anx_project_default_root_is_lazy_and_does_not_import_yianc(self) -> None:
-        with tempfile.TemporaryDirectory(prefix="anx project cwd ") as directory:
-            environment = os.environ.copy()
-            environment["PYTHONPATH"] = str(ROOT / "python")
-            environment.pop("YIAN_ROOT", None)
-            environment.pop("YIAN_LIB", None)
-            process = subprocess.run(
-                [sys.executable, "-c", "import sys, anx.project; print('yianc' in sys.modules)"],
-                cwd=directory,
-                env=environment,
-                capture_output=True,
-                text=True,
-                check=False,
-            )
-            self.assertEqual(process.returncode, 0, process.stderr)
-            self.assertEqual(process.stdout.strip(), "False")
+    def test_toolchain_selects_native_anx_for_both_compilers(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="toolchain path with space ") as temporary:
+            root = Path(temporary)
+            native_bin = root / "native prefix" / "bin"
+            reference_launcher = root / "python reference" / "yianc"
+            with patch.dict(os.environ, {"PATH": "/controlled/path", "PYTHONPATH": "/external/python"}, clear=True):
+                python_toolchain = make_toolchain("python", native_bin, reference_launcher)
+                native_toolchain = make_toolchain("native", native_bin, reference_launcher)
 
-    def test_anx_fallback_compiler_imports_checkout_from_external_cwd(self) -> None:
-        with tempfile.TemporaryDirectory(prefix="源码 checkout 外部 cwd ") as directory:
-            external_cwd = Path(directory)
-            project = external_cwd / "project"
+            self.assertEqual(python_toolchain.anx, (str(native_bin / "anx"),))
+            self.assertEqual(native_toolchain.anx, python_toolchain.anx)
+            self.assertEqual(python_toolchain.compiler, (sys.executable, "-m", "yianc.main"))
+            self.assertEqual(native_toolchain.compiler, (str(native_bin / "yianc"),))
+            self.assertEqual(python_toolchain.environment["YIANC"], str(reference_launcher))
+            self.assertEqual(native_toolchain.environment["YIANC"], str(native_bin / "yianc"))
+            self.assertEqual(python_toolchain.environment["PATH"].split(os.pathsep)[0], str(reference_launcher.parent))
+            self.assertEqual(native_toolchain.environment["PATH"].split(os.pathsep)[0], str(native_bin))
+            self.assertEqual(python_toolchain.environment["YIAN_ROOT"], str(ROOT))
+            self.assertEqual(python_toolchain.environment["YIAN_LIB"], str(STDLIB))
+
+            missing_anx = native_bin / "anx"
+            with redirect_stderr(StringIO()):
+                self.assertTrue(require_native_anx(["basic"], missing_anx))
+                self.assertFalse(require_native_anx(["package"], missing_anx))
+                self.assertFalse(require_native_anx(["bootstrap"], missing_anx))
+            native_bin.mkdir(parents=True)
+            missing_anx.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+            missing_anx.chmod(0o755)
+            self.assertTrue(require_native_anx(["package"], missing_anx))
+
+    def test_compiler_parity_loads_package_metadata_with_native_anx(self) -> None:
+        prefix_value = os.environ.get("YIAN_INSTALL_PREFIX")
+        self.assertTrue(prefix_value, "YIAN_INSTALL_PREFIX must point at a current native toolchain")
+        native_anx = Path(prefix_value) / "bin" / "anx"
+        self.assertTrue(native_anx.is_file(), native_anx)
+        fixture = "tests/package/ffi_llvm"
+
+        with tempfile.TemporaryDirectory(prefix="compiler metadata space ") as temporary:
+            directory = Path(temporary)
+            root_source_root = directory / "relocated fixture" / "src"
+            root_source_root.mkdir(parents=True)
+            root_source = root_source_root / "main.an"
+            shutil.copyfile(ROOT / fixture / "src" / "main.an", root_source)
+            fixture_source_hash = (ROOT / fixture / "src" / "main.an").read_bytes()
+            metadata = capture_native_package_metadata(
+                [str(native_anx)],
+                fixture,
+                directory,
+                root_source_root,
+                {Path("main.an"): root_source},
+                STDLIB,
+            )
+
+            parsed = PackageMap.from_document(metadata.package_map, source="unit metadata probe")
+            self.assertEqual(parsed.root, "ffi_llvm_test")
+            root_package = parsed.packages["ffi_llvm_test"]
+            self.assertEqual(root_package.source_root, root_source_root.resolve())
+            self.assertEqual(root_package.entry, root_source.resolve())
+            self.assertIn("llvm", root_package.dependencies)
+            self.assertTrue(parsed.packages["llvm"].ffi)
+            self.assertTrue(parsed.packages["ffi"].ffi)
+            llvm = parsed.packages["llvm"].native_llvm
+            self.assertIsNotNone(llvm)
+            self.assertEqual(llvm.major, 22)
+            self.assertTrue(llvm.components)
+            self.assertEqual(len(llvm.sources), 1)
+            self.assertTrue(llvm.sources[0].is_file())
+            self.assertEqual(parsed.packages["std"].source_root, STDLIB.resolve())
+            self.assertIn(str(root_source.resolve()), metadata.source_files)
+            self.assertTrue(all(Path(source).is_file() for source in metadata.source_files))
+            self.assertEqual(metadata.capture_argv[:4], (
+                "--packages",
+                str(directory / "native-anx-metadata" / fixture / "build" / "pkg.json"),
+                "-t",
+                "none",
+            ))
+            self.assertNotIn("-o", metadata.capture_argv)
+            self.assertEqual((ROOT / fixture / "src" / "main.an").read_bytes(), fixture_source_hash)
+
+    def test_native_anx_drives_both_compilers_from_external_cwd(self) -> None:
+        prefix_value = os.environ.get("YIAN_INSTALL_PREFIX")
+        self.assertTrue(prefix_value, "YIAN_INSTALL_PREFIX must point at a current native toolchain")
+        native_bin = Path(prefix_value) / "bin"
+        native_anx = native_bin / "anx"
+        native_compiler = native_bin / "yianc"
+        self.assertTrue(native_anx.is_file(), native_anx)
+        self.assertTrue(native_compiler.is_file(), native_compiler)
+
+        with tempfile.TemporaryDirectory(prefix="源码 compiler 外部 cwd ") as temporary:
+            external_cwd = Path(temporary)
+            project = external_cwd / "package path 中文"
             shutil.copytree(
                 ROOT / "tests" / "package" / "basic",
                 project,
                 ignore=shutil.ignore_patterns("build", "__pycache__"),
             )
-            environment = os.environ.copy()
-            environment["PATH"] = "/usr/bin:/bin"
-            environment["PYTHONPATH"] = str(ROOT / "python")
-            for name in ("YIAN_ROOT", "YIAN_LIB", "YIANC"):
-                environment.pop(name, None)
-            process = subprocess.run(
-                [sys.executable, "-m", "anx.main", "check", str(project)],
-                cwd=external_cwd,
-                env=environment,
-                capture_output=True,
-                text=True,
-                check=False,
+            record_path = external_cwd / "compiler selections.log"
+            python_launcher = external_cwd / "python compiler wrapper"
+            python_launcher.write_text(
+                "#!/usr/bin/env bash\n"
+                f"printf 'python\\n' >> {shlex.quote(str(record_path))}\n"
+                f"exec {shlex.quote(sys.executable)} -m yianc.main \"$@\"\n",
+                encoding="utf-8",
             )
-            self.assertEqual(process.returncode, 0, f"{process.stdout}\n{process.stderr}")
+            python_launcher.chmod(0o755)
+            native_launcher = external_cwd / "native compiler wrapper"
+            native_launcher.write_text(
+                "#!/usr/bin/env bash\n"
+                f"printf 'native\\n' >> {shlex.quote(str(record_path))}\n"
+                f"exec {shlex.quote(str(native_compiler))} \"$@\"\n",
+                encoding="utf-8",
+            )
+            native_launcher.chmod(0o755)
+
+            base_environment = os.environ.copy()
+            base_environment["PYTHONPATH"] = str(ROOT / "python")
+            base_environment["YIAN_ROOT"] = str(ROOT)
+            base_environment["YIAN_LIB"] = str(STDLIB)
+            base_environment["YIANC_RECORD"] = str(record_path)
+            for label, compiler_wrapper in (("python", python_launcher), ("native", native_launcher)):
+                environment = base_environment.copy()
+                environment["YIANC"] = str(compiler_wrapper)
+                process = subprocess.run(
+                    [str(native_anx), "check", str(project)],
+                    cwd=external_cwd,
+                    env=environment,
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                )
+                self.assertEqual(process.returncode, 0, f"{label}: {process.stdout}\n{process.stderr}")
+                package_map = json.loads((project / "build" / "pkg.json").read_text(encoding="utf-8"))
+                self.assertEqual(package_map["format"], 2)
+                self.assertIn("hello", package_map["root"])
+
+            self.assertEqual(record_path.read_text(encoding="utf-8").splitlines(), ["python", "native"])
 
     def test_python_and_native_roots_match_from_unicode_external_cwd(self) -> None:
         prefix_value = os.environ.get("YIAN_INSTALL_PREFIX")

@@ -73,10 +73,10 @@ class PackageMap:
     def from_document(cls, raw: object, *, source: str) -> PackageMap:
         """Validate an already-parsed v2 document.
 
-        ``project.compiler_package_map()`` produces exactly this payload, so the
-        language server can hand a project model straight to the analysis session
-        without writing and re-reading a JSON file.  *source* names the origin in
-        error messages.
+        Python compiler clients can validate an already-parsed payload without
+        writing a file. The native language server builds its map with the
+        native anx writer and validates it with the native compiler loader.
+        *source* names the origin in error messages.
         """
         data = _as_table(raw)
         if data is None:

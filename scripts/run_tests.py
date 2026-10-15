@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """Run the YIAN test suites.
 
-The repository suites share one runner and run against both yianc/package
-manager implementations by default. Native execution refreshes the installed
+The repository suites share one runner and run against both compiler
+implementations by default. Package and bootstrap cases use the same installed
+native ``anx`` for either compiler. Native execution refreshes the installed
 binaries through ``scripts/install.sh`` before starting:
 
 - ``basic``   — standalone compilation of one or more .an files, each run
@@ -74,7 +75,7 @@ BUILD_DIR = ROOT_DIR / "build"
 
 @dataclass(frozen=True)
 class Toolchain:
-    """One matched compiler and package-manager implementation."""
+    """One selected compiler and the shared native package manager."""
 
     name: str
     compiler: tuple[str, ...]
@@ -680,7 +681,7 @@ def run_package_test(
     run: bool,
     compile_only: bool,
 ) -> TestResult:
-    """Drive a package fixture through anx, then run its executable.
+    """Drive a package fixture through native anx, then run its executable.
 
     The subcommand defaults to ``build`` (or ``check`` under ``--no-run``); a
     fixture may override it — for example a ``lib`` root can only be checked,
@@ -896,7 +897,7 @@ def __indent(text: str, prefix: str) -> str:
 # ---------------------------------------------------------------------------
 
 def __run_bootstrap_suite(args: argparse.Namespace, toolchain: Toolchain) -> int:
-    """Run the existing bootstrap package tests through the selected anx stack."""
+    """Run the existing bootstrap package tests through the shared native anx."""
     selected: list[TestCase] = []
     command = "check" if args.no_run else "test"
     for package in BOOTSTRAP_PACKAGES:
@@ -1058,6 +1059,20 @@ def __refresh_native(prefix: Path) -> bool:
     return process.returncode == 0
 
 
+def __require_native_anx(suites: tuple[str, ...] | list[str], anx_binary: Path) -> bool:
+    """Require an existing native anx only for package-oriented suites."""
+    if not any(suite in ("package", "bootstrap") for suite in suites):
+        return True
+    if anx_binary.is_file() and os.access(anx_binary, os.X_OK):
+        return True
+    print(
+        f"error: package/bootstrap suites require native anx at {anx_binary}; "
+        f"install it with scripts/install.sh --prefix {shlex.quote(str(anx_binary.parent.parent))}",
+        file=sys.stderr,
+    )
+    return False
+
+
 def __make_toolchain(name: str, native_bin: Path, reference_launcher: Path) -> Toolchain:
     environment = os.environ.copy()
     for variable in ("YIANC", "YIAN_ROOT", "YIAN_LIB"):
@@ -1066,21 +1081,21 @@ def __make_toolchain(name: str, native_bin: Path, reference_launcher: Path) -> T
     # Give both implementations the same explicit source and trust roots.
     environment["YIAN_ROOT"] = str(ROOT_DIR)
     environment["YIAN_LIB"] = str(LIB_DIR)
+    anx = native_bin / "anx"
 
     if name == "python":
-        # Package commands and nested CLI checks use the same reference compiler.
+        # Package commands use native anx with the selected Python compiler.
         environment["YIANC"] = str(reference_launcher)
         environment["PATH"] = str(reference_launcher.parent) + os.pathsep + environment.get("PATH", "")
         environment["PYTHONPATH"] = str(ROOT_DIR / "python") + os.pathsep + environment.get("PYTHONPATH", "")
         return Toolchain(
             name="python",
             compiler=(sys.executable, "-m", "yianc.main"),
-            anx=(sys.executable, "-m", "anx.main"),
+            anx=(str(anx),),
             environment=environment,
         )
 
     compiler = native_bin / "yianc"
-    anx = native_bin / "anx"
     environment["YIANC"] = str(compiler)
     environment["PATH"] = str(native_bin) + os.pathsep + environment.get("PATH", "")
     return Toolchain(
@@ -1147,7 +1162,8 @@ def main(argv: list[str] | None = None, *, suite: str = "basic") -> int:
         "--implementation",
         choices=("both", "python", "native"),
         default="both",
-        help="Implementation to test (default: both; native tests refresh through scripts/install.sh).",
+        help=("Compiler implementation to test (default: both); package/bootstrap use native anx, "
+              "and selections including native refresh through scripts/install.sh."),
     )
     parser.add_argument(
         "--prefix",
@@ -1168,6 +1184,8 @@ def main(argv: list[str] | None = None, *, suite: str = "basic") -> int:
     prefix = args.prefix.expanduser().resolve()
     native_bin = prefix / "bin"
     if "native" in implementations and not __refresh_native(prefix):
+        return 1
+    if not __require_native_anx(suites, native_bin / "anx"):
         return 1
 
     exit_code = 0

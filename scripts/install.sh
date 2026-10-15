@@ -15,7 +15,7 @@ Usage: scripts/install.sh [options]
 
 Options:
   --prefix PATH  Installation prefix (default: $HOME/.local).
-  --python PATH  Python used to build and remove legacy launchers (default: python3).
+  --python PATH  Python used for the seed build and legacy launcher cleanup (default: python3).
   -h, --help     Show this help.
 
 The install requires Python 3.12+, llvmlite 0.49+, LLVM 22, and a native C
@@ -102,14 +102,41 @@ fi
 STAGE_DIR="$(mktemp -d "${TMPDIR:-/tmp}/yian-native-install.XXXXXX")"
 DATA_STAGE=""
 DATA_BACKUP=""
+ACTIVE_BUILD_APP=""
+ACTIVE_BUILD_BACKUP=""
+ACTIVE_BUILD_HAD_ORIGINAL=0
+restore_build_app() {
+    [[ -n "$ACTIVE_BUILD_APP" ]] || return 0
+    if [[ "$ACTIVE_BUILD_HAD_ORIGINAL" -eq 1 ]]; then
+        if [[ -e "$ACTIVE_BUILD_BACKUP" || -L "$ACTIVE_BUILD_BACKUP" ]]; then
+            rm -f -- "$ACTIVE_BUILD_APP" || return 1
+            mv -- "$ACTIVE_BUILD_BACKUP" "$ACTIVE_BUILD_APP" || return 1
+        elif [[ ! -e "$ACTIVE_BUILD_APP" && ! -L "$ACTIVE_BUILD_APP" ]]; then
+            return 1
+        fi
+    else
+        rm -f -- "$ACTIVE_BUILD_APP" || return 1
+    fi
+    ACTIVE_BUILD_APP=""
+    ACTIVE_BUILD_BACKUP=""
+    ACTIVE_BUILD_HAD_ORIGINAL=0
+}
 cleanup() {
-    rm -rf -- "$STAGE_DIR"
+    local status=$?
+    trap - EXIT
+    if restore_build_app; then
+        rm -rf -- "$STAGE_DIR"
+    else
+        printf 'error: could not restore a previous bootstrap build artifact; staging was kept at %s\n' "$STAGE_DIR" >&2
+        status=1
+    fi
     if [[ -n "$DATA_STAGE" && -e "$DATA_STAGE" ]]; then
         rm -rf -- "$DATA_STAGE"
     fi
     if [[ -n "$DATA_BACKUP" && -e "$DATA_BACKUP" && ! -e "$DATA_DIR" ]]; then
         mv "$DATA_BACKUP" "$DATA_DIR"
     fi
+    exit "$status"
 }
 trap cleanup EXIT
 mkdir -p "$STAGE_DIR/bin" "$STAGE_DIR/share/yian/lib" "$STAGE_DIR/share/yian/runtime"
@@ -118,27 +145,72 @@ PYTHON_COMPILER="$STAGE_DIR/yianc-python"
 PYTHON_SHELL_WORD="$(printf '%q' "$PYTHON")"
 cat >"$PYTHON_COMPILER" <<EOF
 #!/usr/bin/env bash
+export PYTHONPATH="$PYTHON_ROOT\${PYTHONPATH:+:\$PYTHONPATH}"
 exec $PYTHON_SHELL_WORD -m yianc.main "\$@"
 EOF
 chmod 0755 "$PYTHON_COMPILER"
 
-run_source_anx() {
-    local compiler="$1"
-    shift
-    PYTHONPATH="$PYTHON_ROOT${PYTHONPATH:+:$PYTHONPATH}" \
+run_native_anx() {
+    local anx="$1"
+    local compiler="$2"
+    shift 2
     YIAN_ROOT="$ROOT_DIR" \
     YIAN_LIB="$ROOT_DIR/lib/src" \
     YIANC="$compiler" \
-        "$PYTHON" -m anx.main "$@"
+        "$anx" "$@"
 }
 
-printf 'Building native yianc with the checkout Python compiler...\n'
-run_source_anx "$PYTHON_COMPILER" build "$ROOT_DIR/bootstrap/yianc" -O2
-install -m 0755 "$ROOT_DIR/bootstrap/yianc/build/app" "$STAGE_DIR/bin/yianc"
+build_native_package() {
+    local anx="$1"
+    local compiler="$2"
+    local project="$3"
+    local output="$4"
+    local label="$5"
+    local build_app="$project/build/app"
+    local backup="$STAGE_DIR/build-backups/$label-app"
+    local status=0
 
-printf 'Building native anx with the new yianc binary...\n'
-run_source_anx "$STAGE_DIR/bin/yianc" build "$ROOT_DIR/bootstrap/anx" -O2
-install -m 0755 "$ROOT_DIR/bootstrap/anx/build/app" "$STAGE_DIR/bin/anx"
+    mkdir -p "$(dirname "$build_app")" "$STAGE_DIR/build-backups"
+    ACTIVE_BUILD_APP="$build_app"
+    ACTIVE_BUILD_BACKUP="$backup"
+    ACTIVE_BUILD_HAD_ORIGINAL=0
+    if [[ -e "$build_app" || -L "$build_app" ]]; then
+        ACTIVE_BUILD_HAD_ORIGINAL=1
+        mv -- "$build_app" "$backup"
+    fi
+
+    if run_native_anx "$anx" "$compiler" build "$project" -O2; then
+        if [[ ! -f "$build_app" ]]; then
+            restore_build_app
+            die "native anx did not create a fresh build output for $project"
+        fi
+        if install -m 0755 "$build_app" "$output"; then
+            :
+        else
+            status=$?
+            restore_build_app
+            die "could not stage the native build output for $project (exit $status)"
+        fi
+    else
+        status=$?
+        restore_build_app
+        die "native anx failed to build $project (exit $status)"
+    fi
+
+    restore_build_app
+}
+
+printf 'Bootstrapping a temporary native anx with the checkout Python compiler...\n'
+"$PYTHON" "$ROOT_DIR/scripts/bootstrap_anx.py" \
+    --python "$PYTHON" --output "$STAGE_DIR/bin/anx-seed"
+
+printf 'Building native yianc with the temporary native anx and checkout Python compiler...\n'
+build_native_package "$STAGE_DIR/bin/anx-seed" "$PYTHON_COMPILER" \
+    "$ROOT_DIR/bootstrap/yianc" "$STAGE_DIR/bin/yianc" yianc
+
+printf 'Building final native anx with the temporary native anx and staged yianc...\n'
+build_native_package "$STAGE_DIR/bin/anx-seed" "$STAGE_DIR/bin/yianc" \
+    "$ROOT_DIR/bootstrap/anx" "$STAGE_DIR/bin/anx" anx
 
 "$STAGE_DIR/bin/yianc" --help >/dev/null
 "$STAGE_DIR/bin/anx" --help >/dev/null

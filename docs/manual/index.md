@@ -1,11 +1,11 @@
 # Yian 开发文档
 
-本文档描述 Yian 工具链的内部实现。01–19 章介绍 Python 参考编译器，20–25 章介绍 Python 参考包管理器；
+本文档描述 Yian 工具链的内部实现。01–19 章介绍 Python 参考编译器，20–25 章介绍原生包管理器 `anx`；
 26–29 章覆盖分析、语言服务器、格式化器与 FFI，30 章介绍以 YIAN 编写的原生工具链：
 
 - **Python 参考编译器**（01–19）：内部架构、数据流与关键算法，覆盖编译管线和编译器的主要子系统。
-- **Python anx 参考包管理器**（20–25）：项目模型、清单与诊断、依赖图与 `build/pkg.json` 契约、CLI、
-  以及 anx 自身的测试。
+- **原生 anx 包管理器**（20–25）：YIAN 项目模型、清单与诊断、依赖图与 `build/pkg.json` 契约、CLI、
+  以及项目测试驱动。
 - **分析接口与语言服务器**（26–27）：编译器分析会话与位置/引用模型，以及 `lsp/` 中的原生
   协议服务、调度与分发。
 - **格式化器**（28）：源码排版的规则、注释与空行的恢复、五条不变式与三个入口。
@@ -40,12 +40,12 @@
 
 | 章 | 标题 | 对应源文件 |
 |----|------|-----------|
-| [20](20.anx_overview.md) | anx 概览 | `python/anx/`：模块地图、一次 build 的数据流、与编译器的契约边界 |
-| [21](21.anx_manifest.md) | 清单解析与诊断 | `python/anx/manifest.py`、`python/anx/diagnostics.py` |
-| [22](22.anx_project.md) | 项目模型与文件归属 | `python/anx/project.py` |
-| [23](23.anx_graph.md) | 依赖图与 v2 包图 | `python/anx/project.py`、`python/yianc/analysis/package_map.py` |
-| [24](24.anx_cli.md) | CLI 与标准库定位 | `python/anx/main.py`、`python/yianc/analysis/source_provenance.py` |
-| [25](25.anx_tests.md) | anx 自身的测试 | `python/anx/project_tests.py`、`scripts/run_tests.py` |
+| [20](20.anx_overview.md) | anx 概览 | `bootstrap/anx/src/`：模块地图、build 数据流、compiler 契约 |
+| [21](21.anx_manifest.md) | 清单解析与诊断 | `bootstrap/anx/src/manifest/`、`diagnostics/model.an` |
+| [22](22.anx_project.md) | 项目模型与文件归属 | `bootstrap/anx/src/project/model.an`、`project/load.an` |
+| [23](23.anx_graph.md) | 依赖图与 v2 包图 | `bootstrap/anx/src/project/`、两种 compiler 的 package-map consumer |
+| [24](24.anx_cli.md) | CLI 与标准库定位 | `bootstrap/anx/src/main.an`、`project/paths.an` |
+| [25](25.anx_tests.md) | anx 项目测试与仓库 fixtures | `bootstrap/anx/src/driver/test.an`、`scripts/run_tests.py` |
 
 ## 目录 · 分析接口与语言服务器
 
@@ -57,4 +57,4 @@
 | [29](29.ffi.md) | FFI 编译与链接 | `python/yianc/analysis/`、`python/yianc/codegen/llvm/emitters/ffi.py`、`python/yianc/native_link.py` |
 | [30](30.bootstrap.md) | 自举编译器与原生工具链 | `bootstrap/yianc/`、`bootstrap/anx/`、`bootstrap/json/`、`bootstrap/toml/`、`bootstrap/jsonrpc/`、`bootstrap/lsp_protocol/`、`bootstrap/ffi/`、`bootstrap/llvm/` |
 
-> 用户视角的用法见 [anx 用户指南](../anx/index.md)。Python 与 native CLI 契约见[编译器命令行手册](../compile_script.md)。
+> 用户视角的用法见 [anx 用户指南](../anx/index.md)。Python 与 native compiler CLI 契约见[编译器命令行手册](../compile_script.md)。
