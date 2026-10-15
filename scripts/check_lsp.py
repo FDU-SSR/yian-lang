@@ -9,6 +9,7 @@ import json
 import math
 import os
 import select
+import shlex
 import shutil
 import signal
 import statistics
@@ -388,7 +389,7 @@ def __default_command() -> list[str]:
     executable = os.environ.get("YIAN_LSP_BIN") or shutil.which("yian-lsp")
     if executable is None:
         raise ValueError(
-            "native yian-lsp is not installed; run scripts/install_lsp.sh"
+            "native yian-lsp is not installed; run scripts/refresh_toolchain.sh with a compatible native anx/yianc pair"
         )
     return [executable, "--stdio", "--compiler-root", "{compiler_root}"]
 
@@ -1502,6 +1503,35 @@ def __run_infrastructure(args: argparse.Namespace) -> int:
     """Run the library-level checks that underpin the native LSP integration."""
     prefix = args.prefix.expanduser().resolve()
     native_bin = prefix / "bin"
+    required = (native_bin / "yianc", native_bin / "anx", native_bin / "yian-lsp")
+    missing = [path for path in required if not path.is_file() or not os.access(path, os.X_OK)]
+    resources = (
+        prefix / "share" / "yian" / "lib" / "src",
+        prefix / "share" / "yian" / "runtime" / "src",
+        prefix / "share" / "yian" / "runtime" / "include",
+    )
+    missing.extend(path for path in resources if not path.is_dir())
+    if missing:
+        native_seeds = all(path.is_file() and os.access(path, os.X_OK) for path in required[:2])
+        if native_seeds:
+            recovery = (
+                f"scripts/refresh_toolchain.sh --prefix {shlex.quote(str(prefix))} "
+                f"--anx {shlex.quote(str(required[1]))} --yianc {shlex.quote(str(required[0]))}"
+            )
+        else:
+            recovery = (
+                f"scripts/bootstrap_toolchain.sh --prefix {shlex.quote(str(prefix))} "
+                f"--python <Python 3.12+ path>, then scripts/refresh_toolchain.sh "
+                f"--prefix {shlex.quote(str(prefix))} --anx {shlex.quote(str(required[1]))} "
+                f"--yianc {shlex.quote(str(required[0]))}"
+            )
+        print(
+            "error: LSP infrastructure requires an existing native yianc/anx/yian-lsp installation "
+            f"and shared resources; missing: {', '.join(str(path) for path in missing)}. "
+            f"Prepare it explicitly with {recovery}",
+            file=sys.stderr,
+        )
+        return 1
     environment = os.environ.copy()
     environment["PATH"] = str(native_bin) + os.pathsep + environment.get("PATH", "")
     environment["YIAN_INSTALL_PREFIX"] = str(prefix)
@@ -1524,7 +1554,6 @@ def __run_infrastructure(args: argparse.Namespace) -> int:
             str(prefix),
             "-q",
         ],
-        ["bash", "scripts/install_lsp.sh", "--prefix", str(prefix)],
         [sys.executable, "-m", "unittest", "discover", "-s", "tests/unit", "-v"],
         [sys.executable, "-m", "yianc.format", "--verify", "bootstrap/yianc/src"],
         [sys.executable, "-m", "yianc.format", "--check", "bootstrap/yianc/src"],

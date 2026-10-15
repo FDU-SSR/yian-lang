@@ -61,7 +61,8 @@ Typical fresh setup:
 
   conda create -n yian-env python=3.12 -y && conda activate yian-env
   scripts/setup_llvm_toolchain.sh --with-clang-22
-  scripts/install.sh --python "\$CONDA_PREFIX/bin/python"
+  scripts/bootstrap_toolchain.sh --python "\$CONDA_PREFIX/bin/python"
+  scripts/refresh_toolchain.sh --anx "\$HOME/.local/bin/anx" --yianc "\$HOME/.local/bin/yianc"
   python3 scripts/run_tests.py --all -q
 
 Select the compiler for YIAN explicitly with YIAN_CC, for example:
@@ -266,7 +267,8 @@ report_state
 
 note ""
 note "Next:"
-note "  scripts/install.sh --python \"$("$PYTHON" -c 'import sys; print(sys.executable)')\""
+note "  scripts/bootstrap_toolchain.sh --python \"$("$PYTHON" -c 'import sys; print(sys.executable)')\""
+note "  scripts/refresh_toolchain.sh --anx \"\$HOME/.local/bin/anx\" --yianc \"\$HOME/.local/bin/yianc\"  # full native refresh, including LSP"
 note "  python3 scripts/run_tests.py --all -q"
 note "  PYRIGHT_PYTHON_FORCE_VERSION=latest pyright   # strict, from the project root"
 note "  export YIAN_CC=${LLVM_PREFIX}/bin/clang       # optional: pin the linker"

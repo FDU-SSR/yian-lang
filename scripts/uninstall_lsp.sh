@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Remove only the language server recorded by install_lsp.sh.
+# Remove only the language server recorded by refresh_toolchain.sh.
 set -euo pipefail
 
 PREFIX="${PREFIX:-}"

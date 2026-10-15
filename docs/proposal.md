@@ -47,9 +47,9 @@ fat 模式的指针携带边界与生命周期元数据，并在内存访问时�
 `bootstrap/anx` 是以 YIAN 编写的原生包管理器。`bootstrap/json`、`bootstrap/toml`、`bootstrap/ffi` 和
 `bootstrap/llvm` 提供它们所需的数据、C ABI 与 LLVM 22 支持。
 
-`scripts/install.sh` 用固定七包配方和 Python reference compiler 先生成临时 seed `anx`，再由 seed
+`scripts/bootstrap_toolchain.sh` 用固定七包配方和 Python reference compiler 先生成临时 seed `anx`，再由 seed
 分别配合 Python compiler 构建原生 `yianc`、配合 native `yianc` 构建最终 `anx`。语言服务器
-`lsp/` 单独构建和安装，并使用同一套原生工具链。自举包结构、构建入口与 CLI 见[自举编译器手册](manual/30.bootstrap.md)。
+`lsp/` 可由纯原生 warm 刷新入口与两个编译工具一起构建；cold 入口仍只构建 `yianc` 和 `anx`。warm 路径固定现有原生 seed，校验完整 staging 和 LSP 握手后事务发布，不调用 Python。自举包结构、构建入口与 CLI 见[自举编译器手册](manual/30.bootstrap.md)。
 
 ## 内存安全机制的边界
 

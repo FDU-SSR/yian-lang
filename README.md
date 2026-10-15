@@ -12,18 +12,18 @@ The installed `yianc`, `anx`, and `yian-lsp` commands are native executables. Th
 
 ## Install
 
-Build and install the compiler, package manager, standard library, and runtime:
+Build and install native `yianc` and `anx`, the standard library, and the runtime from this checkout:
 
 ```bash
-conda run --no-capture-output -n yian-env bash scripts/install.sh \
+conda run --no-capture-output -n yian-env bash scripts/bootstrap_toolchain.sh \
   --prefix "$HOME/.local" --python python
 ```
 
-Install the language server separately. This step requires the installed native `anx` and `yianc` commands and builds the server in raw mode:
+The cold bootstrap does not build the language server. If you also need `yian-lsp`, refresh the complete native toolchain with the newly installed native seeds:
 
 ```bash
-PATH="$HOME/.local/bin:$PATH" \
-  scripts/install_lsp.sh --prefix "$HOME/.local"
+scripts/refresh_toolchain.sh --anx "$HOME/.local/bin/anx" \
+  --yianc "$HOME/.local/bin/yianc" --prefix "$HOME/.local"
 "$HOME/.local/bin/yian-lsp" --version
 ```
 
@@ -36,7 +36,13 @@ scripts/uninstall_lsp.sh --prefix "$HOME/.local"
 scripts/uninstall.sh --prefix "$HOME/.local"
 ```
 
-The general installer manages `yianc`, `anx`, the standard library, and runtime resources. The language-server installer manages only `yian-lsp` and its install record; it reuses the shared resources under `share/yian`.
+The cold bootstrap builds a temporary seed `anx` with the Python reference compiler, then builds native `yianc` and final `anx`. It never selects installed `yianc` or `anx` from `PATH` and does not build the language server. The warm refresh freezes existing native seeds, rebuilds `yianc`, `anx`, and raw/O2 `yian-lsp`, verifies a stdio handshake against staged resources, and publishes the complete set transactionally.
+
+If working native `yianc` and `anx` commands are already available, refresh the full native toolchain, including the language server, without a Python runtime:
+
+```bash
+scripts/refresh_toolchain.sh --anx "$HOME/.local/bin/anx" --yianc "$HOME/.local/bin/yianc" --prefix "$HOME/.local"
+```
 
 ## Compile YIAN programs
 
@@ -68,7 +74,7 @@ Packages declare local dependencies in `package.anx` and import them by package 
 
 ## Run checks
 
-The paired test runner refreshes native compiler tools before running the selected suites:
+The paired test runner uses the already installed native compiler tools and never builds or refreshes them. Prepare a current installation explicitly with the cold or warm toolchain entry before selecting native/package suites:
 
 ```bash
 conda run --no-capture-output -n yian-env python scripts/run_tests.py --all -q

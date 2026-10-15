@@ -73,7 +73,7 @@ function checkServerVersion(
     if (info === undefined) {
         outputChannel.warn(
             `the language server did not report its version; expected ${expected}. ` +
-                `Check that the native yian-lsp installed by scripts/install_lsp.sh is on PATH.`,
+                `Check that the native yian-lsp installed by scripts/refresh_toolchain.sh is on PATH.`,
         );
         return;
     }
@@ -87,7 +87,7 @@ function checkServerVersion(
     );
     void vscode.window.showWarningMessage(
         `YIAN: language server ${info.version} does not match extension ${expected}. ` +
-        `Rebuild and install yian-lsp with scripts/install_lsp.sh, then restart VS Code.`,
+        `Rebuild and install the complete native toolchain, including yian-lsp, with scripts/refresh_toolchain.sh, then restart VS Code.`,
     );
 }
 
@@ -179,7 +179,7 @@ export function activate(context: vscode.ExtensionContext): void {
             outputChannel.error(`could not start '${command}': ${reason}`);
             void vscode.window.showErrorMessage(
                 `YIAN: could not start '${command}'. Install the language server ` +
-                    `with scripts/install_lsp.sh and ensure its bin directory is on PATH, or set ` +
+                    `with scripts/refresh_toolchain.sh and ensure its bin directory is on PATH, or set ` +
                     `"yian.languageServer.command" to the installed binary's absolute path.`,
             );
         });

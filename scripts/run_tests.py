@@ -3,8 +3,8 @@
 
 The repository suites share one runner and run against both compiler
 implementations by default. Package and bootstrap cases use the same installed
-native ``anx`` for either compiler. Native execution refreshes the installed
-binaries through ``scripts/install.sh`` before starting:
+native ``anx`` for either compiler. The runner requires those tools to be
+installed already and never builds or refreshes the native toolchain:
 
 - ``basic``   — standalone compilation of one or more .an files, each run
   twice: once with the default fat-pointer representation and once with
@@ -1034,31 +1034,6 @@ def run_suite(suite: str, args: argparse.Namespace, toolchain: Toolchain) -> int
     return 0 if not failed else 1
 
 
-def __refresh_native(prefix: Path) -> bool:
-    """Rebuild and install the native toolchain before native execution."""
-    command = [
-        str(ROOT_DIR / "scripts" / "install.sh"),
-        "--prefix",
-        str(prefix),
-        "--python",
-        sys.executable,
-    ]
-    print(f"Refreshing installed native yianc/anx under {prefix}…")
-    process = subprocess.run(
-        command,
-        cwd=ROOT_DIR,
-        capture_output=True,
-        encoding="utf-8",
-        errors="replace",
-        check=False,
-    )
-    if process.stdout:
-        print(process.stdout, end="" if process.stdout.endswith("\n") else "\n")
-    if process.stderr:
-        print(process.stderr, file=sys.stderr, end="" if process.stderr.endswith("\n") else "\n")
-    return process.returncode == 0
-
-
 def __require_native_anx(suites: tuple[str, ...] | list[str], anx_binary: Path) -> bool:
     """Require an existing native anx only for package-oriented suites."""
     if not any(suite in ("package", "bootstrap") for suite in suites):
@@ -1067,7 +1042,21 @@ def __require_native_anx(suites: tuple[str, ...] | list[str], anx_binary: Path) 
         return True
     print(
         f"error: package/bootstrap suites require native anx at {anx_binary}; "
-        f"install it with scripts/install.sh --prefix {shlex.quote(str(anx_binary.parent.parent))}",
+        f"cold-install native tools with scripts/bootstrap_toolchain.sh --prefix {shlex.quote(str(anx_binary.parent.parent))}, "
+        "or refresh an existing compatible native pair with scripts/refresh_toolchain.sh",
+        file=sys.stderr,
+    )
+    return False
+
+
+def __require_native_yianc(yianc_binary: Path) -> bool:
+    """Require an existing native compiler when the native implementation is selected."""
+    if yianc_binary.is_file() and os.access(yianc_binary, os.X_OK):
+        return True
+    print(
+        f"error: native compiler is missing or not executable at {yianc_binary}; "
+        f"cold-install with scripts/bootstrap_toolchain.sh --prefix {shlex.quote(str(yianc_binary.parent.parent))} "
+        "or refresh a compatible installed toolchain with scripts/refresh_toolchain.sh",
         file=sys.stderr,
     )
     return False
@@ -1163,13 +1152,13 @@ def main(argv: list[str] | None = None, *, suite: str = "basic") -> int:
         choices=("both", "python", "native"),
         default="both",
         help=("Compiler implementation to test (default: both); package/bootstrap use native anx, "
-              "and selections including native refresh through scripts/install.sh."),
+              "and selected native tools must already be installed."),
     )
     parser.add_argument(
         "--prefix",
         type=Path,
         default=Path(os.environ.get("YIAN_INSTALL_PREFIX", Path.home() / ".local")),
-        help="Native install prefix used when refreshing and testing the native implementation.",
+        help="Prefix containing the installed native tools used by the selected suites.",
     )
     args = parser.parse_args(argv)
 
@@ -1183,7 +1172,7 @@ def main(argv: list[str] | None = None, *, suite: str = "basic") -> int:
     implementations = ("python", "native") if args.implementation == "both" else (args.implementation,)
     prefix = args.prefix.expanduser().resolve()
     native_bin = prefix / "bin"
-    if "native" in implementations and not __refresh_native(prefix):
+    if "native" in implementations and not __require_native_yianc(native_bin / "yianc"):
         return 1
     if not __require_native_anx(suites, native_bin / "anx"):
         return 1

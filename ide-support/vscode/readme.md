@@ -1,27 +1,35 @@
 # YIAN Language Support
 
-VS Code 扩展提供 `.an` 语法高亮、语言配置和原生 YIAN 语言服务器客户端。语言服务器源码位于仓库根目录 `lsp/`，通过独立安装脚本构建和安装。
+VS Code 扩展提供 `.an` 语法高亮、语言配置和原生 YIAN 语言服务器客户端。语言服务器源码位于仓库根目录 `lsp/`，由完整 native toolchain warm refresh 构建和安装。
 
 ## 安装工具链与服务器
 
-先安装 `yianc`、`anx` 和标准库/运行时资源，再使用原生 `anx` 构建服务器：
+先 cold bootstrap `yianc`、`anx` 和标准库/运行时资源，再用这些原生 seeds warm refresh 完整工具链与服务器：
 
 ```bash
-conda run --no-capture-output -n yian-env bash scripts/install.sh \
+conda run --no-capture-output -n yian-env bash scripts/bootstrap_toolchain.sh \
   --prefix "$HOME/.local" --python python
 PATH="$HOME/.local/bin:$PATH" \
-  scripts/install_lsp.sh --prefix "$HOME/.local"
+  scripts/refresh_toolchain.sh --anx "$HOME/.local/bin/anx" \
+    --yianc "$HOME/.local/bin/yianc" --prefix "$HOME/.local"
 "$HOME/.local/bin/yian-lsp" --version
 ```
 
-LSP 安装需要 PATH 上的原生 `anx` 与 `yianc`、LLVM 22、clang 22，以及安装前缀下 `share/yian` 的资源。安装后的语言服务器是 native binary；它复用同一工具链和标准库，不复制第二份资源。二进制以 raw 模式和 `-O2` 构建，分析 YIAN 源码时默认使用 fat 指针。
+warm refresh 需要可用的原生 `anx` 与 `yianc`、LLVM 22、clang 22，以及已安装的共享资源。发布的完整工具链是native binaries；语言服务器复用同一工具链和标准库，不复制第二份资源。服务器以 raw 模式和 `-O2` 构建，分析 YIAN 源码时默认使用 fat 指针。
 
-服务器安装与卸载：
+服务器卸载：
 
 ```bash
-scripts/install_lsp.sh --prefix "$HOME/.local"
 scripts/uninstall_lsp.sh --prefix "$HOME/.local"
 ```
+
+已有原生 `anx` 和 `yianc` 时，也可以直接用 warm 入口重建完整工具链和服务器；它会校验 staging 上的 LSP 握手后再发布：
+
+```bash
+scripts/refresh_toolchain.sh --anx "$HOME/.local/bin/anx" --yianc "$HOME/.local/bin/yianc" --prefix "$HOME/.local"
+```
+
+该入口不调用 Python，也不退回 cold 构建。若没有可用的原生 seed，先执行上面的 cold 安装，再显式运行 warm 刷新。
 
 ## 扩展设置
 
@@ -78,4 +86,4 @@ PATH="$HOME/.local/bin:$PATH" \
   conda run --no-capture-output -n yian-env python scripts/check_lsp.py --mode check
 ```
 
-`check_lsp.py` 是协议客户端和测量工具，只启动原生 `yian-lsp`。`--mode benchmark` 运行性能矩阵，`--mode profile` 保存原生阶段 trace，`--mode infrastructure` 刷新原生编译工具、独立安装服务器并运行协议与资源检查。
+`check_lsp.py` 是协议客户端和测量工具，只启动已安装的原生 `yian-lsp`。`--mode benchmark` 运行性能矩阵，`--mode profile` 保存原生阶段 trace，`--mode infrastructure` 要求完整工具链已安装后运行协议与资源检查，不安装或刷新工具。

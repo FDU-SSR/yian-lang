@@ -10,18 +10,20 @@ import subprocess
 import sys
 import tempfile
 import unittest
-from contextlib import redirect_stderr
+from contextlib import redirect_stderr, redirect_stdout
 from io import StringIO
 from pathlib import Path
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts"))
 
-import check_compiler_parity
+import check_toolchain_parity
+import check_lsp
 import run_tests
+from _toolchain import compiler_parity
 make_toolchain = getattr(run_tests, "__make_toolchain")
 require_native_anx = getattr(run_tests, "__require_native_anx")
-capture_native_package_metadata = getattr(check_compiler_parity, "__capture_native_package_metadata")
+capture_native_package_metadata = compiler_parity.capture_native_package_metadata
 from yianc.analysis.session import AnalysisSession
 from yianc.analysis.documents import Document, DocumentStore
 from yianc.analysis.editor import EditorEngine, EditorMode, FrozenInputs
@@ -104,6 +106,94 @@ class SharedAnalysisTests(unittest.TestCase):
             missing_anx.chmod(0o755)
             self.assertTrue(require_native_anx(["package"], missing_anx))
 
+    def test_test_entrypoints_never_refresh_native(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="installed tools ") as temporary:
+            root = Path(temporary)
+            prefix = root / "working prefix"
+            native_bin = prefix / "bin"
+            native_bin.mkdir(parents=True)
+            for name in ("yianc", "anx"):
+                tool = native_bin / name
+                tool.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+                tool.chmod(0o755)
+
+            with patch.object(run_tests, "run_suite", return_value=0) as run_suite, patch.object(
+                run_tests.subprocess,
+                "run",
+                side_effect=AssertionError("test entrypoints must not build or refresh native tools"),
+            ) as run_process, redirect_stdout(StringIO()):
+                result = run_tests.main([
+                    "--suite", "package", "--implementation", "both", "--prefix", str(prefix), "-q",
+                ])
+            self.assertEqual(result, 0)
+            self.assertEqual(run_suite.call_count, 2)
+            toolchains = [call.args[2] for call in run_suite.call_args_list]
+            self.assertEqual([toolchain.name for toolchain in toolchains], ["python", "native"])
+            self.assertEqual(toolchains[0].anx, toolchains[1].anx)
+            self.assertEqual(toolchains[0].anx, (str(native_bin / "anx"),))
+            self.assertEqual(toolchains[0].compiler, (sys.executable, "-m", "yianc.main"))
+            self.assertEqual(toolchains[1].compiler, (str(native_bin / "yianc"),))
+            run_process.assert_not_called()
+
+            missing_native = root / "missing native" / "bin"
+            missing_native.mkdir(parents=True)
+            missing_anx = root / "missing anx" / "bin"
+            missing_anx.mkdir(parents=True)
+            with patch.object(run_tests, "run_suite") as no_suite, patch.object(
+                run_tests.subprocess,
+                "run",
+                side_effect=AssertionError("missing-tool checks must not launch a build"),
+            ) as run_process, redirect_stdout(StringIO()), redirect_stderr(StringIO()) as errors:
+                result = run_tests.main([
+                    "--suite", "basic", "--implementation", "native", "--prefix", str(missing_native.parent),
+                ])
+            self.assertEqual(result, 1)
+            self.assertIn("scripts/bootstrap_toolchain.sh", errors.getvalue())
+            no_suite.assert_not_called()
+            run_process.assert_not_called()
+
+            with patch.object(check_lsp.subprocess, "run", side_effect=AssertionError("LSP infrastructure must not install tools")) as run_process, redirect_stderr(StringIO()) as errors:
+                result = check_lsp.main([
+                    "--mode", "infrastructure", "--prefix", str(root / "missing LSP tools"),
+                ])
+            self.assertEqual(result, 1)
+            self.assertIn("scripts/bootstrap_toolchain.sh", errors.getvalue())
+            self.assertIn("scripts/refresh_toolchain.sh", errors.getvalue())
+            self.assertNotIn("install_lsp.sh", errors.getvalue())
+            self.assertIn(f"--prefix {shlex.quote(str(root / 'missing LSP tools'))}", errors.getvalue())
+            run_process.assert_not_called()
+
+            seeded_prefix = root / "seed tools with spaces"
+            seeded_bin = seeded_prefix / "bin"
+            seeded_bin.mkdir(parents=True)
+            for name in ("yianc", "anx"):
+                tool = seeded_bin / name
+                tool.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+                tool.chmod(0o755)
+            with patch.object(check_lsp.subprocess, "run", side_effect=AssertionError("LSP infrastructure must not refresh tools")) as run_process, redirect_stderr(StringIO()) as errors:
+                result = check_lsp.main([
+                    "--mode", "infrastructure", "--prefix", str(seeded_prefix),
+                ])
+            self.assertEqual(result, 1)
+            self.assertIn("scripts/refresh_toolchain.sh", errors.getvalue())
+            self.assertNotIn("scripts/bootstrap_toolchain.sh", errors.getvalue())
+            self.assertIn(f"--anx {shlex.quote(str(seeded_bin / 'anx'))}", errors.getvalue())
+            self.assertIn(f"--yianc {shlex.quote(str(seeded_bin / 'yianc'))}", errors.getvalue())
+            run_process.assert_not_called()
+
+            with patch.object(run_tests, "run_suite") as no_suite, patch.object(
+                run_tests.subprocess,
+                "run",
+                side_effect=AssertionError("missing-anx checks must not launch a build"),
+            ) as run_process, redirect_stdout(StringIO()), redirect_stderr(StringIO()) as errors:
+                result = run_tests.main([
+                    "--suite", "package", "--implementation", "python", "--prefix", str(missing_anx.parent),
+                ])
+            self.assertEqual(result, 1)
+            self.assertIn("scripts/bootstrap_toolchain.sh", errors.getvalue())
+            no_suite.assert_not_called()
+            run_process.assert_not_called()
+
     def test_compiler_parity_loads_package_metadata_with_native_anx(self) -> None:
         prefix_value = os.environ.get("YIAN_INSTALL_PREFIX")
         self.assertTrue(prefix_value, "YIAN_INSTALL_PREFIX must point at a current native toolchain")
@@ -152,6 +242,221 @@ class SharedAnalysisTests(unittest.TestCase):
             ))
             self.assertNotIn("-o", metadata.capture_argv)
             self.assertEqual((ROOT / fixture / "src" / "main.an").read_bytes(), fixture_source_hash)
+
+    def test_toolchain_parity_reports_mismatch_and_empty_selection(self) -> None:
+        case_id = "compiler/analysis/unicode-range"
+        case = check_toolchain_parity.DEFAULT_CASES[case_id]
+        with tempfile.TemporaryDirectory(prefix="parity oracle ") as temporary:
+            root = Path(temporary)
+            reference = root / "reference compiler"
+            native = root / "native compiler"
+
+            def write_compiler(path: Path, document: dict[str, object], exit_code: int) -> None:
+                path.write_text(
+                    f"#!{sys.executable}\n"
+                    "import sys\n"
+                    f"sys.stdout.write({json.dumps(json.dumps(document))})\n"
+                    f"raise SystemExit({exit_code})\n",
+                    encoding="utf-8",
+                )
+                path.chmod(0o755)
+
+            matching_error: dict[str, object] = {
+                "format": 1,
+                "ok": False,
+                "stage": "semantic",
+                "diagnostics": [{
+                    "severity": "error",
+                    "code": "TY001",
+                    "message": "Unknown identifier 'missing'",
+                    "range": {
+                        "start": {"line": 0, "character": 30},
+                        "end": {"line": 0, "character": 37},
+                    },
+                }],
+            }
+            different_error = {
+                **matching_error,
+                "diagnostics": [{
+                    **matching_error["diagnostics"][0],
+                    "message": "Unknown identifier 'other'",
+                }],
+            }
+            write_compiler(reference, matching_error, 1)
+            write_compiler(native, different_error, 1)
+            report_path = root / "mismatch.json"
+            with patch.object(check_toolchain_parity, "validate_install", return_value={}), redirect_stdout(StringIO()):
+                result = check_toolchain_parity.run_selected(
+                    [(case_id, case)],
+                    [False],
+                    prefix=root / "unused prefix",
+                    report_path=report_path,
+                    reference=[str(reference)],
+                    native=[str(native)],
+                    anx=[str(root / "shared anx")],
+                )
+            self.assertEqual(result, 1)
+            mismatch = json.loads(report_path.read_text(encoding="utf-8"))["cases"][0]
+            self.assertFalse(mismatch["observations_equal"])
+            self.assertTrue(mismatch["reference_oracle"])
+            self.assertFalse(mismatch["native_oracle"])
+            self.assertFalse(mismatch["passed"])
+            self.assertEqual(len(report_path.with_suffix(".failures.jsonl").read_text().splitlines()), 1)
+
+            same_but_wrong = {"format": 1, "ok": True, "stage": "semantic", "diagnostics": []}
+            write_compiler(reference, same_but_wrong, 0)
+            write_compiler(native, same_but_wrong, 0)
+            wrong_report = root / "same-wrong.json"
+            with patch.object(check_toolchain_parity, "validate_install", return_value={}), redirect_stdout(StringIO()):
+                result = check_toolchain_parity.run_selected(
+                    [(case_id, case)],
+                    [False],
+                    prefix=root / "unused prefix",
+                    report_path=wrong_report,
+                    reference=[str(reference)],
+                    native=[str(native)],
+                    anx=[str(root / "shared anx")],
+                )
+            self.assertEqual(result, 1)
+            common_wrong = json.loads(wrong_report.read_text(encoding="utf-8"))["cases"][0]
+            self.assertTrue(common_wrong["observations_equal"])
+            self.assertFalse(common_wrong["reference_oracle"])
+            self.assertFalse(common_wrong["native_oracle"])
+            self.assertFalse(common_wrong["passed"])
+
+            with patch.object(check_toolchain_parity, "validate_install", side_effect=AssertionError("list/selection must precede freshness")), patch.object(
+                check_toolchain_parity.subprocess,
+                "run",
+                side_effect=AssertionError("selection/list must not invoke a tool"),
+            ):
+                for bad_args in (("--case", ""), ("--case", "compiler/unknown")):
+                    with redirect_stderr(StringIO()), self.assertRaises(SystemExit) as error:
+                        check_toolchain_parity.main([*bad_args, "--list"])
+                    self.assertEqual(error.exception.code, 2)
+
+    def test_toolchain_parity_selects_shared_anx(self) -> None:
+        case_id = "package/std_usage"
+        case = check_toolchain_parity.DEFAULT_CASES[case_id]
+        with tempfile.TemporaryDirectory(prefix="shared anx parity ") as temporary:
+            root = Path(temporary)
+            reference = root / "python compiler wrapper"
+            native = root / "native compiler"
+            for path in (reference, native):
+                path.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+                path.chmod(0o755)
+            anx = root / "one shared anx"
+            record_path = root / "anx selections.jsonl"
+            anx.write_text(
+                f"#!{sys.executable}\n"
+                "import json, os, sys\n"
+                "from pathlib import Path\n"
+                "project = Path(sys.argv[2])\n"
+                "record = {\"argv\": sys.argv[1:], \"yianc\": os.environ[\"YIANC\"]}\n"
+                "with open(os.environ[\"ANX_RECORD\"], \"a\", encoding=\"utf-8\") as stream:\n"
+                "    stream.write(json.dumps(record) + \"\\n\")\n"
+                "build = project / \"build\"\n"
+                "build.mkdir(parents=True, exist_ok=True)\n"
+                "source_root = (project / \"src\").resolve()\n"
+                "mapping = {\"format\": 2, \"root\": \"stdtest\", \"packages\": {"
+                "\"stdtest\": {\"sourceRoot\": str(source_root), \"kind\": \"bin\", \"entry\": str(source_root / \"main.an\"), \"dependencies\": [], \"ffi\": False},"
+                "\"std\": {\"sourceRoot\": os.environ[\"YIAN_LIB\"], \"kind\": \"lib\", \"dependencies\": [], \"ffi\": True}}}\n"
+                "(build / \"pkg.json\").write_text(json.dumps(mapping), encoding=\"utf-8\")\n"
+                "app = build / \"app\"\n"
+                "app.write_text(\"#!/bin/sh\\nexit 0\\n\", encoding=\"utf-8\")\n"
+                "app.chmod(0o755)\n",
+                encoding="utf-8",
+            )
+            anx.chmod(0o755)
+            prefix = root / "installed prefix"
+            environment = os.environ.copy()
+            environment["ANX_RECORD"] = str(record_path)
+            with patch.dict(os.environ, environment, clear=True), patch.object(
+                check_toolchain_parity,
+                "validate_install",
+                return_value={"prefix": str(prefix)},
+            ), redirect_stdout(StringIO()):
+                result = check_toolchain_parity.run_selected(
+                    [(case_id, case)],
+                    [True],
+                    prefix=prefix,
+                    report_path=root / "package.json",
+                    reference=[str(reference)],
+                    native=[str(native)],
+                    anx=[str(anx)],
+                )
+            self.assertEqual(result, 0)
+            report = json.loads((root / "package.json").read_text(encoding="utf-8"))
+            observation = report["cases"][0]
+            self.assertTrue(observation["passed"])
+            self.assertEqual(observation["reference"]["command"][0], observation["native"]["command"][0])
+            self.assertEqual(observation["reference"]["command"][0], str(anx))
+            self.assertEqual(observation["reference"]["command"][-1], "--raw-pointers")
+            self.assertEqual(observation["native"]["command"][-1], "--raw-pointers")
+            self.assertEqual(observation["reference"]["environment"]["YIANC"], str(reference))
+            self.assertEqual(observation["native"]["environment"]["YIANC"], str(native))
+            self.assertEqual(report["cost"]["package_builds"], 2)
+            self.assertEqual(report["cost"]["compiler_calls_including_package_builds"], 2)
+            self.assertEqual(report["cost"]["program_runs"], 2)
+            recorded = [json.loads(line) for line in record_path.read_text(encoding="utf-8").splitlines()]
+            self.assertEqual(len(recorded), 2)
+            self.assertEqual([entry["yianc"] for entry in recorded], [str(reference), str(native)])
+            self.assertTrue(all(entry["argv"][0] == "build" for entry in recorded))
+            self.assertTrue(all(entry["argv"][-1] == "--raw-pointers" for entry in recorded))
+
+            with patch.object(check_toolchain_parity, "validate_install", side_effect=AssertionError("--list must not validate an installation")), patch.object(
+                check_toolchain_parity.subprocess,
+                "run",
+                side_effect=AssertionError("--list must not invoke compiler or anx"),
+            ), redirect_stdout(StringIO()) as output:
+                listed = check_toolchain_parity.main([
+                    "--case", case_id, "--pointer-mode", "raw", "--list", "--prefix", str(prefix),
+                ])
+            self.assertEqual(listed, 0)
+            preview = json.loads(output.getvalue())
+            self.assertEqual(preview["paired_observations"], 1)
+            self.assertEqual(preview["total_compiler_calls_including_package_builds"], 2)
+            self.assertEqual(preview["program_runs"], 2)
+
+            identity_prefix = root / "identity product"
+            identity_bin = identity_prefix / "bin"
+            identity_data = identity_prefix / "share" / "yian"
+            identity_bin.mkdir(parents=True)
+            for relative in ("lib/src", "runtime/src", "runtime/include"):
+                (identity_data / relative).mkdir(parents=True)
+            identity_yianc = identity_bin / "yianc"
+            identity_anx = identity_bin / "anx"
+            for path in (identity_yianc, identity_anx):
+                path.write_bytes(b"\x7fELF" + path.name.encode("utf-8"))
+                path.chmod(0o755)
+            fake_info = {
+                "format": 1,
+                "components": {
+                    "yianc": {"source_sha256": "yianc-source", "artifact_sha256": check_toolchain_parity.file_sha256(identity_yianc)},
+                    "anx": {"source_sha256": "anx-source", "artifact_sha256": check_toolchain_parity.file_sha256(identity_anx)},
+                },
+                "reference_compiler_source_sha256": "python-source",
+                "resources": {"source_sha256": "resource-source", "artifact_sha256": "resource-artifact"},
+            }
+            identity_info = identity_data / ".build-info"
+            identity_info.write_text(json.dumps(fake_info), encoding="utf-8")
+            identity_marker = identity_data / ".native-install"
+            identity_marker.write_text(
+                "yian-native-install-v1\n"
+                f"yianc={check_toolchain_parity.file_sha256(identity_yianc)}\n"
+                f"anx={check_toolchain_parity.file_sha256(identity_anx)}\n"
+                "resources=resource-artifact\n"
+                f"build_info_sha256={check_toolchain_parity.file_sha256(identity_info)}\n",
+                encoding="utf-8",
+            )
+            with patch.object(check_toolchain_parity, "component_source_sha256", side_effect=lambda _root, name: f"{name}-source"), patch.object(
+                check_toolchain_parity, "resources_source_sha256", return_value="resource-source"
+            ), patch.object(check_toolchain_parity, "tree_sha256", return_value="resource-artifact"), patch.object(
+                check_toolchain_parity, "_expected_reference_source_sha256", return_value="python-source"
+            ):
+                self.assertEqual(check_toolchain_parity.validate_install(identity_prefix)["resources_sha256"], "resource-artifact")
+                identity_yianc.write_bytes(b"\x7fELFchanged")
+                with self.assertRaises(check_toolchain_parity.IdentityError):
+                    check_toolchain_parity.validate_install(identity_prefix)
 
     def test_native_anx_drives_both_compilers_from_external_cwd(self) -> None:
         prefix_value = os.environ.get("YIAN_INSTALL_PREFIX")

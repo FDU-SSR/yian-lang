@@ -17,12 +17,15 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TypeAlias, cast
 
-__ROOT = Path(__file__).resolve().parents[1]
+__SCRIPT_ROOT = Path(__file__).resolve().parents[1]
+__ROOT = __SCRIPT_ROOT.parent
 __PYTHON_ROOT = __ROOT / "python"
+sys.path.insert(0, str(__SCRIPT_ROOT))
 sys.path.insert(0, str(__PYTHON_ROOT))
 
 from run_tests import discover_tests
 from yianc.analysis.package_map import PackageMap
+from yianc.error import CompilerError
 
 Json: TypeAlias = None | bool | int | float | str | list["Json"] | dict[str, "Json"]
 FIXTURE_DEPENDENCIES = {
@@ -61,6 +64,7 @@ class Case:
     artifact_patterns: tuple[str, ...] = ("result*",)
     preexisting: tuple[tuple[str, str], ...] = ()
     target_modes: tuple[bool, ...] = (False, True)
+    package_build: bool = False
 
 
 class __Arguments(argparse.Namespace):
@@ -304,6 +308,11 @@ def __capture_native_package_metadata(
     )
 
 
+cases = __cases
+normalize = __normalize
+capture_native_package_metadata = __capture_native_package_metadata
+
+
 def __run(
     compiler: list[str],
     case: Case,
@@ -311,7 +320,19 @@ def __run(
     raw: bool,
     default_library: Path,
     anx: list[str] | None,
+    reference_launcher: Path | None = None,
 ) -> dict[str, Json]:
+    if case.package_build:
+        return __run_package_build(
+            compiler,
+            case,
+            directory,
+            raw,
+            default_library,
+            anx,
+            reference_launcher,
+        )
+
     sources: list[str] = []
     for path, contents in case.preexisting:
         destination = directory / path
@@ -429,6 +450,106 @@ def __run(
         else:
             result["run"] = "missing executable"
     return {"command": [str(value) for value in command], "observation": __normalize(result, directory, default_library), "raw_stdout": process.stdout, "raw_stderr": process.stderr}
+
+
+def run_case(
+    compiler: list[str],
+    case: Case,
+    directory: Path,
+    raw: bool,
+    default_library: Path,
+    anx: list[str] | None,
+    reference_launcher: Path | None = None,
+) -> dict[str, Json]:
+    """Run one compiler or package observation in an isolated work directory."""
+    return __run(compiler, case, directory, raw, default_library, anx, reference_launcher)
+
+
+def __run_package_build(
+    compiler: list[str],
+    case: Case,
+    directory: Path,
+    raw: bool,
+    default_library: Path,
+    anx: list[str] | None,
+    reference_launcher: Path | None,
+) -> dict[str, Json]:
+    if not case.fixture:
+        raise RuntimeError(f"package build case {case.name} has no fixture")
+    if anx is None:
+        raise RuntimeError(f"native anx is required for package build case {case.name}")
+
+    project = directory / "project"
+    shutil.copytree(
+        __ROOT / case.fixture,
+        project,
+        ignore=shutil.ignore_patterns("build", "__pycache__", ".pytest_cache"),
+    )
+    command = [*anx, "build", str(project)]
+    if raw:
+        command.append("--raw-pointers")
+
+    environment = os.environ.copy()
+    for name in ("YIAN_LOG", "YIAN_LOG_FILE"):
+        environment.pop(name, None)
+    environment["YIAN_ROOT"] = str(__ROOT)
+    environment["YIAN_LIB"] = str(default_library)
+    environment["PATH"] = str(Path(compiler[0]).resolve().parent) + os.pathsep + environment.get("PATH", "")
+    python_path = str(__PYTHON_ROOT)
+    if environment.get("PYTHONPATH"):
+        python_path += os.pathsep + environment["PYTHONPATH"]
+    environment["PYTHONPATH"] = python_path
+    if compiler == [sys.executable, "-m", "yianc.main"]:
+        if reference_launcher is None:
+            raise RuntimeError("Python package builds require a reference compiler launcher")
+        environment["YIANC"] = str(reference_launcher)
+    else:
+        environment["YIANC"] = compiler[0]
+
+    process = subprocess.run(
+        command,
+        cwd=directory,
+        env=environment,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    mapping_path = project / "build" / "pkg.json"
+    mapping: dict[str, Json] | None = None
+    mapping_error: str | None = None
+    if mapping_path.is_file():
+        try:
+            mapping = cast(dict[str, Json], json.loads(mapping_path.read_text(encoding="utf-8")))
+            PackageMap.from_document(mapping, source="native anx package parity build")
+        except (OSError, json.JSONDecodeError, CompilerError, ValueError) as error:
+            mapping_error = str(error)
+
+    run_result: dict[str, Json] | None = None
+    executable = project / "build" / "app"
+    if process.returncode == 0 and executable.is_file():
+        run = subprocess.run(
+            [str(executable)],
+            cwd=directory,
+            env=environment,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        run_result = {"status": run.returncode, "stdout": run.stdout, "stderr": run.stderr}
+
+    observation: dict[str, Json] = {
+        "status": process.returncode,
+        "package_map": mapping,
+        "package_map_error": mapping_error,
+        "run": run_result,
+    }
+    return {
+        "command": [str(value) for value in command],
+        "environment": {"YIANC": environment["YIANC"], "YIAN_LIB": str(default_library)},
+        "observation": __normalize(observation, directory, default_library),
+        "raw_stdout": process.stdout,
+        "raw_stderr": process.stderr,
+    }
 
 
 def main() -> int:

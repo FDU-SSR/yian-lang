@@ -197,7 +197,7 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 def main(argv: list[str] | None = None) -> int:
     args = _parse_args(argv)
-    root = Path(__file__).resolve().parents[1]
+    root = Path(__file__).resolve().parents[2]
     output = args.output
     if not output.is_absolute():
         print("error: --output must be an absolute path", file=sys.stderr)

@@ -27,8 +27,7 @@ compiler、native compiler 交互。安装方式见[安装与环境](06.install.
 ## 快速上手
 
 ```bash
-scripts/install.sh        # Install native yianc/anx and shared resources.
-PATH="$HOME/.local/bin:$PATH" scripts/install_lsp.sh --prefix "$HOME/.local"
+scripts/bootstrap_toolchain.sh # Build native yianc/anx and install shared resources.
 
 anx new demo              # Create a bin project skeleton.
 cd demo

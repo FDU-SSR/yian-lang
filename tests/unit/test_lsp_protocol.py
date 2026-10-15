@@ -37,7 +37,7 @@ class StdioClient:
             executable = os.environ.get("YIAN_LSP_BIN") or shutil.which("yian-lsp")
             if executable is None:
                 raise FileNotFoundError(
-                    "native yian-lsp is not installed; run scripts/install_lsp.sh"
+                    "native yian-lsp is not installed; refresh the toolchain with scripts/refresh_toolchain.sh"
                 )
             command = [executable, "--stdio", "--compiler-root", str(ROOT)]
         self.command = list(command)
