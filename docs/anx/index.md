@@ -3,6 +3,9 @@
 `anx` 是 YIAN 的项目与包管理工具：创建项目、按包名解析导入、构建/运行/检查、跑项目测试、
 格式化源码、输出依赖图。
 
+仓库同时提供 Python 参考实现 `python -m anx.main` 和从 `bootstrap/anx/` 构建的原生 `anx`；两者保持相同的
+用户命令与包图契约。安装方式见[安装与环境](06.install.md)。
+
 - 语言语法与模块系统见[语言参考](../grammar/index.md)（其中 `13.modules.md` 讲 `import` 语法）
 - 编译器内部实现见[开发手册](../manual/index.md)（编译器 01–19 章）
 - anx 自己的内部实现见[开发手册 · anx 部分](../manual/index.md)（20–25 章：
@@ -58,7 +61,7 @@ demo/
 | 新建库 / 库+CLI | `anx new mylib --kind lib` / `anx new tool --kind hybrid` |
 | 构建到 `build/app` | `anx build` |
 | 构建并运行（转发参数与 stdin） | `anx run -- alpha beta` |
-| 只做类型检查（不产出可执行文件） | `anx check` |
+| 分析项目、不生成可执行文件或 LLVM 目标 | `anx check` |
 | 跑项目自己的测试 | `anx test` |
 | 格式化根包源码 | `anx fmt` / `anx fmt --check` |
 | 打印依赖图 | `anx graph` / `anx graph --json` |

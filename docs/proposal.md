@@ -6,8 +6,9 @@
 
 ## 语言与编译器
 
-YIAN 是静态类型语言，支持泛型、trait/impl、闭包、引用、切片和枚举。编译器由 Python 实现，源码经过
-词法、语法、语义分析、HIR、CFG 与 LLVM IR 阶段生成目标文件。
+YIAN 是静态类型语言，支持泛型、trait/impl、闭包、引用、切片和枚举。仓库提供 Python 参考编译器
+`compiler/` 和以 YIAN 编写的原生编译器 `bootstrap/compiler/`；两者都实现词法、语法、语义分析、HIR、CFG
+与 LLVM IR 阶段，并可生成原生程序。
 
 模块级常量使用 `const NAME: T = expression;` 声明，可通过 `pub` 导出。常量必须标注整数、浮点、布尔、字符
 或字符串标量类型（也可以使用这些类型的别名）。初始化表达式经过普通类型检查，并由编译期求值器计算；常量
@@ -40,12 +41,14 @@ fat 模式的指针携带边界与生命周期元数据，并在内存访问时�
 安全元数据的裸指针。YIAN 不执行借用检查或生命周期推断；赋值、参数传递和返回采用浅层值复制，不隐式
 释放值。安全机制的适用范围与终止行为见[内存安全说明](security.md)。
 
-## 自举前端与支持库
+## 自举编译器与支持库
 
-`bootstrap/compiler` 是 YIAN 实现的前端，支持源码收集、词法、语法和去糖的 JSON 观察入口。
-它依赖独立的 `bootstrap/json` 库；`bootstrap/ffi` 与 `bootstrap/llvm` 提供 C ABI 支持和 LLVM 22
-C API 绑定。自举前端没有语义分析与目标代码生成入口，完整编译仍由 Python 编译器执行。
-包布局、命令与资源管理见[自举编译器手册](manual/30.bootstrap.md)。
+`bootstrap/compiler` 是完整的 YIAN 原生编译器，覆盖源码准备、语义分析、HIR 到 CFG、LLVM 代码生成与原生链接；
+`bootstrap/anx` 是以 YIAN 编写的原生包管理器。`bootstrap/json`、`bootstrap/toml`、`bootstrap/ffi` 和
+`bootstrap/llvm` 提供它们所需的数据、C ABI 与 LLVM 22 支持。
+
+`scripts/install.sh` 先用 Python 参考编译器构建原生 `yianc`，再用该原生编译器构建 `anx`。语言服务器
+`lsp/` 单独构建和安装，并使用同一套原生工具链。自举包结构、构建入口与 CLI 见[自举编译器手册](manual/30.bootstrap.md)。
 
 ## 内存安全机制的边界
 

@@ -1,6 +1,7 @@
 # Yian 编译器命令行手册
 
-本文档说明如何通过命令行直接调用 `compiler/main.py` 编译 Yian 源码。
+本文档说明 Python 参考编译器和原生 `yianc` 共用的命令行契约。Python 入口是
+`python -m compiler.main`；安装后的 `yianc` 是由 `bootstrap/compiler/` 构建的原生程序。
 
 ## 1. 基本用法
 
@@ -57,7 +58,7 @@ yianc <path> [path...]
 | 值     | 说明                     |
 | ------ | ------------------------ |
 | `exe`  | 可执行文件（默认）       |
-| `none` | 仅做语义分析，不生成代码 |
+| `none` | 完成语义分析与 CFG 下降，不发射 LLVM 或原生目标 |
 | `ll`   | LLVM IR 文本 (.ll)       |
 | `bc`   | LLVM bitcode (.bc)       |
 | `obj`  | 目标文件 (.o)            |
@@ -323,7 +324,7 @@ yianc --log-spec "main=DEBUG" lib/src tests/basic/array/assign.an
 [DEBUG][main        ]generated 5 CFG functions
 ```
 
-### 4.4 仅做语义检查（不生成代码）
+### 4.4 语义分析与 CFG 检查（不发射 LLVM）
 
 ```bash
 yianc -t none lib/src tests/basic/array/assign.an

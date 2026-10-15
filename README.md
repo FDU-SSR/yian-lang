@@ -1,6 +1,6 @@
 # YIAN
 
-YIAN is a statically typed programming language with a Python reference compiler and a native compiler and package manager written in YIAN. The compiler pipeline is `.an source → tokens → AST → HIR → CFG → LLVM IR → executable`.
+YIAN is a statically typed programming language with a Python reference compiler and a native compiler and package manager written in YIAN. Both compilers support the `.an source → tokens → AST → desugared AST → HIR → CFG → LLVM IR → executable` pipeline.
 
 ## Requirements
 

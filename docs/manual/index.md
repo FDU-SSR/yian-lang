@@ -1,15 +1,16 @@
 # Yian 开发文档
 
-本文档描述 Yian 工具链的内部实现：
+本文档描述 Yian 工具链的内部实现。01–19 章介绍 Python 参考编译器，20–25 章介绍 Python 参考包管理器；
+26–29 章覆盖分析、语言服务器、格式化器与 FFI，30 章介绍以 YIAN 编写的原生工具链：
 
-- **编译器**（01–19）：内部架构、数据流与关键算法，覆盖编译管线和编译器的主要子系统。
-- **anx 包管理器**（20–25）：项目模型、清单与诊断、依赖图与 `build/pkg.json` 契约、CLI、
+- **Python 参考编译器**（01–19）：内部架构、数据流与关键算法，覆盖编译管线和编译器的主要子系统。
+- **Python anx 参考包管理器**（20–25）：项目模型、清单与诊断、依赖图与 `build/pkg.json` 契约、CLI、
   以及 anx 自身的测试。
 - **分析接口与语言服务器**（26–27）：编译器分析会话与位置/引用模型，以及 `lsp/` 中的原生
   协议服务、调度与分发。
 - **格式化器**（28）：源码排版的规则、注释与空行的恢复、五条不变式与三个入口。
 - **FFI**（29）：C ABI 声明与封送的编译路径、包权限和原生链接。
-- **自举编译器**（30）：YIAN 实现的前端、JSON 数据结构与 LLVM FFI 包。
+- **自举编译器与原生工具链**（30）：YIAN 实现的完整编译器、原生 anx 与 JSON/TOML/LLVM 支持库。
 
 ## 目录 · 编译器
 
@@ -54,6 +55,6 @@
 | [27](27.language_server.md) | 语言服务器 | `lsp/`、`ide-support/vscode/` |
 | [28](28.formatter.md) | 格式化器 | `compiler/format/`、`lsp/src/worker/service.an` |
 | [29](29.ffi.md) | FFI 编译与链接 | `compiler/analysis/`、`compiler/codegen/llvm/emitters/ffi.py`、`compiler/native_link.py` |
-| [30](30.bootstrap.md) | 自举编译器 | `bootstrap/compiler/`、`bootstrap/json/`、`bootstrap/ffi/`、`bootstrap/llvm/` |
+| [30](30.bootstrap.md) | 自举编译器与原生工具链 | `bootstrap/compiler/`、`bootstrap/anx/`、`bootstrap/json/`、`bootstrap/toml/`、`bootstrap/ffi/`、`bootstrap/llvm/` |
 
-> 用户视角的用法见 [anx 用户指南](../anx/index.md)。
+> 用户视角的用法见 [anx 用户指南](../anx/index.md)。Python 与 native CLI 契约见[编译器命令行手册](../compile_script.md)。
