@@ -1,0 +1,134 @@
+from yianc.frontend.ast.arena import AstArena, AstTree;
+from yianc.frontend.ast.node import Expr, ExprData, Block, Pattern, PatternData, TypeSyntax, TypeData, Condition, MatchArm, PatternArguments, Argument, StrLiteralData, Literal, ElifBranch;
+from yianc.frontend.ast.atoms import BuiltinKind, MatchArmOrigin;
+from yianc.frontend.ast.traversal import AstRewriter, rewrite_expr_children;
+from yianc.frontend.source import Span;
+from std.core.option import Option;
+from std.core.string import String;
+from std.core.vec import Vec;
+from yianc.frontend.desugar.build import identifier, name_expr, block, block_expr, one_block, break_block, unary_not, arm, match_expr, conditional, method_call, argument;
+
+fn append_decimal(output: String&, value: u64) {
+    let text = value.to_string_radix(10);
+    output.push_str(text.as_str());
+    text.drop();
+}
+
+fn assertion_message(path: str, span: Span) -> String {
+    let text = String.from(&"assertion failed at ");
+    text.push_str(path);
+    text.push('(');
+    append_decimal(&text, span.start.row);
+    text.push(':');
+    append_decimal(&text, span.start.column);
+    text.push_str(" - ");
+    append_decimal(&text, span.end.row);
+    text.push(':');
+    append_decimal(&text, span.end.column);
+    text.push(')');
+    text
+}
+struct ControlLowerer { arena: AstArena&, path: str }
+impl ControlLowerer {
+    // Build fallback branches from the end to preserve source-order evaluation of elif conditions.
+    fn lower_if(span: Span, cond: Condition, yes: Block&, branches: Vec<ElifBranch&>&, no: Option<Block&>) -> Expr& {
+        let fallback = no;
+        let index = branches.len();
+
+        while index > 0 {
+            index -= 1;
+            let branch = branches[index];
+            let nested = conditional(self.arena, branch.data.body.span, branch.data.condition, branch.data.body, fallback);
+            fallback = Option<Block&>.Some(val=one_block(self.arena, branch.data.body.span, nested));
+        }
+
+        conditional(self.arena, span, cond, yes, fallback)
+    }
+
+    // Check the condition before each iteration; failed pattern matches and false expressions both select the exit branch.
+    fn lower_while(span: Span, cond: Condition, body: Block&) -> Expr& {
+        let stmts = Vec<Expr&>.new();
+        match cond {
+            Let(value) => {
+                let arms = Vec<MatchArm&>.new();
+                arms.push(arm(self.arena, value.data.pattern, body, MatchArmOrigin.Condition));
+                let wildcard = self.arena.alloc_pattern(PatternData.WildcardPattern, span);
+                arms.push(arm(self.arena, wildcard, break_block(self.arena, span), MatchArmOrigin.Synthetic));
+                stmts.push(match_expr(self.arena, value.span, value.data.value, arms));
+            },
+            Expression(value) => {
+                let stop = Condition.Expression(value=unary_not(self.arena, value));
+                stmts.push(conditional(self.arena, span, stop, break_block(self.arena, span), Option<Block&>.None));
+                stmts.push(block_expr(self.arena, body));
+            },
+        }
+
+        self.arena.alloc_expr(ExprData.Loop(body=block(self.arena, body.span, stmts)), span)
+    }
+
+    // Evaluate iterator initialization once; match next on each iteration and retain the loop-variable origin tag.
+    fn lower_for(span: Span, pattern: Pattern&, iterable: Expr&, body: Block&) -> Expr& {
+        let name = identifier(self.arena, span, "%iter", true);
+        let init = method_call(self.arena, iterable.span, iterable, "into_iter", Vec<Argument&>.new());
+        let ty = self.arena.alloc_type_syntax(TypeData.DeducedType, span);
+        let decl = self.arena.alloc_expr(ExprData.VarDecl(name=name, var_type=ty, init_expr=Option<Expr&>.Some(val=init)), span);
+
+        let receiver = name_expr(self.arena, identifier(self.arena, span, "%iter", true));
+        let next = method_call(self.arena, span, receiver, "next", Vec<Argument&>.new());
+        let positional = Vec<Pattern&>.new();
+        positional.push(pattern);
+        let some = self.arena.alloc_pattern(PatternData.ConstructPattern(name=identifier(self.arena, pattern.span, "Some", true),
+            qualifier=Option<TypeSyntax&>.None, arguments=PatternArguments.Positional(values=positional), rest=false), pattern.span);
+        let none = self.arena.alloc_pattern(PatternData.NamePattern(name=identifier(self.arena, span, "None", true)), span);
+
+        let arms = Vec<MatchArm&>.new();
+        arms.push(arm(self.arena, some, body, MatchArmOrigin.ForItem));
+        arms.push(arm(self.arena, none, break_block(self.arena, span), MatchArmOrigin.Synthetic));
+        let inner = match_expr(self.arena, span, next, arms);
+        let loop_body = one_block(self.arena, body.span, inner);
+        let repeat = self.arena.alloc_expr(ExprData.Loop(body=loop_body), span);
+
+        let stmts = Vec<Expr&>.new();
+        stmts.push(decl);
+        stmts.push(repeat);
+        block_expr(self.arena, block(self.arena, span, stmts))
+    }
+
+    fn lower_assert(span: Span, cond: Expr&, message: Option<Expr&>) -> Expr& {
+        let value = if message.is_some() { *message.unwrap() } else {
+            let text = assertion_message(self.path, span);
+            let raw = String.from(&"\"");
+            raw.push_str(text.as_str());
+            raw.push('"');
+            let literal = self.arena.alloc_str_literal(StrLiteralData(value=text, raw=raw), span);
+            self.arena.alloc_expr(ExprData.Literal(literal=Literal.StringLiteral(value=literal)), span)
+        };
+
+        // The message expression belongs to the failure branch and is evaluated only when the assertion condition is false.
+        let args = Vec<Argument&>.new();
+        args.push(argument(self.arena, value));
+        let panic_call = self.arena.alloc_expr(ExprData.Builtin(kind=BuiltinKind.Panic, type_args=Vec<TypeSyntax&>.new(), args=args), span);
+        conditional(self.arena, span, Condition.Expression(value=unary_not(self.arena, cond)), one_block(self.arena, span, panic_call), Option<Block&>.None)
+    }
+}
+
+impl AstRewriter for ControlLowerer {
+    pub fn rewrite_expr(node: Expr&) -> Expr& {
+        // Rewrite children first; generated control flow directly references their results.
+        rewrite_expr_children(node, self);
+
+        match &node.data {
+            If(cond, yes, branches, no) => self.lower_if(node.span, *cond, *yes, branches, *no),
+            While(cond, body) => self.lower_while(node.span, *cond, *body),
+            For(pattern, iterable, body) => self.lower_for(node.span, *pattern, *iterable, *body),
+            Assert(cond, message) => self.lower_assert(node.span, *cond, *message),
+            _ => node,
+        }
+    }
+}
+
+// Expand conditions, loops, and assertions in child-first order; path supplies default assertion messages.
+pub fn lower_control(tree: AstTree&, path: str) {
+    let pass = ControlLowerer(arena=&tree.arena, path=path);
+    tree.root = pass.rewrite_program(tree.root);
+}

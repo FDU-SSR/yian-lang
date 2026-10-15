@@ -4,6 +4,6 @@ kind = "hybrid"
 version = "0.1.0"
 
 [dependencies]
-compiler = { path = "../compiler" }
+yianc = { path = "../yianc" }
 json = { path = "../json" }
 toml = { path = "../toml" }

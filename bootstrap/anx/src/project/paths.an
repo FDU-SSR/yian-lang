@@ -5,7 +5,7 @@ from std.core.path import Path, PathBuf;
 from std.core.process import env_var;
 from std.core.result import Result;
 from std.core.string import String;
-from compiler.driver.host import associated_root;
+from yianc.driver.host import associated_root;
 
 fn checkout_library(root: str) -> Result<PathBuf, String> {
     let base = match canonicalize(root) {

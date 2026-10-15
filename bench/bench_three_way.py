@@ -426,12 +426,18 @@ def compile_an(spec: BenchSpec, profile: str, raw: bool) -> Path:
     binary = spec_bin(spec, state)
     fat_src, raw_src = materialize(spec, profile)
     src = raw_src if raw else fat_src
-    cmd = [sys.executable, "-m", "compiler.main", OPT_LEVEL]
+    cmd = [sys.executable, "-m", "yianc.main", OPT_LEVEL]
     if raw:
         cmd.append("--raw-pointers")
     cmd += [str(LIB), str(src), "-o", str(binary)]
     binary.parent.mkdir(parents=True, exist_ok=True)
-    res = subprocess.run(cmd, capture_output=True, text=True, cwd=ROOT)
+    environment = os.environ.copy()
+    python_root = str(ROOT / "python")
+    existing_python_path = environment.get("PYTHONPATH")
+    environment["PYTHONPATH"] = (
+        python_root if not existing_python_path else f"{python_root}{os.pathsep}{existing_python_path}"
+    )
+    res = subprocess.run(cmd, capture_output=True, text=True, cwd=ROOT, env=environment)
     if res.returncode != 0:
         raise SystemExit(f"[compile] {spec.key} ({state}) 失败:\n{res.stdout}\n{res.stderr}")
     return binary

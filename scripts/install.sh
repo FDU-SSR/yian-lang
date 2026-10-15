@@ -3,6 +3,7 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+PYTHON_ROOT="$ROOT_DIR/python"
 PYTHON="${PYTHON:-}"
 PREFIX="${PREFIX:-}"
 
@@ -117,14 +118,14 @@ PYTHON_COMPILER="$STAGE_DIR/yianc-python"
 PYTHON_SHELL_WORD="$(printf '%q' "$PYTHON")"
 cat >"$PYTHON_COMPILER" <<EOF
 #!/usr/bin/env bash
-exec $PYTHON_SHELL_WORD -m compiler.main "\$@"
+exec $PYTHON_SHELL_WORD -m yianc.main "\$@"
 EOF
 chmod 0755 "$PYTHON_COMPILER"
 
 run_source_anx() {
     local compiler="$1"
     shift
-    PYTHONPATH="$ROOT_DIR${PYTHONPATH:+:$PYTHONPATH}" \
+    PYTHONPATH="$PYTHON_ROOT${PYTHONPATH:+:$PYTHONPATH}" \
     YIAN_ROOT="$ROOT_DIR" \
     YIAN_LIB="$ROOT_DIR/lib/src" \
     YIANC="$compiler" \
@@ -132,8 +133,8 @@ run_source_anx() {
 }
 
 printf 'Building native yianc with the checkout Python compiler...\n'
-run_source_anx "$PYTHON_COMPILER" build "$ROOT_DIR/bootstrap/compiler" -O2
-install -m 0755 "$ROOT_DIR/bootstrap/compiler/build/app" "$STAGE_DIR/bin/yianc"
+run_source_anx "$PYTHON_COMPILER" build "$ROOT_DIR/bootstrap/yianc" -O2
+install -m 0755 "$ROOT_DIR/bootstrap/yianc/build/app" "$STAGE_DIR/bin/yianc"
 
 printf 'Building native anx with the new yianc binary...\n'
 run_source_anx "$STAGE_DIR/bin/yianc" build "$ROOT_DIR/bootstrap/anx" -O2

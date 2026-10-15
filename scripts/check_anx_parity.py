@@ -113,7 +113,7 @@ def run_case(binary: list[str], case: Case, temporary_root: Path, label: str, co
     environment = os.environ.copy()
     environment["YIAN_ROOT"] = str(ROOT)
     environment["YIAN_LIB"] = str(ROOT / "lib/src")
-    source_path = str(ROOT)
+    source_path = str(ROOT / "python")
     if environment.get("PYTHONPATH"):
         source_path += os.pathsep + environment["PYTHONPATH"]
     environment["PYTHONPATH"] = source_path

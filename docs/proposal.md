@@ -7,7 +7,7 @@
 ## 语言与编译器
 
 YIAN 是静态类型语言，支持泛型、trait/impl、闭包、引用、切片和枚举。仓库提供 Python 参考编译器
-`compiler/` 和以 YIAN 编写的原生编译器 `bootstrap/compiler/`；两者都实现词法、语法、语义分析、HIR、CFG
+`python/yianc/` 和以 YIAN 编写的原生编译器 `bootstrap/yianc/`；两者都实现词法、语法、语义分析、HIR、CFG
 与 LLVM IR 阶段，并可生成原生程序。
 
 模块级常量使用 `const NAME: T = expression;` 声明，可通过 `pub` 导出。常量必须标注整数、浮点、布尔、字符
@@ -43,7 +43,7 @@ fat 模式的指针携带边界与生命周期元数据，并在内存访问时�
 
 ## 自举编译器与支持库
 
-`bootstrap/compiler` 是完整的 YIAN 原生编译器，覆盖源码准备、语义分析、HIR 到 CFG、LLVM 代码生成与原生链接；
+`bootstrap/yianc` 是完整的 YIAN 原生编译器，覆盖源码准备、语义分析、HIR 到 CFG、LLVM 代码生成与原生链接；
 `bootstrap/anx` 是以 YIAN 编写的原生包管理器。`bootstrap/json`、`bootstrap/toml`、`bootstrap/ffi` 和
 `bootstrap/llvm` 提供它们所需的数据、C ABI 与 LLVM 22 支持。
 

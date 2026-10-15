@@ -1,0 +1,201 @@
+from yianc.codegen.lowering.context import Lowering, CleanupScope, LoopTarget;
+from yianc.codegen.cfg.ids import ValueId, BlockId;
+from yianc.codegen.cfg.model import Operation, Terminator;
+from yianc.codegen.error import CodegenError;
+from yianc.analysis.hir.node import HirNode, Block, If;
+from yianc.common.ids import HirId;
+from std.core.drop import Drop;
+from std.core.iter import Iterator, IntoIterator;
+from std.core.ops import Index;
+from std.core.option import Option;
+from std.core.result import Result;
+from std.core.vec import Vec;
+
+impl Lowering {
+    // Place-valued blocks retain the final place instead of copying it into a temporary.
+    pub fn block_address(node: HirNode&, block: Block&) -> Result<ValueId, CodegenError> {
+        let depth = self.scopes.len();
+        self.scopes.push(CleanupScope(Vec<HirId>.new()));
+        let result = Option<ValueId>.None;
+        let index = 0u64;
+        for statement in block.stmts {
+            if self.current.is_none() { break; }
+            index += 1u64;
+            if index == block.stmts.len() { result = Option<ValueId>.Some(self.address(*statement)?); } else { self.expression(*statement)?; }
+        }
+        if self.current.is_some() { self.clean_to(depth)?; }
+        self.scopes.pop().unwrap().drop();
+        match result {
+            Some(value) => Result<ValueId, CodegenError>.Ok(value),
+            None => Result<ValueId, CodegenError>.Err(CodegenError.unsupported(node.span, "place block has no value")),
+        }
+    }
+
+    pub fn block_value(node: HirNode&, block: Block&) -> Result<ValueId, CodegenError> {
+        let depth = self.scopes.len();
+        self.scopes.push(CleanupScope(Vec<HirId>.new()));
+        let result = self.zero(node.type_id);
+        for statement in block.stmts {
+            if self.current.is_none() { break; }
+            result = self.expression(*statement)?;
+        }
+
+        if self.current.is_some() { self.clean_to(depth)?; }
+        self.scopes.pop().unwrap().drop();
+        Result<ValueId, CodegenError>.Ok(result)
+    }
+
+    pub fn if_value(node: HirNode&, value: If&) -> Result<ValueId, CodegenError> {
+        let condition = self.expression(value.cond)?;
+        if self.current.is_none() { return Result<ValueId, CodegenError>.Ok(self.zero(node.type_id)); }
+        let yes = self.function.add_block();
+        let no = self.function.add_block();
+        let join = self.function.add_block();
+        self.end(Terminator.Branch(condition, yes, no))?;
+        let incoming = Vec<(ValueId, BlockId)>.new();
+        let transferred = false;
+        defer { if !transferred { incoming.drop(); } };
+
+        self.current = Option<BlockId>.Some(yes);
+        let then_value = self.expression(value.then_branch)?;
+        match self.current {
+            Some(block) => {
+                incoming.push((then_value, block));
+                self.end(Terminator.Jump(join))?;
+            },
+            None => {},
+        }
+
+        self.current = Option<BlockId>.Some(no);
+        let else_value = match value.else_branch {
+            Some(branch) => self.expression(branch)?,
+            None => self.zero(node.type_id),
+        };
+        match self.current {
+            Some(block) => {
+                incoming.push((else_value, block));
+                self.end(Terminator.Jump(join))?;
+            },
+            None => {},
+        }
+
+        self.current = Option<BlockId>.Some(join);
+        if incoming.is_empty() {
+            self.end(Terminator.Unreachable)?;
+            return Result<ValueId, CodegenError>.Ok(self.zero(node.type_id));
+        }
+        if self.types.is_zst(node.type_id)? {
+            return Result<ValueId, CodegenError>.Ok(self.zero(node.type_id));
+        }
+
+        transferred = true;
+        self.emit(node.span, node.type_id, Operation.Phi(incoming))
+    }
+
+    pub fn short_circuit(node: HirNode&, left: HirId, right: HirId, conjunction: bool)
+    -> Result<ValueId, CodegenError> {
+        let condition = self.expression(left)?;
+        let origin = match self.current {
+            Some(value) => value,
+            None => return Result<ValueId, CodegenError>.Ok(self.zero(node.type_id)),
+        };
+        let evaluate = self.function.add_block();
+        let join = self.function.add_block();
+        self.end(if conjunction {
+                Terminator.Branch(condition, evaluate, join)
+            } else {
+                Terminator.Branch(condition, join, evaluate)
+            })?;
+
+        let incoming = Vec<(ValueId, BlockId)>.new();
+        let transferred = false;
+        defer { if !transferred { incoming.drop(); } };
+        incoming.push((condition, origin));
+        self.current = Option<BlockId>.Some(evaluate);
+        let rhs = self.expression(right)?;
+        match self.current {
+            Some(block) => {
+                incoming.push((rhs, block));
+                self.end(Terminator.Jump(join))?;
+            },
+            None => {},
+        }
+
+        self.current = Option<BlockId>.Some(join);
+        transferred = true;
+        self.emit(node.span, node.type_id, Operation.Phi(incoming))
+    }
+
+    pub fn loop_value(node: HirNode&, body: HirId) -> Result<ValueId, CodegenError> {
+        let head = self.function.add_block();
+        let exit = self.function.add_block();
+        self.end(Terminator.Jump(head))?;
+        self.loops.push(LoopTarget(head, exit, self.scopes.len(), node.type_id, Vec<(ValueId, BlockId)>.new()));
+        self.current = Option<BlockId>.Some(head);
+        self.expression(body)?;
+        if self.current.is_some() { self.end(Terminator.Jump(head))?; }
+        let target = *self.loops.pop().unwrap();
+        let transferred = false;
+        defer { if !transferred { target.drop(); } };
+        self.current = Option<BlockId>.Some(exit);
+
+        if target.incoming.is_empty() {
+            self.end(Terminator.Unreachable)?;
+            return Result<ValueId, CodegenError>.Ok(self.zero(node.type_id));
+        }
+        if self.types.is_zst(node.type_id)? {
+            return Result<ValueId, CodegenError>.Ok(self.zero(node.type_id));
+        }
+
+        transferred = true;
+        self.emit(node.span, node.type_id, Operation.Phi(target.incoming))
+    }
+
+    pub fn break_value(node: HirNode&, value: Option<HirId>) -> Result<ValueId, CodegenError> {
+        if self.loops.is_empty() {
+            return Result<ValueId, CodegenError>.Err(CodegenError.invalid("break has no CFG loop"));
+        }
+        let index = self.loops.len() - 1;
+        let depth = self.loops[index].cleanup_depth;
+        let destination = self.loops[index].exit;
+        let result = match value {
+            Some(expr) => self.expression(expr)?,
+            None => self.zero(self.loops[index].result_type),
+        };
+        self.clean_to(depth)?;
+        if self.current.is_none() { return Result<ValueId, CodegenError>.Ok(self.zero(node.type_id)); }
+        let block = *self.current.unwrap();
+        self.loops[index].incoming.push((result, block));
+        self.end(Terminator.Jump(destination))?;
+        Result<ValueId, CodegenError>.Ok(self.zero(node.type_id))
+    }
+
+    pub fn continue_value(node: HirNode&) -> Result<ValueId, CodegenError> {
+        if self.loops.is_empty() {
+            return Result<ValueId, CodegenError>.Err(CodegenError.invalid("continue has no CFG loop"));
+        }
+        let index = self.loops.len() - 1;
+        let depth = self.loops[index].cleanup_depth;
+        let destination = self.loops[index].head;
+        self.clean_to(depth)?;
+        if self.current.is_some() { self.end(Terminator.Jump(destination))?; }
+        Result<ValueId, CodegenError>.Ok(self.zero(node.type_id))
+    }
+
+    pub fn return_value(node: HirNode&, value: Option<HirId>) -> Result<ValueId, CodegenError> {
+        let result = match value {
+            Some(expr) => {
+                let evaluated = self.expression(expr)?;
+                if self.types.is_zst(self.function.result_type)? {
+                    Option<ValueId>.None
+                } else {
+                    Option<ValueId>.Some(evaluated)
+                }
+            },
+            None => Option<ValueId>.None,
+        };
+        self.clean_to(0u64)?;
+        if self.current.is_some() { self.end(Terminator.Return(result))?; }
+        Result<ValueId, CodegenError>.Ok(self.zero(node.type_id))
+    }
+}

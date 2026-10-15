@@ -1,0 +1,439 @@
+from yianc.analysis.lowering.checker import ExprChecker;
+from std.core.string import String;
+from std.core.convert import From;
+from yianc.analysis.ty.substitution import infer, substitute;
+from yianc.analysis.ty.callable import instance_substitutions;
+from yianc.analysis.ty.aggregate import payload_fields;
+from yianc.analysis.ty.relations import default_type, has_literal, compatible;
+from yianc.analysis.ty.display import type_text;
+from yianc.analysis.ty.model import StructField, AccessMode, EnumVariant;
+from yianc.analysis.hir.node import HirKind, StructConstruct, VariantConstruct, FieldAccess, TupleAccess, Unary;
+from yianc.common.ids import TypeId, HirId, NameId, DefId;
+from yianc.analysis.editor_facts import EditorMemberKind;
+from yianc.frontend.ast.node import Argument;
+from yianc.frontend.ast.operator import UnaryOperator;
+from yianc.frontend.source import Span;
+from yianc.diagnostics.model import AnalysisError, DiagnosticCode;
+from std.core.drop import Drop;
+from std.core.iter import Iterator, IntoIterator;
+from std.core.option import Option;
+from std.core.result import Result;
+from std.core.vec import Vec;
+
+impl ExprChecker {
+    pub fn construct(span: Span, type_id: TypeId, args: Vec<Argument&>&) -> Result<HirId, AnalysisError> {
+        if args.len() != 0 {
+            let named = args[0].data.name.is_some();
+
+            for arg in *args {
+                if arg.data.name.is_some() != named {
+                    return Result<HirId, AnalysisError>.Err(self.error(span, "named and positional arguments cannot be mixed"));
+                }
+            }
+        }
+
+        let definition = match self.ctx.session.types.require(type_id)? {
+            Nominal(value, _) => *value,
+            _ => return Result<HirId, AnalysisError>.Err(self.error(span, "constructor requires an aggregate type")),
+        };
+        let body = match self.ctx.session.types.complete_definition(definition)? {
+            Struct(value) => value,
+            _ => return Result<HirId, AnalysisError>.Err(self.error(span, "type cannot be constructed directly")),
+        };
+
+        if args.len() != body.fields.len() {
+            return Result<HirId, AnalysisError>.Err(self.error(span, "constructor field count mismatch"));
+        }
+
+        let values = Vec<(NameId, HirId)>.new();
+        let substitutions = instance_substitutions(self.ctx, type_id)?;
+        defer substitutions.drop();
+        let accepted = false;
+        defer {
+            if !accepted {
+                values.drop();
+            }
+        };
+        let index = 0u64;
+
+        while index < args.len() {
+            let field_index = index;
+
+            match &args[index].data.name {
+                Some(name) => {
+                    let requested = self.ctx.session.names.intern(name.data.name.as_str());
+                    let found = false;
+
+                    for candidate in body.fields {
+                        if candidate.name == requested {
+                            field_index = candidate.index;
+                            found = true;
+                        }
+                    }
+
+                    if !found {
+                        return Result<HirId, AnalysisError>.Err(self.error(args[index].span, "constructor field does not exist"));
+                    }
+                },
+                None => {},
+            }
+
+            let field = body.fields[field_index];
+
+            for previous in values {
+                if previous[0] == field.name {
+                    return Result<HirId, AnalysisError>.Err(self.error(args[index].span, "duplicate constructor field"));
+                }
+            }
+
+            self.check_field_access(type_id, field, span)?;
+            let value = self.expression(args[index].data.value)?;
+            let expected = substitute(&self.ctx.session.types, field.type_id, &substitutions)?;
+
+            match &args[index].data.name {
+                Some(name) => match &field.span {
+                    Some(target) => self.ctx.session.editor_facts.record_member_reference(
+                        EditorMemberKind.Field, field.name, self.ctx.span(self.unit, name.span), *target, expected),
+                    None => {},
+                },
+                None => {},
+            };
+
+            if !has_literal(self.ctx, self.type_of(value)) && !self.match_argument(expected, default_type(self.ctx, self.type_of(value)), &substitutions) {
+                self.coerce(value, expected)?;
+            }
+
+            values.push((field.name, value));
+            index += 1;
+        }
+
+        for entry in values {
+            for field in body.fields {
+                if entry[0] == field.name {
+                    let expected = substitute(&self.ctx.session.types, field.type_id, &substitutions)?;
+
+                    if !compatible(self.ctx, self.type_of(entry[1]), expected) && !self.match_argument(expected, default_type(self.ctx, self.type_of(entry[1])), &substitutions) {
+                        return Result<HirId, AnalysisError>.Err(self.error(span, "constructor field cannot be matched to its type"));
+                    }
+                }
+            }
+        }
+
+        let arguments = Vec<TypeId>.new();
+        defer arguments.drop();
+        let header = *self.ctx.session.types.definition(definition).unwrap();
+        index = 0;
+
+        while index < header.generic_count() {
+            let generic = *header.generic(index).unwrap();
+
+            match substitutions.get(&generic) {
+                Some(value) => arguments.push(*value),
+                None => return Result<HirId, AnalysisError>.Err(self.unbound_arguments(span, type_id)),
+            }
+
+            index += 1;
+        }
+
+        let instance = self.ctx.session.types.instance(definition, &arguments)?;
+        index = 0;
+
+        while index < values.len() {
+            for field in body.fields {
+                if field.name == values[index][0] {
+                    let field_type = substitute(&self.ctx.session.types, field.type_id, &substitutions)?;
+                    values[index][1] = self.coerce(values[index][1], field_type)?;
+                }
+            }
+
+            index += 1;
+        }
+
+        accepted = true;
+        Result<HirId, AnalysisError>.Ok(self.node(span, instance, false, HirKind.StructConstruct(StructConstruct(instance, values))))
+    }
+
+    pub fn variant(span: Span, name_span: Span, type_id: TypeId, name: NameId,
+        args: Vec<Argument&>&) -> Result<Option<HirId>, AnalysisError> {
+        if args.len() != 0 {
+            let named = args[0].data.name.is_some();
+
+            for arg in *args {
+                if arg.data.name.is_some() != named {
+                    return Result<Option<HirId>, AnalysisError>.Err(self.error(arg.span, "variant arguments cannot mix named and positional fields"));
+                }
+            }
+        }
+
+        let definition = match self.ctx.session.types.require(type_id)? {
+            Nominal(value, _) => *value,
+            _ => return Result<Option<HirId>, AnalysisError>.Ok(Option<HirId>.None),
+        };
+        let body = match self.ctx.session.types.complete_definition(definition)? {
+            Enum(value) => value,
+            _ => return Result<Option<HirId>, AnalysisError>.Ok(Option<HirId>.None),
+        };
+
+        for variant in body.variants {
+            if variant.name != name {
+                continue;
+            }
+
+            match &variant.span {
+                Some(target) => self.ctx.session.editor_facts.record_member_reference(
+                    EditorMemberKind.Variant, name, self.ctx.span(self.unit, name_span), *target, type_id),
+                None => {},
+            };
+
+            let substitutions = instance_substitutions(self.ctx, type_id)?;
+            defer substitutions.drop();
+            let expected = payload_fields(self.ctx, variant.payload)?;
+            defer expected.drop();
+
+            if expected.len() != args.len() {
+                return Result<Option<HirId>, AnalysisError>.Err(self.error(span, "enum variant argument count mismatch"));
+            }
+
+            let values = Vec<(NameId, HirId)>.new();
+            let accepted = false;
+            defer {
+                if !accepted {
+                    values.drop();
+                }
+            };
+            let index = 0u64;
+
+            while index < args.len() {
+                let value = self.expression(args[index].data.value)?;
+                let field = index;
+
+                match &args[index].data.name {
+                    Some(name) => {
+                        let requested = self.ctx.session.names.intern(name.data.name.as_str());
+                        let found = false;
+
+                        for candidate in expected {
+                            if candidate.name == requested {
+                                field = candidate.index;
+                                found = true;
+                            }
+                        }
+
+                        if !found {
+                            return Result<Option<HirId>, AnalysisError>.Err(self.error(args[index].span, "enum payload field does not exist"));
+                        }
+                    },
+                    None => {},
+                }
+
+                for previous in values {
+                    if previous[0] == expected[field].name {
+                        return Result<Option<HirId>, AnalysisError>.Err(self.error(args[index].span, "duplicate enum payload field"));
+                    }
+                }
+
+                let target = substitute(&self.ctx.session.types, expected[field].type_id, &substitutions)?;
+
+                match &args[index].data.name {
+                    Some(name) => match &expected[field].span {
+                        Some(location) => self.ctx.session.editor_facts.record_member_reference(
+                            EditorMemberKind.Field, expected[field].name, self.ctx.span(self.unit, name.span),
+                            *location, target),
+                        None => {},
+                    },
+                    None => {},
+                };
+
+                if !infer(&self.ctx.session.types, target, default_type(self.ctx, self.type_of(value)), &substitutions) {
+                    self.coerce(value, target)?;
+                }
+
+                let name = expected[field].name;
+                values.push((name, value));
+                index += 1;
+            }
+
+            let arguments = Vec<TypeId>.new();
+            defer arguments.drop();
+            let header = *self.ctx.session.types.definition(definition).unwrap();
+            index = 0;
+
+            while index < header.generic_count() {
+                let generic = *header.generic(index).unwrap();
+
+                match substitutions.get(&generic) {
+                    Some(value) => arguments.push(*value),
+                    None => return Result<Option<HirId>, AnalysisError>.Err(self.unbound_arguments(span, type_id)),
+                }
+
+                index += 1;
+            }
+
+            let instance = self.ctx.session.types.instance(definition, &arguments)?;
+            index = 0;
+
+            while index < values.len() {
+                for field in expected {
+                    if field.name == values[index][0] {
+                        values[index][1] = self.coerce(values[index][1], substitute(&self.ctx.session.types, field.type_id, &substitutions)?)?;
+                    }
+                }
+
+                index += 1;
+            }
+
+            let payload = match &variant.payload {
+                Some(payload) => Option<TypeId>.Some(substitute(&self.ctx.session.types, *payload, &substitutions)?), None => Option<TypeId>.None
+            };
+            let concrete_variant = EnumVariant(variant.name, payload, variant.discriminant, variant.span);
+            accepted = true;
+            return Result<Option<HirId>, AnalysisError>.Ok(Option<HirId>.Some(self.node(span, instance, false,
+                HirKind.VariantConstruct(VariantConstruct(instance, concrete_variant, Option<Vec<(NameId, HirId)>>.Some(values))))));
+        }
+
+        Result<Option<HirId>, AnalysisError>.Ok(Option<HirId>.None)
+    }
+
+    pub fn field(span: Span, name_span: Span, receiver: HirId, name: str) -> Result<HirId, AnalysisError> {
+        let value = receiver;
+        let type_id = self.type_of(receiver);
+
+        while true {
+            match self.ctx.session.types.require(type_id)? {
+                Reference(inner) => {
+                    type_id = *inner;
+                    value = self.node(span, type_id, true, HirKind.Unary(Unary(UnaryOperator.Deref, value)));
+                },
+                Pointer(inner) => {
+                    type_id = *inner;
+                    value = self.node(span, type_id, true, HirKind.Unary(Unary(UnaryOperator.Deref, value)));
+                },
+                _ => {
+                    break;
+                },
+            }
+        }
+
+        let interned = self.ctx.session.names.intern(name);
+
+        match self.ctx.session.types.require(type_id)? {
+            Nominal(definition, _) => {
+                let header = *self.ctx.session.types.definition(*definition).unwrap();
+
+                match self.ctx.session.types.complete_definition(*definition)? {
+                    Struct(body) => {
+                        let substitutions = instance_substitutions(self.ctx, type_id)?;
+                        defer substitutions.drop();
+
+                        for field in body.fields {
+                            if field.name == interned {
+                                self.check_field_access(type_id, *field, span)?;
+                                let field_type = substitute(&self.ctx.session.types, field.type_id, &substitutions)?;
+
+                                match &field.span {
+                                    Some(target) => self.ctx.session.editor_facts.record_member_reference(
+                                        EditorMemberKind.Field, field.name, self.ctx.span(self.unit, name_span),
+                                        *target, field_type),
+                                    None => {},
+                                };
+
+                                let copy = StructField(field.name, field_type, field.access, field.index, field.span);
+                                return Result<HirId, AnalysisError>.Ok(self.node(span, field_type, self.ctx.session.hir.require(value)?.is_place, HirKind.FieldAccess(FieldAccess(value, copy))));
+                            }
+                        }
+
+                        let receiver_name = type_text(self.ctx, type_id);
+                        defer receiver_name.drop();
+                        let message = String.from(&"Struct '");
+                        defer message.drop();
+                        message.push_str(receiver_name.as_str());
+                        message.push_str("' has no field named '");
+                        message.push_str(name);
+                        message.push_str("'.");
+                        return Result<HirId, AnalysisError>.Err(self.ctx.error(self.unit, span, DiagnosticCode.NoSuchField, message.as_str()));
+                    },
+                    Enum(_) => {
+                        let empty = Vec<Argument&>.new();
+                        defer empty.drop();
+
+                        match self.variant(span, name_span, type_id, interned, &empty)? {
+                            Some(id) => return Result<HirId, AnalysisError>.Ok(id),
+                            None => {},
+                        }
+                    },
+                    _ => {},
+                }
+            },
+            Tuple(elements) => {
+                let index = 0u64;
+
+                if name.as_slice().len() == 0 {
+                    return Result<HirId, AnalysisError>.Err(self.error(span, "tuple index is empty"));
+                }
+
+                for byte in name.as_slice() {
+                    if *byte < b'0' || *byte > b'9' {
+                        return Result<HirId, AnalysisError>.Err(self.error(span, "invalid tuple index"));
+                    }
+
+                    let digit = u64(*byte - b'0');
+
+                    if index > (0xFFFFFFFFFFFFFFFFu64 - digit) / 10 {
+                        return Result<HirId, AnalysisError>.Err(self.error(span, "tuple index is out of bounds"));
+                    }
+
+                    index = index * 10 + digit;
+                }
+
+                if index >= elements.len() {
+                    return Result<HirId, AnalysisError>.Err(self.error(span, "tuple index is out of bounds"));
+                }
+
+                return Result<HirId, AnalysisError>.Ok(self.node(span, elements[index], self.ctx.session.hir.require(value)?.is_place, HirKind.TupleAccess(TupleAccess(value, index))));
+            },
+            _ => {},
+        }
+
+        Result<HirId, AnalysisError>.Err(self.error(span, "field access is only supported on struct instances and enum types"))
+    }
+
+    pub fn check_field_access(type_id: TypeId, field: StructField, span: Span) -> Result<(), AnalysisError> {
+        let definition = match self.ctx.session.types.require(type_id)? {
+            Nominal(id, _) => *id,
+            _ => return Result<(), AnalysisError>.Err(AnalysisError.internal("field access requires a nominal type")),
+        };
+        let header = self.ctx.session.types.definition(definition).unwrap().header();
+
+        if field.access == AccessMode.Public || header.unit == self.unit {
+            return Result<(), AnalysisError>.Ok(());
+        }
+
+        let self_name = self.ctx.session.names.intern("Self");
+
+        match self.ctx.session.symbols.lookup(self.scope, self_name) {
+            Some(symbol) => match self.ctx.session.types.require(self.ctx.session.symbols.get(symbol).unwrap().type_id)? {
+                Nominal(id, _) => {
+                    if *id == definition {
+                        return Result<(), AnalysisError>.Ok(());
+                    }
+                },
+                _ => {},
+            },
+            None => {},
+        }
+
+        let message = String.from(&"Field '");
+        defer message.drop();
+        message.push_str(self.ctx.session.names.text(field.name));
+        message.push_str("' of struct '");
+        let name = type_text(self.ctx, type_id);
+        defer name.drop();
+        message.push_str(name.as_str());
+        message.push_str("' is private and cannot be accessed from unit ");
+        let number = self.unit.index.to_string_radix(10);
+        defer number.drop();
+        message.push_str(number.as_str());
+        message.push_str(" unless inside an impl for that struct");
+        Result<(), AnalysisError>.Err(self.ctx.error(self.unit, span, DiagnosticCode.Type, message.as_str()))
+    }
+}

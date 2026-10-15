@@ -2,22 +2,28 @@
 
 from __future__ import annotations
 
+import json
+import os
+import shutil
 import subprocess
 import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
-from compiler.analysis.session import AnalysisSession
-from compiler.analysis.documents import Document, DocumentStore
-from compiler.analysis.editor import EditorEngine, EditorMode, FrozenInputs
-from compiler.analysis.queries.context import QueryContext
-from compiler.analysis.queries.completion import CompletionKind
-from compiler.analysis.queries.index import DeclarationKind
-from compiler.analysis.queries.navigation import Navigator
-from compiler.analysis.queries.refactor import rename
-from compiler.analysis.queries.semantic import SemanticKind, SemanticModifier
-from compiler.target_layout import type_size_provider
+from anx.project import default_stdlib_root as anx_default_stdlib_root
+from yianc.analysis.session import AnalysisSession
+from yianc.analysis.documents import Document, DocumentStore
+from yianc.analysis.editor import EditorEngine, EditorMode, FrozenInputs
+from yianc.analysis.queries.context import QueryContext
+from yianc.analysis.queries.completion import CompletionKind
+from yianc.analysis.queries.index import DeclarationKind
+from yianc.analysis.queries.navigation import Navigator
+from yianc.analysis.queries.refactor import rename
+from yianc.analysis.queries.semantic import SemanticKind, SemanticModifier
+from yianc.analysis.source_provenance import build_source_trust, resolve_stdlib_root
+from yianc.target_layout import type_size_provider
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -25,6 +31,131 @@ STDLIB = ROOT / "lib" / "src"
 
 
 class SharedAnalysisTests(unittest.TestCase):
+    def test_source_roots_keep_checkout_environment_precedence(self) -> None:
+        alternate = Path("/tmp/yian alternate checkout")
+        alternate_lib = alternate / "custom stdlib"
+        with patch.dict(os.environ, {"YIAN_LIB": "", "YIAN_ROOT": ""}, clear=True):
+            self.assertEqual(resolve_stdlib_root(), STDLIB.resolve())
+            self.assertEqual(anx_default_stdlib_root(), STDLIB)
+            self.assertEqual(resolve_stdlib_root(ROOT), (ROOT / "lib" / "src").resolve())
+
+        with patch.dict(os.environ, {"YIAN_LIB": str(alternate_lib), "YIAN_ROOT": str(alternate)}, clear=True):
+            self.assertEqual(resolve_stdlib_root(), alternate_lib.resolve())
+            self.assertEqual(resolve_stdlib_root(ROOT), (ROOT / "lib" / "src").resolve())
+
+        with patch.dict(os.environ, {"YIAN_ROOT": str(alternate)}, clear=True):
+            self.assertEqual(resolve_stdlib_root(), (alternate / "lib" / "src").resolve())
+
+    def test_source_trust_uses_configured_roots_and_exact_test_roots(self) -> None:
+        trust = build_source_trust()
+        self.assertEqual(trust.stdlib_root, STDLIB.resolve())
+        self.assertEqual(
+            trust.test_roots,
+            (
+                (ROOT / "tests" / "basic" / "std").resolve(),
+                (ROOT / "tests" / "safety" / "std").resolve(),
+            ),
+        )
+        self.assertTrue(trust.allows_restricted_ops(STDLIB / "core" / "slice.an"))
+        self.assertTrue(trust.allows_restricted_ops(ROOT / "tests" / "basic" / "std" / "core" / "slice_prim.an"))
+
+        with tempfile.TemporaryDirectory(prefix="lib tests std ") as directory:
+            similar_input = Path(directory) / "lib" / "src" / "restricted.an"
+            similar_test = Path(directory) / "tests" / "basic" / "std" / "restricted.an"
+            self.assertFalse(trust.allows_restricted_ops(similar_input))
+            self.assertFalse(trust.allows_restricted_ops(similar_test))
+
+    def test_anx_project_default_root_is_lazy_and_does_not_import_yianc(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="anx project cwd ") as directory:
+            environment = os.environ.copy()
+            environment["PYTHONPATH"] = str(ROOT / "python")
+            environment.pop("YIAN_ROOT", None)
+            environment.pop("YIAN_LIB", None)
+            process = subprocess.run(
+                [sys.executable, "-c", "import sys, anx.project; print('yianc' in sys.modules)"],
+                cwd=directory,
+                env=environment,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            self.assertEqual(process.returncode, 0, process.stderr)
+            self.assertEqual(process.stdout.strip(), "False")
+
+    def test_anx_fallback_compiler_imports_checkout_from_external_cwd(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="源码 checkout 外部 cwd ") as directory:
+            external_cwd = Path(directory)
+            project = external_cwd / "project"
+            shutil.copytree(
+                ROOT / "tests" / "package" / "basic",
+                project,
+                ignore=shutil.ignore_patterns("build", "__pycache__"),
+            )
+            environment = os.environ.copy()
+            environment["PATH"] = "/usr/bin:/bin"
+            environment["PYTHONPATH"] = str(ROOT / "python")
+            for name in ("YIAN_ROOT", "YIAN_LIB", "YIANC"):
+                environment.pop(name, None)
+            process = subprocess.run(
+                [sys.executable, "-m", "anx.main", "check", str(project)],
+                cwd=external_cwd,
+                env=environment,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            self.assertEqual(process.returncode, 0, f"{process.stdout}\n{process.stderr}")
+
+    def test_python_and_native_roots_match_from_unicode_external_cwd(self) -> None:
+        prefix_value = os.environ.get("YIAN_INSTALL_PREFIX")
+        self.assertTrue(prefix_value, "YIAN_INSTALL_PREFIX must point at the refreshed task toolchain")
+        native_compiler = Path(prefix_value) / "bin" / "yianc"
+        self.assertTrue(native_compiler.is_file(), native_compiler)
+
+        environment = os.environ.copy()
+        environment["PYTHONPATH"] = str(ROOT / "python")
+        environment["YIAN_ROOT"] = str(ROOT)
+        environment["YIAN_LIB"] = str(STDLIB)
+        environment["YIANC"] = str(native_compiler)
+        cases = (
+            (ROOT / "tests" / "basic" / "array" / "access.an", True),
+            (ROOT / "tests" / "basic" / "error" / "restricted_bitcast.err.an", False),
+        )
+
+        with tempfile.TemporaryDirectory(prefix="YIAN 外部 cwd ") as directory:
+            cwd = Path(directory)
+            for raw in (False, True):
+                for source, expected_ok in cases:
+                    with self.subTest(raw_pointers=raw, source=source.name):
+                        flags = ["--analyze", "--json"]
+                        if raw:
+                            flags.append("--raw-pointers")
+                        common = [*flags, "--compiler-root", str(ROOT), str(STDLIB), str(source)]
+                        python_process = subprocess.run(
+                            [sys.executable, "-m", "yianc.main", *common],
+                            cwd=cwd,
+                            env=environment,
+                            capture_output=True,
+                            text=True,
+                            check=False,
+                        )
+                        native_process = subprocess.run(
+                            [str(native_compiler), *common],
+                            cwd=cwd,
+                            env=environment,
+                            capture_output=True,
+                            text=True,
+                            check=False,
+                        )
+                        self.assertEqual(python_process.returncode, native_process.returncode)
+                        self.assertEqual(python_process.stderr, native_process.stderr)
+                        python_result = json.loads(python_process.stdout)
+                        native_result = json.loads(native_process.stdout)
+                        self.assertEqual(python_result, native_result)
+                        self.assertEqual(python_result["ok"], expected_ok)
+                        if not expected_ok:
+                            self.assertTrue(python_result["diagnostics"])
+
     def test_editor_queries_use_reliable_receivers_in_partial_documents(self) -> None:
         for raw in (False, True):
             with self.subTest(raw_pointers=raw):
@@ -368,7 +499,7 @@ class SharedAnalysisTests(unittest.TestCase):
                         type_size_factory=type_size_provider,
                     ).analyze((STDLIB, source))
                     self.assertIn(code, {diagnostic.code for diagnostic in result.diagnostics})
-                    command = [sys.executable, "-m", "compiler.main", "-t", "none"]
+                    command = [sys.executable, "-m", "yianc.main", "-t", "none"]
                     if raw:
                         command.append("--raw-pointers")
                     process = subprocess.run(
@@ -390,7 +521,7 @@ class SharedAnalysisTests(unittest.TestCase):
             ).analyze((STDLIB, source))
             self.assertIn("E502", {diagnostic.code for diagnostic in result.diagnostics})
             process = subprocess.run(
-                [sys.executable, "-m", "compiler.main", "-t", "none", str(STDLIB), str(source)],
+                [sys.executable, "-m", "yianc.main", "-t", "none", str(STDLIB), str(source)],
                 cwd=ROOT, capture_output=True, text=True, check=False,
             )
             self.assertIn("error[E502]", process.stderr)
@@ -424,7 +555,7 @@ class SharedAnalysisTests(unittest.TestCase):
             ).analyze((STDLIB, source))
             self.assertTrue(result.ok())
             process = subprocess.run(
-                [sys.executable, "-m", "compiler.main", "-t", "none", str(STDLIB), str(source)],
+                [sys.executable, "-m", "yianc.main", "-t", "none", str(STDLIB), str(source)],
                 cwd=ROOT, capture_output=True, text=True, check=False,
             )
             self.assertNotEqual(process.returncode, 0)
@@ -443,7 +574,7 @@ class SharedAnalysisTests(unittest.TestCase):
             ).analyze((STDLIB, source))
             self.assertIn("E503", {diagnostic.code for diagnostic in result.diagnostics})
             process = subprocess.run(
-                [sys.executable, "-m", "compiler.main", "-t", "none", str(STDLIB), str(source)],
+                [sys.executable, "-m", "yianc.main", "-t", "none", str(STDLIB), str(source)],
                 cwd=ROOT, capture_output=True, text=True, check=False,
             )
             self.assertIn("error[E503]", process.stderr)

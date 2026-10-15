@@ -1,0 +1,55 @@
+from yianc.frontend.ast.arena import AstArena;
+from yianc.frontend.ast.node import Expr, ExprData, TypeData, TypeSource, TypeSyntax, Identifier, IdentifierData, Argument, ArgumentData, BlockData, PatternLet, Item, ItemData, Attr, GenericParam, Parameter, ProgramData;
+from yianc.frontend.ast.traversal import AstVisitor, AstRewriter, walk_expr;
+from yianc.frontend.ast.format import AstFormatter;
+from yianc.frontend.source import Span, Position;
+from json.write import Writer;
+from json.parse import parse;
+from std.core.convert import From;
+from std.core.drop import Drop;
+from std.core.option import Option;
+from std.core.string import String;
+from std.core.vec import Vec;
+
+struct Visitor { types: u64 }
+impl AstVisitor for Visitor {
+    pub fn enter_type_syntax(node: TypeSyntax&) -> bool { self.types += 1; true }
+}
+struct Rewriter { replacement: TypeSyntax&, types: u64 }
+impl AstRewriter for Rewriter {
+    pub fn rewrite_type_syntax(node: TypeSyntax&) -> TypeSyntax& { self.types += 1; self.replacement }
+}
+fn main() {
+    let arena = AstArena.new(); defer arena.drop();
+    let span = Span(Position(0u64, 0u64), Position(0u64, 1u64));
+    let name = arena.alloc_identifier(IdentifierData(String.from(&"trait_name"), true), span);
+    let trait = arena.alloc_expr(ExprData.Identifier(name), span);
+    let int_type = arena.alloc_type_syntax(TypeData.IntType(false, 8u64), span);
+    let bool_type = arena.alloc_type_syntax(TypeData.BoolType, span);
+    let types = Vec<Option<TypeSource>>.new();
+    types.push(Option<TypeSource>.Some(TypeSource.Syntax(int_type)));
+    types.push(Option<TypeSource>.Some(TypeSource.ArgumentType(0u64)));
+    types.push(Option<TypeSource>.Some(TypeSource.CallableReturnType));
+    types.push(Option<TypeSource>.None);
+    let args = Vec<Argument&>.new();
+    args.push(arena.alloc_argument(ArgumentData(Option<Identifier&>.None, trait), span));
+    let call = arena.alloc_expr(ExprData.TraitCall(trait, TypeSource.Syntax(int_type), types, name, args), span);
+    let visitor = Visitor(0u64); walk_expr(call, &visitor);
+    assert visitor.types == 2: "explicit sources visited per edge";
+    let rewriter = Rewriter(bool_type, 0u64); rewriter.rewrite_expr(call);
+    assert rewriter.types == 2: "explicit sources rewritten";
+    let writer = Writer.with_max_depth(512u64); defer writer.drop();
+    // append_program is the public observation interface; a minimal program exposes the expression under test.
+    let stmts = Vec<Expr&>.new(); stmts.push(call);
+    let block = arena.alloc_block(BlockData(stmts, Option<Position>.None, Vec<PatternLet&>.new()), span);
+    let item = arena.alloc_item(ItemData.FuncDef(
+        Vec<Attr&>.new(), name, Vec<GenericParam>.new(),
+        Vec<Parameter>.new(), Option<TypeSyntax&>.None, block), span);
+    let items = Vec<Item&>.new(); items.push(item);
+    let program = arena.alloc_program(ProgramData(items), span);
+    AstFormatter.new(&writer).append_program(program);
+    let text = *writer.finish().unwrap(); defer text.drop();
+    assert text.as_str().contains("TraitCall") && text.as_str().contains("BoolType"): "rewritten call serialized";
+    assert text.as_str().contains("ArgumentType") && text.as_str().contains("CallableReturnType"): "delayed types serialized";
+    let json = *parse(text.as_str()).unwrap(); json.drop();
+}

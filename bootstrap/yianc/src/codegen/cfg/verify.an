@@ -1,0 +1,489 @@
+from yianc.codegen.cfg.dominance import Dominance, dominators;
+from yianc.codegen.cfg.ids import FunctionId, BlockId, ValueId;
+from yianc.codegen.cfg.model import CfgModule, CfgFunction, Operation, ValueKind, Terminator, Instruction;
+from yianc.codegen.error import CodegenError;
+from yianc.codegen.types import BackendTypes;
+from yianc.analysis.ty.callable import store_signature;
+from yianc.analysis.ty.queries import struct_fields, enum_variants;
+from yianc.common.ids import TypeId;
+from yianc.frontend.ast.operator import BinaryOperator;
+from std.collections.hash_set import HashSet;
+from std.core.drop import Drop;
+from std.core.convert import From;
+from std.core.fmt import ToString;
+from std.core.string import String;
+from std.core.iter import Iterator, IntoIterator;
+from std.core.ops import Index;
+from std.core.range import Range;
+from std.core.option import Option;
+from std.core.result import Result;
+from std.core.vec import Vec;
+
+fn release_rows<T>(rows: Vec<Vec<T>>&) {
+    for row in *rows { row.drop(); }
+    rows.drop();
+}
+
+fn predecessors(function: CfgFunction&) -> Result<Vec<Vec<BlockId>>, CodegenError> {
+    let rows = Vec<Vec<BlockId>>.new();
+    let accepted = false;
+    defer { if !accepted { release_rows<BlockId>(&rows); } };
+    for index in 0u64..function.block_count() { rows.push(Vec<BlockId>.new()); }
+    for index in 0u64..function.block_count() {
+        let origin = BlockId(index);
+        let block = function.block(origin)?;
+        let destinations = Vec<BlockId>.new();
+        defer destinations.drop();
+        match &block.terminator {
+            Some(terminator) => match terminator {
+                Jump(destination) => destinations.push(*destination),
+                Branch(_, yes, no) => {
+                    destinations.push(*yes);
+                    if *no != *yes { destinations.push(*no); }
+                },
+                _ => {},
+            },
+            None => return Result<Vec<Vec<BlockId>>, CodegenError>.Err(CodegenError.invalid("CFG block has no terminator")),
+        }
+        for destination in destinations {
+            function.block(*destination)?;
+            rows[destination.index].push(origin);
+        }
+    }
+    accepted = true;
+    Result<Vec<Vec<BlockId>>, CodegenError>.Ok(rows)
+}
+
+fn check_use(function: CfgFunction&, id: ValueId, block: BlockId, order: u64,
+    dominates: Dominance&) -> Result<TypeId, CodegenError> {
+    let value = function.value(id)?;
+    match &value.kind {
+        Temporary(origin, position) => {
+            function.block(*origin)?;
+            if (*origin == block && *position >= order) || (*origin != block && !dominates.dominates(*origin, block)?) {
+                let message = String.from(&"CFG value does not dominate its use; value/definition block/use block: ");
+                defer message.drop();
+                let identities = [id.index, origin.index, block.index];
+                for identity in identities {
+                    let text = identity.to_string();
+                    defer text.drop();
+                    message.push_str(text.as_str());
+                    message.push(' ');
+                }
+                return Result<TypeId, CodegenError>.Err(CodegenError.invalid(message.as_str()));
+            }
+        },
+        Parameter(index) => {
+            if *index >= function.parameters.len() || function.parameters[*index] != value.type_id {
+                return Result<TypeId, CodegenError>.Err(CodegenError.invalid("CFG parameter identity is invalid"));
+            }
+        },
+        _ => {},
+    }
+    Result<TypeId, CodegenError>.Ok(value.type_id)
+}
+
+fn pointee(types: BackendTypes&, type_id: TypeId) -> Result<TypeId, CodegenError> {
+    match types.semantic_store().require(type_id)? {
+        Pointer(inner) | Reference(inner) | CPointer(inner) => Result<TypeId, CodegenError>.Ok(*inner),
+        _ => Result<TypeId, CodegenError>.Err(CodegenError.invalid("CFG memory address is not a pointer")),
+    }
+}
+
+fn same(left: TypeId, right: TypeId) -> Result<(), CodegenError> {
+    if left != right {
+        let message = String.from(&"CFG operand type is inconsistent: expected ");
+        defer message.drop();
+        let expected = left.index.to_string();
+        defer expected.drop();
+        let actual = right.index.to_string();
+        defer actual.drop();
+        message.push_str(expected.as_str());
+        message.push_str(", got ");
+        message.push_str(actual.as_str());
+        return Result<(), CodegenError>.Err(CodegenError.invalid(message.as_str()));
+    }
+    Result<(), CodegenError>.Ok(())
+}
+
+// Operand and edge checks use the same dominance facts for an entire function.
+fn verify_instruction(function: CfgFunction&, types: BackendTypes&, instruction: Instruction&,
+    block_id: BlockId, order: u64, dominates: Dominance&, incoming: Vec<Vec<BlockId>>&, ordinary: bool)
+-> Result<(), CodegenError> {
+    for check in instruction.checks {
+        let operands = check.operands();
+        defer operands.drop();
+        for value in operands { check_use(function, *value, block_id, order, dominates)?; }
+    }
+    let result = match instruction.result {
+        Some(id) => {
+            let value = function.value(id)?;
+            match &value.kind {
+                Temporary(origin, position) => {
+                    if *origin != block_id || *position != order {
+                        return Result<(), CodegenError>.Err(CodegenError.invalid("CFG instruction result has the wrong identity"));
+                    }
+                },
+                _ => return Result<(), CodegenError>.Err(CodegenError.invalid("CFG instruction defines a non-temporary value")),
+            }
+            Option<TypeId>.Some(value.type_id)
+        },
+        None => Option<TypeId>.None,
+    };
+    match &instruction.operation {
+        Store(local, value) => {
+            if result.is_some() { return Result<(), CodegenError>.Err(CodegenError.invalid("store defines a value")); }
+            same(function.local(*local)?.type_id, check_use(function, *value, block_id, order, dominates)?)?;
+        },
+        Delete(value) => {
+            if result.is_some() { return Result<(), CodegenError>.Err(CodegenError.invalid("delete defines a value")); }
+            let type_id = check_use(function, *value, block_id, order, dominates)?;
+            match types.semantic_store().require(type_id)? {
+                Pointer(_) | Reference(_) | Slice(_) => {},
+                _ => return Result<(), CodegenError>.Err(CodegenError.invalid("delete has no allocation view")),
+            }
+        },
+        Fill(destination, element, count) => {
+            if result.is_some() { return Result<(), CodegenError>.Err(CodegenError.invalid("fill defines a value")); }
+            let target = check_use(function, *destination, block_id, order, dominates)?;
+            same(pointee(types, target)?, check_use(function, *element, block_id, order, dominates)?)?;
+            integer_offset(types, check_use(function, *count, block_id, order, dominates)?)?;
+        },
+        Write(address, value) => {
+            if result.is_some() { return Result<(), CodegenError>.Err(CodegenError.invalid("write defines a value")); }
+            let target = check_use(function, *address, block_id, order, dominates)?;
+            same(pointee(types, target)?, check_use(function, *value, block_id, order, dominates)?)?;
+        },
+        _ => {
+            let type_id = match result {
+                Some(value) => value,
+                None => return Result<(), CodegenError>.Err(CodegenError.invalid("value instruction has no result")),
+            };
+            match &instruction.operation {
+                Load(local) => { same(type_id, function.local(*local)?.type_id)?; },
+                Address(local) => { same(pointee(types, type_id)?, function.local(*local)?.type_id)?; },
+                Read(address) => {
+                    let target = check_use(function, *address, block_id, order, dominates)?;
+                    same(type_id, pointee(types, target)?)?;
+                },
+                Binary(op, left, right) => {
+                    let lhs = check_use(function, *left, block_id, order, dominates)?;
+                    let rhs = check_use(function, *right, block_id, order, dominates)?;
+                    if *op != BinaryOperator.Shl && *op != BinaryOperator.Shr { same(lhs, rhs)?; }
+                    let comparison = match op { Eq | Neq | Lt | Leq | Gt | Geq => true, _ => false, };
+                    if comparison {
+                        match types.semantic_store().require(type_id)? {
+                            Bool => {},
+                            _ => return Result<(), CodegenError>.Err(CodegenError.invalid("CFG comparison is not boolean")),
+                        }
+                    } else { same(type_id, lhs)?; }
+                },
+                Unary(_, operand) => { same(type_id, check_use(function, *operand, block_id, order, dominates)?)?; },
+                Cast(operand) => { check_use(function, *operand, block_id, order, dominates)?; },
+                Call(callable, args) => {
+                    let signature = types.signature(*callable)?;
+
+                    same(type_id, signature.result)?;
+                    let receiver_count = if !signature.is_static && signature.receiver.is_some() { 1u64 } else { 0u64 };
+                    let environment = types.closure_environment(*callable);
+                    let captures_count = if environment.is_some() { 1u64 } else { 0u64 };
+                    if args.len() != signature.parameters.len() + receiver_count + captures_count {
+                        return Result<(), CodegenError>.Err(CodegenError.invalid("CFG call argument count is inconsistent"));
+                    }
+                    let argument = 0u64;
+                    match environment {
+                        Some(expected) => {
+                            let actual = check_use(function, args[argument], block_id, order, dominates)?;
+                            let pointed = pointee(types, actual)?;
+                            let equivalent = match types.semantic_store().require(pointed)? {
+                                Closure(_, _, _, _, environment, _) => *environment.unwrap(),
+                                _ => pointed,
+                            };
+                            same(equivalent, expected)?;
+                            argument += 1u64;
+                        },
+                        None => {},
+                    }
+                    if receiver_count != 0 {
+                        let actual = check_use(function, args[argument], block_id, order, dominates)?;
+                        same(pointee(types, actual)?, *signature.receiver.unwrap())?;
+                        argument += 1u64;
+                    }
+                    for parameter in signature.parameters {
+                        same(parameter.type_id, check_use(function, args[argument], block_id, order, dominates)?)?;
+                        argument += 1u64;
+                    }
+                },
+                Invoke(callable, args) => {
+                    let source = check_use(function, *callable, block_id, order, dominates)?;
+                    match types.semantic_store().require(source)? {
+                        FunctionPointer(parameters, result) => {
+                            same(type_id, *result)?;
+                            if parameters.len() != args.len() { return Result<(), CodegenError>.Err(CodegenError.invalid("CFG indirect call argument count is invalid")); }
+                            for index in 0u64..parameters.len() {
+                                same(parameters[index], check_use(function, args[index], block_id, order, dominates)?)?;
+                            }
+                        },
+                        _ => return Result<(), CodegenError>.Err(CodegenError.invalid("CFG indirect call has no function pointer")),
+                    }
+                },
+                TraitObject(source, methods) => {
+                    let origin = check_use(function, *source, block_id, order, dominates)?;
+                    pointee(types, origin)?;
+                    match types.semantic_store().require(type_id)? {
+                        TraitObject(_) => {},
+                        _ => return Result<(), CodegenError>.Err(CodegenError.invalid("CFG trait coercion has no object type")),
+                    }
+                    for method in *methods { types.signature(*method)?; }
+                },
+                DynamicCall(receiver, method, _, args) => {
+                    let object = check_use(function, *receiver, block_id, order, dominates)?;
+                    match types.semantic_store().require(object)? { TraitObject(_) => {}, _ => return Result<(), CodegenError>.Err(CodegenError.invalid("CFG dynamic receiver has no object type")), }
+                    let signature = types.signature(*method)?;
+
+                    same(type_id, signature.result)?;
+                    if args.len() != signature.parameters.len() { return Result<(), CodegenError>.Err(CodegenError.invalid("CFG dynamic argument count is inconsistent")); }
+                    for index in 0u64..args.len() { same(signature.parameters[index].type_id, check_use(function, args[index], block_id, order, dominates)?)?; }
+                },
+                Phi(edges) => {
+                    if ordinary || edges.len() != incoming[block_id.index].len() {
+                        return Result<(), CodegenError>.Err(CodegenError.invalid("CFG Phi has invalid placement or predecessor count"));
+                    }
+                    let seen = HashSet<BlockId>.new();
+                    defer seen.drop();
+                    for edge in *edges {
+                        let predecessor = edge[1];
+                        let found = false;
+                        for candidate in incoming[block_id.index] { if *candidate == predecessor { found = true; } }
+                        if !found || !seen.insert(predecessor) {
+                            return Result<(), CodegenError>.Err(CodegenError.invalid("CFG Phi has an invalid predecessor"));
+                        }
+                        same(type_id, check_use(function, edge[0], predecessor,
+                            function.block(predecessor)?.instructions.len(), dominates)?)?;
+                    }
+                },
+                Aggregate(fields) => {
+                    let expected = Vec<TypeId>.new();
+                    defer expected.drop();
+                    match types.semantic_store().require(type_id)? {
+                        Tuple(elements) => { for element in *elements { expected.push(*element); } },
+                        Array(element, length) => {
+                            let count = match types.semantic_store().require(*length)? {
+                                LiteralValue(bits, _, _) => *bits,
+                                _ => return Result<(), CodegenError>.Err(CodegenError.invalid("CFG array length is not concrete")),
+                            };
+                            if fields.len() != count { return Result<(), CodegenError>.Err(CodegenError.invalid("CFG array initializer length is inconsistent")); }
+                            for field in *fields { same(*element, check_use(function, *field, block_id, order, dominates)?)?; }
+                        },
+                        Closure(captures, _, _, _, _, _) => { for capture in *captures { expected.push(capture.type_id); } },
+                        _ => {
+                            let members = types.fields_of(type_id)?;
+
+                            for member in members { expected.push(member.type_id); }
+                        },
+                    }
+                    if !expected.is_empty() || fields.is_empty() {
+                        if expected.len() != fields.len() { return Result<(), CodegenError>.Err(CodegenError.invalid("CFG aggregate field count is inconsistent")); }
+                        for field in 0u64..fields.len() {
+                            same(expected[field], check_use(function, fields[field], block_id, order, dominates)?)?;
+                        }
+                    }
+                },
+                Extract(aggregate, field) => {
+                    let source = check_use(function, *aggregate, block_id, order, dominates)?;
+                    same(type_id, field_type(types, source, *field)?)?;
+                },
+                FieldAddress(address, aggregate, field) => {
+                    let pointer = check_use(function, *address, block_id, order, dominates)?;
+                    same(*aggregate, pointee(types, pointer)?)?;
+                    same(pointee(types, type_id)?, field_type(types, *aggregate, *field)?)?;
+                },
+                Builtin(_, type_args, args) => {
+                    for id in *type_args { types.semantic_store().require(*id)?; }
+                    for id in *args { check_use(function, *id, block_id, order, dominates)?; }
+                },
+                EnumConstruct(discriminant, payload) => {
+                    let variants = types.variants_of(type_id)?;
+
+                    let found = false;
+                    for variant in variants {
+                        if variant.discriminant != *discriminant { continue; }
+                        found = true;
+                        match payload {
+                            Some(id) => {
+                                let expected = match variant.payload {
+                                    Some(value) => value,
+                                    None => return Result<(), CodegenError>.Err(CodegenError.invalid("unit variant has a CFG payload")),
+                                };
+                                same(expected, check_use(function, *id, block_id, order, dominates)?)?;
+                            },
+                            None => { if variant.payload.is_some() { return Result<(), CodegenError>.Err(CodegenError.invalid("CFG variant payload is missing")); } },
+                        }
+                    }
+                    if !found { return Result<(), CodegenError>.Err(CodegenError.invalid("CFG enum discriminant is invalid")); }
+                },
+                EnumTag(value) => {
+                    let source = check_use(function, *value, block_id, order, dominates)?;
+                    types.variants_of(source)?;
+                    match types.semantic_store().require(type_id)? {
+                        Integer(bits, signed) => {
+                            if *bits != 32u32 || *signed { return Result<(), CodegenError>.Err(CodegenError.invalid("CFG enum tag type is invalid")); }
+                        },
+                        _ => return Result<(), CodegenError>.Err(CodegenError.invalid("CFG enum tag is not an integer")),
+                    }
+                },
+                EnumPayload(value) => {
+                    let source = check_use(function, *value, block_id, order, dominates)?;
+                    validate_payload(types, source, type_id)?;
+                },
+                EnumPayloadAddress(address, enum_type) => {
+                    let source = check_use(function, *address, block_id, order, dominates)?;
+                    same(*enum_type, pointee(types, source)?)?;
+                    validate_payload(types, *enum_type, pointee(types, type_id)?)?;
+                },
+                PointerOffset(pointer, offset, _) => {
+                    let source = check_use(function, *pointer, block_id, order, dominates)?;
+                    pointee(types, source)?;
+                    same(type_id, source)?;
+                    integer_offset(types, check_use(function, *offset, block_id, order, dominates)?)?;
+                },
+                PointerDifference(left, right) => {
+                    let source = check_use(function, *left, block_id, order, dominates)?;
+                    pointee(types, source)?;
+                    same(source, check_use(function, *right, block_id, order, dominates)?)?;
+                    match types.semantic_store().require(type_id)? {
+                        Integer(bits, signed) => {
+                            if *bits != 64u32 || !*signed { return Result<(), CodegenError>.Err(CodegenError.invalid("CFG pointer difference type is invalid")); }
+                        },
+                        _ => return Result<(), CodegenError>.Err(CodegenError.invalid("CFG pointer difference is not an integer")),
+                    }
+                },
+                IndexAddress(address, element, offset, bounds) => {
+                    let pointer = check_use(function, *address, block_id, order, dominates)?;
+                    let source = pointee(types, pointer)?;
+                    let contained = if source == *element { source } else {
+                        match types.semantic_store().require(source)? { Array(inner, _) => *inner, _ => source, }
+                    };
+                    same(*element, contained)?;
+                    same(*element, pointee(types, type_id)?)?;
+                    integer_offset(types, check_use(function, *offset, block_id, order, dominates)?)?;
+                    integer_offset(types, check_use(function, bounds.limit(), block_id, order, dominates)?)?;
+                },
+                Repeat(element, count) => {
+                    let source = check_use(function, *element, block_id, order, dominates)?;
+                    match types.semantic_store().require(type_id)? {
+                        Array(inner, length) => {
+                            same(*inner, source)?;
+                            match types.semantic_store().require(*length)? {
+                                LiteralValue(bits, _, _) => { if *bits != *count { return Result<(), CodegenError>.Err(CodegenError.invalid("CFG repeated array length is inconsistent")); } },
+                                _ => return Result<(), CodegenError>.Err(CodegenError.invalid("CFG repeated array has no concrete length")),
+                            }
+                        },
+                        _ => return Result<(), CodegenError>.Err(CodegenError.invalid("CFG repeat has no array type")),
+                    }
+                },
+                _ => return Result<(), CodegenError>.Err(CodegenError.invalid("unknown CFG value operation")),
+            }
+        },
+    }
+    Result<(), CodegenError>.Ok(())
+}
+
+fn verify_function(function: CfgFunction&, types: BackendTypes&) -> Result<(), CodegenError> {
+    if function.block_count() == 0 {
+        return Result<(), CodegenError>.Err(CodegenError.invalid("CFG function has no entry block"));
+    }
+    let incoming = predecessors(function)?;
+    defer release_rows<BlockId>(&incoming);
+    let dominates = dominators(function, &incoming)?;
+    defer dominates.drop();
+    for index in 0u64..function.block_count() {
+        let block_id = BlockId(index);
+        let block = function.block(block_id)?;
+        let order = 0u64;
+        let ordinary = false;
+        for instruction in block.instructions {
+            match verify_instruction(function, types, instruction, block_id, order, &dominates, &incoming, ordinary) {
+                Ok(_) => {},
+                Err(problem) => return Result<(), CodegenError>.Err(problem.with_location(instruction.span)),
+            }
+            match &instruction.operation { Phi(_) => {}, _ => { ordinary = true; }, }
+            order += 1u64;
+        }
+        match &*block.terminator.unwrap() {
+            Return(value) => match value {
+                Some(id) => { same(function.result_type, check_use(function, *id, block_id, order, &dominates)?)?; },
+                None => {
+                    if !types.is_zst(function.result_type)? {
+                        return Result<(), CodegenError>.Err(CodegenError.invalid("non-ZST CFG return has no value"));
+                    }
+                },
+            },
+            Branch(condition, _, _) => {
+                let type_id = check_use(function, *condition, block_id, order, &dominates)?;
+                match types.semantic_store().require(type_id)? {
+                    Bool => {},
+                    _ => return Result<(), CodegenError>.Err(CodegenError.invalid("CFG branch condition is not boolean")),
+                }
+            },
+            _ => {},
+        }
+    }
+    Result<(), CodegenError>.Ok(())
+}
+
+fn validate_payload(types: BackendTypes&, enumeration: TypeId, payload: TypeId) -> Result<(), CodegenError> {
+    let variants = types.variants_of(enumeration)?;
+
+    for variant in variants {
+        match variant.payload { Some(value) => { if value == payload { return Result<(), CodegenError>.Ok(()); } }, None => {}, }
+    }
+    Result<(), CodegenError>.Err(CodegenError.invalid("CFG payload does not belong to its enum"))
+}
+
+fn integer_offset(types: BackendTypes&, type_id: TypeId) -> Result<(), CodegenError> {
+    match types.semantic_store().require(type_id)? {
+        Integer(bits, signed) => {
+            if *bits == 64u32 && !*signed { return Result<(), CodegenError>.Ok(()); }
+        },
+        _ => {},
+    }
+    Result<(), CodegenError>.Err(CodegenError.invalid("CFG offset is not u64"))
+}
+
+fn field_type(types: BackendTypes&, aggregate: TypeId, field: u64) -> Result<TypeId, CodegenError> {
+    match types.semantic_store().require(aggregate)? {
+        Tuple(elements) => match elements.as_slice().get(field) {
+            Some(value) => Result<TypeId, CodegenError>.Ok(*value),
+            None => Result<TypeId, CodegenError>.Err(CodegenError.invalid("CFG tuple field is out of bounds")),
+        },
+        _ => {
+            let fields = types.fields_of(aggregate)?;
+
+            match fields.as_slice().get(field) {
+                Some(value) => Result<TypeId, CodegenError>.Ok(value.type_id),
+                None => Result<TypeId, CodegenError>.Err(CodegenError.invalid("CFG structure field is out of bounds")),
+            }
+        },
+    }
+}
+
+pub fn verify_cfg(module: CfgModule&, types: BackendTypes&) -> Result<(), CodegenError> {
+    for index in 0u64..module.len() {
+        verify_function(*module.function(FunctionId(index)).unwrap(), types)?;
+    }
+    Result<(), CodegenError>.Ok(())
+}
+
+// Structural checks precede cleanup; SSA dominance applies to the retained graph.
+pub fn verify_structure(module: CfgModule&) -> Result<(), CodegenError> {
+    for index in 0u64..module.len() {
+        let function = *module.function(FunctionId(index)).unwrap();
+        if function.block_count() == 0u64 {
+            return Result<(), CodegenError>.Err(CodegenError.invalid("CFG function has no entry block"));
+        }
+        let rows = predecessors(function)?;
+        release_rows<BlockId>(&rows);
+    }
+    Result<(), CodegenError>.Ok(())
+}

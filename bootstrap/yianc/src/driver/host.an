@@ -1,0 +1,26 @@
+from yianc.diagnostics.model import AnalysisError;
+from std.core.drop import Drop;
+from std.core.result import Result;
+from std.core.string import String;
+from std.core.vec import Vec;
+
+extern "C" {
+    fn yian_compiler_root(buffer: cptr<u8>, capacity: u64) -> i64;
+    fn yian_compiler_monotonic_ns() -> u64;
+}
+
+pub ffi fn associated_root() -> Result<String, AnalysisError> {
+    let bytes = Vec<u8>.new();
+    defer bytes.drop();
+    let index = 0u64;
+    while index < 4096u64 { bytes.push(0u8); index += 1; }
+    let data = @ffi_parts(bytes.as_slice())[0];
+    let length = yian_compiler_root(data, bytes.len());
+    if length < 0 {
+        return Result<String, AnalysisError>.Err(AnalysisError.internal("cannot locate compiler resources"));
+    }
+    let text = *str.from_slice(bytes.as_slice()[0u64..u64(length)]).unwrap();
+    Result<String, AnalysisError>.Ok(String.from(&text))
+}
+
+pub ffi fn monotonic_ns() -> u64 { yian_compiler_monotonic_ns() }

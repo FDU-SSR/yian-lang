@@ -6,16 +6,16 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from compiler.analysis.queries.completion import CompletionKind, complete
-from compiler.analysis.queries.context import QueryContext
-from compiler.analysis.queries.navigation import Navigator
-from compiler.analysis.queries.refactor import rename
-from compiler.analysis.session import AnalysisResult, AnalysisSession
-from compiler.analysis.symbol.symbol import AliasSymbol
-from compiler.analysis.ty import ty as Type
-from compiler.analysis.ty.context import TypeCtx
-from compiler.frontend.lex.position import SrcSpan
-from compiler.target_layout import type_size_provider
+from yianc.analysis.queries.completion import CompletionKind, complete
+from yianc.analysis.queries.context import QueryContext
+from yianc.analysis.queries.navigation import Navigator
+from yianc.analysis.queries.refactor import rename
+from yianc.analysis.session import AnalysisResult, AnalysisSession
+from yianc.analysis.symbol.symbol import AliasSymbol
+from yianc.analysis.ty import ty as Type
+from yianc.analysis.ty.context import TypeCtx
+from yianc.frontend.lex.position import SrcSpan
+from yianc.target_layout import type_size_provider
 
 
 ROOT = Path(__file__).resolve().parents[2]

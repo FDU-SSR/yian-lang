@@ -1,0 +1,72 @@
+from yianc.config import CompilerConfig;
+from yianc.package.model import PackageMap;
+from yianc.diagnostics.model import AnalysisError;
+from yianc.package.provenance import normalize_path;
+from yianc.driver.host import associated_root;
+from std.core.drop import Drop;
+from std.core.iter import Iterator, IntoIterator;
+from std.core.option import Option;
+from std.core.path import Path, PathBuf;
+from std.core.process import env_var;
+from std.core.result import Result;
+
+pub struct SourceRoots {
+    pub standard_library: PathBuf,
+}
+
+impl SourceRoots {
+    static fn from_checkout(path: str) -> Result<Self, AnalysisError> {
+        let checkout = normalize_path(path)?;
+        defer checkout.drop();
+        let joined = checkout.as_path().join("lib/src");
+        defer joined.drop();
+        let standard_library = normalize_path(joined.as_str())?;
+        Result<Self, AnalysisError>.Ok(Self(standard_library))
+    }
+
+    static fn from_library(path: str) -> Result<Self, AnalysisError> {
+        let library = normalize_path(path)?;
+        Result<Self, AnalysisError>.Ok(Self(library))
+    }
+}
+
+impl Drop for SourceRoots {
+    pub fn drop() { self.standard_library.drop(); }
+}
+
+pub fn source_roots(config: CompilerConfig&, packages: Option<PackageMap&>) -> Result<SourceRoots, AnalysisError> {
+    match packages {
+        Some(map) => match map.find("std") {
+            Some(package) => return SourceRoots.from_library(package.source_root.as_str()),
+            None => {},
+        },
+        None => {},
+    }
+    if config.root_explicit { return SourceRoots.from_checkout(config.compiler_root.as_str()); }
+    for name in ["YIAN_LIB", "YIAN_ROOT"] {
+        let path = match env_var(*name) {
+            Ok(value) => value,
+            Err(problem) => { defer problem.drop(); return Result<SourceRoots, AnalysisError>.Err(AnalysisError.internal(problem.msg())); },
+        };
+        match &path {
+            Some(value) => {
+                defer value.drop();
+                if value.is_empty() { continue; }
+                return if *name == "YIAN_LIB" { SourceRoots.from_library(value.as_str()) } else { SourceRoots.from_checkout(value.as_str()) };
+            },
+            None => {},
+        }
+    }
+
+    let root = associated_root()?;
+    defer root.drop();
+    SourceRoots.from_checkout(root.as_str())
+}
+
+// Runtime resources are independent of the package map's standard-library source root.
+pub fn runtime_root(config: CompilerConfig&) -> Result<PathBuf, AnalysisError> {
+    if config.root_explicit { return normalize_path(config.compiler_root.as_str()); }
+    let root = associated_root()?;
+    defer root.drop();
+    normalize_path(root.as_str())
+}

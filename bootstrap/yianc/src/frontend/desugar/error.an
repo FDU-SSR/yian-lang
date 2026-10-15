@@ -1,0 +1,17 @@
+from yianc.frontend.source import Span;
+from std.core.drop import Drop;
+from std.core.string import String;
+
+pub struct DesugarError { message: String, span: Span }
+impl DesugarError {
+    static pub fn new(message: str, span: Span) -> Self {
+        Self(message=String.from(&message), span=span)
+    }
+
+    pub fn message() -> str { self.message.as_str() }
+
+    pub fn span() -> Span { self.span }
+}
+impl Drop for DesugarError {
+    pub fn drop() { self.message.drop(); }
+}

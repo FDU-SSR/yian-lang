@@ -1,0 +1,833 @@
+from yianc.frontend.ast.node import Expr, ExprData, Block, BlockData, Argument, ArgumentData, Identifier, IdentifierData, GenericArgument, TypeSyntax, TypeData, Condition, LetConditionData, ElifBranch, ElifBranchData, MatchArm, MatchArmData, PatternLet, PatternLetData, CaptureItem, CaptureItemData, Literal, StrLiteralData, Parameter;
+from yianc.frontend.ast.atoms import BuiltinKind, MatchArmOrigin;
+from yianc.frontend.ast.operator import BinaryOperator, UnaryOperator;
+from yianc.frontend.lex.token import KeywordKind, PunctuatorKind;
+from yianc.frontend.parse.literal import parse_literal;
+from yianc.frontend.parse.parameters import parse_parameters, parse_return_type;
+from yianc.frontend.parse.pattern import parse_binding_pattern, parse_match_pattern;
+from yianc.frontend.parse.state import Parser;
+from yianc.frontend.parse.type import parse_generic_arg, parse_type;
+from yianc.frontend.source import Position, Span;
+from std.core.convert import From;
+from std.core.drop import Drop;
+from std.core.ops import Index;
+from std.core.option import Option;
+from std.core.string import String;
+from std.core.vec import Vec;
+
+// Consume only operators whose left binding power meets min_bp; right binding power sets the recursive boundary.
+fn expr_bp(parser: Parser&, min_bp: i32) -> Option<Expr&> {
+    parser.ready()?;
+    let start = parser.peek().span.start;
+
+    let lhs = prefix(parser)?;
+
+    loop {
+        let candidate = BinaryOperator.from_token(parser.peek());
+        let lbp = match candidate { Some(op) => op.lbp(), None => 0 };
+        if lbp == 0 || lbp < min_bp {
+            break;
+        }
+
+        let op = *candidate.unwrap();
+        parser.advance();
+        let rhs = expr_bp(parser, op.rbp())?;
+        lhs = parser.arena.alloc_expr(ExprData.Binary(op=op, left=lhs, right=rhs), lhs.span + rhs.span);
+    }
+
+    parser.extent(lhs, start);
+    Option<Expr&>.Some(val=lhs)
+}
+
+pub fn parse_expr(parser: Parser&) -> Option<Expr&> { expr_bp(parser, 1) }
+
+fn prefix(parser: Parser&) -> Option<Expr&> {
+    let candidate = UnaryOperator.from_token(parser.peek());
+    if candidate.is_some() {
+        let op = *candidate.unwrap();
+        parser.advance();
+        // Dereference and address-of operands exclude expressions below the ordinary unary-operator precedence level.
+        let rbp = if op == UnaryOperator.Deref || op == UnaryOperator.AddrOf { 14 } else { 13 };
+        let operand = expr_bp(parser, rbp)?;
+        return Option<Expr&>.Some(val=parser.arena.alloc_expr(ExprData.Unary(op=op, operand=operand), operand.span));
+    }
+
+    if parser.at_keyword(KeywordKind.Dyn) {
+        return dyn_expr(parser);
+    }
+    let problem_count = parser.problems.len();
+    let expression = primary(parser)?;
+    if parser.editor && parser.problems.len() != problem_count {
+        match expression.data {
+            Array(_) | Tuple(_) | TypeItem(_, _) | ArrayRepeat(_, _) => { expression.syntax_recovered = true; },
+            _ => {},
+        }
+    }
+    postfix(parser, expression)
+}
+
+// Probe type syntax after expression failure; if it is not a complete type, reparse to retain the expression diagnostic.
+fn diagnose_dyn_initializer(parser: Parser&, mark: u64, span: Span) {
+    parser.clear_error();
+    parser.reset(mark);
+    parse_type(parser);
+
+    let complete_type = !parser.failed() && (
+        parser.at_punct(PunctuatorKind.Semicolon) || parser.at_punct(PunctuatorKind.RParen) ||
+        parser.at_punct(PunctuatorKind.Comma) || parser.at_punct(PunctuatorKind.RBracket) ||
+        parser.at_punct(PunctuatorKind.RBrace) || parser.at_end());
+    if complete_type {
+        parser.error("'dyn[n]' initializes every element from a value, not a type: write 'dyn[n] <initial value>'", span);
+        return;
+    }
+
+    parser.clear_error();
+    parser.reset(mark);
+    parse_expr(parser);
+}
+
+fn dyn_expr(parser: Parser&) -> Option<Expr&> {
+    parser.take_keyword(KeywordKind.Dyn);
+    let span = parser.peek().span;
+    if !parser.at_punct(PunctuatorKind.LBracket) {
+        let value = parse_expr(parser)?;
+        return Option<Expr&>.Some(val=parser.arena.alloc_expr(ExprData.DynValue(value=value), span));
+    }
+
+    parser.advance();
+    let size = parse_expr(parser)?;
+    parser.take_punct(PunctuatorKind.RBracket);
+    parser.ready()?;
+
+    let mark = parser.mark();
+    let initializer_span = parser.peek().span;
+    let value = parse_expr(parser);
+    if value.is_none() {
+        diagnose_dyn_initializer(parser, mark, initializer_span);
+        return Option<Expr&>.None;
+    }
+
+    Option<Expr&>.Some(val=parser.arena.alloc_expr(ExprData.DynBuffer(size=size, element=*value.unwrap()), span))
+}
+
+// Dispatch primary expressions by the starting token; postfix handles calls, members, and indexing.
+fn primary(parser: Parser&) -> Option<Expr&> {
+    parser.ready()?;
+
+    let token = parser.peek();
+    let span = token.span;
+    if parser.at_punct(PunctuatorKind.LBrace) {
+        let body = parse_block(parser)?;
+        return Option<Expr&>.Some(val=parser.arena.alloc_expr(ExprData.Block(block=body), body.span));
+    }
+
+    if parser.at_keyword(KeywordKind.Return) {
+        return return_expr(parser);
+    }
+
+    if parser.at_keyword(KeywordKind.If) {
+        return if_expr(parser);
+    }
+
+    if parser.at_keyword(KeywordKind.Comptime) {
+        return comptime_if(parser);
+    }
+
+    if parser.at_keyword(KeywordKind.IsRawMode) {
+        parser.advance();
+        return Option<Expr&>.Some(val=parser.arena.alloc_expr(ExprData.CompileConfig(name=String.from(&"IS_RAW_MODE")), span));
+    }
+
+    if parser.at_keyword(KeywordKind.For) {
+        return for_expr(parser);
+    }
+
+    if parser.at_keyword(KeywordKind.While) {
+        return while_expr(parser);
+    }
+
+    if parser.at_keyword(KeywordKind.Loop) {
+        return loop_expr(parser);
+    }
+
+    if parser.at_keyword(KeywordKind.Match) {
+        return match_expr(parser);
+    }
+
+    if parser.at_keyword(KeywordKind.Break) {
+        return break_expr(parser);
+    }
+
+    if parser.at_keyword(KeywordKind.Continue) {
+        parser.advance();
+        return Option<Expr&>.Some(val=parser.arena.alloc_expr(ExprData.Continue, span));
+    }
+
+    if parser.at_keyword(KeywordKind.Assert) {
+        return assert_expr(parser);
+    }
+
+    if parser.at_keyword(KeywordKind.Del) {
+        parser.advance();
+        let target = parse_expr(parser)?;
+        return Option<Expr&>.Some(val=parser.arena.alloc_expr(ExprData.Delete(target=target), span));
+    }
+
+    if parser.at_keyword(KeywordKind.Let) {
+        return let_expr(parser);
+    }
+
+    if parser.at_punct(PunctuatorKind.Pipe) || parser.at_punct(PunctuatorKind.PipePipe) {
+        return closure_expr(parser);
+    }
+
+    if parser.at_punct(PunctuatorKind.At) {
+        return builtin_expr(parser);
+    }
+
+    let is_literal = match token.kind() {
+        Integer | Float | Character | StringLiteral => true,
+        Keyword(kind) => *kind == KeywordKind.True_ || *kind == KeywordKind.False_,
+        FStrStart => return fstring(parser),
+        _ => false,
+    };
+
+    if is_literal {
+        let literal = parse_literal(parser)?;
+        return Option<Expr&>.Some(val=parser.arena.alloc_expr(ExprData.Literal(literal=literal), span));
+    }
+
+    if token.is_identifier() || parser.keyword_token() {
+        return identifier_expr(parser);
+    }
+
+    if parser.at_punct(PunctuatorKind.LParen) {
+        return parenthesized_expr(parser);
+    }
+
+    if parser.at_punct(PunctuatorKind.LBracket) {
+        return array_expr(parser);
+    }
+    if token.is_eof() {
+        parser.error("Unexpected end of file while parsing expression", span);
+    } else {
+        let message = String.from(&"Unexpected token '");
+        defer message.drop();
+        message.push_str(token.value());
+        message.push_str("' while parsing expression");
+        parser.error(message.as_str(), span);
+    }
+    Option<Expr&>.None
+}
+
+fn identifier_expr(parser: Parser&) -> Option<Expr&> {
+    let name = parser.identifier()?;
+    if !parser.at_punct(PunctuatorKind.LAngle) {
+        return Option<Expr&>.Some(val=parser.arena.alloc_expr(ExprData.Identifier(name=name), name.span));
+    }
+
+    parser.advance();
+    let generics = Vec<GenericArgument>.new();
+    defer generics.drop();
+
+    while !parser.at_punct(PunctuatorKind.RAngle) {
+        if parser.editor && (parser.at_end() || parser.at_punct(PunctuatorKind.RBrace) || parser.at_punct(PunctuatorKind.Semicolon)) { break; }
+        generics.push(parse_generic_arg(parser)?);
+        if !parser.at_punct(PunctuatorKind.Comma) {
+            break;
+        }
+        parser.advance();
+    }
+
+    parser.take_punct(PunctuatorKind.RAngle);
+    parser.ready()?;
+
+    Option<Expr&>.Some(val=parser.arena.alloc_expr(ExprData.TypeItem(name=name, generics=generics.take()), name.span))
+}
+
+// Empty parentheses denote a unit value; commas distinguish tuples from grouping that preserves the original node.
+fn parenthesized_expr(parser: Parser&) -> Option<Expr&> {
+    let span = parser.peek().span;
+    parser.advance();
+    if parser.at_punct(PunctuatorKind.RParen) {
+        parser.advance();
+        return Option<Expr&>.Some(val=parser.arena.alloc_expr(ExprData.Tuple(elements=Vec<Expr&>.new()), span));
+    }
+
+    let first = parse_expr(parser)?;
+    if !parser.at_punct(PunctuatorKind.Comma) {
+        parser.take_punct(PunctuatorKind.RParen);
+        parser.ready()?;
+
+        return Option<Expr&>.Some(val=first);
+    }
+
+    parser.advance();
+    let members = Vec<Expr&>.new();
+    defer members.drop();
+    members.push(first);
+
+    while !parser.at_punct(PunctuatorKind.RParen) {
+        if parser.editor && (parser.at_end() || parser.at_punct(PunctuatorKind.RBrace) || parser.at_punct(PunctuatorKind.Semicolon)) { break; }
+        members.push(parse_expr(parser)?);
+        if !parser.at_punct(PunctuatorKind.Comma) {
+            break;
+        }
+        parser.advance();
+    }
+
+    parser.take_punct(PunctuatorKind.RParen);
+    parser.ready()?;
+
+    Option<Expr&>.Some(val=parser.arena.alloc_expr(ExprData.Tuple(elements=members.take()), span))
+}
+
+// A semicolon after the first element denotes repeated construction; commas denote explicit elements.
+fn array_expr(parser: Parser&) -> Option<Expr&> {
+    let span = parser.take_punct(PunctuatorKind.LBracket);
+    let members = Vec<Expr&>.new();
+    defer members.drop();
+    if parser.at_punct(PunctuatorKind.RBracket) {
+        parser.take_punct(PunctuatorKind.RBracket);
+        parser.ready()?;
+
+        return Option<Expr&>.Some(val=parser.arena.alloc_expr(ExprData.Array(elements=members.take()), span));
+    }
+
+    let first = parse_expr(parser)?;
+    if parser.at_punct(PunctuatorKind.Semicolon) {
+        parser.advance();
+        let count = parse_expr(parser)?;
+        parser.take_punct(PunctuatorKind.RBracket);
+        parser.ready()?;
+
+        return Option<Expr&>.Some(val=parser.arena.alloc_expr(ExprData.ArrayRepeat(element=first, count=count), span));
+    }
+
+    members.push(first);
+    if parser.at_punct(PunctuatorKind.Comma) {
+        parser.advance();
+
+        while !parser.at_punct(PunctuatorKind.RBracket) {
+            if parser.editor && (parser.at_end() || parser.at_punct(PunctuatorKind.RBrace) || parser.at_punct(PunctuatorKind.Semicolon)) { break; }
+            members.push(parse_expr(parser)?);
+            if !parser.at_punct(PunctuatorKind.Comma) {
+                break;
+            }
+            parser.advance();
+        }
+    }
+
+    parser.take_punct(PunctuatorKind.RBracket);
+    parser.ready()?;
+
+    Option<Expr&>.Some(val=parser.arena.alloc_expr(ExprData.Array(elements=members.take()), span))
+}
+
+fn argument(parser: Parser&) -> Option<Argument&> {
+    let name = Option<Identifier&>.None;
+    if parser.peek().is_identifier() && parser.peek_at(1).is_punct(PunctuatorKind.Equal) {
+        name = parser.identifier();
+        parser.advance();
+    }
+
+    let value = parse_expr(parser)?;
+    let span = match name { Some(ident) => ident.span + value.span, None => value.span };
+    Option<Argument&>.Some(val=parser.arena.alloc_argument(ArgumentData(name=name, value=value), span))
+}
+
+fn arguments(parser: Parser&) -> Option<Vec<Argument&>> {
+    parser.take_punct(PunctuatorKind.LParen);
+    parser.ready()?;
+
+    let args = Vec<Argument&>.new();
+    defer args.drop();
+
+    while !parser.at_punct(PunctuatorKind.RParen) {
+        if parser.editor && (parser.at_end() || parser.at_punct(PunctuatorKind.RBrace)) { break; }
+        match argument(parser) {
+            Some(value) => args.push(value),
+            None => {
+                if !parser.editor { return Option<Vec<Argument&>>.None; }
+                parser.save_problem();
+                while !parser.at_end() && !parser.at_punct(PunctuatorKind.RParen) &&
+                !parser.at_punct(PunctuatorKind.RBrace) && !parser.at_punct(PunctuatorKind.Comma) {
+                    parser.advance();
+                }
+            },
+        }
+        if !parser.at_punct(PunctuatorKind.Comma) {
+            break;
+        }
+        parser.advance();
+    }
+
+    parser.take_punct(PunctuatorKind.RParen);
+    parser.ready()?;
+
+    Option<Vec<Argument&>>.Some(val=args.take())
+}
+
+// Generic arguments after a dot require a method call; without generics or an argument list, produce field access.
+fn member_expr(parser: Parser&, receiver: Expr&) -> Option<Expr&> {
+    parser.advance();
+    let name = match parser.identifier() {
+        Some(value) => value,
+        None => {
+            if !parser.editor { return Option<Expr&>.None; }
+            parser.save_problem();
+            let children = Vec<Expr&>.new();
+            children.push(receiver);
+            return Option<Expr&>.Some(parser.arena.alloc_expr(ExprData.Recovery(children, Vec<Identifier&>.new()), receiver.span));
+        },
+    };
+    let generics = Vec<TypeSyntax&>.new();
+    defer generics.drop();
+    let generic_call = parser.at_punct(PunctuatorKind.LAngle);
+    if generic_call {
+        parser.advance();
+
+        while !parser.at_punct(PunctuatorKind.RAngle) {
+            generics.push(parse_type(parser)?);
+            if !parser.at_punct(PunctuatorKind.Comma) {
+                break;
+            }
+            parser.advance();
+        }
+
+        parser.take_punct(PunctuatorKind.RAngle);
+        parser.ready()?;
+    }
+
+    if !generic_call && !parser.at_punct(PunctuatorKind.LParen) {
+        return Option<Expr&>.Some(val=parser.arena.alloc_expr(ExprData.FieldAccess(receiver=receiver, field_name=name), receiver.span));
+    }
+
+    let args = arguments(parser)?;
+    Option<Expr&>.Some(val=parser.arena.alloc_expr(ExprData.MethodCall(receiver=receiver, method_name=name, generics=generics.take(), args=args), receiver.span))
+}
+
+fn postfix(parser: Parser&, initial: Expr&) -> Option<Expr&> {
+    let expr = initial;
+    let start = initial.span.start;
+    parser.extent(expr, start);
+
+    loop {
+        let problem_count = parser.problems.len();
+        if parser.at_punct(PunctuatorKind.Question) {
+            let span = expr.span + parser.take_punct(PunctuatorKind.Question);
+            expr = parser.arena.alloc_expr(ExprData.TryExpr(operand=expr), span);
+        } elif parser.at_punct(PunctuatorKind.LParen) {
+            let span = expr.span + parser.peek().span;
+            let args = arguments(parser)?;
+            expr = parser.arena.alloc_expr(ExprData.Call(callee=expr, args=args), span);
+        } elif parser.at_punct(PunctuatorKind.Dot) {
+            expr = member_expr(parser, expr)?;
+        } elif parser.at_punct(PunctuatorKind.LBracket) {
+            parser.advance();
+            let index = parse_expr(parser)?;
+            parser.take_punct(PunctuatorKind.RBracket);
+            parser.ready()?;
+            expr = parser.arena.alloc_expr(ExprData.Binary(op=BinaryOperator.Index, left=expr, right=index), expr.span);
+        } else {
+            break;
+        }
+        parser.extent(expr, start);
+        if parser.editor && parser.problems.len() != problem_count { expr.syntax_recovered = true; }
+    }
+
+    Option<Expr&>.Some(val=expr)
+}
+
+fn builtin_expr(parser: Parser&) -> Option<Expr&> {
+    let start = parser.take_punct(PunctuatorKind.At);
+    let name = parser.identifier()?;
+    let spelling = name.data.name.as_str();
+    let kind = BuiltinKind.from_text(spelling);
+    if kind.is_none() {
+        let message = String.from(&"unknown builtin '");
+        defer message.drop();
+        message.push_str(spelling);
+        message.push_str("' (expected '@name')");
+        parser.error(message.as_str(), name.span);
+        return Option<Expr&>.None;
+    }
+
+    let types = Vec<TypeSyntax&>.new();
+    defer types.drop();
+    let end = name.span;
+    if parser.at_punct(PunctuatorKind.LAngle) {
+        parser.advance();
+
+        while !parser.at_punct(PunctuatorKind.RAngle) {
+            types.push(parse_type(parser)?);
+            if !parser.at_punct(PunctuatorKind.Comma) {
+                break;
+            }
+            parser.advance();
+        }
+        end = parser.take_punct(PunctuatorKind.RAngle);
+        parser.ready()?;
+    }
+
+    let args = Vec<Argument&>.new();
+    defer args.drop();
+    if parser.at_punct(PunctuatorKind.LParen) {
+        args = arguments(parser)?;
+        end = parser.previous_span();
+    }
+
+    Option<Expr&>.Some(val=parser.arena.alloc_expr(ExprData.Builtin(kind=*kind.unwrap(), type_args=types.take(), args=args.take()), start + end))
+}
+
+// Retain semicolon and defer syntax nodes and record the closing-brace position.
+pub fn parse_block(parser: Parser&) -> Option<Block&> {
+    let open = parser.take_punct(PunctuatorKind.LBrace);
+    parser.ready()?;
+
+    let stmts = Vec<Expr&>.new();
+    defer stmts.drop();
+
+    while !parser.at_punct(PunctuatorKind.RBrace) && !parser.at_end() {
+        if parser.declaration_boundary() { break; }
+        let mark = parser.mark();
+        let bindings = Vec<Identifier&>.new();
+        let is_binding = parser.editor && parser.at_keyword(KeywordKind.Let) && parser.peek_at(1).is_identifier();
+        if is_binding {
+            let token = parser.peek_at(1);
+            match token.kind() {
+                Identifier(name) => bindings.push(parser.arena.alloc_identifier(IdentifierData(String.from(&name.as_str()), false), token.span)),
+                _ => {},
+            }
+        }
+        let recovery = false;
+        let statement = match block_statement(parser) {
+            Some(value) => value,
+            None => {
+                if !parser.editor { return Option<Block&>.None; }
+                let span = parser.peek().span;
+                recovery = true;
+                parser.synchronize();
+                if parser.at_punct(PunctuatorKind.Semicolon) { parser.advance(); }
+                if parser.mark() == mark && !parser.at_end() && !parser.at_punct(PunctuatorKind.RBrace) { parser.advance(); }
+                parser.arena.alloc_expr(ExprData.Recovery(Vec<Expr&>.new(), bindings), span)
+            },
+        };
+        if !recovery { bindings.drop(); }
+        stmts.push(statement);
+    }
+
+    let close = parser.take_punct(PunctuatorKind.RBrace);
+    parser.ready()?;
+
+    Option<Block&>.Some(val=parser.arena.alloc_block(BlockData(stmts=stmts.take(), end=Option<Position>.Some(val=close.end), parameter_bindings=Vec<PatternLet&>.new()), open))
+}
+
+fn block_statement(parser: Parser&) -> Option<Expr&> {
+    let statement = if parser.at_keyword(KeywordKind.Defer) {
+        let span = parser.take_keyword(KeywordKind.Defer);
+        let action = parse_expr(parser)?;
+        parser.take_punct(PunctuatorKind.Semicolon);
+        parser.ready()?;
+        parser.arena.alloc_expr(ExprData.Defer(action=action), span)
+    } else {
+        let expr = parse_expr(parser)?;
+        if parser.at_punct(PunctuatorKind.Semicolon) {
+            parser.advance();
+            parser.arena.alloc_expr(ExprData.Semi(expr=expr), expr.span)
+        } else { expr }
+    };
+    Option<Expr&>.Some(statement)
+}
+
+fn return_expr(parser: Parser&) -> Option<Expr&> {
+    let span = parser.take_keyword(KeywordKind.Return);
+    let value = if parser.at_punct(PunctuatorKind.Semicolon) { Option<Expr&>.None } else { parse_expr(parser) };
+    parser.ready()?;
+
+    Option<Expr&>.Some(val=parser.arena.alloc_expr(ExprData.Return(expr=value), span))
+}
+
+fn condition(parser: Parser&) -> Option<Condition> {
+    if !parser.at_keyword(KeywordKind.Let) {
+        return Option<Condition>.Some(val=Condition.Expression(value=parse_expr(parser)?));
+    }
+
+    let span = parser.take_keyword(KeywordKind.Let);
+    let pattern = parse_binding_pattern(parser)?;
+    parser.take_punct(PunctuatorKind.Equal);
+    parser.ready()?;
+
+    let value = parse_expr(parser)?;
+    Option<Condition>.Some(val=Condition.Let(value=parser.arena.alloc_let_condition(LetConditionData(pattern=pattern, value=value), span)))
+}
+
+fn if_expr(parser: Parser&) -> Option<Expr&> {
+    let span = parser.take_keyword(KeywordKind.If);
+    let cond = condition(parser)?;
+    let yes = parse_block(parser)?;
+    let branches = Vec<ElifBranch&>.new();
+    defer branches.drop();
+
+    while parser.at_keyword(KeywordKind.Elif) {
+        let span = parser.take_keyword(KeywordKind.Elif);
+        let cond = condition(parser)?;
+        let body = parse_block(parser)?;
+        branches.push(parser.arena.alloc_elif_branch(ElifBranchData(condition=cond, body=body), span));
+    }
+
+    let no = Option<Block&>.None;
+    if parser.at_keyword(KeywordKind.Else) {
+        parser.advance();
+        no = parse_block(parser);
+    }
+    parser.ready()?;
+
+    Option<Expr&>.Some(val=parser.arena.alloc_expr(ExprData.If(condition=cond, then_branch=yes, elif_branches=branches.take(), else_branch=no), span))
+}
+
+fn comptime_if(parser: Parser&) -> Option<Expr&> {
+    let span = parser.take_keyword(KeywordKind.Comptime);
+    parser.take_keyword(KeywordKind.If);
+    parser.ready()?;
+
+    let cond = parse_expr(parser)?;
+    let yes = parse_block(parser)?;
+    parser.take_keyword(KeywordKind.Else);
+    parser.ready()?;
+
+    let no = parse_block(parser)?;
+    Option<Expr&>.Some(val=parser.arena.alloc_expr(ExprData.ComptimeIf(condition=cond, then_branch=yes, else_branch=no), span))
+}
+
+fn for_expr(parser: Parser&) -> Option<Expr&> {
+    let span = parser.take_keyword(KeywordKind.For);
+    let pattern = parse_binding_pattern(parser)?;
+    parser.take_keyword(KeywordKind.In);
+    parser.ready()?;
+
+    let iterable = parse_expr(parser)?;
+    let body = parse_block(parser)?;
+    Option<Expr&>.Some(val=parser.arena.alloc_expr(ExprData.For(pattern=pattern, iterable=iterable, body=body), span))
+}
+
+fn while_expr(parser: Parser&) -> Option<Expr&> {
+    let span = parser.take_keyword(KeywordKind.While);
+    let cond = condition(parser)?;
+    let body = parse_block(parser)?;
+    Option<Expr&>.Some(val=parser.arena.alloc_expr(ExprData.While(condition=cond, body=body), span))
+}
+
+fn loop_expr(parser: Parser&) -> Option<Expr&> {
+    let span = parser.take_keyword(KeywordKind.Loop);
+    let body = parse_block(parser)?;
+    Option<Expr&>.Some(val=parser.arena.alloc_expr(ExprData.Loop(body=body), span))
+}
+
+fn match_arm(parser: Parser&) -> Option<MatchArm&> {
+    if parser.at_punct(PunctuatorKind.Comma) {
+        parser.advance();
+    }
+
+    let pattern = parse_match_pattern(parser)?;
+    let guard = Option<Expr&>.None;
+    if parser.at_keyword(KeywordKind.If) {
+        parser.advance();
+        guard = parse_expr(parser);
+        parser.ready()?;
+    }
+    parser.take_punct(PunctuatorKind.FatArrow);
+    parser.ready()?;
+
+    let body = if parser.at_punct(PunctuatorKind.LBrace) { parse_block(parser)? } else {
+        let value = parse_expr(parser)?;
+        let stmts = Vec<Expr&>.new();
+        stmts.push(value);
+        parser.arena.alloc_block(BlockData(stmts=stmts, end=Option<Position>.None, parameter_bindings=Vec<PatternLet&>.new()), value.span)
+    };
+
+    if parser.at_punct(PunctuatorKind.Comma) {
+        parser.advance();
+    }
+
+    Option<MatchArm&>.Some(val=parser.arena.alloc_match_arm(MatchArmData(pattern=pattern, guard=guard, body=body, origin=MatchArmOrigin.User), pattern.span))
+}
+
+fn match_expr(parser: Parser&) -> Option<Expr&> {
+    let span = parser.take_keyword(KeywordKind.Match);
+    let value = parse_expr(parser)?;
+    parser.take_punct(PunctuatorKind.LBrace);
+    parser.ready()?;
+
+    let arms = Vec<MatchArm&>.new();
+    defer arms.drop();
+
+    while !parser.at_punct(PunctuatorKind.RBrace) && !parser.at_end() {
+        arms.push(match_arm(parser)?);
+    }
+
+    parser.take_punct(PunctuatorKind.RBrace);
+    parser.ready()?;
+
+    Option<Expr&>.Some(val=parser.arena.alloc_expr(ExprData.Match(expr=value, arms=arms.take()), span))
+}
+
+fn break_expr(parser: Parser&) -> Option<Expr&> {
+    let span = parser.take_keyword(KeywordKind.Break);
+    let value = if parser.at_punct(PunctuatorKind.Semicolon) || parser.at_punct(PunctuatorKind.RBrace) { Option<Expr&>.None } else { parse_expr(parser) };
+    parser.ready()?;
+
+    Option<Expr&>.Some(val=parser.arena.alloc_expr(ExprData.Break(expr=value), span))
+}
+
+fn assert_expr(parser: Parser&) -> Option<Expr&> {
+    let span = parser.take_keyword(KeywordKind.Assert);
+    let cond = parse_expr(parser)?;
+    let message = Option<Expr&>.None;
+    if parser.at_punct(PunctuatorKind.Colon) {
+        parser.advance();
+        message = parse_expr(parser);
+    }
+    parser.ready()?;
+
+    Option<Expr&>.Some(val=parser.arena.alloc_expr(ExprData.Assert(condition=cond, message=message), span))
+}
+
+fn let_expr(parser: Parser&) -> Option<Expr&> {
+    let span = parser.take_keyword(KeywordKind.Let);
+    let pattern = parse_binding_pattern(parser)?;
+    let ty = if parser.at_punct(PunctuatorKind.Colon) {
+        parser.advance();
+        parse_type(parser)?
+    } elif parser.at_punct(PunctuatorKind.Equal) { parser.arena.alloc_type_syntax(TypeData.DeducedType, pattern.span) } else {
+        parser.error("Expected ':' or '=' after let pattern", parser.peek().span);
+        return Option<Expr&>.None;
+    };
+
+    let init = Option<Expr&>.None;
+    if parser.at_punct(PunctuatorKind.Equal) {
+        parser.advance();
+        init = parse_expr(parser);
+        parser.ready()?;
+    }
+
+    let no = Option<Block&>.None;
+    if parser.at_keyword(KeywordKind.Else) {
+        parser.advance();
+        no = parse_block(parser);
+        parser.ready()?;
+    }
+
+    if no.is_none() {
+        match &pattern.data {
+            NamePattern(name) => return Option<Expr&>.Some(val=parser.arena.alloc_expr(ExprData.VarDecl(name=*name, var_type=ty, init_expr=init), pattern.span)),
+            _ => {},
+        }
+    }
+
+    if init.is_none() {
+        parser.error("A destructuring let requires an initializer", pattern.span);
+        return Option<Expr&>.None;
+    }
+
+    let binding = parser.arena.alloc_pattern_let(PatternLetData(pattern=pattern, var_type=ty, init_expr=*init.unwrap(), else_branch=no, is_parameter=false), span);
+    Option<Expr&>.Some(val=parser.arena.alloc_expr(ExprData.PatternLet(binding=binding), span))
+}
+
+fn method(parser: Parser&, receiver: Expr&, name: str) -> Expr& {
+    let ident = parser.named_identifier(receiver.span, name, false);
+    parser.arena.alloc_expr(ExprData.MethodCall(receiver=receiver, method_name=ident, generics=Vec<TypeSyntax&>.new(), args=Vec<Argument&>.new()), receiver.span)
+}
+
+fn fstring(parser: Parser&) -> Option<Expr&> {
+    let span = parser.peek().span;
+    parser.advance();
+    let segments = Vec<Expr&>.new();
+    defer segments.drop();
+
+    loop {
+        let token = parser.peek();
+        match token.kind() {
+            FStrLiteral(_) => {
+                let literal = parser.arena.alloc_str_literal(StrLiteralData(value=String.from(&token.value()), raw=String.from(&token.value())), token.span);
+                segments.push(parser.arena.alloc_expr(ExprData.Literal(literal=Literal.StringLiteral(value=literal)), token.span));
+                parser.advance();
+            },
+            FStrExprBegin => {
+                parser.advance();
+                let value = parse_expr(parser)?;
+                parser.advance();
+                segments.push(method(parser, value, "to_string"));
+            },
+            FStrEnd => {
+                parser.advance();
+                break;
+            },
+            _ => {
+                parser.error("Unexpected token in f-string", token.span);
+                return Option<Expr&>.None;
+            },
+        }
+    }
+
+    let name = parser.named_identifier(span, "String", false);
+    let ty = parser.arena.alloc_expr(ExprData.TypeItem(name=name, generics=Vec<GenericArgument>.new()), span);
+    let result = method(parser, ty, "new");
+    let i: u64 = 0;
+
+    while i < segments.len() {
+        result = parser.arena.alloc_expr(ExprData.Binary(op=BinaryOperator.Add, left=result, right=segments[i]), span);
+        i += 1;
+    }
+
+    Option<Expr&>.Some(val=result)
+}
+
+// Capture initializers use binding power above bitwise OR to avoid consuming the closing capture-list pipe.
+fn closure_captures(parser: Parser&) -> Option<Vec<CaptureItem&>> {
+    let captures = Vec<CaptureItem&>.new();
+    defer captures.drop();
+    if parser.at_punct(PunctuatorKind.PipePipe) {
+        parser.advance();
+        return Option<Vec<CaptureItem&>>.Some(val=captures.take());
+    }
+
+    parser.take_punct(PunctuatorKind.Pipe);
+    parser.ready()?;
+    if parser.at_punct(PunctuatorKind.Pipe) {
+        parser.advance();
+        return Option<Vec<CaptureItem&>>.Some(val=captures.take());
+    }
+
+    loop {
+        let name = parser.identifier()?;
+        parser.take_punct(PunctuatorKind.Equal);
+        parser.ready()?;
+
+        let value = expr_bp(parser, 5)?;
+        captures.push(parser.arena.alloc_capture_item(CaptureItemData(name=name, expr=value), name.span + value.span));
+        if !parser.at_punct(PunctuatorKind.Comma) {
+            break;
+        }
+        parser.advance();
+    }
+
+    parser.take_punct(PunctuatorKind.Pipe);
+    parser.ready()?;
+
+    Option<Vec<CaptureItem&>>.Some(val=captures.take())
+}
+
+fn closure_expr(parser: Parser&) -> Option<Expr&> {
+    let span = parser.peek().span;
+    let captures = closure_captures(parser)?;
+    defer captures.drop();
+
+    let params = parse_parameters(parser)?;
+    defer params.drop();
+    let ret = parse_return_type(parser);
+    parser.ready()?;
+
+    let body = parse_block(parser)?;
+    Option<Expr&>.Some(val=parser.arena.alloc_expr(ExprData.ClosureExpr(captures=captures.take(), params=params.take(), return_type=ret, body=body), span + body.span))
+}

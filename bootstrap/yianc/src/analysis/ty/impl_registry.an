@@ -1,0 +1,102 @@
+from yianc.common.ids import NameId, TypeId, ImplId;
+from yianc.common.location import SourceSpan;
+from std.collections.arena import Arena;
+from std.collections.hash_map import HashMap;
+from std.core.clone import Clone;
+from std.core.drop import Drop;
+from std.core.iter import Iterator, IntoIterator;
+from std.core.option import Option;
+from std.core.vec import Vec;
+
+pub struct ImplCondition {
+    pub generic: TypeId,
+    pub traits: Vec<TypeId>
+}
+
+impl Drop for ImplCondition {
+    pub fn drop() {
+        self.traits.drop();
+    }
+}
+
+pub struct ImplRecord {
+    pub span: SourceSpan,
+    pub generics: Vec<TypeId>,
+    pub target: TypeId,
+    pub trait_id: Option<TypeId>,
+    pub conditions: Vec<ImplCondition>,
+    pub methods: HashMap<NameId, TypeId>,
+    pub automatic: bool,
+}
+
+impl Drop for ImplRecord {
+    pub fn drop() {
+        self.generics.drop();
+
+        for condition in self.conditions {
+            condition.drop();
+        }
+
+        self.conditions.drop();
+        self.methods.drop();
+    }
+}
+
+pub struct ImplRegistry {
+    records: Arena<ImplRecord>,
+    targets: HashMap<TypeId, Vec<ImplId>>
+}
+
+impl ImplRegistry {
+    pub fn len() -> u64 {
+        self.records.len()
+    }
+
+    static pub fn new() -> Self {
+        Self(Arena<ImplRecord>.new(), HashMap<TypeId, Vec<ImplId>>.new())
+    }
+
+    pub fn register(record: ImplRecord) -> ImplId {
+        let id = ImplId(self.records.len());
+
+        match self.targets.get(&record.target) {
+            Some(ids) => ids.push(id),
+            None => {
+                let ids = Vec<ImplId>.new();
+                ids.push(id);
+                self.targets.insert(record.target, ids);
+            },
+        }
+
+        self.records.alloc(record);
+        id
+    }
+
+    pub fn get(id: ImplId) -> Option<ImplRecord&> {
+        self.records.get(id.index)
+    }
+
+    // The caller owns this ID snapshot; registering more impls cannot invalidate it.
+    pub fn for_target(target: TypeId) -> Vec<ImplId> {
+        match self.targets.get(&target) {
+            Some(ids) => ids.clone(),
+            None => Vec<ImplId>.new(),
+        }
+    }
+}
+
+impl Drop for ImplRegistry {
+    pub fn drop() {
+        for ids in self.targets.values() {
+            ids.drop();
+        }
+
+        self.targets.drop();
+
+        for record in self.records {
+            record.drop();
+        }
+
+        self.records.drop();
+    }
+}

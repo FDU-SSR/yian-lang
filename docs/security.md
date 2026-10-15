@@ -244,7 +244,7 @@ YIAN 安全模式使用运行时管理的单线程堆池。每个堆块都分为
 这套机制不是凭空产生安全性，它依赖一组需要被信任和审计的基础部分：
 
 - 编译器必须正确生成指针元数据和访问检查；
-- 运行时（`runtime/` 的 C 库）必须正确维护堆池、生命周期锁和生命周期键；它是安全关键组件，因此有独立自测与 sanitizer 运行（`python3 runtime/build.py --check` / `--asan`）。`--check` 还断言 C 头文件里的 ABI 常量——帧锁槽数与槽宽、块头字节数、尺寸类表、失败消息——与 `compiler/codegen/abi/lockmech.py`、`compiler/runtime_error.py`、`compiler/runtime_lib.py` 一致；
+- 运行时（`runtime/` 的 C 库）必须正确维护堆池、生命周期锁和生命周期键；它是安全关键组件，因此有独立自测与 sanitizer 运行（`python3 runtime/build.py --check` / `--asan`）。`--check` 还断言 C 头文件里的 ABI 常量——帧锁槽数与槽宽、块头字节数、尺寸类表、失败消息——与 `python/yianc/codegen/abi/lockmech.py`、`python/yianc/runtime_error.py`、`python/yianc/runtime_lib.py` 一致；
 - 标准库中的受限内存原语必须遵守长度、布局和生命周期约束；
 - 编译后端、目标平台和底层内存分配器必须按约定工作；
 - 普通用户代码不能任意修改胖指针元数据、堆块头或帧锁槽。

@@ -1,0 +1,147 @@
+from yianc.common.ids import HirId, PatternId, TypeId, SymbolId;
+from yianc.common.location import SourceSpan;
+from yianc.analysis.constant.interval import Boundary;
+from yianc.analysis.constant.value import ConstValue;
+from yianc.analysis.ty.model import EnumVariant;
+from std.core.drop import Drop;
+from std.core.option import Option;
+from std.core.vec import Vec;
+
+pub struct EnumPattern {
+    pub variant: EnumVariant,
+    pub fields: Option<Vec<(u64, PatternId)>>,
+}
+
+impl Drop for EnumPattern {
+    pub fn drop() {
+        match &self.fields {
+            Some(value) => value.drop(),
+            None => {}
+        };
+    }
+}
+
+pub struct LiteralPattern {
+    pub value: ConstValue,
+    pub condition: Option<HirId>,
+    pub condition_symbol: Option<SymbolId>,
+}
+
+impl Drop for LiteralPattern {
+    pub fn drop() { self.value.drop(); }
+}
+
+pub struct RangePattern {
+    pub lower: Boundary,
+    pub upper: Boundary,
+}
+
+pub struct BindPattern {
+    pub symbol_id: SymbolId,
+    pub inner: PatternId,
+}
+
+pub struct OrPattern {
+    pub alternatives: Vec<PatternId>,
+}
+
+impl Drop for OrPattern {
+    pub fn drop() {
+        self.alternatives.drop();
+    }
+}
+
+pub struct StructPattern {
+    pub fields: Vec<(u64, PatternId)>,
+}
+
+impl Drop for StructPattern {
+    pub fn drop() {
+        self.fields.drop();
+    }
+}
+
+pub struct TuplePattern {
+    pub elements: Vec<PatternId>,
+}
+
+impl Drop for TuplePattern {
+    pub fn drop() {
+        self.elements.drop();
+    }
+}
+
+pub struct SequencePattern {
+    pub prefix: Vec<PatternId>,
+    pub suffix: Vec<PatternId>,
+    pub rest: bool,
+}
+
+impl Drop for SequencePattern {
+    pub fn drop() {
+        self.prefix.drop();
+        self.suffix.drop();
+    }
+}
+
+pub enum PatternKind {
+    EnumPattern {
+        value: EnumPattern
+    },
+    WildcardPattern,
+    LiteralPattern {
+        value: LiteralPattern
+    },
+    RangePattern {
+        value: RangePattern
+    },
+    BindPattern {
+        value: BindPattern
+    },
+    RefPattern {
+        inner: PatternId
+    },
+    OrPattern {
+        value: OrPattern
+    },
+    StructPattern {
+        value: StructPattern
+    },
+    TuplePattern {
+        value: TuplePattern
+    },
+    SequencePattern {
+        value: SequencePattern
+    },
+}
+
+// The store owns payload buffers; ID edges never own their target nodes.
+impl PatternKind {
+    pub fn name() -> str {
+        match self {
+            EnumPattern(_) => "Enum", WildcardPattern => "Wildcard", LiteralPattern(_) => "Literal",
+            RangePattern(_) => "Range", BindPattern(_) => "Bind", RefPattern(_) => "Reference",
+            OrPattern(_) => "Or", StructPattern(_) => "Struct", TuplePattern(_) => "Tuple", SequencePattern(_) => "Sequence",
+        }
+    }
+}
+
+pub struct PatternNode {
+    pub span: SourceSpan,
+    pub type_id: TypeId,
+    pub kind: PatternKind,
+}
+
+impl Drop for PatternNode {
+    pub fn drop() {
+        match &self.kind {
+            EnumPattern(value) => value.drop(),
+            LiteralPattern(value) => value.drop(),
+            OrPattern(value) => value.drop(),
+            StructPattern(value) => value.drop(),
+            TuplePattern(value) => value.drop(),
+            SequencePattern(value) => value.drop(),
+            _ => {},
+        }
+    }
+}

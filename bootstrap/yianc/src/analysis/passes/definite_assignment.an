@@ -1,0 +1,634 @@
+from yianc.analysis.session.session import AnalysisSession;
+from yianc.analysis.resolution.context import ResolutionContext;
+from yianc.analysis.ty.properties import is_zst;
+from yianc.analysis.ty.callable import instance_substitutions;
+from yianc.analysis.ty.substitution import substitute;
+from yianc.analysis.session.output import AnalyzedProcedure;
+from yianc.analysis.hir.node import HirKind;
+from yianc.common.ids import SymbolId, HirId, PatternId, TypeId;
+from yianc.common.location import SourceSpan;
+from yianc.frontend.ast.operator import BinaryOperator;
+from yianc.frontend.ast.atoms import BuiltinKind;
+from yianc.diagnostics.model import AnalysisError, DiagnosticCode;
+from std.collections.hash_set import HashSet;
+from std.collections.hash_map import HashMap;
+from std.collections.arena import Arena;
+from std.core.clone import Clone;
+from std.core.drop import Drop;
+from std.core.iter import Iterator, IntoIterator;
+from std.core.option import Option;
+from std.core.result import Result;
+from std.core.vec import Vec;
+from std.core.hash import Hash, Murmur3Hasher;
+from std.core.ops import PartialEq;
+
+struct FlowState {
+    assigned: HashSet<u64>,
+    reachable: bool,
+}
+
+impl FlowState {
+    static fn new() -> Self {
+        Self(HashSet<u64>.new(), true)
+    }
+
+    fn snapshot() -> Self {
+        Self(self.assigned.clone(), self.reachable)
+    }
+
+    // Ownership transfers from the selected or intersected branch state.
+    fn merge(left: FlowState&, right: FlowState&) {
+        let merged = if !left.reachable {
+            right.assigned.clone()
+        } elif !right.reachable {
+            left.assigned.clone()
+        } else {
+            left.assigned.intersection(&right.assigned)
+        };
+        self.assigned.drop();
+        self.assigned = merged;
+        self.reachable = left.reachable || right.reachable;
+    }
+}
+
+impl Drop for FlowState {
+    pub fn drop() {
+        self.assigned.drop();
+    }
+}
+
+struct LoopFrame {
+    exits: Vec<FlowState>,
+    defer_base: u64,
+}
+
+impl Drop for LoopFrame {
+    pub fn drop() {
+        for exit in self.exits {
+            exit.drop();
+        }
+
+        self.exits.drop();
+    }
+}
+
+struct AssignmentChecker {
+    ctx: ResolutionContext&,
+    session: AnalysisSession&,
+    deferred: Vec<HirId>,
+    loops: Vec<LoopFrame>,
+    places: Arena<Place>,
+    roots: HashMap<SymbolId, u64>,
+    children: HashMap<FieldKey, u64>,
+}
+
+struct Place {
+    parent: Option<u64>, type_id: TypeId
+}
+
+struct FieldKey {
+    parent: u64, index: u64
+}
+
+impl PartialEq<FieldKey> for FieldKey {
+    pub fn eq(other: FieldKey&) -> bool {
+        self.parent == other.parent && self.index == other.index
+    }
+}
+
+impl Hash<Murmur3Hasher> for FieldKey {
+    pub fn hash(hasher: Murmur3Hasher&) {
+        self.parent.hash(hasher);
+        self.index.hash(hasher);
+    }
+}
+
+impl Drop for AssignmentChecker {
+    pub fn drop() {
+        for frame in self.loops {
+            frame.drop();
+        }
+
+        self.loops.drop();
+        self.deferred.drop();
+        self.roots.drop();
+        self.children.drop();
+        self.places.drop();
+    }
+}
+
+impl AssignmentChecker {
+    fn root(symbol: SymbolId) -> u64 {
+        match self.roots.get(&symbol) {
+            Some(value) => return *value, None => {}
+        }
+
+        let id = self.places.len();
+        self.places.alloc(Place(Option<u64>.None, self.session.symbols.get(symbol).unwrap().type_id));
+        self.roots.insert(symbol, id);
+        id
+    }
+
+    fn child(parent: u64, index: u64, type_id: TypeId) -> u64 {
+        let key = FieldKey(parent, index);
+
+        match self.children.get(&key) {
+            Some(value) => return *value, None => {}
+        }
+
+        let id = self.places.len();
+        self.places.alloc(Place(Option<u64>.Some(parent), type_id));
+        self.children.insert(key, id);
+        id
+    }
+
+    // Assignment facts use canonical place IDs; branch snapshots copy only scalar IDs.
+    fn assigned(place: u64, state: FlowState&) -> Result<bool, AnalysisError> {
+        let ancestor = Option<u64>.Some(place);
+
+        while ancestor.is_some() {
+            let id = *ancestor.unwrap();
+
+            if state.assigned.contains(&id) {
+                return Result<bool, AnalysisError>.Ok(true);
+            }
+
+            ancestor = self.places.get(id).unwrap().parent;
+        }
+
+        let type_id = self.places.get(place).unwrap().type_id;
+
+        if is_zst(self.ctx, type_id)? {
+            return Result<bool, AnalysisError>.Ok(true);
+        }
+
+        match self.session.types.require(type_id)? {
+            Tuple(elements) => {
+                let index = 0u64;
+
+                for element in *elements {
+                    if !self.assigned(self.child(place, index, *element), state)? {
+                        return Result<bool, AnalysisError>.Ok(false);
+                    }
+
+                    index += 1;
+                }
+
+                Result<bool, AnalysisError>.Ok(true)
+            },
+            Nominal(id, _) => match self.session.types.complete_definition(*id)? {
+                Struct(body) => {
+                    let substitutions = instance_substitutions(self.ctx, type_id)?;
+                    defer substitutions.drop();
+
+                    for field in body.fields {
+                        let field_type = substitute(&self.session.types, field.type_id, &substitutions)?;
+
+                        if !self.assigned(self.child(place, field.index, field_type), state)? {
+                            return Result<bool, AnalysisError>.Ok(false);
+                        }
+                    }
+
+                    Result<bool, AnalysisError>.Ok(true)
+                },
+                _ => Result<bool, AnalysisError>.Ok(false),
+            },
+            _ => Result<bool, AnalysisError>.Ok(false),
+        }
+    }
+
+    // Local member places do not read their aggregate until the selected value is used.
+    fn place(id: HirId, state: FlowState&) -> Result<Option<u64>, AnalysisError> {
+        let node = self.session.hir.require(id)?;
+
+        match &node.kind {
+            Var(symbol) => Result<Option<u64>, AnalysisError>.Ok(Option<u64>.Some(self.root(*symbol))),
+            FieldAccess(value) => match self.place(value.receiver, state)? {
+                Some(parent) => Result<Option<u64>, AnalysisError>.Ok(Option<u64>.Some(self.child(parent, value.field.index, node.type_id))),
+                None => Result<Option<u64>, AnalysisError>.Ok(Option<u64>.None),
+            },
+            TupleAccess(value) => match self.place(value.receiver, state)? {
+                Some(parent) => Result<Option<u64>, AnalysisError>.Ok(Option<u64>.Some(self.child(parent, value.index, node.type_id))),
+                None => Result<Option<u64>, AnalysisError>.Ok(Option<u64>.None),
+            },
+            _ => {
+                self.visit(id, state)?;
+                Result<Option<u64>, AnalysisError>.Ok(Option<u64>.None)
+            },
+        }
+    }
+
+    fn read_place(id: HirId, state: FlowState&) -> Result<(), AnalysisError> {
+        match self.place(id, state)? {
+            Some(place) => {
+                if !self.assigned(place, state)? {
+                    return Result<(), AnalysisError>.Err(self.uninitialized(id)?);
+                }
+            },
+            None => {},
+        }
+
+        Result<(), AnalysisError>.Ok(())
+    }
+
+    fn bind_pattern(id: PatternId, state: FlowState&) -> Result<(), AnalysisError> {
+        let pattern = self.session.hir.require_pattern(id)?;
+
+        match &pattern.kind {
+            BindPattern(value) => {
+                state.assigned.insert(self.root(value.symbol_id));
+                self.bind_pattern(value.inner, state)?;
+            },
+            RefPattern(inner) => {
+                self.bind_pattern(*inner, state)?;
+            },
+            EnumPattern(value) => {
+                match &value.fields {
+                    Some(fields) => {
+                        for field in *fields {
+                            self.bind_pattern(field[1], state)?;
+                        }
+                    }, None => {}
+                }
+            },
+            StructPattern(value) => {
+                for field in value.fields {
+                    self.bind_pattern(field[1], state)?;
+                }
+            },
+            TuplePattern(value) => {
+                for element in value.elements {
+                    self.bind_pattern(*element, state)?;
+                }
+            },
+            SequencePattern(value) => {
+                for element in value.prefix {
+                    self.bind_pattern(*element, state)?;
+                }
+
+                for element in value.suffix {
+                    self.bind_pattern(*element, state)?;
+                }
+            },
+            OrPattern(value) => {
+                for alternative in value.alternatives {
+                    self.bind_pattern(*alternative, state)?;
+                }
+            },
+            LiteralPattern(value) => {
+                match &value.condition_symbol {
+                    Some(symbol) => {
+                        state.assigned.insert(self.root(*symbol));
+                    },
+                    None => {},
+                }
+
+                self.optional(&value.condition, state)?;
+            },
+            _ => {},
+        }
+
+        Result<(), AnalysisError>.Ok(())
+    }
+
+    fn uninitialized(id: HirId) -> Result<AnalysisError, AnalysisError> {
+        let original = self.session.hir.require(id)?;
+        let current = id;
+        loop {
+            match &self.session.hir.require(current)?.kind {
+                Var(symbol) => {
+                    let record = self.session.symbols.get(*symbol).unwrap();
+                    return Result<AnalysisError, AnalysisError>.Ok(AnalysisError.named(DiagnosticCode.Uninitialized,
+                        Option<SourceSpan>.Some(original.span), "variable '", self.session.names.text(record.name),
+                        "' is used before it is definitely assigned"));
+                },
+                FieldAccess(value) => current = value.receiver,
+                TupleAccess(value) => current = value.receiver,
+                _ => return Result<AnalysisError, AnalysisError>.Err(AnalysisError.internal("uninitialized place has no root symbol")),
+            }
+        }
+    }
+
+    fn flush(base: u64, state: FlowState&) -> Result<(), AnalysisError> {
+        // Deferred assignments do not establish facts for the enclosing expression.
+        let deferred_state = state.snapshot();
+        defer deferred_state.drop();
+        let index = self.deferred.len();
+
+        while index > base {
+            index -= 1;
+            let action = self.deferred[index];
+            self.visit(action, &deferred_state)?;
+        }
+
+        Result<(), AnalysisError>.Ok(())
+    }
+
+    fn optional(value: Option<HirId>&, state: FlowState&) -> Result<(), AnalysisError> {
+        match value {
+            Some(id) => {
+                self.visit(*id, state)?;
+            },
+            None => {},
+        }
+
+        Result<(), AnalysisError>.Ok(())
+    }
+
+    fn visit(id: HirId, state: FlowState&) -> Result<(), AnalysisError> {
+        if !state.reachable {
+            return Result<(), AnalysisError>.Ok(());
+        }
+
+        let node = self.session.hir.require(id)?;
+
+        match &node.kind {
+            Var(symbol) => {
+                if !self.assigned(self.root(*symbol), state)? {
+                    return Result<(), AnalysisError>.Err(self.uninitialized(id)?);
+                }
+            },
+            Block(value) => {
+                let base = self.deferred.len();
+                defer self.deferred.truncate(base);
+
+                for statement in value.stmts {
+                    self.visit(*statement, state)?;
+                }
+
+                if state.reachable {
+                    self.flush(base, state)?;
+                }
+            },
+            Let(value) => {
+                self.optional(&value.init, state)?;
+
+                if value.init.is_some() {
+                    match &value.symbol_id {
+                        Some(symbol) => {
+                            state.assigned.insert(self.root(*symbol));
+                        }, None => {}
+                    }
+                }
+            },
+            PatternLet(value) => {
+                self.visit(value.value, state)?;
+                let failure = state.snapshot();
+                defer failure.drop();
+                self.optional(&value.else_branch, &failure)?;
+                self.bind_pattern(value.pattern, state)?;
+            },
+            Match(value) => {
+                self.visit(value.value, state)?;
+                let merged = FlowState.new();
+                defer merged.drop();
+                merged.reachable = false;
+
+                for arm in value.arms {
+                    let branch = state.snapshot();
+                    defer branch.drop();
+                    self.bind_pattern(arm.pattern, &branch)?;
+                    self.optional(&arm.guard, &branch)?;
+                    self.visit(arm.body, &branch)?;
+                    let previous = merged.snapshot();
+                    defer previous.drop();
+                    merged.merge(&previous, &branch);
+                }
+
+                state.assigned.drop();
+                state.assigned = merged.assigned.clone();
+                state.reachable = merged.reachable;
+            },
+            Binary(value) => {
+                if value.op == BinaryOperator.Assign {
+                    // Computing a place does not read a directly assigned local's old value.
+                    let target = self.place(value.left, state)?;
+                    self.visit(value.right, state)?;
+
+                    match target {
+                        Some(place) => {
+                            state.assigned.insert(place);
+                        }, None => {}
+                    }
+                } elif value.op == BinaryOperator.LogicalAnd || value.op == BinaryOperator.LogicalOr {
+                    self.visit(value.left, state)?;
+                    let skipped = state.snapshot();
+                    defer skipped.drop();
+                    let evaluated = state.snapshot();
+                    defer evaluated.drop();
+                    self.visit(value.right, &evaluated)?;
+                    state.merge(&skipped, &evaluated);
+                } else {
+                    self.visit(value.left, state)?;
+                    self.visit(value.right, state)?;
+                }
+            },
+            Unary(value) => {
+                self.visit(value.operand, state)?;
+            },
+            Cast(value) => {
+                self.visit(value.value, state)?;
+            },
+            BitCast(value) => {
+                self.visit(value.value, state)?;
+            },
+            Semi(value) => {
+                self.visit(*value, state)?;
+            },
+            If(value) => {
+                self.visit(value.cond, state)?;
+                let left = state.snapshot();
+                defer left.drop();
+                let right = state.snapshot();
+                defer right.drop();
+                self.visit(value.then_branch, &left)?;
+                self.optional(&value.else_branch, &right)?;
+                state.merge(&left, &right);
+            },
+            Loop(body) => {
+                self.loops.push(LoopFrame(Vec<FlowState>.new(), self.deferred.len()));
+                let local = state.snapshot();
+                defer local.drop();
+                let completed = false;
+                defer {
+                    if !completed {
+                        let frame = *self.loops.pop().unwrap();
+                        frame.drop();
+                    }
+                };
+                self.visit(*body, &local)?;
+                let frame = *self.loops.pop().unwrap();
+                completed = true;
+                defer frame.drop();
+                state.reachable = false;
+
+                for exit in frame.exits {
+                    if !state.reachable {
+                        state.assigned.drop();
+                        state.assigned = exit.assigned.clone();
+                        state.reachable = true;
+                    } else {
+                        let previous = state.snapshot();
+                        defer previous.drop();
+                        state.merge(&previous, exit);
+                    }
+                }
+            },
+            Break(value) => {
+                self.optional(value, state)?;
+
+                if self.loops.len() == 0 {
+                    return Result<(), AnalysisError>.Err(AnalysisError.internal("HIR break has no loop"));
+                }
+
+                let index = self.loops.len() - 1;
+                self.flush(self.loops[index].defer_base, state)?;
+                self.loops[index].exits.push(state.snapshot());
+                state.reachable = false;
+            },
+            Continue => {
+                if self.loops.len() == 0 {
+                    return Result<(), AnalysisError>.Err(AnalysisError.internal("HIR continue has no loop"));
+                }
+
+                self.flush(self.loops[self.loops.len() - 1].defer_base, state)?;
+                state.reachable = false;
+            },
+            Return(value) => {
+                self.optional(value, state)?;
+                self.flush(0, state)?;
+                state.reachable = false;
+            },
+            Defer(action) => {
+                let registration = state.snapshot();
+                defer registration.drop();
+                self.visit(*action, &registration)?;
+                self.deferred.push(*action);
+            },
+            Delete(target) => {
+                self.visit(*target, state)?;
+            },
+            Call(value) => {
+                for argument in value.args {
+                    self.visit(*argument, state)?;
+                }
+            },
+            Invoke(value) => {
+                self.visit(value.callable, state)?;
+
+                for argument in value.args {
+                    self.visit(*argument, state)?;
+                }
+            },
+            Closure(value) => {
+                for capture in value.captures {
+                    self.visit(capture[1], state)?;
+                }
+            },
+            DynValue(value) => {
+                self.visit(*value, state)?;
+            },
+            DynBuffer(value) => {
+                self.visit(value.length, state)?;
+                self.optional(&value.element, state)?;
+            },
+            MethodCall(value) => {
+                self.visit(value.receiver, state)?;
+
+                for argument in value.args {
+                    self.visit(*argument, state)?;
+                }
+            },
+            TraitObjectCoerce(value) => {
+                self.visit(value.value, state)?;
+            },
+            TraitObjectMethodCall(value) => {
+                self.visit(value.receiver, state)?;
+
+                for argument in value.args {
+                    self.visit(*argument, state)?;
+                }
+            },
+            StructConstruct(value) => {
+                for field in value.field_values {
+                    self.visit(field[1], state)?;
+                }
+            },
+            VariantConstruct(value) => {
+                match &value.args {
+                    Some(args) => {
+                        for argument in *args {
+                            self.visit(argument[1], state)?;
+                        }
+                    }, None => {}
+                }
+            },
+            Builtin(value) => {
+                if value.kind == BuiltinKind.AssumeInit {
+                    let target = self.place(value.args[0], state)?;
+
+                    match target {
+                        Some(place) => {
+                            state.assigned.insert(place);
+                        }, None => {}
+                    }
+                } else {
+                    for argument in value.args {
+                        self.visit(*argument, state)?;
+                    }
+                }
+            },
+            Tuple(value) => {
+                for element in value.field_values {
+                    self.visit(*element, state)?;
+                }
+            },
+            Array(value) => {
+                for element in value.elements {
+                    self.visit(*element, state)?;
+                }
+            },
+            ArrayRepeat(value) => {
+                self.visit(value.element, state)?;
+            },
+            ArrayAccess(value) => {
+                self.visit(value.array, state)?;
+                self.visit(value.index, state)?;
+            },
+            SliceAccess(value) => {
+                self.visit(value.slice, state)?;
+                self.visit(value.index, state)?;
+            },
+            FieldAccess(_) => {
+                self.read_place(id, state)?;
+            },
+            TupleAccess(_) => {
+                self.read_place(id, state)?;
+            },
+            Ty => {},
+            IntLiteral(_) => {}, FloatLiteral(_) => {}, CharLiteral(_) => {}, StrLiteral(_) => {}, BoolLiteral(_) => {},
+        }
+
+        match self.session.types.require(node.type_id)? {
+            Never => {
+                state.reachable = false;
+            },
+            _ => {},
+        };
+
+        Result<(), AnalysisError>.Ok(())
+    }
+}
+
+pub fn check_assignment(ctx: ResolutionContext&, procedure: AnalyzedProcedure&) -> Result<(), AnalysisError> {
+    let checker = AssignmentChecker(ctx, ctx.session, Vec<HirId>.new(), Vec<LoopFrame>.new(), Arena<Place>.new(), HashMap<SymbolId, u64>.new(), HashMap<FieldKey, u64>.new());
+    defer checker.drop();
+    let state = FlowState.new();
+    defer state.drop();
+
+    for parameter in procedure.parameters {
+        state.assigned.insert(checker.root(*parameter));
+    }
+
+    checker.visit(procedure.root, &state)
+}

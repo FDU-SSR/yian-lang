@@ -1,0 +1,145 @@
+from yianc.codegen.cfg.ids import BlockId;
+from yianc.codegen.cfg.model import CfgFunction;
+from yianc.codegen.error import CodegenError;
+from std.core.drop import Drop;
+from std.core.iter import Iterator, IntoIterator;
+from std.core.range import Range;
+from std.core.ops import Index;
+from std.core.option import Option;
+from std.core.result import Result;
+from std.core.vec import Vec;
+
+// Immediate dominators need linear storage. All identities refer to one immutable CFG.
+pub struct Dominance {
+    reachable: Vec<bool>,
+    rank: Vec<u64>,
+    parents: Vec<Option<BlockId>>,
+}
+
+impl Drop for Dominance {
+    pub fn drop() {
+        self.reachable.drop();
+        self.rank.drop();
+        self.parents.drop();
+    }
+}
+
+impl Dominance {
+    fn parent(id: BlockId) -> Result<BlockId, CodegenError> {
+        match self.parents[id.index] {
+            Some(value) => Result<BlockId, CodegenError>.Ok(value),
+            None => Result<BlockId, CodegenError>.Err(CodegenError.invalid("reachable CFG block has no dominator")),
+        }
+    }
+
+    pub fn dominates(origin: BlockId, block: BlockId) -> Result<bool, CodegenError> {
+        if origin.index >= self.rank.len() || block.index >= self.rank.len() {
+            return Result<bool, CodegenError>.Err(CodegenError.invalid("invalid dominance query block"));
+        }
+        if origin == block { return Result<bool, CodegenError>.Ok(true); }
+        if !self.reachable[block.index] || !self.reachable[origin.index] {
+            return Result<bool, CodegenError>.Ok(false);
+        }
+
+        let current = block;
+        while current != origin {
+            let parent = self.parent(current)?;
+            if parent == current { return Result<bool, CodegenError>.Ok(false); }
+            if self.rank[parent.index] >= self.rank[current.index] {
+                return Result<bool, CodegenError>.Err(CodegenError.invalid("cyclic CFG dominator tree"));
+            }
+            current = parent;
+        }
+        Result<bool, CodegenError>.Ok(true)
+    }
+
+    // Every step moves toward the entry in reverse postorder.
+    fn meet(first: BlockId, second: BlockId) -> Result<BlockId, CodegenError> {
+        let left = first;
+        let right = second;
+        while left != right {
+            if self.rank[left.index] > self.rank[right.index] {
+                left = self.parent(left)?;
+            } elif self.rank[right.index] > self.rank[left.index] {
+                right = self.parent(right)?;
+            } else {
+                return Result<BlockId, CodegenError>.Err(CodegenError.invalid("inconsistent CFG traversal ranks"));
+            }
+        }
+        Result<BlockId, CodegenError>.Ok(left)
+    }
+}
+
+pub fn dominators(function: CfgFunction&, predecessors: Vec<Vec<BlockId>>&)
+-> Result<Dominance, CodegenError> {
+    let count = function.block_count();
+    if count == 0u64 || predecessors.len() != count {
+        return Result<Dominance, CodegenError>.Err(CodegenError.invalid("invalid CFG predecessor table"));
+    }
+    let facts = Dominance(Vec<bool>.new(), Vec<u64>.new(), Vec<Option<BlockId>>.new());
+    let accepted = false;
+    defer { if !accepted { facts.drop(); } };
+    for index in 0u64..count {
+        facts.reachable.push(false);
+        facts.rank.push(0u64);
+        facts.parents.push(Option<BlockId>.None);
+        for predecessor in predecessors[index] { function.block(*predecessor)?; }
+    }
+
+    let postorder = Vec<BlockId>.new();
+    defer postorder.drop();
+    let pending = Vec<(BlockId, bool)>.new();
+    defer pending.drop();
+    pending.push((BlockId(0u64), false));
+    while !pending.is_empty() {
+        let item = *pending.pop().unwrap();
+        let id = item[0];
+        if item[1] { postorder.push(id); continue; }
+        if facts.reachable[id.index] { continue; }
+        facts.reachable[id.index] = true;
+        pending.push((id, true));
+        let terminator = match &function.block(id)?.terminator {
+            Some(value) => value,
+            None => return Result<Dominance, CodegenError>.Err(CodegenError.invalid("CFG block has no terminator")),
+        };
+        match terminator {
+            Jump(destination) => pending.push((*destination, false)),
+            Branch(_, yes, no) => { pending.push((*no, false)); pending.push((*yes, false)); },
+            _ => {},
+        }
+    }
+    for index in 0u64..postorder.len() {
+        facts.rank[postorder[postorder.len() - index - 1u64].index] = index;
+    }
+    facts.parents[0] = Option<BlockId>.Some(BlockId(0u64));
+
+    // Predecessor intersections converge monotonically, including loop backedges.
+    let changed = true;
+    while changed {
+        changed = false;
+        for position in 1u64..postorder.len() {
+            let block = postorder[postorder.len() - position - 1u64];
+            let parent = Option<BlockId>.None;
+            for predecessor in predecessors[block.index] {
+                if facts.parents[predecessor.index].is_none() { continue; }
+                parent = match parent {
+                    Some(current) => Option<BlockId>.Some(facts.meet(current, *predecessor)?),
+                    None => Option<BlockId>.Some(*predecessor),
+                };
+            }
+            let different = match parent {
+                Some(value) => match facts.parents[block.index] {
+                    Some(previous) => value != previous,
+                    None => true,
+                },
+                None => facts.parents[block.index].is_some(),
+            };
+            if different {
+                facts.parents[block.index] = parent;
+                changed = true;
+            }
+        }
+    }
+    accepted = true;
+    Result<Dominance, CodegenError>.Ok(facts)
+}

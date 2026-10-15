@@ -9,8 +9,8 @@ from anx.diagnostics.model import AX_NO_PROJECT_ROOT, Diagnostic;
 from anx.project.load import discover, load;
 from anx.project.model import LoadReport, Project;
 from anx.project.paths import standard_library_root;
-from compiler.format.api import format_text;
-from compiler.frontend.source import read_source;
+from yianc.format.api import format_text;
+from yianc.frontend.source import read_source;
 
 fn write_stdout(text: str) -> bool {
     match Stdout.new().write_str(text) {

@@ -1,0 +1,531 @@
+from __future__ import annotations
+
+from collections import defaultdict
+from copy import deepcopy
+from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
+
+from yianc.analysis.error import AnalysisError
+from yianc.analysis.ty import ty as Type
+from yianc.analysis.ty.generic_inference import GenericInference
+from yianc.frontend.lex.position import SrcSpan
+
+if TYPE_CHECKING:
+    from yianc.analysis.ty.context import TypeCtx
+
+
+@dataclass
+class Impl:
+    span: SrcSpan
+    generics: list[int]
+    target: int
+    trait: int | None
+    methods: dict[str, int] = field(default_factory=dict[str, int])
+    conditions: dict[int, list[int]] = field(default_factory=dict[int, list[int]])  # generic_type_id -> [required_trait_type_id, ...]
+    # Automatic implementations are fallback candidates when no explicit impl matches.
+    automatic: bool = False
+
+
+class ImplRegistry:
+    def __init__(self, type_ctx: TypeCtx):
+        self.__ctx = type_ctx
+
+        self.__impls: list[Impl] = []
+
+        self.__impl_cache: dict[int, list[Impl]] = defaultdict(list)  # target type -> list of impls for the target type
+        self.__trait_impl_cache: dict[int, list[Impl]] = defaultdict(list)  # target type -> list of trait impls for the target type
+        self.__generic_impl_cache: list[Impl] = []  # list of generic impls
+        self.__trait_generic_impl_cache: list[Impl] = []  # list of generic trait impls
+
+        # Only top-level has_impl queries are safe to memoize. Recursive
+        # queries share a cycle-detection set and are context-dependent.
+        self.__memoize_enabled = False
+        self.__has_impl_cache: dict[tuple[int, int], bool] = {}
+        self.__procedure_copies: list[tuple[int, int]] = []
+
+    def enable_memoization(self) -> None:
+        """Enable has_impl memoization after impl registration is complete."""
+        self.__memoize_enabled = True
+
+    def register_impl(self, span: SrcSpan, generics: list[int], target: int, trait: int | None, conditions: dict[int, list[int]] | None = None, *, automatic: bool = False) -> Impl:
+        impl = Impl(span=span, generics=generics, target=target, trait=trait, conditions=conditions or {}, automatic=automatic)
+        self.__impls.append(impl)
+        return impl
+
+    def check_impls(self) -> tuple[tuple[int, int], ...]:
+        for impl in self.__impls:
+            self.__check_impl(impl)
+
+        self.__cache_impls()
+        return tuple(self.__procedure_copies)
+
+    def iter_impls(self) -> list[Impl]:
+        return list(self.__impls)
+
+    def find_deref_target(self, type_id: int) -> int | None:
+        """
+        If `type_id` implements the `Deref` trait, return the return type
+        of the deref() method. Otherwise return None.
+
+        Used by TypeCtx.try_deref to support auto-deref via the Deref trait.
+        """
+        deref_trait_ty = self.__ctx[self.__ctx.deref_id]
+        assert isinstance(deref_trait_ty, Type.TraitType)
+
+        def is_deref_impl(impl: Impl) -> bool:
+            """Check whether *impl* is a Deref trait implementation."""
+            if impl.trait is None or "deref" not in impl.methods:
+                return False
+            impl_trait_ty = self.__ctx[impl.trait]
+            return (
+                isinstance(impl_trait_ty, Type.TraitType)
+                and impl_trait_ty.custom_def is deref_trait_ty.custom_def
+            )
+
+        # 1) Non-generic trait impls that match the exact target type
+        for impl in self.__trait_impl_cache[type_id]:
+            if is_deref_impl(impl):
+                return self.__resolve_deref_target(impl, {})
+
+        # 2) Generic trait impls — try to unify impl.target against type_id
+        for impl in self.__trait_generic_impl_cache:
+            if not is_deref_impl(impl):
+                continue
+            inference = GenericInference(self.__ctx, SrcSpan.empty())
+            try:
+                inference.constrain(impl.target, type_id)
+                substs = inference.substitutions()
+            except AnalysisError:
+                continue
+            if not self.check_conditions(impl, substs):
+                continue
+            return self.__resolve_deref_target(impl, substs)
+
+        return None
+
+    def check_conditions(self, impl: Impl, substs: dict[int, int], visited: set[tuple[int, int]] | None = None) -> bool:
+        """Return True if all trait conditions on *impl* are satisfied under *substs*."""
+        if not impl.conditions:
+            return True
+        if visited is None:
+            visited = set()
+        for generic_id, required_traits in impl.conditions.items():
+            concrete_type_id = substs.get(generic_id, generic_id)
+            for trait_id in required_traits:
+                substed_trait = self.__ctx.instantiate(trait_id, substs)
+                # Keep the ancestor path for cycle detection, but isolate
+                # sibling conditions so one successful query cannot mark the
+                # same (type, trait) pair as visited for the next condition.
+                condition_visited = set(visited)
+                # This is a recursive query, even when this method itself
+                # was entered from a top-level has_impl call. Its result is
+                # dependent on the shared cycle-detection path and must not
+                # enter the top-level cache.
+                if not self.has_impl(concrete_type_id, substed_trait, condition_visited, False):
+                    return False
+        return True
+
+    def infer_condition_substs(self, impl: Impl, substs: dict[int, int], span: SrcSpan) -> dict[int, int] | None:
+        """Resolve generic arguments supplied by concrete trait-bound implementations."""
+        if not impl.conditions:
+            return substs
+        inferred = dict(substs)
+        for generic_id, required_traits in impl.conditions.items():
+            concrete_type_id = self.__ctx.instantiate(generic_id, inferred)
+            if self.__ctx.contains_generic(concrete_type_id):
+                return None
+            for trait_id in required_traits:
+                required_trait_id = self.__ctx.instantiate(trait_id, inferred)
+                if not self.__ctx.contains_generic(required_trait_id):
+                    if not self.has_impl(concrete_type_id, required_trait_id):
+                        return None
+                    continue
+
+                matches: list[dict[int, int]] = []
+                for candidate in self.iter_candidate_impls(concrete_type_id):
+                    if candidate.trait is None:
+                        continue
+                    candidate_inference = GenericInference(self.__ctx, span)
+                    try:
+                        candidate_inference.constrain(candidate.target, concrete_type_id)
+                        candidate_substs = candidate_inference.substitutions()
+                        concrete_trait_id = self.__ctx.instantiate(candidate.trait, candidate_substs)
+                        if self.__ctx.contains_generic(concrete_trait_id):
+                            continue
+                        bound_inference = GenericInference(self.__ctx, span)
+                        bound_inference.constrain(required_trait_id, concrete_trait_id)
+                        bound_substs = bound_inference.substitutions()
+                    except AnalysisError:
+                        continue
+                    if not self.has_impl(concrete_type_id, concrete_trait_id):
+                        continue
+                    merged = dict(inferred)
+                    if any(key in merged and not self.__ctx.is_same_type(merged[key], value)
+                           for key, value in bound_substs.items()):
+                        continue
+                    merged.update(bound_substs)
+                    if merged not in matches:
+                        matches.append(merged)
+
+                if len(matches) != 1:
+                    if len(matches) > 1:
+                        raise AnalysisError("Ambiguous trait-bound type inference", span)
+                    return None
+                inferred = matches[0]
+
+        if not self.check_conditions(impl, inferred):
+            return None
+        return inferred
+
+    def has_impl(self, type_id: int, trait_id: int, visited: set[tuple[int, int]] | None = None, fresh: bool = False) -> bool:
+        """Check whether *type_id* implements *trait_id*.
+
+        A query with a newly created visited set is context-independent and
+        may be cached. Recursive calls pass ``fresh=False`` so cycle
+        detection cannot leak a context-dependent result into the cache.
+        """
+        if visited is None:
+            visited = set()
+            fresh = True
+        key = (type_id, trait_id)
+        if fresh and self.__memoize_enabled:
+            cached = self.__has_impl_cache.get(key)
+            if cached is not None:
+                return cached
+        result = self.__has_impl_inner(type_id, trait_id, visited)
+        if fresh and self.__memoize_enabled:
+            self.__has_impl_cache[key] = result
+        return result
+
+    def find_trait_impl(self, type_id: int, trait_id: int) -> tuple[Impl, dict[int, int]] | None:
+        """Return the unique impl matching a fully concrete type and trait."""
+        trait_ty = self.__ctx[trait_id]
+        if not isinstance(trait_ty, Type.TraitType):
+            return None
+        matches: list[tuple[Impl, dict[int, int]]] = []
+        for impl in self.iter_candidate_impls(type_id):
+            if impl.trait is None:
+                continue
+            inference = GenericInference(self.__ctx, trait_ty.custom_def.span)
+            try:
+                inference.constrain(impl.target, type_id)
+                inference.constrain(impl.trait, trait_id)
+                substs = inference.substitutions()
+            except AnalysisError:
+                continue
+            if self.check_conditions(impl, substs):
+                matches.append((impl, substs))
+
+        if len(matches) > 1:
+            raise AnalysisError(
+                f"Ambiguous implementation of trait '{self.__ctx.get_name(trait_id)}' "
+                f"for type '{self.__ctx.get_name(type_id)}'",
+                trait_ty.custom_def.span,
+            )
+        return matches[0] if matches else None
+
+    def __has_impl_inner(self, type_id: int, trait_id: int, visited: set[tuple[int, int]]) -> bool:
+        """Evaluate a has_impl query without consulting or updating its cache."""
+        key = (type_id, trait_id)
+        if key in visited:
+            return False
+        visited.add(key)
+
+        exact = self.__trait_impl_cache.get(type_id, [])
+        generic = self.__trait_generic_impl_cache
+        target_trait = self.__ctx[trait_id]
+        for automatic in (False, True):
+            for impl in exact:
+                if impl.automatic == automatic and impl.trait == trait_id and self.check_conditions(impl, {}, visited):
+                    return True
+            for impl in generic:
+                if impl.automatic != automatic or impl.trait is None:
+                    continue
+                impl_trait = self.__ctx[impl.trait]
+                if not (isinstance(impl_trait, Type.TraitType) and isinstance(target_trait, Type.TraitType)
+                        and impl_trait.custom_def is target_trait.custom_def):
+                    continue
+                inference = GenericInference(self.__ctx, SrcSpan.empty())
+                try:
+                    inference.constrain(impl.target, type_id)
+                    if not self.__ctx.contains_generic(trait_id):
+                        inference.constrain(impl.trait, trait_id)
+                    substs = inference.substitutions()
+                except AnalysisError:
+                    continue
+                if automatic and not self.__ctx.contains_generic(trait_id):
+                    resolved_trait = self.__ctx.instantiate(impl.trait, substs)
+                    if not self.__ctx.is_same_type(resolved_trait, trait_id):
+                        continue
+                if self.check_conditions(impl, substs, visited):
+                    return True
+
+        return False
+
+    def __matches_trait(self, impl: Impl, type_id: int, trait_id: int, visited: set[tuple[int, int]] | None = None) -> bool:
+        if impl.trait is None:
+            return False
+        inference = GenericInference(self.__ctx, SrcSpan.empty())
+        try:
+            inference.constrain(impl.target, type_id)
+            inference.constrain(impl.trait, trait_id)
+            substs = inference.substitutions()
+        except AnalysisError:
+            return False
+        return self.check_conditions(impl, substs, visited)
+
+    def __resolve_deref_target(self, impl: Impl, substs: dict[int, int]) -> int | None:
+        """Given a Deref impl and substitutions, return the return type of deref()."""
+        deref_method_id = impl.methods["deref"]
+        instantiated_id = deref_method_id
+        if substs:
+            instantiated_id = self.__ctx.instantiate(deref_method_id, substs)
+        method_ty = self.__ctx[instantiated_id]
+        assert isinstance(method_ty, Type.MethodType)
+        return self.__ctx.get_return_type(instantiated_id)
+
+    def __check_impl(self, impl: Impl) -> None:
+        """
+        Check if the given impl has implemented all required methods and that the signatures match.
+        """
+        if impl.trait is None:
+            return
+        trait_ty = self.__ctx[impl.trait]
+        assert isinstance(trait_ty, Type.TraitType)
+
+        impl_methods = impl.methods
+        trait_methods = trait_ty.get_methods(self.__ctx)
+
+        # Check that all methods in the trait are implemented
+        for method_name, trait_method_ty_id in trait_methods.items():
+            # method name in impl -> check signature matches the trait method
+            if method_name in impl_methods:
+                impl_method_ty_id = impl_methods[method_name]
+                if not self.__impl_signature_match(
+                    trait_ty.type_id, impl.target, trait_method_ty_id,
+                    impl_method_ty_id, len(impl.generics),
+                ):
+                    raise AnalysisError(
+                        f"Method '{method_name}' in impl of trait '{self.__ctx.get_name(impl.trait)}' for type '{self.__ctx.get_name(impl.target)}' does not match the signature of the trait method",
+                        impl.span,
+                    )
+                continue
+
+            # method name not in impl -> check if the trait method has a default implementation
+            trait_method_ty = self.__ctx[trait_method_ty_id]
+            assert isinstance(trait_method_ty, Type.MethodType)
+            if not trait_method_ty.custom_def.is_header:
+                # add the default implementation to the impl
+                impl.methods[method_name] = self.__clone_trait_method_as_impl(trait_method_ty_id, impl.target, impl)
+                continue
+
+            # method name not in impl and no default implementation -> error
+            raise AnalysisError(
+                f"Method '{method_name}' is not implemented for type '{self.__ctx.get_name(impl.target)}' in impl of trait '{self.__ctx.get_name(impl.trait)}'",
+                impl.span,
+            )
+
+    def __impl_compatible(self, trait_type: int, target_type: int, type_from_trait: int, type_from_impl: int) -> bool:
+        """Check method types after substituting only the trait's ``Self`` placeholder."""
+        if self.__ctx.is_same_type(type_from_trait, type_from_impl):
+            return True
+
+        trait_type_def = self.__ctx[trait_type]
+        trait_side_ty = self.__ctx[type_from_trait]
+        impl_side_ty = self.__ctx[type_from_impl]
+
+        if isinstance(trait_side_ty, Type.SelfType):
+            self_trait_ty = self.__ctx[trait_side_ty.trait_type_id]
+            if isinstance(self_trait_ty, Type.TraitType) and isinstance(trait_type_def, Type.TraitType) \
+                    and self_trait_ty.custom_def is trait_type_def.custom_def:
+                return self.__ctx.is_same_type(target_type, type_from_impl)
+
+        if isinstance(trait_side_ty, (Type.GenericType, Type.ConstGenericType)) and \
+           isinstance(impl_side_ty, (Type.GenericType, Type.ConstGenericType)):
+            return True
+
+        if isinstance(trait_side_ty, Type.PointerType) and isinstance(impl_side_ty, Type.PointerType):
+            return self.__impl_compatible(trait_type, target_type, trait_side_ty.pointee_type, impl_side_ty.pointee_type)
+        if isinstance(trait_side_ty, Type.RefType) and isinstance(impl_side_ty, Type.RefType):
+            return self.__impl_compatible(trait_type, target_type, trait_side_ty.pointee_type, impl_side_ty.pointee_type)
+        if isinstance(trait_side_ty, Type.SliceType) and isinstance(impl_side_ty, Type.SliceType):
+            return self.__impl_compatible(trait_type, target_type, trait_side_ty.element_type, impl_side_ty.element_type)
+        if isinstance(trait_side_ty, Type.ArrayType) and isinstance(impl_side_ty, Type.ArrayType):
+            return self.__impl_compatible(trait_type, target_type, trait_side_ty.element_type, impl_side_ty.element_type) \
+                and self.__impl_compatible(trait_type, target_type, trait_side_ty.length, impl_side_ty.length)
+        if isinstance(trait_side_ty, Type.TupleType) and isinstance(impl_side_ty, Type.TupleType):
+            return len(trait_side_ty.element_types) == len(impl_side_ty.element_types) and all(
+                self.__impl_compatible(trait_type, target_type, left, right)
+                for left, right in zip(trait_side_ty.element_types, impl_side_ty.element_types)
+            )
+        if isinstance(trait_side_ty, Type.FunctionPointerType) and isinstance(impl_side_ty, Type.FunctionPointerType):
+            return len(trait_side_ty.parameter_types) == len(impl_side_ty.parameter_types) and all(
+                self.__impl_compatible(trait_type, target_type, left, right)
+                for left, right in zip(trait_side_ty.parameter_types, impl_side_ty.parameter_types)
+            ) and self.__impl_compatible(trait_type, target_type, trait_side_ty.return_type, impl_side_ty.return_type)
+
+        if isinstance(trait_side_ty, Type.CustomType) and isinstance(impl_side_ty, Type.CustomType):
+            return trait_side_ty.custom_def is impl_side_ty.custom_def \
+                and len(trait_side_ty.generic_args) == len(impl_side_ty.generic_args) \
+                and all(
+                    self.__impl_compatible(trait_type, target_type, left, right)
+                    for left, right in zip(trait_side_ty.generic_args, impl_side_ty.generic_args)
+                )
+
+        return False
+
+    def __impl_signature_match(self, trait_type: int, target_type: int, trait_method: int, impl_method: int, impl_generic_count: int) -> bool:
+        """
+        Check that the method defined in the impl matches the method defined in the trait.
+        """
+        trait_method_ty = self.__ctx[trait_method]
+        assert isinstance(trait_method_ty, Type.MethodType)
+        impl_method_ty = self.__ctx[impl_method]
+        assert isinstance(impl_method_ty, Type.MethodType)
+
+        if trait_method_ty.is_static != impl_method_ty.is_static:
+            return False
+
+        receiver_type = self.__ctx.get_receiver_type(impl_method)
+
+        if not self.__ctx.is_same_type(receiver_type, target_type):
+            return False
+
+        trait_receiver_type = self.__ctx.get_receiver_type(trait_method)
+        trait_receiver_ty = self.__ctx[trait_receiver_type]
+        trait_type_ty = self.__ctx[trait_type]
+        if not isinstance(trait_receiver_ty, Type.SelfType) or not isinstance(trait_type_ty, Type.TraitType):
+            return False
+        self_trait_ty = self.__ctx[trait_receiver_ty.trait_type_id]
+        if not isinstance(self_trait_ty, Type.TraitType) or self_trait_ty.custom_def is not trait_type_ty.custom_def:
+            return False
+
+        # Inherited trait and impl parameters do not belong to the method's arity.
+        trait_own_generics = len(trait_method_ty.custom_def.generics) - len(trait_type_ty.custom_def.generics)
+        impl_own_generics = len(impl_method_ty.custom_def.generics) - impl_generic_count
+        if trait_own_generics != impl_own_generics:
+            return False
+
+        if not self.__impl_compatible(trait_type, target_type, self.__ctx.get_return_type(trait_method), self.__ctx.get_return_type(impl_method)):
+            return False
+        trait_params = self.__ctx.get_params(trait_method)
+        impl_params = self.__ctx.get_params(impl_method)
+        if len(trait_params) != len(impl_params):
+            return False
+        for trait_param, impl_param in zip(trait_params, impl_params):
+            if not self.__impl_compatible(trait_type, target_type, trait_param.type_id, impl_param.type_id):
+                return False
+        return True
+
+    def __clone_trait_method_as_impl(self, trait_method_id: int, target_type: int, impl: Impl) -> int:
+        """
+        Clone the given trait method as an impl method for the given target type.
+
+        This is used to add default implementations of trait methods to impls that do not provide their own implementation.
+        """
+        trait_method_ty = self.__ctx[trait_method_id]
+        assert isinstance(trait_method_ty, Type.MethodType)
+
+        # alloc a new method type
+        method_type_id = self.__ctx.alloc_method(trait_method_ty.custom_def.name, span=trait_method_ty.custom_def.span)
+        method_ty = self.__ctx[method_type_id]
+        assert isinstance(method_ty, Type.MethodType)
+
+        method_ty.custom_def = deepcopy(trait_method_ty.custom_def)
+        old_self = trait_method_ty.custom_def.receiver_type
+
+        generics = (*trait_method_ty.custom_def.generics, *impl.generics)
+        method_ty.custom_def.receiver_type = target_type
+        method_ty.custom_def.return_type = self.__subst_trait_self(method_ty.custom_def.return_type, old_self, target_type)
+        for param in method_ty.custom_def.parameters:
+            param.type_id = self.__subst_trait_self(param.type_id, old_self, target_type)
+
+        self.__ctx.bind_template(
+            method_type_id, generics,
+            (*trait_method_ty.generic_args, *impl.generics),
+        )
+
+        self.__procedure_copies.append((trait_method_id, method_type_id))
+
+        return method_type_id
+
+    def __subst_trait_self(self, type_id: int, old_self: int, new_target: int) -> int:
+        """Replace one trait's ``SelfType`` placeholder recursively."""
+        if type_id == old_self:
+            return new_target
+        ty = self.__ctx[type_id]
+        if isinstance(ty, Type.PointerType):
+            return self.__ctx.alloc_pointer(self.__subst_trait_self(ty.pointee_type, old_self, new_target))
+        if isinstance(ty, Type.RefType):
+            return self.__ctx.alloc_ref(self.__subst_trait_self(ty.pointee_type, old_self, new_target))
+        if isinstance(ty, Type.SliceType):
+            return self.__ctx.alloc_slice(self.__subst_trait_self(ty.element_type, old_self, new_target))
+        if isinstance(ty, Type.ArrayType):
+            return self.__ctx.alloc_array(self.__subst_trait_self(ty.element_type, old_self, new_target), ty.length)
+        if isinstance(ty, Type.TupleType):
+            return self.__ctx.alloc_tuple([self.__subst_trait_self(et, old_self, new_target) for et in ty.element_types])
+        if isinstance(ty, Type.FunctionPointerType):
+            return self.__ctx.alloc_function_pointer([self.__subst_trait_self(pt, old_self, new_target) for pt in ty.parameter_types], self.__subst_trait_self(ty.return_type, old_self, new_target))
+        if isinstance(ty, (Type.StructType, Type.EnumType, Type.TraitType, Type.MethodType, Type.FunctionType)):
+            if ty.generic_args:
+                return self.__ctx.alloc_instance(type_id, [self.__subst_trait_self(ga, old_self, new_target) for ga in ty.generic_args])
+            return type_id
+        return type_id
+
+    def __cache_impls(self) -> None:
+        """
+        Cache the implementations for faster lookup.
+        """
+        for impl in self.__impls:
+            if impl.trait is None and len(impl.generics) == 0:
+                self.__impl_cache[impl.target].append(impl)
+            elif impl.trait is not None and len(impl.generics) == 0:
+                self.__trait_impl_cache[impl.target].append(impl)
+            elif impl.trait is None and len(impl.generics) > 0:
+                self.__generic_impl_cache.append(impl)
+            elif impl.trait is not None and len(impl.generics) > 0:
+                self.__trait_generic_impl_cache.append(impl)
+
+    def methods_of(self, type_id: int) -> tuple[tuple[str, int], ...]:
+        """Enumerate signatures after receiver inference and trait obligations succeed."""
+        methods: dict[str, list[tuple[int, int]]] = {}
+        for impl in self.iter_candidate_impls(type_id):
+            inference = GenericInference(self.__ctx, impl.span)
+            try:
+                inference.constrain(impl.target, type_id)
+                substitutions = self.infer_condition_substs(impl, inference.substitutions(), impl.span)
+                if substitutions is None or not self.check_conditions(impl, substitutions):
+                    continue
+            except AnalysisError:
+                continue
+            for name, method_id in impl.methods.items():
+                rank = 2 if impl.trait is None else 0 if impl.automatic else 1
+                methods.setdefault(name, []).append((rank, self.__ctx.instantiate(method_id, substitutions)))
+        return tuple((name, type_id) for name, candidates in methods.items()
+                     for rank, type_id in dict.fromkeys(candidates)
+                     if rank == max(candidate[0] for candidate in candidates))
+
+    def iter_candidate_impls(self, type_id: int) -> list[Impl]:
+        """Return the impls that could potentially match the given type_id.
+
+        Explicit exact and generic impls remain candidates for method lookup.
+        An automatic impl is omitted when a matching explicit trait impl has
+        satisfied conditions; method lookup checks each remaining signature.
+        """
+        exact = self.__impl_cache.get(type_id, []) + self.__trait_impl_cache.get(type_id, [])
+        generic = self.__generic_impl_cache + self.__trait_generic_impl_cache
+        candidates = exact + generic
+        explicit = [impl for impl in candidates if not impl.automatic]
+        automatic: list[Impl] = []
+        for impl in candidates:
+            if not impl.automatic or impl.trait is None:
+                continue
+            inference = GenericInference(self.__ctx, SrcSpan.empty())
+            try:
+                inference.constrain(impl.target, type_id)
+                trait_id = self.__ctx.instantiate(impl.trait, inference.substitutions())
+            except AnalysisError:
+                continue
+            if not any(self.__matches_trait(other, type_id, trait_id) for other in explicit):
+                automatic.append(impl)
+        return explicit + automatic

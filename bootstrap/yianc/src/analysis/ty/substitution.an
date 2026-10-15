@@ -1,0 +1,213 @@
+from yianc.analysis.ty.store import TypeStore;
+from yianc.analysis.ty.model import TypeData;
+from yianc.analysis.ty.const_expression import const_unary, const_binary;
+from yianc.common.location import SourceSpan;
+from std.core.option import Option;
+from yianc.common.ids import TypeId;
+from yianc.diagnostics.model import AnalysisError;
+from std.collections.hash_map import HashMap;
+from std.core.drop import Drop;
+from std.core.iter import Iterator, IntoIterator;
+from std.core.result import Result;
+from std.core.vec import Vec;
+
+// Substitutions are caller-owned and isolated for each candidate or function instance.
+pub fn substitute(store: TypeStore&, type_id: TypeId, substitutions: HashMap<TypeId, TypeId>&) -> Result<TypeId, AnalysisError> {
+    match substitutions.get(&type_id) {
+        Some(value) => return Result<TypeId, AnalysisError>.Ok(*value),
+        None => {},
+    }
+
+    let record = store.require(type_id)?;
+    let result = match record {
+        ConstUnary(op, operand) => const_unary(store, *op, substitute(store, *operand, substitutions)?, Option<SourceSpan>.None)?,
+        ConstBinary(op, left, right) => const_binary(store, *op, substitute(store, *left, substitutions)?, substitute(store, *right, substitutions)?, Option<SourceSpan>.None)?,
+        Pointer(inner) => store.pointer(substitute(store, *inner, substitutions)?),
+        CPointer(inner) => store.c_pointer(substitute(store, *inner, substitutions)?),
+        Reference(inner) => store.reference(substitute(store, *inner, substitutions)?),
+        Slice(inner) => store.slice(substitute(store, *inner, substitutions)?),
+        TraitObject(inner) => store.trait_object(substitute(store, *inner, substitutions)?),
+        Array(inner, length) => store.array(substitute(store, *inner, substitutions)?, substitute(store, *length, substitutions)?),
+        Tuple(elements) => {
+            let ids = substitute_list(store, elements, substitutions)?;
+            defer ids.drop();
+            store.tuple(&ids)
+        },
+        FunctionPointer(parameters, result) => {
+            let ids = substitute_list(store, parameters, substitutions)?;
+            defer ids.drop();
+            let return_type = substitute(store, *result, substitutions)?;
+            store.function_pointer(&ids, return_type)
+        },
+        Nominal(definition, arguments) => {
+            let ids = substitute_list(store, arguments, substitutions)?;
+            defer ids.drop();
+            store.instance(*definition, &ids)?
+        },
+        _ => type_id,
+    };
+
+    Result<TypeId, AnalysisError>.Ok(result)
+}
+
+pub fn substitute_list(store: TypeStore&, values: Vec<TypeId>&, substitutions: HashMap<TypeId, TypeId>&) -> Result<Vec<TypeId>, AnalysisError> {
+    let result = Vec<TypeId>.new();
+    let accepted = false;
+    defer {
+        if !accepted {
+            result.drop();
+        }
+    };
+
+    for value in *values {
+        result.push(substitute(store, *value, substitutions)?);
+    }
+
+    accepted = true;
+    Result<Vec<TypeId>, AnalysisError>.Ok(result)
+}
+
+pub fn infer(store: TypeStore&, pattern: TypeId, actual: TypeId, substitutions: HashMap<TypeId, TypeId>&) -> bool {
+    if pattern == actual {
+        return true;
+    }
+
+    let expected = *store.get(pattern).unwrap();
+    let provided = *store.get(actual).unwrap();
+
+    match expected {
+        Generic(_) => {
+            match substitutions.get(&pattern) {
+                Some(previous) => return *previous == actual,
+                None => {
+                    substitutions.insert(pattern, actual);
+                    return true;
+                },
+            }
+        },
+        ConstGeneric(_, _) => {
+            match substitutions.get(&pattern) {
+                Some(previous) => return *previous == actual,
+                None => {
+                    substitutions.insert(pattern, actual);
+                    return true;
+                },
+            }
+        },
+        SelfType(_) => {
+            match substitutions.get(&pattern) {
+                Some(previous) => return *previous == actual,
+                None => {
+                    substitutions.insert(pattern, actual);
+                    return true;
+                },
+            }
+        },
+        Pointer(inner) => match provided {
+            Pointer(value) => infer(store, *inner, *value, substitutions), _ => false
+        },
+        CPointer(inner) => match provided {
+            CPointer(value) => infer(store, *inner, *value, substitutions), _ => false
+        },
+        Reference(inner) => match provided {
+            Reference(value) => infer(store, *inner, *value, substitutions), _ => false
+        },
+        Slice(inner) => match provided {
+            Slice(value) => infer(store, *inner, *value, substitutions), _ => false
+        },
+        TraitObject(inner) => match provided {
+            TraitObject(value) => infer(store, *inner, *value, substitutions), _ => false
+        },
+        Array(inner, length) => match provided {
+            Array(value, count) => infer(store, *inner, *value, substitutions) && infer(store, *length, *count, substitutions),
+            _ => false,
+        },
+        Tuple(elements) => match provided {
+            Tuple(values) => infer_list(store, elements, values, substitutions), _ => false
+        },
+        Nominal(definition, arguments) => match provided {
+            Nominal(other, values) => *definition == *other && infer_list(store, arguments, values, substitutions),
+            _ => false,
+        },
+        FunctionPointer(parameters, result) => match provided {
+            FunctionPointer(values, output) => infer_list(store, parameters, values, substitutions) && infer(store, *result, *output, substitutions),
+            _ => false,
+        },
+        _ => false,
+    }
+}
+
+fn infer_list(store: TypeStore&, patterns: Vec<TypeId>&, values: Vec<TypeId>&, substitutions: HashMap<TypeId, TypeId>&) -> bool {
+    if patterns.len() != values.len() {
+        return false;
+    }
+
+    let index = 0u64;
+
+    while index < patterns.len() {
+        if !infer(store, patterns[index], values[index], substitutions) {
+            return false;
+        }
+
+        index += 1;
+    }
+
+    true
+}
+
+pub fn has_generic(store: TypeStore&, type_id: TypeId) -> bool {
+    match *store.get(type_id).unwrap() {
+        Generic(_) => true, ConstGeneric(_, _) => true, SelfType(_) => true,
+        Pointer(inner) => has_generic(store, *inner),
+        CPointer(inner) => has_generic(store, *inner),
+        Reference(inner) => has_generic(store, *inner),
+        Slice(inner) => has_generic(store, *inner),
+        TraitObject(inner) => has_generic(store, *inner),
+        Array(element, count) => has_generic(store, *element) || has_generic(store, *count),
+        Nominal(_, arguments) => {
+            for argument in *arguments {
+                if has_generic(store, *argument) {
+                    return true;
+                }
+            }
+
+            false
+        },
+        Tuple(elements) => {
+            for element in *elements {
+                if has_generic(store, *element) {
+                    return true;
+                }
+            }
+
+            false
+        },
+        FunctionPointer(parameters, result) => {
+            for parameter in *parameters {
+                if has_generic(store, *parameter) {
+                    return true;
+                }
+            }
+
+            has_generic(store, *result)
+        },
+        Closure(captures, parameters, result, _, _, _) => {
+            for capture in *captures {
+                if has_generic(store, capture.type_id) {
+                    return true;
+                }
+            }
+
+            for parameter in *parameters {
+                if has_generic(store, parameter.type_id) {
+                    return true;
+                }
+            }
+
+            has_generic(store, *result)
+        },
+        ConstUnary(_, operand) => has_generic(store, *operand),
+        ConstBinary(_, left, right) => has_generic(store, *left) || has_generic(store, *right),
+        _ => false,
+    }
+}

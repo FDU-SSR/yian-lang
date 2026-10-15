@@ -1,0 +1,226 @@
+from yianc.analysis.resolution.context import ResolutionContext;
+from yianc.analysis.lowering.checker import ExprChecker;
+from yianc.analysis.session.output import AnalysisOptions, AnalysisOutput, AnalyzedProcedure;
+from yianc.analysis.symbol.model import SymbolKind;
+from yianc.analysis.ty.model import NominalKind;
+from yianc.analysis.ty.callable import signature, schedule;
+from yianc.analysis.ty.substitution import has_generic;
+from yianc.analysis.ty.validation import validate_concrete_value;
+from yianc.analysis.passes.entry import select_entry;
+from yianc.common.ids import TypeId, SymbolId, NameId, ScopeId, UnitId;
+from yianc.common.location import SourceSpan;
+from yianc.diagnostics.model import AnalysisError, AnalysisErrorKind, Diagnostic, DiagnosticCode;
+from std.core.drop import Drop;
+from std.core.iter import Iterator, IntoIterator;
+from std.core.option import Option;
+from std.core.result import Result;
+from std.core.vec import Vec;
+
+fn root_unit(ctx: ResolutionContext&, unit: UnitId) -> bool {
+    let record = *ctx.session.unit(unit).unwrap();
+
+    match ctx.session.package_map() {
+        Some(packages) => match packages.package_of(ctx.session.source(record.source).unwrap().canonical_path()) {
+            Some(owner) => match packages.root_name() {
+                Some(name) => owner.name.as_str() == name, None => true
+            },
+            None => true,
+        },
+        None => true,
+    }
+}
+
+pub fn check_procedures(ctx: ResolutionContext&, options: AnalysisOptions&, diagnostics: Vec<Diagnostic>&) -> Result<AnalysisOutput, AnalysisError> {
+    let output = AnalysisOutput.new();
+    let accepted = false;
+    defer {
+        if !accepted {
+            output.drop();
+        }
+    };
+
+    output.entry = match select_entry(ctx, options) {
+        Ok(value) => value,
+        Err(error) => {
+            if !ctx.session.editor_recovery || error.kind == AnalysisErrorKind.Internal { return Result<AnalysisOutput, AnalysisError>.Err(error); }
+            ctx.session.diagnostics.push_unique(error.diagnostic);
+            Option<TypeId>.None
+        },
+    };
+
+    // Match the reference worklist: entry and reachable calls first, then all concrete root definitions.
+    match output.entry { Some(entry) => { schedule(ctx, entry)?; }, None => {}, }
+    drain(ctx, options, &output, diagnostics)?;
+    let count = ctx.session.definitions.len();
+    for index in 0u64..count {
+        let procedure = *ctx.session.definitions.at(index).unwrap();
+        if root_unit(ctx, procedure.unit) && !has_generic(&ctx.session.types, procedure.type_id) {
+            schedule(ctx, procedure.type_id)?;
+        }
+    }
+    drain(ctx, options, &output, diagnostics)?;
+    accepted = true;
+    Result<AnalysisOutput, AnalysisError>.Ok(output)
+}
+
+fn drain(ctx: ResolutionContext&, options: AnalysisOptions&, output: AnalysisOutput&, diagnostics: Vec<Diagnostic>&) -> Result<(), AnalysisError> {
+    while true {
+        let type_id = match ctx.session.worklist.next() {
+            Some(value) => value,
+            None => {
+                break;
+            },
+        };
+        let finished = false;
+        defer {
+            if !finished {
+                match ctx.session.worklist.finish(type_id, true) {
+                    Ok(_) => {}, Err(problem) => problem.drop()
+                }
+            }
+        };
+        let checked = match check_one(ctx, type_id, options) {
+            Ok(value) => value,
+            Err(problem) => {
+                if !options.recover || problem.kind == AnalysisErrorKind.Internal {
+                    return Result<(), AnalysisError>.Err(problem);
+                }
+                if problem.kind == AnalysisErrorKind.EditorIncomplete { problem.drop(); } elif ctx.session.editor_recovery {
+                    ctx.session.diagnostics.push_unique(problem.diagnostic);
+                } elif duplicate(diagnostics, &problem.diagnostic) { problem.drop(); } else { diagnostics.push(problem.diagnostic); }
+                ctx.session.worklist.finish(type_id, true)?;
+                finished = true;
+                continue;
+            },
+        };
+        let definition = checked.definition;
+        output.procedures.push(checked);
+        let recorded = false;
+
+        for id in output.checked {
+            if *id == definition {
+                recorded = true;
+            }
+        }
+
+        if !recorded {
+            output.checked.push(definition);
+        }
+
+        ctx.session.worklist.finish(type_id, false)?;
+        finished = true;
+    }
+
+    Result<(), AnalysisError>.Ok(())
+}
+
+// Local lists transfer only after the body and result conversion both succeed.
+fn check_one(ctx: ResolutionContext&, type_id: TypeId, options: AnalysisOptions&) -> Result<AnalyzedProcedure, AnalysisError> {
+    let previous_context = ctx.session.editor_facts.definition_context;
+    if ctx.session.editor_recovery { ctx.session.editor_facts.definition_context = Option<TypeId>.Some(type_id); }
+    defer ctx.session.editor_facts.definition_context = previous_context;
+    match options.trace { Some(trace) => trace.event("type_check", 5, "checking concrete procedure", Option<str>.None), None => {}, }
+    let procedure = match ctx.session.definitions.get(type_id) {
+        Some(value) => value,
+        None => return Result<AnalyzedProcedure, AnalysisError>.Err(AnalysisError.internal("scheduled function has no body")),
+    };
+    let parent = *ctx.callable_scopes.get(&procedure.definition).unwrap();
+    let scope = ctx.session.symbols.create_scope(Option<ScopeId>.Some(*parent))?;
+    let callable = signature(ctx, type_id)?;
+    defer callable.drop();
+    let location = ctx.span(procedure.unit, procedure.body.span);
+    validate_concrete_value(ctx, callable.result, location)?;
+    for parameter in callable.parameters {
+        validate_concrete_value(ctx, parameter.type_id, location)?;
+    }
+
+    let checker = ExprChecker.new(ctx, procedure.unit, scope, callable.result, options.sizes);
+    defer checker.drop();
+    checker.ffi_allowed = callable.is_ffi;
+    let parameters = Vec<SymbolId>.new();
+    let captures = Vec<(NameId, SymbolId)>.new();
+    let transferred = false;
+    defer {
+        if !transferred {
+            parameters.drop();
+            captures.drop();
+        }
+    };
+
+    match ctx.closure_captures.get(&procedure.definition) {
+        Some(symbols) => {
+            for symbol in *symbols {
+                parameters.push(*symbol);
+                captures.push((ctx.session.symbols.get(*symbol).unwrap().name, *symbol));
+            }
+        },
+        None => {},
+    }
+
+    match ctx.session.types.require(type_id)? {
+        Nominal(id, arguments) => {
+            let header = *ctx.session.types.definition(*id).unwrap();
+            let index = 0u64;
+
+            while index < arguments.len() {
+                let generic = *header.generic(index).unwrap();
+                let name = match ctx.session.types.require(generic)? {
+                    Generic(name) => *name,
+                    ConstGeneric(name, _) => *name,
+                    SelfType(_) => ctx.session.names.intern("Self"),
+                    _ => return Result<AnalyzedProcedure, AnalysisError>.Err(AnalysisError.internal("invalid generic identity")),
+                };
+                checker.bind(ctx.session.names.text(name), arguments[index], procedure.body.span, SymbolKind.Type)?;
+                index += 1;
+            }
+        },
+        _ => {},
+    }
+
+    match &callable.receiver {
+        Some(receiver) => {
+            let name = ctx.session.names.intern("Self");
+
+            if ctx.session.symbols.scope(scope).unwrap().get(name).is_none() {
+                checker.bind("Self", *receiver, procedure.body.span, SymbolKind.Type)?;
+            }
+
+            if !callable.is_static {
+                let reference = ctx.session.types.reference(*receiver);
+                parameters.push(checker.bind("self", reference, procedure.body.span, SymbolKind.Parameter)?);
+            }
+        },
+        None => {},
+    }
+
+    for parameter in callable.parameters {
+        let span = match parameter.span {
+            Some(location) => location.span,
+            None => procedure.body.span,
+        };
+        parameters.push(checker.bind(ctx.session.names.text(parameter.name), parameter.type_id, span, SymbolKind.Parameter)?);
+    }
+
+    let root = match checker.block(procedure.body) {
+        Ok(value) => value,
+        Err(error) => {
+            return Result<AnalyzedProcedure, AnalysisError>.Err(error);
+        },
+    };
+    root = checker.coerce(root, callable.result)?;
+    transferred = true;
+    Result<AnalyzedProcedure, AnalysisError>.Ok(AnalyzedProcedure(procedure.definition, type_id, parameters, root, procedure.unit, captures))
+}
+
+fn duplicate(diagnostics: Vec<Diagnostic>&, candidate: Diagnostic&) -> bool {
+    for diagnostic in *diagnostics {
+        if diagnostic.code != candidate.code { continue; }
+        let existing = match &diagnostic.location { Some(value) => value, None => continue };
+        let incoming = match &candidate.location { Some(value) => value, None => continue };
+        let left = match existing { Source(value) => value, _ => continue };
+        let right = match incoming { Source(value) => value, _ => continue };
+        if left.source == right.source && left.span.start.row == right.span.start.row &&
+        left.span.start.column == right.span.start.column { return true; }
+    }
+    false
+}

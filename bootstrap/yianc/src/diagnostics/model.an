@@ -1,0 +1,394 @@
+from yianc.common.location import SourceSpan;
+from yianc.frontend.source import Span;
+from std.collections.arena import Arena;
+from std.core.convert import From;
+from std.core.drop import Drop;
+from std.core.fmt import ToString;
+from std.core.iter import Iterator, IntoIterator;
+from std.core.option import Option;
+from std.core.string import String;
+from std.core.vec import Vec;
+
+pub enum DiagnosticCode {
+    UnterminatedComment,
+    FString,
+    Escape,
+    UnterminatedLiteral,
+    Lexical,
+    EndOfInput,
+    ExpectedToken,
+    UnexpectedToken,
+    ReservedWord,
+    Syntax,
+    Source,
+    Duplicate,
+    Undefined,
+    UnknownType,
+    ImportNotFound,
+    NotPublic,
+    NotAType,
+    ImportEntry,
+    UnknownPackage,
+    NotDependency,
+    NotModule,
+    Resolution,
+    Access,
+    TypeMismatch,
+    Inference,
+    NoSuchField,
+    NoSuchMethod,
+    UnsupportedOperator,
+    CircularAlias,
+    RecursiveStorage,
+    Type,
+    Restricted,
+    ControlFlow,
+    Coverage,
+    Uninitialized,
+    UnreachablePattern,
+    Unsupported,
+    GenericArguments,
+    Constant,
+    Internal,
+}
+
+impl DiagnosticCode {
+    pub fn text() -> str {
+        match self {
+            UnterminatedComment => "E101",
+            FString => "E102",
+            Escape => "E103",
+            UnterminatedLiteral => "E105",
+            Lexical => "E199",
+            EndOfInput => "E201",
+            ExpectedToken => "E202",
+            UnexpectedToken => "E203",
+            ReservedWord => "E204",
+            Syntax => "E299",
+            Source => "E399",
+            Duplicate => "E303",
+            Undefined => "E301",
+            UnknownType => "E302",
+            ImportNotFound => "E304",
+            NotPublic => "E305",
+            NotAType => "E306",
+            ImportEntry => "E307",
+            UnknownPackage => "E308",
+            NotDependency => "E309",
+            NotModule => "E310",
+            Resolution => "E399",
+            Access => "E399",
+            TypeMismatch => "E401",
+            Inference => "E402",
+            NoSuchField => "E403",
+            NoSuchMethod => "E404",
+            UnsupportedOperator => "E406",
+            CircularAlias => "E407",
+            RecursiveStorage => "E599",
+            Type => "E499",
+            ControlFlow => "E499",
+            Restricted => "E501",
+            Coverage => "E504",
+            Uninitialized => "E502",
+            UnreachablePattern => "W501",
+            Unsupported => "E598",
+            GenericArguments => "E405",
+            Constant => "E503",
+            Internal => "E599",
+        }
+    }
+}
+
+pub enum Severity {
+    Error,
+    Warning,
+    Note,
+}
+
+pub enum AnalysisStage {
+    Lex, Parse, Desugar, Prelude, Restricted, Resolve, Finalize, TypeCheck, Coverage, Assignment, Codegen,
+}
+
+impl AnalysisStage {
+    pub fn name() -> str {
+        match self {
+            Lex => "lex", Parse => "parse", Desugar => "desugar", Prelude => "prelude",
+            Restricted => "restricted_ops", Resolve => "resolve", Finalize => "finalize",
+            TypeCheck => "type_check", Coverage => "match_coverage", Assignment => "definite_assignment", Codegen => "codegen",
+        }
+    }
+}
+
+pub enum AnalysisErrorKind {
+    EditorIncomplete,
+    User,
+    NotConstant,
+    NoCandidate,
+    Internal,
+    Unsupported,
+}
+
+// Source locations borrow a live session. Detached locations own their path text.
+pub enum DiagnosticLocation {
+    Source {
+        value: SourceSpan
+    },
+    Detached {
+        path: String,
+        span: Span
+    },
+}
+
+impl DiagnosticLocation {
+    pub fn span() -> Span {
+        match self {
+            Source(value) => value.span,
+            Detached(_, span) => *span
+        }
+    }
+}
+
+impl Drop for DiagnosticLocation {
+    pub fn drop() {
+        match self {
+            Source(_) => {},
+            Detached(path, _) => path.drop()
+        }
+    }
+}
+
+pub struct RelatedLocation {
+    pub location: DiagnosticLocation,
+    pub message: String
+}
+
+impl Drop for RelatedLocation {
+    pub fn drop() {
+        self.location.drop();
+        self.message.drop();
+    }
+}
+
+pub struct Diagnostic {
+    pub code: DiagnosticCode,
+    pub severity: Severity,
+    pub location: Option<DiagnosticLocation>,
+    pub message: String,
+    pub related: Vec<RelatedLocation>,
+    pub stage: Option<AnalysisStage>,
+    pub recovered: bool,
+}
+
+impl Diagnostic {
+    // Every owned path and message is copied; session source identities remain borrowed.
+    pub fn copy() -> Self {
+        let primary = match &self.location {
+            Some(Source(value)) => Option<DiagnosticLocation>.Some(DiagnosticLocation.Source(*value)),
+            Some(Detached(path, span)) => Option<DiagnosticLocation>.Some(DiagnosticLocation.Detached(String.from(&path.as_str()), *span)),
+            None => Option<DiagnosticLocation>.None,
+        };
+        let related = Vec<RelatedLocation>.new();
+        for item in self.related {
+            let location = match &item.location {
+                Source(value) => DiagnosticLocation.Source(*value),
+                Detached(path, span) => DiagnosticLocation.Detached(String.from(&path.as_str()), *span),
+            };
+            related.push(RelatedLocation(location, String.from(&item.message.as_str())));
+        }
+        Self(self.code, self.severity, primary, String.from(&self.message.as_str()), related, self.stage, self.recovered)
+    }
+
+    static pub fn new(code: DiagnosticCode, severity: Severity, location: Option<SourceSpan>, message: str) -> Self {
+        let primary = match location {
+            Some(value) => Option<DiagnosticLocation>.Some(DiagnosticLocation.Source(value)),
+            None => Option<DiagnosticLocation>.None,
+        };
+
+        Self(code, severity, primary, String.from(&message), Vec<RelatedLocation>.new(), Option<AnalysisStage>.None, false)
+    }
+
+    pub fn add_related(location: SourceSpan, message: str) {
+        self.related.push(RelatedLocation(DiagnosticLocation.Source(location), String.from(&message)));
+    }
+}
+
+impl Drop for Diagnostic {
+    pub fn drop() {
+        match &self.location {
+            Some(value) => value.drop(),
+            None => {}
+        }
+
+        for item in self.related {
+            item.drop();
+        }
+
+        self.related.drop();
+        self.message.drop();
+    }
+}
+
+pub struct AnalysisError {
+    pub kind: AnalysisErrorKind,
+    pub diagnostic: Diagnostic
+}
+
+impl AnalysisError {
+    pub fn with_stage(stage: AnalysisStage) -> Self {
+        self.diagnostic.stage = Option<AnalysisStage>.Some(stage);
+        *self
+    }
+    // This transfers the same owned payload; an existing primary location remains authoritative.
+    pub fn with_location(location: SourceSpan) -> Self {
+        if self.diagnostic.location.is_none() {
+            self.diagnostic.location = Option<DiagnosticLocation>.Some(DiagnosticLocation.Source(location));
+        };
+
+        *self
+    }
+
+    // The new buffer is independent before the previous owned message is released.
+    pub fn with_message(message: str) -> Self {
+        let owned = String.from(&message);
+        self.diagnostic.message.drop();
+        self.diagnostic.message = owned;
+        *self
+    }
+
+    static pub fn user(code: DiagnosticCode, location: Option<SourceSpan>, message: str) -> Self {
+        Self(AnalysisErrorKind.User, Diagnostic.new(code, Severity.Error, location, message))
+    }
+
+    // The diagnostic copies the completed text and owns it independently of all inputs.
+    static pub fn named(code: DiagnosticCode, location: Option<SourceSpan>, prefix: str, name: str, suffix: str) -> Self {
+        let message = String.from(&prefix);
+        defer message.drop();
+        message.push_str(name);
+        message.push_str(suffix);
+        Self.user(code, location, message.as_str())
+    }
+
+    static pub fn arity(location: Option<SourceSpan>, subject: str, expected: u64, actual: u64, generic: bool) -> Self {
+        let message = String.from(&subject);
+        defer message.drop();
+        let wanted = expected.to_string();
+        defer wanted.drop();
+        let provided = actual.to_string();
+        defer provided.drop();
+        message.push_str(" expects ");
+        message.push_str(wanted.as_str());
+        message.push_str(if generic { " generic arguments, got " } else { " arguments, got " });
+        message.push_str(provided.as_str());
+        Self.user(DiagnosticCode.GenericArguments, location, message.as_str())
+    }
+
+    static pub fn internal(message: str) -> Self {
+        Self(AnalysisErrorKind.Internal, Diagnostic.new(DiagnosticCode.Internal, Severity.Error, Option<SourceSpan>.None, message))
+    }
+
+    static pub fn unsupported(location: Option<SourceSpan>, message: str) -> Self {
+        Self(AnalysisErrorKind.Unsupported, Diagnostic.new(DiagnosticCode.Unsupported, Severity.Error, location, message))
+    }
+}
+
+impl Drop for AnalysisError {
+    pub fn drop() {
+        self.diagnostic.drop();
+    }
+}
+
+// Ownership transfers into the sink; no diagnostic payload is copied deeply.
+pub struct DiagnosticSink {
+    diagnostics: Arena<Diagnostic>
+}
+
+impl DiagnosticSink {
+    pub fn push_unique(diagnostic: Diagnostic) {
+        for current in self.diagnostics {
+            if current.code == diagnostic.code && current.message.as_str() == diagnostic.message.as_str() {
+                match &current.location {
+                    Some(DiagnosticLocation.Source(left)) => match &diagnostic.location {
+                        Some(DiagnosticLocation.Source(right)) => {
+                            if left.source == right.source && left.span.start.row == right.span.start.row &&
+                            left.span.start.column == right.span.start.column {
+                                diagnostic.drop();
+                                return;
+                            }
+                        },
+                        _ => {},
+                    },
+                    _ => {},
+                }
+            }
+        }
+        self.push(diagnostic);
+    }
+
+    static pub fn new() -> Self {
+        Self(Arena<Diagnostic>.new())
+    }
+
+    pub fn push(diagnostic: Diagnostic) {
+        self.diagnostics.alloc(diagnostic);
+    }
+
+    pub fn len() -> u64 {
+        self.diagnostics.len()
+    }
+
+    pub fn get(index: u64) -> Option<Diagnostic&> {
+        self.diagnostics.get(index)
+    }
+
+    pub fn has_errors() -> bool {
+        for item in self.diagnostics {
+            if item.severity == Severity.Error {
+                return true;
+            }
+        }
+
+        false
+    }
+}
+
+impl Drop for DiagnosticSink {
+    pub fn drop() {
+        for diagnostic in self.diagnostics {
+            diagnostic.drop();
+        }
+
+        self.diagnostics.drop();
+    }
+}
+
+pub struct MessageBuilder {
+    text: String
+}
+
+impl MessageBuilder {
+    static pub fn new() -> Self {
+        Self(String.new())
+    }
+
+    pub fn append(text: str) {
+        self.text.push_str(text);
+    }
+
+    pub fn number(value: u64) {
+        let text = value.to_string();
+        defer text.drop();
+        self.append(text.as_str());
+    }
+
+    pub fn finish() -> String {
+        let result = self.text;
+        self.text = String.new();
+        result
+    }
+}
+
+impl Drop for MessageBuilder {
+    pub fn drop() {
+        self.text.drop();
+    }
+}

@@ -1,0 +1,8 @@
+from yianc.common.ids import SourceId;
+from yianc.frontend.source import Span;
+
+// A span carries file identity only in the analysis layer.
+pub struct SourceSpan {
+    pub source: SourceId,
+    pub span: Span
+}

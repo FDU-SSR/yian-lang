@@ -1,0 +1,102 @@
+from yianc.analysis.lowering.checker import ExprChecker;
+from yianc.analysis.resolution.types import resolve_type;
+from yianc.analysis.ty.relations import default_type;
+from yianc.analysis.ty.method_lookup import lookup_method_args;
+from yianc.analysis.ty.callable import signature;
+from yianc.analysis.hir.node import HirKind;
+from yianc.common.ids import TypeId, HirId;
+from yianc.frontend.ast.node import Expr, TypeSource, Argument;
+from yianc.frontend.source import Span;
+from yianc.diagnostics.model import AnalysisError;
+from std.core.drop import Drop;
+from std.core.iter import Iterator, IntoIterator;
+from std.core.option import Option;
+from std.core.result import Result;
+from std.core.vec import Vec;
+
+impl ExprChecker {
+    fn source_type(span: Span, source: TypeSource&, args: Vec<HirId>&) -> Result<TypeId, AnalysisError> {
+        match source {
+            Syntax(value) => self.local_type(*value),
+            ArgumentType(index) => {
+                if *index >= args.len() {
+                    return Result<TypeId, AnalysisError>.Err(AnalysisError.internal("trait argument type source is out of range"));
+                }
+
+                Result<TypeId, AnalysisError>.Ok(default_type(self.ctx, self.type_of(args[*index])))
+            },
+            CallableReturnType => Result<TypeId, AnalysisError>.Ok(self.return_type),
+        }
+    }
+
+    pub fn trait_call(span: Span, trait_expr: Expr&, self_source: TypeSource&, trait_sources: Vec<Option<TypeSource>>&, method_name: str, args: Vec<Argument&>&) -> Result<HirId, AnalysisError> {
+        let trait_value = self.expression(trait_expr)?;
+        let trait_id = self.type_of(trait_value);
+        let definition = match self.ctx.session.types.require(trait_id)? {
+            Nominal(id, _) => *id,
+            _ => return Result<HirId, AnalysisError>.Err(self.error(span, "qualified call requires a trait")),
+        };
+
+        match self.ctx.session.types.complete_definition(definition)? {
+            Trait(methods) => {
+                let name = self.ctx.session.names.intern(method_name);
+                let declared = match methods.get(&name) {
+                    Some(value) => *value,
+                    None => return Result<HirId, AnalysisError>.Err(self.error(span, "Unknown trait method")),
+                };
+                let declared_signature = signature(self.ctx, declared)?;
+                defer declared_signature.drop();
+                if !declared_signature.is_static {
+                    return Result<HirId, AnalysisError>.Err(self.error(span, "trait-qualified calls require a static method"));
+                }
+            },
+            _ => return Result<HirId, AnalysisError>.Err(self.error(span, "qualified call requires a trait")),
+        }
+
+        // Desugared trait calls evaluate each source argument exactly once.
+        let values = Vec<HirId>.new();
+        defer values.drop();
+
+        for arg in *args {
+            if arg.data.name.is_some() {
+                return Result<HirId, AnalysisError>.Err(self.error(arg.span, "qualified arguments cannot be named"));
+            }
+
+            values.push(self.expression(arg.data.value)?);
+        }
+
+        let target = self.source_type(span, self_source, &values)?;
+        let header = *self.ctx.session.types.definition(definition).unwrap();
+
+        if trait_sources.len() != header.generic_count() {
+            return Result<HirId, AnalysisError>.Err(self.error(span, "trait argument count mismatch"));
+        }
+
+        let arguments = Vec<TypeId>.new();
+        defer arguments.drop();
+        let index = 0u64;
+
+        while index < trait_sources.len() {
+            arguments.push(match &trait_sources[index] {
+                    Some(source) => self.source_type(span, source, &values)?,
+                    None => *header.generic(index).unwrap(),
+                });
+            index += 1;
+        }
+
+        let required = self.ctx.session.types.instance(definition, &arguments)?;
+        let name = self.ctx.session.names.intern(method_name);
+        let types = Vec<TypeId>.new();
+        defer types.drop();
+        for value in values { types.push(self.type_of(*value)); }
+        let method = lookup_method_args(self.ctx, target, name, Option<TypeId>.Some(required), Option<Vec<TypeId>&>.Some(&types), self.ctx.span(self.unit, span))?;
+        let callable = signature(self.ctx, method)?;
+        defer callable.drop();
+
+        if !callable.is_static {
+            return Result<HirId, AnalysisError>.Err(self.error(span, "qualified trait call requires a static method"));
+        }
+
+        self.call_values(span, method, &values, Option<HirId>.None)
+    }
+}

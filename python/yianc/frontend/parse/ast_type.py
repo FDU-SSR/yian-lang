@@ -1,0 +1,247 @@
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, TypeAlias
+
+if TYPE_CHECKING:
+    from yianc.frontend.lex.position import SrcSpan
+    from yianc.frontend.lex.token import Token
+    from yianc.frontend.parse.ast import Identifier
+    from yianc.frontend.parse.operator import BinaryOperator, UnaryOperator
+
+
+@dataclass
+class LiteralConstExpr:
+    """Literal constant, such as 5 in T[5] or 3 in Array<T,3>."""
+    span: SrcSpan
+    literal: Token             # IntLiteral / BoolLiteral, etc.
+
+    def __repr__(self) -> str:
+        return str(self.literal)
+
+
+@dataclass
+class GenericConstExpr:
+    """Generic constant reference, such as N in T[N] or Array<T,N>."""
+    span: SrcSpan
+    name: Identifier
+
+    def __repr__(self) -> str:
+        return self.name.name
+
+
+@dataclass
+class UnaryConstExpr:
+    """Unary integer operation in a concrete type-level expression."""
+
+    span: SrcSpan
+    op: UnaryOperator
+    operand: ConstExpr
+
+    def __repr__(self) -> str:
+        return f"({self.op}{self.operand})"
+
+
+@dataclass
+class BinaryConstExpr:
+    """Binary integer operation in a concrete type-level expression."""
+
+    span: SrcSpan
+    op: BinaryOperator
+    left: ConstExpr
+    right: ConstExpr
+
+    def __repr__(self) -> str:
+        return f"({self.left} {self.op} {self.right})"
+
+
+ConstExpr: TypeAlias = LiteralConstExpr | GenericConstExpr | UnaryConstExpr | BinaryConstExpr
+
+
+@dataclass
+class IntType:
+    span: SrcSpan
+    signed: bool
+    width: int  # in bytes
+
+    def __repr__(self) -> str:
+        sign_str = "i" if self.signed else "u"
+        return f"{sign_str}{self.width * 8}"
+
+
+@dataclass
+class CScalarType:
+    span: SrcSpan
+    name: str
+
+    def __repr__(self) -> str:
+        return self.name
+
+
+@dataclass
+class CPtrType:
+    span: SrcSpan
+    pointee_type: ASTType
+
+    def __repr__(self) -> str:
+        return f"cptr<{self.pointee_type}>"
+
+
+@dataclass
+class FloatType:
+    span: SrcSpan
+    width: int  # in bytes
+
+    def __repr__(self) -> str:
+        return f"f{self.width * 8}"
+
+
+@dataclass
+class BoolType:
+    span: SrcSpan
+
+    def __repr__(self) -> str:
+        return "bool"
+
+
+@dataclass
+class StrType:
+    span: SrcSpan
+
+    def __repr__(self) -> str:
+        return "str"
+
+
+@dataclass
+class CharType:
+    span: SrcSpan
+
+    def __repr__(self) -> str:
+        return "char"
+
+
+@dataclass
+class VoidType:
+    span: SrcSpan
+
+    def __repr__(self) -> str:
+        return "void"
+
+
+@dataclass
+class NeverType:
+    span: SrcSpan
+
+    def __repr__(self) -> str:
+        return "!"
+
+
+@dataclass
+class NamedType:
+    span: SrcSpan
+    name: Identifier
+
+    def __repr__(self) -> str:
+        return self.name.name
+
+
+@dataclass
+class ArrayType:
+    span: SrcSpan
+    element_type: ASTType
+    size: ConstExpr
+
+    def __repr__(self) -> str:
+        match self.size:
+            case LiteralConstExpr(literal=lit):
+                return f"{self.element_type}[{lit}]"
+            case GenericConstExpr(name=name):
+                return f"{self.element_type}[{name.name}]"
+            case _:
+                return f"{self.element_type}[{self.size}]"
+
+
+@dataclass
+class TupleType:
+    span: SrcSpan
+    element_types: list[ASTType]
+
+    def __repr__(self) -> str:
+        return f"({', '.join(repr(t) for t in self.element_types)})"
+
+
+@dataclass
+class PointerType:
+    span: SrcSpan
+    pointee_type: ASTType
+
+    def __repr__(self) -> str:
+        return f"{self.pointee_type}*"
+
+
+@dataclass
+class RefType:
+    span: SrcSpan
+    pointee_type: ASTType
+
+    def __repr__(self) -> str:
+        return f"{self.pointee_type}&"
+
+
+@dataclass
+class SliceType:
+    span: SrcSpan
+    element_type: ASTType
+
+    def __repr__(self) -> str:
+        return f"{self.element_type}[]"
+
+
+@dataclass
+class InstanceType:
+    span: SrcSpan
+    base: ASTType
+    generic_args: list[ASTType | ConstExpr]
+
+    def __repr__(self) -> str:
+        if len(self.generic_args) == 0:
+            return repr(self.base)
+        parts: list[str] = []
+        for arg in self.generic_args:
+            match arg:
+                case LiteralConstExpr(literal=lit):
+                    parts.append(str(lit))
+                case GenericConstExpr(name=name):
+                    parts.append(name.name)
+                case _:
+                    parts.append(repr(arg))
+        return f"{repr(self.base)}<{', '.join(parts)}>"
+
+
+@dataclass
+class FunctionType:
+    span: SrcSpan
+    param_types: list[ASTType]
+    return_type: ASTType
+
+    def __repr__(self) -> str:
+        param_str = ", ".join(repr(t) for t in self.param_types)
+        return f"fn({param_str}) -> {self.return_type}"
+
+
+@dataclass
+class DeducedType:
+    span: SrcSpan
+
+    def __repr__(self) -> str:
+        return "_"
+
+
+ASTType: TypeAlias = (
+    IntType | CScalarType | CPtrType | FloatType | BoolType | StrType | CharType | VoidType | NeverType
+    | ArrayType | TupleType | PointerType | RefType | SliceType
+    | NamedType
+    | InstanceType
+    | FunctionType
+    | DeducedType
+)

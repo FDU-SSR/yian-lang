@@ -1,0 +1,362 @@
+from yianc.codegen.cfg.ids import FunctionId, BlockId, ValueId, LocalId;
+from yianc.codegen.error import CodegenError;
+from yianc.common.ids import TypeId, NameId;
+from yianc.common.location import SourceSpan;
+from yianc.frontend.ast.operator import BinaryOperator, UnaryOperator;
+from yianc.frontend.ast.atoms import BuiltinKind;
+from yianc.analysis.ty.store import TypeStore;
+from std.collections.arena import Arena;
+from std.collections.hash_map import HashMap;
+from std.core.drop import Drop;
+from std.core.iter import Iterator, IntoIterator;
+from std.core.option import Option;
+from std.core.result import Result;
+from std.core.vec import Vec;
+
+pub enum ValueKind {
+    Integer { bits: u64 },
+    Float { value: f64 },
+    Zero,
+    Undef,
+    Bytes { name: NameId },
+    Parameter { index: u64 },
+    Function { callable: TypeId },
+    Temporary { block: BlockId, instruction: u64 },
+}
+
+pub struct Value {
+    pub type_id: TypeId,
+    pub kind: ValueKind,
+}
+
+pub struct Local {
+    pub type_id: TypeId,
+}
+
+pub enum IndexBounds {
+    Array { length: ValueId },
+    Slice { length: ValueId },
+}
+
+impl IndexBounds {
+    pub fn limit() -> ValueId {
+        match self { Array(length) | Slice(length) => *length, }
+    }
+}
+
+pub enum Operation {
+    Load { local: LocalId },
+    Store { local: LocalId, value: ValueId },
+    Binary { op: BinaryOperator, left: ValueId, right: ValueId },
+    Unary { op: UnaryOperator, value: ValueId },
+    Cast { value: ValueId },
+    Call { callable: TypeId, args: Vec<ValueId> },
+    Phi { incoming: Vec<(ValueId, BlockId)> },
+    Address { local: LocalId },
+    Read { address: ValueId },
+    Write { address: ValueId, value: ValueId },
+    Aggregate { fields: Vec<ValueId> },
+    Extract { aggregate: ValueId, index: u64 },
+    FieldAddress { address: ValueId, aggregate: TypeId, index: u64 },
+    Builtin { kind: BuiltinKind, type_args: Vec<TypeId>, args: Vec<ValueId> },
+    EnumConstruct { discriminant: u64, payload: Option<ValueId> },
+    EnumTag { value: ValueId },
+    EnumPayload { value: ValueId },
+    EnumPayloadAddress { address: ValueId, enum_type: TypeId },
+    Delete { value: ValueId },
+    PointerOffset { pointer: ValueId, index: ValueId, subtract: bool },
+    PointerDifference { left: ValueId, right: ValueId },
+    IndexAddress { address: ValueId, element: TypeId, index: ValueId, bounds: IndexBounds },
+    Repeat { element: ValueId, count: u64 },
+    Invoke { callable: ValueId, args: Vec<ValueId> },
+    Fill { destination: ValueId, element: ValueId, count: ValueId },
+    TraitObject { source: ValueId, methods: Vec<TypeId> },
+    DynamicCall { receiver: ValueId, method: TypeId, slot: u64, args: Vec<ValueId> },
+}
+
+impl Drop for Operation {
+    pub fn drop() {
+        match self {
+            Call(_, args) => args.drop(),
+            Invoke(_, args) => args.drop(),
+            TraitObject(_, methods) => methods.drop(),
+            DynamicCall(_, _, _, args) => args.drop(),
+            Phi(incoming) => incoming.drop(),
+            Aggregate(fields) => fields.drop(),
+            Builtin(_, type_args, args) => { type_args.drop(); args.drop(); },
+            _ => {},
+        }
+    }
+}
+
+impl Operation {
+    pub fn name() -> str {
+        match self {
+            Load(_) => "load", Store(_, _) => "store", Binary(_, _, _) => "binary", Unary(_, _) => "unary",
+            Cast(_) => "cast", Call(_, _) => "call", Invoke(_, _) => "invoke", Phi(_) => "phi",
+            Address(_) => "address", Read(_) => "read", Write(_, _) => "write", Aggregate(_) => "aggregate",
+            Extract(_, _) => "extract", FieldAddress(_, _, _) => "field-address", Builtin(_, _, _) => "builtin",
+            EnumConstruct(_, _) => "enum", EnumTag(_) => "tag", EnumPayload(_) => "payload", EnumPayloadAddress(_, _) => "payload-address",
+            Delete(_) => "delete", PointerOffset(_, _, _) => "pointer-offset", PointerDifference(_, _) => "pointer-difference",
+            IndexAddress(_, _, _, _) => "index-address", Repeat(_, _) => "repeat", Fill(_, _, _) => "fill",
+            TraitObject(_, _) => "trait-object", DynamicCall(_, _, _, _) => "dynamic-call",
+        }
+    }
+
+    pub fn operands() -> Vec<ValueId> {
+        let result = Vec<ValueId>.new();
+        match self {
+            Store(_, value) | Unary(_, value) | Cast(value) | Read(value) | Extract(value, _) |
+            FieldAddress(value, _, _) | EnumTag(value) | EnumPayload(value) | EnumPayloadAddress(value, _) |
+            Delete(value) | Repeat(value, _) | TraitObject(value, _) => result.push(*value),
+            Write(left, right) | Binary(_, left, right) | PointerOffset(left, right, _) | PointerDifference(left, right) => {
+                result.push(*left);
+                result.push(*right);
+            },
+            Call(_, args) | Builtin(_, _, args) | Aggregate(args) => { for arg in *args { result.push(*arg); } },
+            Phi(incoming) => { for edge in *incoming { result.push(edge[0]); } },
+            EnumConstruct(_, payload) => match payload { Some(value) => result.push(*value), None => {}, },
+            IndexAddress(address, _, index, bounds) => {
+                result.push(*address);
+                result.push(*index);
+                result.push(bounds.limit());
+            },
+            Invoke(callable, args) | DynamicCall(callable, _, _, args) => {
+                result.push(*callable);
+                for arg in *args { result.push(*arg); }
+            },
+            Fill(destination, element, count) => { result.push(*destination); result.push(*element); result.push(*count); },
+            _ => {},
+        }
+        result
+    }
+}
+
+pub struct Instruction {
+    pub span: SourceSpan,
+    pub result: Option<ValueId>,
+    pub operation: Operation,
+    pub checks: Vec<SafetyCheck>,
+}
+
+// Checks borrow value identities. They carry no LLVM handles or mutable liveness facts.
+pub enum AccessKind {
+    Pointer,
+    Reference,
+}
+
+impl AccessKind {
+    pub fn code() -> str {
+        match self { Pointer => "S002", Reference => "S003", }
+    }
+}
+
+pub enum SafetyCheck {
+    Access { address: ValueId, kind: AccessKind },
+    InBounds { pointer: ValueId },
+    View { value: ValueId },
+    Index { index: ValueId, bounds: IndexBounds },
+    Nonempty { view: ValueId },
+    Copy { destination: ValueId, source: ValueId, count: ValueId },
+}
+
+impl SafetyCheck {
+    pub fn name() -> str {
+        match self {
+            Access(_, _) => "access",
+            InBounds(_) => "in-bounds",
+            View(_) => "view",
+            Index(_, _) => "index",
+            Nonempty(_) => "nonempty",
+            Copy(_, _, _) => "copy",
+        }
+    }
+
+    pub fn operands() -> Vec<ValueId> {
+        let values = Vec<ValueId>.new();
+        match self {
+            Access(value, _) | InBounds(value) | View(value) | Nonempty(value) => values.push(*value),
+            Index(index, bounds) => { values.push(*index); values.push(bounds.limit()); },
+            Copy(destination, source, count) => { values.push(*destination); values.push(*source); values.push(*count); },
+        }
+        values
+    }
+}
+
+impl Drop for Instruction {
+    pub fn drop() {
+        self.operation.drop();
+        self.checks.drop();
+    }
+}
+
+pub enum Terminator {
+    Return { value: Option<ValueId> },
+    Jump { destination: BlockId },
+    Branch { condition: ValueId, yes: BlockId, no: BlockId },
+    Unreachable,
+}
+
+pub struct BasicBlock {
+    pub instructions: Vec<Instruction>,
+    pub terminator: Option<Terminator>,
+}
+
+impl Drop for BasicBlock {
+    pub fn drop() {
+        for instruction in self.instructions { instruction.drop(); }
+        self.instructions.drop();
+    }
+}
+
+// Arenas retain references during append. Payloads are released before any record storage.
+pub struct CfgFunction {
+    pub callable: TypeId,
+    pub result_type: TypeId,
+    pub parameters: Vec<TypeId>,
+    blocks: Arena<BasicBlock>,
+    values: Arena<Value>,
+    locals: Arena<Local>,
+}
+
+impl CfgFunction {
+    // Parameter storage transfers to the function.
+    static pub fn new(callable: TypeId, result_type: TypeId, parameters: Vec<TypeId>) -> Self {
+        Self(callable, result_type, parameters, Arena<BasicBlock>.new(), Arena<Value>.new(), Arena<Local>.new())
+    }
+
+    pub fn block_count() -> u64 { self.blocks.len() }
+    pub fn value_count() -> u64 { self.values.len() }
+    pub fn local_count() -> u64 { self.locals.len() }
+
+    pub fn block(id: BlockId) -> Result<BasicBlock&, CodegenError> {
+        match self.blocks.get(id.index) {
+            Some(value) => Result<BasicBlock&, CodegenError>.Ok(value),
+            None => Result<BasicBlock&, CodegenError>.Err(CodegenError.invalid("invalid CFG block ID")),
+        }
+    }
+
+    pub fn value(id: ValueId) -> Result<Value&, CodegenError> {
+        match self.values.get(id.index) {
+            Some(value) => Result<Value&, CodegenError>.Ok(value),
+            None => Result<Value&, CodegenError>.Err(CodegenError.invalid("invalid CFG value ID")),
+        }
+    }
+
+    pub fn local(id: LocalId) -> Result<Local&, CodegenError> {
+        match self.locals.get(id.index) {
+            Some(value) => Result<Local&, CodegenError>.Ok(value),
+            None => Result<Local&, CodegenError>.Err(CodegenError.invalid("invalid CFG local ID")),
+        }
+    }
+
+    pub fn add_block() -> BlockId {
+        let id = BlockId(self.blocks.len());
+        self.blocks.alloc(BasicBlock(Vec<Instruction>.new(), Option<Terminator>.None));
+        id
+    }
+
+    pub fn add_local(type_id: TypeId) -> LocalId {
+        let id = LocalId(self.locals.len());
+        self.locals.alloc(Local(type_id));
+        id
+    }
+
+    pub fn add_value(type_id: TypeId, kind: ValueKind) -> ValueId {
+        let id = ValueId(self.values.len());
+        self.values.alloc(Value(type_id, kind));
+        id
+    }
+
+    // Operation ownership transfers on both success and failure.
+    pub fn append(block: BlockId, span: SourceSpan, type_id: Option<TypeId>, operation: Operation)
+    -> Result<Option<ValueId>, CodegenError> {
+        let target = match self.block(block) {
+            Ok(value) => value,
+            Err(problem) => {
+                operation.drop();
+                return Result<Option<ValueId>, CodegenError>.Err(problem);
+            },
+        };
+        if target.terminator.is_some() {
+            operation.drop();
+            return Result<Option<ValueId>, CodegenError>.Err(CodegenError.invalid("instruction follows CFG terminator"));
+        }
+
+        let result = match type_id {
+            Some(value) => Option<ValueId>.Some(self.add_value(value,
+                ValueKind.Temporary(block, target.instructions.len()))),
+            None => Option<ValueId>.None,
+        };
+        target.instructions.push(Instruction(span, result, operation, Vec<SafetyCheck>.new()));
+        Result<Option<ValueId>, CodegenError>.Ok(result)
+    }
+
+    pub fn terminate(block: BlockId, terminator: Terminator) -> Result<(), CodegenError> {
+        let target = self.block(block)?;
+        if target.terminator.is_some() {
+            return Result<(), CodegenError>.Err(CodegenError.invalid("CFG block has multiple terminators"));
+        }
+
+        target.terminator = Option<Terminator>.Some(terminator);
+        Result<(), CodegenError>.Ok(())
+    }
+}
+
+impl Drop for CfgFunction {
+    pub fn drop() {
+        for block in self.blocks { block.drop(); }
+        self.parameters.drop();
+        self.blocks.drop();
+        self.values.drop();
+        self.locals.drop();
+    }
+}
+
+pub struct CfgModule {
+    owner: TypeStore&,
+    functions: Arena<CfgFunction>,
+    index: HashMap<TypeId, FunctionId>,
+    pub entry: Option<TypeId>,
+}
+
+impl CfgModule {
+    static pub fn new(owner: TypeStore&, entry: Option<TypeId>) -> Self {
+        Self(owner, Arena<CfgFunction>.new(), HashMap<TypeId, FunctionId>.new(), entry)
+    }
+
+    pub fn type_store() -> TypeStore& { self.owner }
+
+    pub fn len() -> u64 { self.functions.len() }
+
+    pub fn function(id: FunctionId) -> Option<CfgFunction&> {
+        self.functions.get(id.index)
+    }
+
+    pub fn find(callable: TypeId) -> Option<CfgFunction&> {
+        match self.index.get(&callable) {
+            Some(id) => self.function(*id),
+            None => Option<CfgFunction&>.None,
+        }
+    }
+
+    pub fn add(function: CfgFunction) -> Result<FunctionId, CodegenError> {
+        if self.index.contains(&function.callable) {
+            function.drop();
+            return Result<FunctionId, CodegenError>.Err(CodegenError.invalid("duplicate CFG procedure"));
+        }
+
+        let id = FunctionId(self.functions.len());
+        self.index.insert(function.callable, id);
+        self.functions.alloc(function);
+        Result<FunctionId, CodegenError>.Ok(id)
+    }
+}
+
+impl Drop for CfgModule {
+    pub fn drop() {
+        for function in self.functions { function.drop(); }
+        self.index.drop();
+        self.functions.drop();
+    }
+}

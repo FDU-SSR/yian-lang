@@ -16,10 +16,13 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TypeAlias, cast
 
+__ROOT = Path(__file__).resolve().parents[1]
+__PYTHON_ROOT = __ROOT / "python"
+sys.path.insert(0, str(__PYTHON_ROOT))
+
 from anx.project import load
 from run_tests import discover_tests
 
-__ROOT = Path(__file__).resolve().parents[1]
 Json: TypeAlias = None | bool | int | float | str | list["Json"] | dict[str, "Json"]
 
 
@@ -134,12 +137,12 @@ def __cases() -> list[Case]:
         cases.append(Case(phase, "frontend", ("tests/basic/literal/float.an", "tests/basic/fmt/fstring_basic.an", "tests/basic/try/generic.an"), ("--frontend-json", phase), standard_library=False, json_output=True))
     for name, flags in (("format-stdout", ()), ("format-check", ("--check",)), ("format-write", ("--write",))):
         cases.append(Case(name, "format", ("tests/compiler_parity/format.an",), ("--format", *flags), standard_library=False))
-    for fixture in sorted((__ROOT / "compiler/format/fixtures").rglob("*.an")):
+    for fixture in sorted((__PYTHON_ROOT / "yianc/format/fixtures").rglob("*.an")):
         if not fixture.name.endswith(".expected.an"):
-            cases.append(Case("fixture-" + fixture.relative_to(__ROOT / "compiler/format/fixtures").as_posix(), "format", (fixture.relative_to(__ROOT).as_posix(),), ("--format",), standard_library=False))
+            cases.append(Case("fixture-" + fixture.relative_to(__PYTHON_ROOT / "yianc/format/fixtures").as_posix(), "format", (fixture.relative_to(__ROOT).as_posix(),), ("--format",), standard_library=False))
     for name in ("mixed", "only"):
         for flag in ("--write", "--check"):
-            cases.append(Case(f"comments-{name}-{flag[2:]}", "format", (f"compiler/format/fixtures/comments/{name}.an",), ("--format", flag), standard_library=False))
+            cases.append(Case(f"comments-{name}-{flag[2:]}", "format", (f"python/yianc/format/fixtures/comments/{name}.an",), ("--format", flag), standard_library=False))
     for target in ("none", "exe", "ll", "bc", "obj", "asm"):
         cases.append(Case("no-main-" + target, "cli", ("tests/compiler_parity/no_main.an",), ("-t", target, "-o", "result")))
         cases.append(Case("output-" + target, "native", ("tests/basic/type/sizeof_full.an",), ("-t", target, "-o", "result"), run=target == "exe"))
@@ -243,7 +246,7 @@ def __run(
         environment.pop(name, None)
     environment["YIAN_ROOT"] = str(__ROOT)
     environment["YIAN_LIB"] = str(__ROOT / "lib/src")
-    source_path = str(__ROOT)
+    source_path = str(__PYTHON_ROOT)
     if environment.get("PYTHONPATH"):
         source_path += os.pathsep + environment["PYTHONPATH"]
     environment["PYTHONPATH"] = source_path
@@ -311,8 +314,8 @@ def main() -> int:
     parser.add_argument("--failed-from", type=Path, help="select cases that failed in a previous complete report")
     args = parser.parse_args(namespace=__Arguments())
     if args.reference == "python":
-        reference = [sys.executable, "-m", "compiler.main"]
-        reference_label = "python -m compiler.main"
+        reference = [sys.executable, "-m", "yianc.main"]
+        reference_label = "python -m yianc.main"
     else:
         reference_path = shutil.which(args.reference)
         if reference_path is None:

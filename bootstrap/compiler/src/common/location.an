@@ -1,8 +1,0 @@
-from compiler.common.ids import SourceId;
-from compiler.frontend.source import Span;
-
-// A span carries file identity only in the analysis layer.
-pub struct SourceSpan {
-    pub source: SourceId,
-    pub span: Span
-}

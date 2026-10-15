@@ -1,0 +1,43 @@
+from yianc.codegen.llvm.module import FunctionLowering;
+from yianc.codegen.cfg.model import SafetyCheck;
+from yianc.codegen.error import CodegenError;
+from llvm.ir import IntCompare;
+from std.core.result import Result;
+
+impl FunctionLowering {
+    pub fn safety_check(check: SafetyCheck&) -> Result<(), CodegenError> {
+        match check {
+            Access(address, kind) => self.check_access_as(self.cfg.value(*address)?.type_id, self.get(*address)?, kind.code()),
+            InBounds(pointer) => self.check_in_bounds(self.cfg.value(*pointer)?.type_id, self.get(*pointer)?),
+            View(value) => self.check_view(self.cfg.value(*value)?.type_id, self.get(*value)?),
+            Index(index, bounds) => {
+                if !self.owner.types.raw_pointers() {
+                    match bounds {
+                        Slice(_) => { self.checked(self.builder.icmp(IntCompare.Ule, self.get(*index)?, self.get(bounds.limit())?, ""), "S004")?; },
+                        _ => {},
+                    }
+                }
+                let code = match bounds {
+                    Array(_) => "S001",
+                    Slice(_) => if self.owner.types.raw_pointers() { "S001" } else { "S002" },
+                };
+                self.checked(self.builder.icmp(IntCompare.Ult, self.get(*index)?, self.get(bounds.limit())?, ""), code)
+            },
+            Nonempty(view) => self.checked(self.builder.icmp(IntCompare.Ne, self.view_length(self.get(*view)?), self.integer(0u64), ""), "S007"),
+            Copy(destination, source, count) => {
+                if self.owner.types.raw_pointers() { return Result<(), CodegenError>.Ok(()); }
+                // Empty copies perform no access and permit null or tail addresses.
+                let inspect = self.function.append_block("");
+                let done = self.function.append_block("");
+                let nonempty = self.builder.icmp(IntCompare.Ne, self.get(*count)?, self.integer(0u64), "");
+                self.builder.cond_br(nonempty, inspect, done);
+                self.builder.position_at_end(inspect);
+                self.check_access(self.cfg.value(*destination)?.type_id, self.get(*destination)?)?;
+                self.check_access(self.cfg.value(*source)?.type_id, self.get(*source)?)?;
+                self.builder.br(done);
+                self.builder.position_at_end(done);
+                Result<(), CodegenError>.Ok(())
+            },
+        }
+    }
+}

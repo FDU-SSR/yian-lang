@@ -11,10 +11,10 @@ Usage from the repository root or any directory:
 
 Consistency checks:
   - runtime/include/yian_rt.h YIAN_FRAME_LOCK_SLOTS / YIAN_FRAME_LOCK_SLOT_BYTES
-    match compiler/codegen/abi/lockmech.py::FrameLockArena;
+    match yianc/codegen/abi/lockmech.py::FrameLockArena;
   - YIAN_HDR_BYTES matches lockmech.py::BlockHeader.BYTES;
-  - YIAN_CLASS_COUNT / YIAN_CLASS_BYTES match compiler/runtime_lib.py::CLASS_BYTES elementwise;
-  - YIAN_ABI_FAIL_MESSAGE / YIAN_OOM_MESSAGE match compiler/runtime_error.py S002/R002
+  - YIAN_CLASS_COUNT / YIAN_CLASS_BYTES match yianc/runtime_lib.py::CLASS_BYTES elementwise;
+  - YIAN_ABI_FAIL_MESSAGE / YIAN_OOM_MESSAGE match yianc/runtime_error.py S002/R002
     messages byte-for-byte.
 """
 
@@ -126,10 +126,10 @@ def __macro_int_list(name: str) -> list[int]:
 
 
 def check_consistency() -> None:
-    sys.path.insert(0, str(ROOT))
-    from compiler.codegen.abi import lockmech  # noqa: PLC0415
-    from compiler.runtime_error import RuntimeErrorCode, runtime_error_message  # noqa: PLC0415
-    from compiler.runtime_lib import CLASS_BYTES  # noqa: PLC0415
+    sys.path.insert(0, str(ROOT / "python"))
+    from yianc.codegen.abi import lockmech  # noqa: PLC0415
+    from yianc.runtime_error import RuntimeErrorCode, runtime_error_message  # noqa: PLC0415
+    from yianc.runtime_lib import CLASS_BYTES  # noqa: PLC0415
 
     slots = __macro_int("YIAN_FRAME_LOCK_SLOTS")
     slot_bytes = __macro_int("YIAN_FRAME_LOCK_SLOT_BYTES")

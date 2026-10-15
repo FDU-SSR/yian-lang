@@ -1,0 +1,61 @@
+from yianc.diagnostics.model import AnalysisError, AnalysisErrorKind, Diagnostic, DiagnosticLocation;
+from yianc.common.location import SourceSpan;
+from std.core.convert import From;
+from std.core.drop import Drop;
+from std.core.option import Option;
+from std.core.vec import Vec;
+
+pub enum CodegenErrorKind {
+    InvalidState,
+    LLVM,
+    Target,
+}
+
+pub struct CodegenError {
+    pub kind: CodegenErrorKind,
+    pub diagnostic: Diagnostic,
+}
+
+impl CodegenError {
+    pub fn with_location(span: SourceSpan) -> Self {
+        if self.diagnostic.location.is_none() {
+            self.diagnostic.location = Option<DiagnosticLocation>.Some(DiagnosticLocation.Source(span));
+        };
+        *self
+    }
+
+    static pub fn invalid(message: str) -> Self {
+        Self(CodegenErrorKind.InvalidState, AnalysisError.internal(message).diagnostic)
+    }
+
+    static pub fn target(message: str) -> Self {
+        Self(CodegenErrorKind.Target, AnalysisError.unsupported(Option<SourceSpan>.None, message).diagnostic)
+    }
+
+    static pub fn unsupported(span: SourceSpan, message: str) -> Self {
+        Self(CodegenErrorKind.Target,
+            AnalysisError.unsupported(Option<SourceSpan>.Some(span), message).diagnostic)
+    }
+
+    // LLVM messages transfer into an owned diagnostic before their buffer is released.
+    static pub fn llvm_error(message: Vec<u8>) -> Self {
+        defer message.drop();
+        let text = match str.from_slice(message.as_slice()) {
+            Some(value) => value,
+            None => "LLVM returned a non-UTF-8 error",
+        };
+        Self(CodegenErrorKind.LLVM, AnalysisError.internal(text).diagnostic)
+    }
+}
+
+impl From<AnalysisError> for CodegenError {
+    static pub fn from(value: AnalysisError&) -> Self {
+        Self(if value.kind == AnalysisErrorKind.Unsupported { CodegenErrorKind.Target } else { CodegenErrorKind.InvalidState }, value.diagnostic)
+    }
+}
+
+impl Drop for CodegenError {
+    pub fn drop() {
+        self.diagnostic.drop();
+    }
+}

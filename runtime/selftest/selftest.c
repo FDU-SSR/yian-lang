@@ -388,7 +388,7 @@ void __yian_main(void) {
     check(rc == 1, "panic exits with 1");
     check(strcmp(buf, "yian: panic: test-message\n") == 0, "panic writes prefix, message and newline");
 
-    /* The build script verifies the ABI-failure message matches compiler/runtime_error.py S002. */
+    /* The build script verifies the ABI-failure message matches yianc/runtime_error.py S002. */
     check(strcmp(YIAN_ABI_FAIL_MESSAGE, "yian: safety error [S002]: invalid memory access\n") == 0,
           "ABI failure message text");
 

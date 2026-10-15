@@ -1,7 +1,7 @@
 # Yian 编译器命令行手册
 
 本文档说明 Python 参考编译器和原生 `yianc` 共用的命令行契约。Python 入口是
-`python -m compiler.main`；安装后的 `yianc` 是由 `bootstrap/compiler/` 构建的原生程序。
+`PYTHONPATH=python python -m yianc.main`；安装后的 `yianc` 是由 `bootstrap/yianc/` 构建的原生程序。
 
 ## 1. 基本用法
 
@@ -365,7 +365,7 @@ build/runtime/libyian_rt.{o,a}   产物（首次使用时构建并缓存）
 
 堆分配器是单线程尺寸类 arena：64 KiB、64 KiB 对齐的 slab，每个尺寸类一条空闲块链加一个正在填充的 slab；大于最大类的请求走独占尺寸块，并按额度缓存、按 `madvise` 归还物理页。用户程序不直接调用它：尺寸在编译期已知的分配点由编译器直接传尺寸类号（`YIAN_CLASS_BYTES` 的下标），否则传字节数。
 
-尺寸类表属于 ABI：`runtime/build.py --check` 逐项断言它与 `compiler/runtime_lib.py::CLASS_BYTES` 相等，并断言帧锁常量、块头字节数、S002/R002 消息分别与 `compiler/codegen/abi/lockmech.py`、`compiler/runtime_error.py` 一致，然后运行自测。
+尺寸类表属于 ABI：`runtime/build.py --check` 逐项断言它与 `python/yianc/runtime_lib.py::CLASS_BYTES` 相等，并断言帧锁常量、块头字节数、S002/R002 消息分别与 `python/yianc/codegen/abi/lockmech.py`、`python/yianc/runtime_error.py` 一致，然后运行自测。
 
 手动构建与校验：
 
@@ -387,7 +387,7 @@ python3 runtime/build.py --asan     # ASan/UBSan self-tests.
 
 | 文件                    | 说明             |
 | ----------------------- | ---------------- |
-| `compiler/main.py`      | 编译器入口       |
-| `compiler/utils/log.py` | 日志系统实现     |
-| `compiler/format/`      | 源码格式化器     |
+| `python/yianc/main.py`      | 编译器入口       |
+| `python/yianc/utils/log.py` | 日志系统实现     |
+| `python/yianc/format/`      | 源码格式化器     |
 | `runtime/`              | 运行时库（C）    |

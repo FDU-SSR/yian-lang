@@ -6,7 +6,7 @@ entry = "src/main.an"
 
 [dependencies]
 anx = { path = "../bootstrap/anx" }
-compiler = { path = "../bootstrap/compiler" }
+yianc = { path = "../bootstrap/yianc" }
 json = { path = "../bootstrap/json" }
 jsonrpc = { path = "../bootstrap/jsonrpc" }
 lsp_protocol = { path = "../bootstrap/lsp_protocol" }

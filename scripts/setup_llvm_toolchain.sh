@@ -14,7 +14,7 @@
 set -euo pipefail
 
 # llvmlite 0.49.0 bundles LLVM 22.1.0.  Keep in sync with the llvmlite pin in
-# requirements.txt / pyproject.toml and with the version note in AGENTS.md.
+# python/requirements.txt / python/pyproject.toml and with the version note in AGENTS.md.
 TARGET_LLVMLITE="0.49.0"
 LLVM_MAJOR=22
 LLVM_PREFIX="/usr/lib/llvm-${LLVM_MAJOR}"

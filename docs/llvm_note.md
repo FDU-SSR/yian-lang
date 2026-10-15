@@ -7,11 +7,11 @@
 
 本编译器的目标固定为 `x86_64-unknown-linux-gnu`, 常量与落盘位置:
 
-- `compiler/codegen/llvm/base/module.py` 的 `TARGET_TRIPLE` / `TARGET_DATA_LAYOUT` 与
+- `python/yianc/codegen/llvm/base/module.py` 的 `TARGET_TRIPLE` / `TARGET_DATA_LAYOUT` 与
   `apply_target(module)`;
-- `compiler/codegen/llvm/pipeline/translator.py` 与 `compiler/target_layout.py` 的
+- `python/yianc/codegen/llvm/pipeline/translator.py` 与 `python/yianc/target_layout.py` 的
   `type_size_provider`(编译期布局查询用的临时模块)都调用 `apply_target`;
-- `compiler/codegen/llvm/pipeline/emit.py` 在跑优化管线前再兜一道: 解析出的模块若没有
+- `python/yianc/codegen/llvm/pipeline/emit.py` 在跑优化管线前再兜一道: 解析出的模块若没有
   data layout, 就用目标机的 `target_data` 补上。
 
 优化器与后端必须使用一致布局。缺少 data layout 时，优化器计算的字段偏移与目标机布局可能不一致，
@@ -19,7 +19,7 @@
 
 ## 目标机与代码模型
 
-`compiler/codegen/llvm/pipeline/emit.py` 由目标三元组创建目标机: `Target.from_triple(...)` 之后调用
+`python/yianc/codegen/llvm/pipeline/emit.py` 由目标三元组创建目标机: `Target.from_triple(...)` 之后调用
 `create_target_machine(reloc="pic", codemodel="small", opt=<O>)`。code model 必须显式给出:
 llvmlite 的默认值是 `jitdefault`, 在 64 位平台上等于 `large`, 后端于是不采用 ±2 GiB 的 PC
 相对寻址, 把每个函数地址与全局地址都经 `movabs` 物化进寄存器, 内部调用被编译成
@@ -253,7 +253,7 @@ YIAN 发射器使用普通浮点指令，不添加 `strictfp` 或受约束浮点
 - `sin`, `cos`, `sqrt` 等数学函数
 - `llvm.expect` 用于提供分支预测信息
 
-本编译器(`compiler/codegen/llvm/base/intrinsics.py`)声明并使用 C 库的 `malloc`、`realloc`、
+本编译器(`python/yianc/codegen/llvm/base/intrinsics.py`)声明并使用 C 库的 `malloc`、`realloc`、
 `free`、`write`、`read`、`open`、`close`、`_exit`、`strlen`、`rand`, 以及 LLVM 内建
 `llvm.memcpy.p0.p0.i64`、`llvm.memset.p0.i64`、`llvm.sqrt.f64`、`llvm.sin.f64` 和
 `llvm.cos.f64`。非单字节元素的重复填充使用按元素类型特化的

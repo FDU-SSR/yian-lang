@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Run the YIAN test suites.
 
-The repository suites share one runner and run against both compiler/package
+The repository suites share one runner and run against both yianc/package
 manager implementations by default. Native execution refreshes the installed
 binaries through ``scripts/install.sh`` before starting:
 
@@ -11,8 +11,8 @@ binaries through ``scripts/install.sh`` before starting:
 - ``safety``  — the fat-pointer safety regressions.
 - ``package`` — package-mode fixtures (a ``package.anx`` project directory),
   driven through ``anx build`` / ``anx check``.
-- ``bootstrap`` — existing package tests for the bootstrap compiler, JSON
-  package, and TOML package, each in fat and raw pointer modes.
+- ``bootstrap`` — existing package tests for the bootstrap compiler, JSON,
+  TOML, JSON-RPC, and LSP protocol packages, each in fat and raw pointer modes.
 
 Tests without a corresponding .ans file under ``tests/output/<suite>`` are
 treated as success tests (expected exit code 0, no output comparison).
@@ -58,7 +58,7 @@ TESTS_DIR = ROOT_DIR / "tests"
 
 SUITES = ("basic", "safety", "package", "bootstrap")
 BOOTSTRAP_PACKAGES = (
-    "bootstrap/compiler",
+    "bootstrap/yianc",
     "bootstrap/json",
     "bootstrap/toml",
     "bootstrap/jsonrpc",
@@ -1071,10 +1071,10 @@ def __make_toolchain(name: str, native_bin: Path, reference_launcher: Path) -> T
         # Package commands and nested CLI checks use the same reference compiler.
         environment["YIANC"] = str(reference_launcher)
         environment["PATH"] = str(reference_launcher.parent) + os.pathsep + environment.get("PATH", "")
-        environment["PYTHONPATH"] = str(ROOT_DIR) + os.pathsep + environment.get("PYTHONPATH", "")
+        environment["PYTHONPATH"] = str(ROOT_DIR / "python") + os.pathsep + environment.get("PYTHONPATH", "")
         return Toolchain(
             name="python",
-            compiler=(sys.executable, "-m", "compiler.main"),
+            compiler=(sys.executable, "-m", "yianc.main"),
             anx=(sys.executable, "-m", "anx.main"),
             environment=environment,
         )
@@ -1174,7 +1174,7 @@ def main(argv: list[str] | None = None, *, suite: str = "basic") -> int:
     with tempfile.TemporaryDirectory(prefix="yian-reference-compiler-") as temporary:
         reference_launcher = Path(temporary) / "yianc"
         reference_launcher.write_text(
-            '#!/bin/sh\nexec ' + shlex.quote(sys.executable) + ' -m compiler.main "$@"\n',
+            '#!/bin/sh\nexec ' + shlex.quote(sys.executable) + ' -m yianc.main "$@"\n',
             encoding="utf-8",
         )
         reference_launcher.chmod(0o755)

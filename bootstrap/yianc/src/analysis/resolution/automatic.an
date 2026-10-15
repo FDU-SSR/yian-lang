@@ -1,0 +1,123 @@
+from yianc.analysis.resolution.context import ResolutionContext;
+from yianc.analysis.ty.model import NominalKind, DefinitionHeader, DefinitionBody, CallableDefinition, Parameter;
+from yianc.analysis.ty.impl_registry import ImplRecord, ImplCondition;
+from yianc.analysis.definition.registry import Procedure, DefinitionKind;
+from yianc.common.ids import TypeId, NameId, ScopeId;
+from yianc.common.location import SourceSpan;
+from yianc.frontend.ast.arena import AstArena;
+from yianc.frontend.ast.node import ExprData, Literal, BoolLiteralData, PatternData, Block, MatchArm;
+from yianc.frontend.ast.atoms import MatchArmOrigin;
+from yianc.frontend.ast.operator import UnaryOperator;
+from yianc.frontend.desugar.build import identifier, name_expr, one_block, arm, match_expr;
+from yianc.frontend.source import Span;
+from yianc.diagnostics.model import AnalysisError;
+from std.collections.hash_map import HashMap;
+from std.core.clone import Clone;
+from std.core.drop import Drop;
+from std.core.iter import Iterator, IntoIterator;
+from std.core.option import Option;
+from std.core.result import Result;
+from std.core.vec import Vec;
+
+fn truth(arena: AstArena&, span: Span, value: bool) -> Block& {
+    let literal = arena.alloc_bool_literal(BoolLiteralData(value), span);
+    one_block(arena, span, arena.alloc_expr(ExprData.Literal(Literal.Boolean(literal)), span))
+}
+
+// Generated bodies allocate into the declaration's AST arena and borrow its variant names.
+pub fn register_automatic(ctx: ResolutionContext&) -> Result<(), AnalysisError> {
+    let equality = Option<TypeId>.None;
+    let index = 0u64;
+
+    while index < ctx.len() {
+        let declaration = ctx.declaration(index);
+        let symbol = *ctx.session.symbols.get(declaration.symbol).unwrap();
+
+        if ctx.session.unit(declaration.unit).unwrap().is_stdlib && ctx.session.names.text(symbol.name) == "PartialEq" {
+            equality = Option<TypeId>.Some(symbol.type_id);
+        }
+
+        index += 1;
+    }
+
+    let trait_definition = match equality {
+        Some(type_id) => match ctx.session.types.require(type_id)? {
+            Nominal(id, _) => *id, _ => return Result<(), AnalysisError>.Err(AnalysisError.internal("intrinsic equality is not nominal"))
+        },
+        None => return Result<(), AnalysisError>.Ok(()),
+    };
+    index = 0;
+
+    while index < ctx.len() {
+        let declaration = ctx.declaration(index);
+
+        match &declaration.item.data {
+            EnumDef(_, _, _, variants) => {
+                let unit_enum = true;
+
+                for variant in *variants {
+                    if variant.data.fields.len() != 0 {
+                        unit_enum = false;
+                    }
+                }
+
+                if !unit_enum {
+                    index += 1;
+                    continue;
+                }
+
+                let target = ctx.session.symbols.get(declaration.symbol).unwrap().type_id;
+                let header = *ctx.session.types.definition(*declaration.definition.unwrap()).unwrap();
+                let generics = Vec<TypeId>.new();
+                defer generics.drop();
+                let generic = 0u64;
+
+                while generic < header.generic_count() {
+                    generics.push(*header.generic(generic).unwrap());
+                    generic += 1;
+                }
+
+                let span = declaration.item.span;
+                let tree = ctx.session.unit(declaration.unit).unwrap().prepared.tree.unwrap();
+                let arms = Vec<MatchArm&>.new();
+
+                for variant in *variants {
+                    let nested = Vec<MatchArm&>.new();
+                    let same = tree.arena.alloc_pattern(PatternData.NamePattern(variant.data.name), variant.span);
+                    nested.push(arm(&tree.arena, same, truth(&tree.arena, span, true), MatchArmOrigin.Synthetic));
+                    let wildcard = tree.arena.alloc_pattern(PatternData.WildcardPattern, span);
+                    nested.push(arm(&tree.arena, wildcard, truth(&tree.arena, span, false), MatchArmOrigin.Synthetic));
+                    let other = name_expr(&tree.arena, identifier(&tree.arena, span, "other", true));
+                    let other_value = tree.arena.alloc_expr(ExprData.Unary(UnaryOperator.Deref, other), span);
+                    let body = one_block(&tree.arena, span, match_expr(&tree.arena, span, other_value, nested));
+                    let pattern = tree.arena.alloc_pattern(PatternData.NamePattern(variant.data.name), variant.span);
+                    arms.push(arm(&tree.arena, pattern, body, MatchArmOrigin.Synthetic));
+                }
+
+                let receiver = name_expr(&tree.arena, identifier(&tree.arena, span, "self", true));
+                let receiver_value = tree.arena.alloc_expr(ExprData.Unary(UnaryOperator.Deref, receiver), span);
+                let body = one_block(&tree.arena, span, match_expr(&tree.arena, span, receiver_value, arms));
+                let name = ctx.session.names.intern("eq");
+                let identity = ctx.session.types.register(DefinitionHeader(NominalKind.Method, name, ctx.span(declaration.unit, span), declaration.unit), generics.clone());
+                let params = Vec<Parameter>.new();
+                params.push(Parameter(ctx.session.names.intern("other"), ctx.session.types.reference(target), Option<SourceSpan>.Some(ctx.span(declaration.unit, span))));
+                ctx.session.types.finish_definition(identity, DefinitionBody.Method(CallableDefinition(params, ctx.primitives.boolean, Option<TypeId>.Some(target), false, false, false, false, false, true, generics.len())))?;
+                let method = ctx.session.types.instance(identity, &generics)?;
+                ctx.callable_scopes.insert(identity, ctx.scopes[declaration.unit.index]);
+                ctx.session.definitions.register(Procedure(identity, method, declaration.unit, body, DefinitionKind.Method))?;
+                let arguments = Vec<TypeId>.new();
+                defer arguments.drop();
+                arguments.push(target);
+                let trait_id = ctx.session.types.instance(trait_definition, &arguments)?;
+                let methods = HashMap<NameId, TypeId>.new();
+                methods.insert(name, method);
+                ctx.session.impls.register(ImplRecord(ctx.span(declaration.unit, span), generics.clone(), target, Option<TypeId>.Some(trait_id), Vec<ImplCondition>.new(), methods, true));
+            },
+            _ => {},
+        }
+
+        index += 1;
+    }
+
+    Result<(), AnalysisError>.Ok(())
+}

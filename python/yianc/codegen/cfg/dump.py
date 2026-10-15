@@ -1,0 +1,423 @@
+"""
+Text serialisation for CFG IR (cfg/ir.py).
+"""
+
+from __future__ import annotations
+
+from yianc.codegen.cfg import ir as IR
+from yianc.frontend.parse.operator import BinaryOperator, UnaryOperator
+
+
+def dump(func: IR.Function) -> str:
+    """Return a human-readable string representation of *func*."""
+    out: list[str] = []
+
+    # signature — Function no longer carries params/return_type directly;
+    # those are encoded in the type system via func.type_id.
+    out.append(f"function @{func.name} (type_id={func.type_id}) {{")
+
+    for block in func.blocks:
+        out.append(f"  {block.label}:")
+        for phi in block.phis:
+            out.append(f"    {__dump_phi(phi)}")
+        for stmt in block.stmts:
+            out.append(f"    {__dump_stmt(stmt)}")
+        if block.terminator:
+            out.append(f"    {__dump_terminator(block.terminator)}")
+        out.append("")
+
+    out.append("}")
+    return "\n".join(out)
+
+
+# ---------------------------------------------------------------------------
+# statement dumpers
+# ---------------------------------------------------------------------------
+
+# pylint: disable=too-many-return-statements
+def __dump_stmt(stmt: IR.Stmt) -> str:
+    match stmt:
+        case IR.VarPtr(result=result, var_ref=var_ref, frame_word=e_f, frame_key=k_f, raw=raw):
+            if e_f is None:
+                frame = "⟨-, -⟩"
+            else:
+                assert k_f is not None
+                frame = f"⟨{__dump_value(e_f)}, {__dump_value(k_f)}⟩"
+            raw_tag = " [raw]" if raw else ""
+            return (
+                f"%{result.name} = varptr {var_ref.name}"
+                f" {frame}{raw_tag}"
+                f"  [{__type_str(var_ref.type_id)}]"
+            )
+
+        case IR.FieldPtr(result=result, base=base, field_index=idx):
+            return f"%{result.name} = fieldptr {__dump_value(base)}[{idx}]"
+
+        case IR.ElementPtr(result=result, base=base, offset=offset):
+            return (
+                f"%{result.name} = elementptr"
+                f" {__dump_value(base)}, {__dump_value(offset)}"
+                f"  [{__type_str(result.type_id)}]"
+            )
+
+        case IR.PtrDiff(result=result, lhs=lhs, rhs=rhs):
+            return (
+                f"%{result.name} = ptrdiff"
+                f" {__dump_value(lhs)}, {__dump_value(rhs)}"
+                f"  [{__type_str(result.type_id)}]"
+            )
+
+        case IR.Alloca(result=result, value=value, raw=raw):
+            return (
+                f"%{result.name} = alloca"
+                f" {__dump_value(value)}"
+                f"{' [raw]' if raw else ' [frame]'}"
+            )
+
+        case IR.Malloc(result=result, type_id=type_id, size=size, key=key):
+            key_str = f" key={__dump_value(key)}" if key is not None else " key=undef"
+            return (
+                f"%{result.name} = malloc"
+                f" {__type_str(type_id)}, {__dump_value(size)}{key_str}"
+            )
+
+        case IR.Realloc(result=result, type_id=type_id, ptr=ptr, size=size):
+            return (
+                f"%{result.name} = realloc"
+                f" {__type_str(type_id)}, {__dump_value(ptr)}, {__dump_value(size)}"
+            )
+
+        case IR.FuncPtr(result=result, func_type_id=func_type_id):
+            return (
+                f"%{result.name} = funcptr {__type_str(func_type_id)}"
+                f"  [{__type_str(result.type_id)}]"
+            )
+
+        case IR.Load(result=result, ptr=ptr):
+            return (
+                f"%{result.name} = load {__dump_value(ptr)}"
+                f"  [{__type_str(result.type_id)}]"
+            )
+
+        case IR.Store(ptr=ptr, value=value):
+            return f"store {__dump_value(ptr)}, {__dump_value(value)}"
+
+        case IR.Binary(result=result, op=op, lhs=lhs, rhs=rhs):
+            return (
+                f"%{result.name} = binary {__op_str(op)}"
+                f" {__dump_value(lhs)}, {__dump_value(rhs)}"
+                f"  [{__type_str(result.type_id)}]"
+            )
+
+        case IR.Unary(result=result, op=op, operand=operand):
+            return (
+                f"%{result.name} = unary {__op_str(op)}"
+                f" {__dump_value(operand)}"
+                f"  [{__type_str(result.type_id)}]"
+            )
+
+        case IR.ExtractValue(result=result, base=base, field_index=idx):
+            return (
+                f"%{result.name} = extractvalue"
+                f" {__dump_value(base)}[{idx}]"
+                f"  [{__type_str(result.type_id)}]"
+            )
+
+        case IR.EnumIsVariant(result=result, address=address, variant=variant):
+            return f"%{result.name} = enum_is_variant {__dump_value(address)}, {variant.name}"
+
+        case IR.EnumPayloadFieldPtr(result=result, address=address, field_index=index):
+            return f"%{result.name} = enum_payload_field_ptr {__dump_value(address)}[{index}]"
+
+        case IR.Delete(ptr=ptr):
+            return f"delete {__dump_value(ptr)}"
+
+        case IR.GenKey(result=result):
+            return f"%{result.name} = gen_key frame  [{__type_str(result.type_id)}]"
+
+        case IR.AcquireFrameLock(result=result, key=key):
+            return f"%{result.name} = acquire_frame_lock {__dump_value(key)}"
+
+        case IR.CheckSafeAccess(ptr=ptr, live=live):
+            item = "live ∧ in_bounds" if live else "in_bounds(live 恒真)"
+            return f"check_safe_access {__dump_value(ptr)}  ({item})"
+
+        case IR.CheckViewAccess(view=view, live=live):
+            item = "live ∧ span" if live else "span(live 恒真)"
+            return f"check_view_access {__dump_value(view)}  ({item})"
+
+        case IR.CheckInBounds(ptr=ptr):
+            return f"check_in_bounds {__dump_value(ptr)}  (index < size)"
+
+        case IR.CheckSliceNonEmpty(ptr=ptr):
+            return f"check_slice_nonempty {__dump_value(ptr)}  (T[] -> T&)"
+
+        case IR.CheckRefAccess(ptr=ptr):
+            return f"check_ref_access {__dump_value(ptr)}  (仅 live,免 in_bounds, tiered-pointers)"
+
+        case IR.CheckElementArith(base=base, offset=offset):
+            return f"check_element_arith {__dump_value(base)}, {__dump_value(offset)}  (0 ≤ index+n ≤ size)"
+
+        case IR.CheckElementAccess(base=base, offset=offset, ptr=ptr):
+            return (
+                f"check_element_access {__dump_value(base)}, {__dump_value(offset)}"
+                f" on {__dump_value(ptr)}  (良构 ∧ in_bounds ∧ live 合取, 检查合并)"
+            )
+
+        case IR.CheckRawBounds(index=index, length=length):
+            return f"check_raw_bounds {__dump_value(index)}, {length}  (裸数组 index < length, todo1)"
+
+        case IR.LiveKnownBegin(root=root):
+            return f"live_known_begin {__dump_value(root)}  (刚分配窗口开始)"
+        case IR.LiveKnownEnd(root=root):
+            return f"live_known_end {__dump_value(root)}  (刚分配窗口结束)"
+        case IR.CheckRequest(kind=kind, operands=operands):
+            args = ", ".join(__dump_value(v) for v in operands)
+            return f"check_request {kind} {args}  (标记, 待插入 pass 物化)"
+        case IR.CheckPtrDiff(lhs=lhs, rhs=rhs):
+            return f"check_ptrdiff {__dump_value(lhs)}, {__dump_value(rhs)}  (data 相等 + 良构 + 无回绕)"
+
+        case IR.CheckPtrCmp(lhs=lhs, rhs=rhs):
+            return f"check_ptrcmp {__dump_value(lhs)}, {__dump_value(rhs)}  (data 相等)"
+
+        case IR.PtrCmp(result=result, op=op, lhs=lhs, rhs=rhs):
+            return (
+                f"%{result.name} = ptrcmp {__op_str(op)}"
+                f" {__dump_value(lhs)}, {__dump_value(rhs)}"
+                f"  [{__type_str(result.type_id)}]"
+            )
+
+        case IR.CheckDelete(ptr=ptr):
+            return f"check_delete {__dump_value(ptr)}  (is_heap ∧ live ∧ is_raw)"
+
+        case IR.Call(result=result, callee_type=callee_type, args=args):
+            arg_str = ", ".join(__dump_value(a) for a in args)
+            return (
+                f"%{result.name} = call @{__type_str(callee_type)}({arg_str})"
+                f"  [{__type_str(result.type_id)}]"
+            )
+
+        case IR.Invoke(result=result, callee=callee, args=args):
+            arg_str = ", ".join(__dump_value(a) for a in args)
+            return (
+                f"%{result.name} = invoke"
+                f" {__dump_value(callee)}({arg_str})"
+                f"  [{__type_str(result.type_id)}]"
+            )
+
+        case IR.TraitObjectConstruct(result=result, reference=reference, concrete_type_id=concrete, trait_type_id=trait):
+            return (
+                f"%{result.name} = trait_object {__dump_value(reference)} "
+                f"for {__type_str(concrete)} as {__type_str(trait)}"
+                f"  [{__type_str(result.type_id)}]"
+            )
+
+        case IR.TraitObjectInvoke(result=result, receiver=receiver, method_id=method_id, slot_index=slot, args=args):
+            arg_str = ", ".join(__dump_value(arg) for arg in args)
+            return (
+                f"%{result.name} = trait_invoke {__dump_value(receiver)}.slot[{slot}] "
+                f"@{__type_str(method_id)}({arg_str})"
+                f"  [{__type_str(result.type_id)}]"
+            )
+
+        case IR.Cast(result=result, value=value, to_type=to_type, raw=raw):
+            raw_tag = " [raw]" if raw else ""
+            return (
+                f"%{result.name} = cast {__dump_value(value)}"
+                f" to {__type_str(to_type)}{raw_tag}"
+                f"  [{__type_str(result.type_id)}]"
+            )
+
+        case IR.Undef(result=result, type_id=type_id):
+            return f"%{result.name} = undef {__type_str(type_id)}  [{__type_str(result.type_id)}]"
+
+        case IR.Dangling(result=result, type_id=type_id):
+            return f"%{result.name} = dangling {__type_str(type_id)}  [{__type_str(result.type_id)}]"
+
+        case IR.SizeOf(result=result, type_id=type_id):
+            return (
+                f"%{result.name} = sizeof"
+                f" {__type_str(type_id)}"
+                f"  [{__type_str(result.type_id)}]"
+            )
+
+        case IR.AggregateConstruct(
+            result=result, type_id=type_id, fields=fields
+        ):
+            field_str = ", ".join(__dump_value(f) for f in fields)
+            return (
+                f"%{result.name} = aggregate"
+                f" {__type_str(type_id)} {{{field_str}}}"
+            )
+
+        case IR.ArrayConstruct(
+            result=result, type_id=type_id, elements=elements
+        ):
+            elem_str = ", ".join(__dump_value(e) for e in elements)
+            return (
+                f"%{result.name} = array"
+                f" {__type_str(type_id)} [{elem_str}]"
+            )
+
+        case IR.VariantConstruct(
+            result=result,
+            enum_type=_,
+            variant=variant,
+            payload_fields=payload_fields,
+        ):
+            if payload_fields is not None:
+                pl = ", ".join(__dump_value(f) for f in payload_fields)
+                return f"%{result.name} = variant {variant.name} {{{pl}}}"
+            return f"%{result.name} = variant {variant.name}"
+
+        case IR.SysWrite(
+            fd=fd,
+            buf=buf,
+        ):
+            return f"sys_write {__dump_value(fd)} {__dump_value(buf)}"
+
+        case IR.SysWriteBytes(result=result, fd=fd, buf=buf):
+            return f"%{result.name} = sys_write_bytes {__dump_value(fd)} {__dump_value(buf)}"
+
+        case IR.MemCopy(
+            dest=dest,
+            src=src,
+            count=count,
+        ):
+            return f"mem_copy {__dump_value(dest)}, {__dump_value(src)}, {__dump_value(count)}"
+
+        case IR.MemSetPattern(dest=dest, value=value, count=count):
+            return f"mem_set_pattern {__dump_value(dest)}, {__dump_value(value)}, {__dump_value(count)}"
+
+        case IR.FfiAddr(result=result, reference=reference):
+            return f"%{result.name} = ffi_addr {__dump_value(reference)}"
+        case IR.FfiParts(result=result, view=view):
+            return f"%{result.name} = ffi_parts {__dump_value(view)}"
+        case IR.FfiNull(result=result):
+            return f"%{result.name} = ffi_null"
+        case IR.FfiPtrCast(result=result, pointer=pointer):
+            return f"%{result.name} = ffi_ptr_cast {__dump_value(pointer)}"
+        case IR.FfiCopy(destination=destination, source=source, count=count, from_c=from_c):
+            direction = "from" if from_c else "to"
+            return f"ffi_copy_{direction} {__dump_value(destination)}, {__dump_value(source)}, {__dump_value(count)}"
+
+        case IR.SysRead(
+            result=result,
+            fd=fd,
+            buf=buf,
+        ):
+            return (
+                f"%{result.name} = sys_read"
+                f" {__dump_value(fd)}, {__dump_value(buf)}"
+                f"  [{__type_str(result.type_id)}]"
+            )
+
+        case IR.SysReadBytes(result=result, fd=fd, buf=buf):
+            return f"%{result.name} = sys_read_bytes {__dump_value(fd)}, {__dump_value(buf)}"
+
+        case IR.Open(result=result, path=path, flags=flags):
+            return (
+                f"%{result.name} = open {__dump_value(path)}, {__dump_value(flags)}"
+                f"  [{__type_str(result.type_id)}]"
+            )
+
+        case IR.Close(result=result, fd=fd):
+            return f"%{result.name} = close {__dump_value(fd)}  [{__type_str(result.type_id)}]"
+
+        case IR.Sqrt(result=result, value=value):
+            return f"%{result.name} = sqrt {__dump_value(value)}  [{__type_str(result.type_id)}]"
+
+        case IR.Sin(result=result, value=value):
+            return f"%{result.name} = sin {__dump_value(value)}  [{__type_str(result.type_id)}]"
+
+        case IR.Cos(result=result, value=value):
+            return f"%{result.name} = cos {__dump_value(value)}  [{__type_str(result.type_id)}]"
+
+        case IR.ArgCount(result=result):
+            return f"%{result.name} = arg_count  [{__type_str(result.type_id)}]"
+
+        case IR.ArgBytes(result=result, index=index):
+            return (
+                f"%{result.name} = arg_bytes {__dump_value(index)}"
+                f"  [{__type_str(result.type_id)}]"
+            )
+
+
+def __dump_phi(phi: IR.Phi) -> str:
+    inc_str = ", ".join(
+        f"[{__dump_value(v)}, {b.label}]" for b, v in phi.incoming
+    )
+    return (
+        f"%{phi.result.name} = phi [{inc_str}]"
+        f"  [{__type_str(phi.result.type_id)}]"
+    )
+
+
+# ---------------------------------------------------------------------------
+# terminator dumpers
+# ---------------------------------------------------------------------------
+
+def __dump_terminator(term: IR.Terminator) -> str:
+    match term:
+        case IR.Ret(value=value):
+            return f"ret {__dump_value(value)}"
+
+        case IR.Br(target=target):
+            return f"br {target.label}"
+
+        case IR.CondBr(
+            cond=cond, then_block=then_block, else_block=else_block
+        ):
+            return (
+                f"condbr {__dump_value(cond)},"
+                f" {then_block.label}, {else_block.label}"
+            )
+
+        case IR.Panic(message=message):
+            return f"panic {__dump_value(message)}"
+
+        case IR.RuntimeFail(code=code):
+            return f"runtime_fail {code.name}"
+
+        case IR.ProcessExit(code=code):
+            return f"process_exit {__dump_value(code)}"
+
+        case IR.Unreachable():
+            return "unreachable"
+
+
+# ---------------------------------------------------------------------------
+# helpers
+# ---------------------------------------------------------------------------
+
+# pylint: disable=too-many-return-statements
+def __dump_value(val: IR.Value) -> str:
+    """Format a Value (Reg or Literal) for display."""
+    match val:
+        case IR.Reg(name=name):
+            return f"%{name}"
+
+        case IR.IntLiteral(value=v):
+            return f"{v}"
+
+        case IR.FloatLiteral(value=v):
+            return f"{v}"
+
+        case IR.BoolLiteral(value=v):
+            return "true" if v else "false"
+
+        case IR.CharLiteral(value=v):
+            return repr(v)
+
+        case IR.StringLiteral(value=v):
+            return repr(v)
+
+
+def __type_str(type_id: int) -> str:
+    if type_id < 0:
+        return "void"
+    return f"T{type_id}"
+
+
+def __op_str(op: BinaryOperator | UnaryOperator) -> str:
+    return str(op)

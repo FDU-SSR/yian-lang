@@ -1,0 +1,319 @@
+from yianc.analysis.session.session import AnalysisSession;
+from yianc.analysis.session.prepare import PreparationObserver;
+from yianc.analysis.session.output import AnalysisOutput;
+from yianc.analysis.hir.node import HirNode;
+from yianc.analysis.hir.pattern import PatternNode;
+from yianc.analysis.hir.traversal import HirVisitor, walk_expr;
+from yianc.codegen.cfg.model import CfgModule;
+from yianc.codegen.cfg.ids import FunctionId, BlockId, ValueId;
+from yianc.codegen.error import CodegenError;
+from yianc.common.ids import UnitId, HirId, PatternId;
+from yianc.common.traversal import WalkControl;
+from yianc.diagnostics.model import AnalysisError;
+from yianc.frontend.prepare import PreparationStage;
+from yianc.frontend.observe import append_token_file;
+from yianc.frontend.ast.format import AstFormatter;
+from json.write import Writer;
+from std.core.drop import Drop;
+from std.core.fmt import ToString;
+from std.core.fs import create_dir_all, write_string;
+from std.core.iter import Iterator, IntoIterator;
+from std.core.option import Option;
+from std.core.ops import Index;
+from std.core.range import Range;
+from std.core.result import Result;
+
+fn save(output: Writer&, path: str) -> Result<(), AnalysisError> {
+    let text = match output.finish() {
+        Ok(value) => value,
+        Err(_) => return Result<(), AnalysisError>.Err(AnalysisError.internal("stage dump exceeds JSON writer limits")),
+    };
+    defer text.drop();
+    match write_string(path, text.as_str()) {
+        Ok(value) => Result<(), AnalysisError>.Ok(value),
+        Err(problem) => { defer problem.drop(); Result<(), AnalysisError>.Err(AnalysisError.internal(problem.msg())) },
+    }
+}
+
+pub struct StageDumps { pub enabled: bool }
+
+impl PreparationObserver for StageDumps {
+    pub fn stage_complete(stage: PreparationStage, session: AnalysisSession&) -> Result<(), AnalysisError> {
+        if !self.enabled { return Result<(), AnalysisError>.Ok(()); }
+        match stage {
+            Lex => tokens_dump(session),
+            Desugar => ast_dump(session),
+            Parse => Result<(), AnalysisError>.Ok(()),
+        }
+    }
+}
+
+fn tokens_dump(session: AnalysisSession&) -> Result<(), AnalysisError> {
+    match create_dir_all("build") {
+        Ok(_) => {},
+        Err(problem) => { defer problem.drop(); return Result<(), AnalysisError>.Err(AnalysisError.internal(problem.msg())); },
+    }
+    let tokens = Writer.with_max_depth(512u64);
+    defer tokens.drop();
+    tokens.begin_array();
+    for index in 0u64..session.len() {
+        let unit = session.unit(UnitId(index)).unwrap();
+        let source = session.source(unit.source).unwrap();
+        append_token_file(&tokens, source.path(), &unit.prepared.tokens);
+    }
+    tokens.end_array();
+    save(&tokens, "build/tokens.txt")
+}
+
+fn ast_dump(session: AnalysisSession&) -> Result<(), AnalysisError> {
+    let ast = Writer.with_max_depth(512u64);
+    defer ast.drop();
+    ast.begin_array();
+    for index in 0u64..session.len() {
+        let unit = session.unit(UnitId(index)).unwrap();
+        let source = session.source(unit.source).unwrap();
+        ast.begin_object();
+        ast.key("path");
+        ast.write_string(source.path());
+        ast.key("ast");
+        AstFormatter.new(&ast).append_program(unit.prepared.tree.unwrap().root);
+        ast.end_object();
+    }
+    ast.end_array();
+    save(&ast, "build/ast.txt")
+}
+
+struct HirDump {
+    output: Writer&,
+}
+
+impl HirVisitor for HirDump {
+    pub fn enter_expr(id: HirId, node: HirNode&) -> Result<WalkControl, AnalysisError> {
+        self.output.begin_object();
+        self.output.key("id");
+        self.output.write_u64(id.index);
+        self.output.key("kind");
+        self.output.write_string(node.kind.name());
+        self.output.key("type");
+        self.output.write_u64(node.type_id.index);
+        self.output.key("place");
+        self.output.write_bool(node.is_place);
+        self.output.key("source");
+        self.output.write_u64(node.span.source.index);
+        node.span.span.write_json(self.output);
+        match &node.kind {
+            IntLiteral(value) => { self.output.key("bits"); self.output.write_u64(value.raw_bits()); },
+            FloatLiteral(value) => {
+                let text = value.to_string();
+                defer text.drop();
+                self.output.key("value");
+                self.output.write_string(text.as_str());
+            },
+            BoolLiteral(value) => { self.output.key("value"); self.output.write_bool(*value); },
+            CharLiteral(value) => { self.output.key("value"); self.output.write_u64(u64(*value)); },
+            StrLiteral(value) => { self.output.key("name"); self.output.write_u64(value.index); },
+            Var(symbol) => { self.output.key("symbol"); self.output.write_u64(symbol.index); },
+            Call(value) => { self.output.key("callee"); self.output.write_u64(value.func.index); },
+            MethodCall(value) => { self.output.key("callee"); self.output.write_u64(value.method_id.index); },
+            Builtin(value) => { self.output.key("builtin"); self.output.write_string(value.kind.spelling()); },
+            Binary(value) => { self.output.key("operator"); self.output.write_string(value.op.spelling()); },
+            Unary(value) => { self.output.key("operator"); self.output.write_string(value.op.spelling()); },
+            _ => {},
+        }
+        self.output.key("children");
+        self.output.begin_array();
+        Result<WalkControl, AnalysisError>.Ok(WalkControl.Continue)
+    }
+
+    pub fn leave_expr(id: HirId, node: HirNode&) -> Result<(), AnalysisError> {
+        self.output.end_array();
+        self.output.end_object();
+        Result<(), AnalysisError>.Ok(())
+    }
+
+    pub fn enter_pattern(id: PatternId, node: PatternNode&) -> Result<WalkControl, AnalysisError> {
+        self.output.begin_object();
+        self.output.key("pattern");
+        self.output.write_u64(id.index);
+        self.output.key("kind");
+        self.output.write_string(node.kind.name());
+        self.output.key("type");
+        self.output.write_u64(node.type_id.index);
+        self.output.key("source");
+        self.output.write_u64(node.span.source.index);
+        node.span.span.write_json(self.output);
+        self.output.key("children");
+        self.output.begin_array();
+        Result<WalkControl, AnalysisError>.Ok(WalkControl.Continue)
+    }
+
+    pub fn leave_pattern(id: PatternId, node: PatternNode&) -> Result<(), AnalysisError> {
+        self.output.end_array();
+        self.output.end_object();
+        Result<(), AnalysisError>.Ok(())
+    }
+}
+
+pub fn hir_dump(session: AnalysisSession&, result: AnalysisOutput&) -> Result<(), AnalysisError> {
+    let output = Writer.with_max_depth(512u64);
+    defer output.drop();
+    let visitor = HirDump(&output);
+    output.begin_array();
+    for procedure in result.procedures {
+        output.begin_object();
+        output.key("definition");
+        output.write_u64(procedure.definition.index);
+        output.key("callable");
+        output.write_u64(procedure.type_id.index);
+        output.key("unit");
+        output.write_u64(procedure.unit.index);
+        output.key("parameters");
+        output.begin_array();
+        for parameter in procedure.parameters { output.write_u64(parameter.index); }
+        output.end_array();
+        output.key("root");
+        walk_expr(&session.hir, procedure.root, &visitor)?;
+        output.end_object();
+    }
+    output.end_array();
+    save(&output, "build/hir.txt")
+}
+
+pub fn cfg_dump(module: CfgModule&) -> Result<(), CodegenError> {
+    let output = Writer.with_max_depth(512u64);
+    defer output.drop();
+    output.begin_array();
+    for index in 0u64..module.len() {
+        let function = *module.function(FunctionId(index)).unwrap();
+        output.begin_object();
+        output.key("function");
+        output.write_u64(index);
+        output.key("callable");
+        output.write_u64(function.callable.index);
+        output.key("result");
+        output.write_u64(function.result_type.index);
+        output.key("parameters");
+        output.begin_array();
+        for parameter in function.parameters { output.write_u64(parameter.index); }
+        output.end_array();
+        output.key("values");
+        output.begin_array();
+        for index in 0u64..function.value_count() {
+            let value = function.value(ValueId(index))?;
+            output.begin_object();
+            output.key("id");
+            output.write_u64(index);
+            output.key("type");
+            output.write_u64(value.type_id.index);
+            match &value.kind {
+                Integer(bits) => { output.key("integer"); output.write_u64(*bits); },
+                Float(value) => {
+                    let text = value.to_string();
+                    defer text.drop();
+                    output.key("float");
+                    output.write_string(text.as_str());
+                },
+                Zero => { output.key("kind"); output.write_string("zero"); },
+                Undef => { output.key("kind"); output.write_string("undef"); },
+                Bytes(name) => { output.key("name"); output.write_u64(name.index); },
+                Parameter(index) => { output.key("parameter"); output.write_u64(*index); },
+                Function(callable) => { output.key("callable"); output.write_u64(callable.index); },
+                Temporary(block, position) => {
+                    output.key("block");
+                    output.write_u64(block.index);
+                    output.key("instruction");
+                    output.write_u64(*position);
+                },
+            }
+            output.end_object();
+        }
+        output.end_array();
+        output.key("blocks");
+        output.begin_array();
+        for index in 0u64..function.block_count() {
+            let block = function.block(BlockId(index))?;
+            output.begin_object();
+            output.key("block");
+            output.write_u64(index);
+            output.key("instructions");
+            output.begin_array();
+            for instruction in block.instructions {
+                output.begin_object();
+                output.key("operation");
+                output.write_string(instruction.operation.name());
+                output.key("result");
+                match instruction.result { Some(value) => output.write_u64(value.index), None => output.write_null(), }
+                output.key("operands");
+                output.begin_array();
+                let operands = instruction.operation.operands();
+                defer operands.drop();
+                for operand in operands { output.write_u64(operand.index); }
+                output.end_array();
+                output.key("checks");
+                output.begin_array();
+                for check in instruction.checks {
+                    output.begin_object();
+                    output.key("kind");
+                    output.write_string(check.name());
+                    match check {
+                        Access(_, kind) => { output.key("code"); output.write_string(kind.code()); },
+                        _ => {},
+                    }
+                    output.key("operands");
+                    output.begin_array();
+                    let operands = check.operands();
+                    defer operands.drop();
+                    for operand in operands { output.write_u64(operand.index); }
+                    output.end_array();
+                    output.end_object();
+                }
+                output.end_array();
+                match &instruction.operation {
+                    Binary(op, _, _) => { output.key("operator"); output.write_string(op.spelling()); },
+                    Unary(op, _) => { output.key("operator"); output.write_string(op.spelling()); },
+                    Call(callable, _) => { output.key("callee"); output.write_u64(callable.index); },
+                    Builtin(kind, type_args, _) => {
+                        output.key("builtin");
+                        output.write_string(kind.spelling());
+                        output.key("types");
+                        output.begin_array();
+                        for type_id in *type_args { output.write_u64(type_id.index); }
+                        output.end_array();
+                    },
+                    EnumConstruct(tag, _) => { output.key("tag"); output.write_u64(*tag); },
+                    Extract(_, field) | FieldAddress(_, _, field) => { output.key("field"); output.write_u64(*field); },
+                    _ => {},
+                }
+                output.end_object();
+            }
+            output.end_array();
+            output.key("terminator");
+            output.begin_object();
+            match &*block.terminator.unwrap() {
+                Return(value) => {
+                    output.key("kind");
+                    output.write_string("return");
+                    output.key("value");
+                    match value { Some(id) => output.write_u64(id.index), None => output.write_null(), }
+                },
+                Jump(destination) => { output.key("jump"); output.write_u64(destination.index); },
+                Branch(condition, yes, no) => {
+                    output.key("condition");
+                    output.write_u64(condition.index);
+                    output.key("yes");
+                    output.write_u64(yes.index);
+                    output.key("no");
+                    output.write_u64(no.index);
+                },
+                Unreachable => { output.key("kind"); output.write_string("unreachable"); },
+            }
+            output.end_object();
+            output.end_object();
+        }
+        output.end_array();
+        output.end_object();
+    }
+    output.end_array();
+    save(&output, "build/cfg.txt")?;
+    Result<(), CodegenError>.Ok(())
+}

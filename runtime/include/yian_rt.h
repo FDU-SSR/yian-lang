@@ -7,7 +7,7 @@
  *   - Check decisions, key generation, slot writes, SENTINEL invalidation, and live predicates belong
  *     to compiler-emitted inline code.
  *
- * This header defines the ABI constants; compiler/codegen/abi/lockmech.py is their Python mirror.
+ * This header defines the ABI constants; yianc/codegen/abi/lockmech.py is their Python mirror.
  * runtime/build.py --check verifies consistency.
  */
 
@@ -40,19 +40,19 @@
  * so no word macros are defined here. */
 
 /* Diagnostic for the main wrapper's argument-ABI failure; must match
- * compiler/runtime_error.py S002 byte-for-byte. */
+ * yianc/runtime_error.py S002 byte-for-byte. */
 #define YIAN_ABI_FAIL_MESSAGE "yian: safety error [S002]: invalid memory access\n"
 
-/* Allocation-failure diagnostic; must match compiler/runtime_error.py R002 byte-for-byte. */
+/* Allocation-failure diagnostic; must match yianc/runtime_error.py R002 byte-for-byte. */
 #define YIAN_OOM_MESSAGE "yian: runtime error [R002]: memory allocation failed\n"
-/* Lock-table exhaustion message matching compiler/runtime_error.py R003. */
+/* Lock-table exhaustion message matching yianc/runtime_error.py R003. */
 #define YIAN_METADATA_MESSAGE "yian: runtime error [R003]: safety metadata exhausted\n"
 
 /* Size-class payload capacities in bytes, from 16 to 49152 at approximately 1.25 ratios.
  * The table index is the class number; larger requests use the large-object path.
  *
  * The compiler passes class indices for known sizes (see __secl_pool_alloc_class), making this table
- * part of the ABI. compiler/runtime_lib.py::CLASS_BYTES is its Python mirror;
+ * part of the ABI. yianc/runtime_lib.py::CLASS_BYTES is its Python mirror;
  * runtime/build.py --check verifies elementwise equality. */
 #define YIAN_CLASS_COUNT 36u
 #define YIAN_CLASS_BYTES                                                                     \

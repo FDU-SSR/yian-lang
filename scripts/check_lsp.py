@@ -345,13 +345,13 @@ def __make_scenario(name: str, parent: Path) -> Scenario:
     if name == "compiler-project":
         package_parent = root / "bootstrap"
         package_parent.mkdir()
-        for package in ("compiler", "json", "llvm", "ffi"):
+        for package in ("yianc", "json", "llvm", "ffi"):
             shutil.copytree(
                 ROOT / "bootstrap" / package,
                 package_parent / package,
                 ignore=shutil.ignore_patterns("build", "__pycache__", ".pytest_cache"),
             )
-        project_root = package_parent / "compiler"
+        project_root = package_parent / "yianc"
         source = project_root / "src" / "lsp_probe.an"
         text = __sample_source()
         source.write_text(text, encoding="utf-8", newline="")
@@ -673,7 +673,7 @@ def __replace_artifact_paths(value: Json, replacements: dict[str, str]) -> Json:
 def __source_fingerprint() -> dict[str, Json]:
     files = [
         *sorted((ROOT / "lsp").rglob("*.an")),
-        *sorted((ROOT / "bootstrap" / "compiler" / "src").rglob("*.an")),
+        *sorted((ROOT / "bootstrap" / "yianc" / "src").rglob("*.an")),
         *sorted((ROOT / "bootstrap" / "anx" / "src").rglob("*.an")),
         *sorted((ROOT / "bootstrap" / "json" / "src").rglob("*.an")),
         *sorted((ROOT / "bootstrap" / "jsonrpc" / "src").rglob("*.an")),
@@ -681,7 +681,7 @@ def __source_fingerprint() -> dict[str, Json]:
         *sorted((ROOT / "lib" / "src").rglob("*.an")),
         *sorted((ROOT / "runtime" / "src").rglob("*.c")),
         ROOT / "lsp" / "package.anx",
-        ROOT / "bootstrap" / "compiler" / "package.anx",
+        ROOT / "bootstrap" / "yianc" / "package.anx",
         ROOT / "bootstrap" / "anx" / "package.anx",
         ROOT / "bootstrap" / "json" / "package.anx",
         ROOT / "bootstrap" / "jsonrpc" / "package.anx",
@@ -1504,8 +1504,14 @@ def __run_infrastructure(args: argparse.Namespace) -> int:
     native_bin = prefix / "bin"
     environment = os.environ.copy()
     environment["PATH"] = str(native_bin) + os.pathsep + environment.get("PATH", "")
+    environment["YIAN_INSTALL_PREFIX"] = str(prefix)
     environment["YIANC"] = str(native_bin / "yianc")
     environment["YIAN_LSP_BIN"] = str(native_bin / "yian-lsp")
+    python_root = str(ROOT / "python")
+    existing_python_path = environment.get("PYTHONPATH")
+    environment["PYTHONPATH"] = (
+        python_root if not existing_python_path else f"{python_root}{os.pathsep}{existing_python_path}"
+    )
     commands = [
         [
             sys.executable,
@@ -1520,8 +1526,8 @@ def __run_infrastructure(args: argparse.Namespace) -> int:
         ],
         ["bash", "scripts/install_lsp.sh", "--prefix", str(prefix)],
         [sys.executable, "-m", "unittest", "discover", "-s", "tests/unit", "-v"],
-        [sys.executable, "-m", "compiler.format", "--verify", "bootstrap/compiler/src"],
-        [sys.executable, "-m", "compiler.format", "--check", "bootstrap/compiler/src"],
+        [sys.executable, "-m", "yianc.format", "--verify", "bootstrap/yianc/src"],
+        [sys.executable, "-m", "yianc.format", "--check", "bootstrap/yianc/src"],
         [str(native_bin / "anx"), "fmt", "--check", str(ROOT / "lsp")],
         [sys.executable, "runtime/build.py", "--check"],
         [sys.executable, "runtime/build.py", "--asan"],

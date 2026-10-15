@@ -1,0 +1,141 @@
+from yianc.analysis.lowering.checker import ExprChecker;
+from yianc.analysis.ty.relations import is_integer;
+from yianc.analysis.ty.validation import c_abi_type;
+from yianc.analysis.ty.model import TypeData;
+from yianc.analysis.hir.node import HirKind, Binary, Unary, TupleAccess, ArrayAccess, SliceAccess;
+from yianc.analysis.constant.integer import magnitude;
+from yianc.common.ids import HirId;
+from yianc.frontend.ast.operator import BinaryOperator, UnaryOperator;
+from yianc.frontend.source import Span;
+from yianc.diagnostics.model import AnalysisError;
+from std.core.option import Option;
+from std.core.result import Result;
+
+impl ExprChecker {
+    // Pointer operations preserve the declared pointee; references have identity equality only.
+    pub fn pointer_binary(span: Span, op: BinaryOperator, left: HirId, right: HirId) -> Result<Option<HirId>, AnalysisError> {
+        let left_type = self.type_of(left);
+        let right_type = self.type_of(right);
+        let left_data = self.ctx.session.types.require(left_type)?;
+        let right_data = self.ctx.session.types.require(right_type)?;
+        let pointer = match left_data {
+            Pointer(_) => true, CPointer(_) => true, _ => false
+        };
+        let same = left_type == right_type;
+        let equality = op == BinaryOperator.Eq || op == BinaryOperator.Neq;
+        let ordered = equality || op == BinaryOperator.Lt || op == BinaryOperator.Leq || op == BinaryOperator.Gt || op == BinaryOperator.Geq;
+        let comparable = match left_data {
+            Pointer(_) => ordered,
+            Reference(_) => equality,
+            CPointer(_) => equality && self.ffi_allowed,
+            _ => false,
+        };
+
+        if same && comparable {
+            return Result<Option<HirId>, AnalysisError>.Ok(Option<HirId>.Some(self.node(span, self.ctx.primitives.boolean, false, HirKind.Binary(Binary(op, left, right)))));
+        }
+
+        if same && op == BinaryOperator.Sub {
+            match left_data {
+                Pointer(_) => {
+                    let difference = self.ctx.session.types.primitive(TypeData.Integer(64, true))?;
+                    return Result<Option<HirId>, AnalysisError>.Ok(Option<HirId>.Some(self.node(span, difference, false, HirKind.Binary(Binary(op, left, right)))));
+                },
+                _ => {},
+            }
+        }
+
+        let compound = op == BinaryOperator.AddAssign || op == BinaryOperator.SubAssign;
+
+        if pointer && is_integer(self.ctx, right_type) && (op == BinaryOperator.Add || op == BinaryOperator.Sub || compound) {
+            match left_data {
+                CPointer(inner) => {
+                    if !self.ffi_allowed || !c_abi_type(&self.ctx.session.types, *inner, false, false) {
+                        return Result<Option<HirId>, AnalysisError>.Err(self.error(span, "C pointer arithmetic requires an ffi function and a complete C ABI element"));
+                    }
+                },
+                _ => {},
+            }
+
+            if compound && !self.ctx.session.hir.require(left)?.is_place {
+                return Result<Option<HirId>, AnalysisError>.Err(self.error(span, "pointer assignment requires a place"));
+            }
+
+            let offset = self.coerce(right, self.ctx.primitives.unsigned)?;
+            let result = if compound {
+                self.ctx.primitives.void
+            } else {
+                left_type
+            };
+            return Result<Option<HirId>, AnalysisError>.Ok(Option<HirId>.Some(self.node(span, result, false, HirKind.Binary(Binary(op, left, offset)))));
+        }
+
+        if op == BinaryOperator.Add && is_integer(self.ctx, left_type) {
+            match right_data {
+                Pointer(_) => return self.pointer_binary(span, op, right, left),
+                CPointer(_) => return self.pointer_binary(span, op, right, left),
+                _ => {},
+            }
+        }
+
+        Result<Option<HirId>, AnalysisError>.Ok(Option<HirId>.None)
+    }
+
+    pub fn index(span: Span, object: HirId, index: HirId) -> Result<HirId, AnalysisError> {
+        // References address their object. A pointer keeps its own Index implementation.
+
+        while true {
+            match self.ctx.session.types.require(self.type_of(object))? {
+                Reference(inner) => {
+                    object = self.node(span, *inner, true, HirKind.Unary(Unary(UnaryOperator.Deref, object)));
+                },
+                _ => {
+                    break;
+                },
+            }
+        }
+
+        let place = self.ctx.session.hir.require(object)?.is_place;
+
+        match self.ctx.session.types.require(self.type_of(object))? {
+            Tuple(elements) => {
+                let position = match &self.ctx.session.hir.require(index)?.kind {
+                    IntLiteral(integer) => {
+                        if integer.is_negative() {
+                            return Result<HirId, AnalysisError>.Err(self.error(span, "tuple index is negative"));
+                        }
+
+                        magnitude(*integer)
+                    },
+                    _ => return Result<HirId, AnalysisError>.Err(self.error(span, "tuple index requires an integer literal")),
+                };
+
+                if position >= elements.len() {
+                    return Result<HirId, AnalysisError>.Err(self.error(span, "tuple index is out of range"));
+                }
+
+                return Result<HirId, AnalysisError>.Ok(self.node(span, elements[position], place, HirKind.TupleAccess(TupleAccess(object, position))));
+            },
+            Array(element, count) => {
+                if is_integer(self.ctx, self.type_of(index)) {
+                    match self.ctx.session.types.require(*count)? {
+                        LiteralValue(length, _, _) => {
+                            let offset = self.coerce(index, self.ctx.primitives.unsigned)?;
+                            return Result<HirId, AnalysisError>.Ok(self.node(span, *element, place, HirKind.ArrayAccess(ArrayAccess(object, offset, *element, *length))));
+                        },
+                        _ => {},
+                    }
+                }
+            },
+            Slice(element) => {
+                if is_integer(self.ctx, self.type_of(index)) {
+                    let offset = self.coerce(index, self.ctx.primitives.unsigned)?;
+                    return Result<HirId, AnalysisError>.Ok(self.node(span, *element, true, HirKind.SliceAccess(SliceAccess(object, offset, *element))));
+                }
+            },
+            _ => {},
+        }
+
+        self.overloaded_binary(span, BinaryOperator.Index, object, index)
+    }
+}

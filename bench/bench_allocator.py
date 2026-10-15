@@ -28,6 +28,7 @@ from __future__ import annotations
 import argparse
 import datetime
 import json
+import os
 import re
 import subprocess
 import sys
@@ -119,11 +120,17 @@ def compile_one(name: str, raw: bool, compiler_root: Path, spec: dict[str, objec
     binary = BUILD_DIR / f"{name}.{'raw' if raw else 'fat'}"
     binary.parent.mkdir(parents=True, exist_ok=True)
     src = source_path(name, raw, spec, profile)
-    cmd = [sys.executable, "-m", "compiler.main", OPT_LEVEL]
+    cmd = [sys.executable, "-m", "yianc.main", OPT_LEVEL]
     if raw:
         cmd.append("--raw-pointers")
     cmd += [str(compiler_root / "lib" / "src"), str(src), "-o", str(binary)]
-    proc = subprocess.run(cmd, capture_output=True, text=True, cwd=compiler_root)
+    environment = os.environ.copy()
+    python_root = str(compiler_root / "python")
+    existing_python_path = environment.get("PYTHONPATH")
+    environment["PYTHONPATH"] = (
+        python_root if not existing_python_path else f"{python_root}{os.pathsep}{existing_python_path}"
+    )
+    proc = subprocess.run(cmd, capture_output=True, text=True, cwd=compiler_root, env=environment)
     if proc.returncode != 0:
         raise SystemExit(f"[compile] {name} ({'raw' if raw else 'fat'}) 失败:\n{proc.stdout}\n{proc.stderr}")
     return binary

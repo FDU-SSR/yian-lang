@@ -1,0 +1,147 @@
+from std.core.drop import Drop;
+from yianc.analysis.editor import EditorSnapshot, EditorLocation;
+from yianc.analysis.session.session import CompilationUnit;
+from yianc.common.ids import SourceId, UnitId;
+from yianc.frontend.source import Position, Span;
+from yianc.frontend.lex.token import Token, PunctuatorKind, KeywordKind;
+from std.core.convert import From;
+from std.core.text import LineIndex, TextPosition;
+from std.core.option import Option;
+from std.core.string import String;
+from std.core.vec import Vec;
+
+from yianc.analysis.editor.query_model import CompletionContext, CompletionPosition;
+
+pub fn unit_for_source(snapshot: EditorSnapshot&, source: SourceId) -> Option<CompilationUnit&> {
+    let index = 0u64;
+    while index < snapshot.session().len() {
+        match snapshot.session().unit(UnitId(index)) {
+            Some(unit) if unit.source == source => return Option<CompilationUnit&>.Some(unit),
+            _ => {},
+        }
+        index += 1u64;
+    }
+    Option<CompilationUnit&>.None
+}
+
+pub fn is_punctuator(token: Token&, expected: PunctuatorKind) -> bool {
+    match token.kind() {
+        Punctuator(value) => *value == expected,
+        _ => false,
+    }
+}
+
+pub fn completion_position(
+    snapshot: EditorSnapshot&,
+    source: SourceId,
+    tokens: Vec<Token>&,
+    row: u64,
+    column: u64,
+) -> CompletionPosition {
+    let prefix = String.new();
+    let replace = Option<EditorLocation>.None;
+    let prefix_token = Option<u64>.None;
+    let last_before = Option<u64>.None;
+    let text = match snapshot.source_text(source) {
+        Some(value) => value,
+        None => return CompletionPosition(prefix, replace, CompletionContext.Value, Option<Position>.None),
+    };
+    let line_index = LineIndex.new(text);
+    defer line_index.drop();
+
+    let index = 0u64;
+    while index < tokens.len() {
+        let token = &tokens[index];
+        let is_before = token.span.start.row < row ||
+        (token.span.start.row == row && token.span.start.column < column);
+        if is_before { last_before = Option<u64>.Some(index); }
+
+        if token.span.start.row == row && token.span.end.row == row &&
+        token.span.start.column < column && column <= token.span.end.column {
+            match token.kind() {
+                Identifier(_) => {
+                    let begin = line_index.byte_offset(TextPosition(row=row, column=token.span.start.column));
+                    let end = line_index.byte_offset(TextPosition(row=row, column=column));
+                    let typed = str.from_slice(text.as_slice()[begin..end]).unwrap();
+                    prefix.push_str(*typed);
+                    prefix_token = Option<u64>.Some(index);
+
+                    let path = snapshot.source_path(source).unwrap();
+                    let span = Span(start=token.span.start, end=Position(row=row, column=column));
+                    replace = Option<EditorLocation>.Some(EditorLocation(
+                        path=String.from(path), span=span));
+                },
+                _ => {},
+            }
+        }
+
+        index += 1u64;
+    }
+
+    let anchor = match prefix_token {
+        Some(value) => value,
+        None => match last_before {
+            Some(value) => value + 1u64,
+            None => 0u64,
+        },
+    };
+
+    let statement_start = 0u64;
+    let statement_index = anchor;
+    while statement_index != 0u64 {
+        statement_index -= 1u64;
+        if is_punctuator(&tokens[statement_index], PunctuatorKind.Semicolon) {
+            statement_start = statement_index + 1u64;
+            break;
+        }
+    }
+
+    let from_index = Option<u64>.None;
+    let import_index = Option<u64>.None;
+    let scan = statement_start;
+    while scan < anchor {
+        match tokens[scan].kind() {
+            Keyword(value) => {
+                if *value == KeywordKind.From { from_index = Option<u64>.Some(scan); }
+                if *value == KeywordKind.Import { import_index = Option<u64>.Some(scan); }
+            },
+            _ => {},
+        }
+        scan += 1u64;
+    }
+
+    let context = match import_index {
+        Some(index) => match from_index {
+            Some(_) if anchor > index => CompletionContext.ImportName,
+            _ => CompletionContext.ImportPath,
+        },
+        None => match from_index {
+            Some(_) => CompletionContext.ImportPath,
+            None => {
+                let previous = match anchor {
+                    0u64 => Option<u64>.None,
+                    _ => Option<u64>.Some(anchor - 1u64),
+                };
+                match previous {
+                    Some(index) if is_punctuator(&tokens[index], PunctuatorKind.Dot) =>
+                    CompletionContext.Member,
+                    Some(index) if is_type_introducer(&tokens[index]) => CompletionContext.Type,
+                    _ => CompletionContext.Value,
+                }
+            },
+        },
+    };
+
+    let receiver_end = if context == CompletionContext.Member && anchor >= 2u64 {
+        Option<Position>.Some(tokens[anchor - 2u64].span.end)
+    } else { Option<Position>.None };
+    CompletionPosition(prefix, replace, context, receiver_end)
+}
+
+fn is_type_introducer(token: Token&) -> bool {
+    match token.kind() {
+        Punctuator(kind) => *kind == PunctuatorKind.Colon ||
+        *kind == PunctuatorKind.Arrow || *kind == PunctuatorKind.LAngle,
+        _ => false,
+    }
+}

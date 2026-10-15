@@ -1,0 +1,152 @@
+"""CFG cleanup: eliminate dead blocks, order blocks, and guard termination."""
+from __future__ import annotations
+
+from yianc.analysis.ty.context import TypeCtx
+from yianc.codegen.cfg import ir as IR
+from yianc.codegen.cfg.module import CfgFunction, CfgModule
+from yianc.codegen.error import CodegenError
+
+
+def _eliminate_dead_code(func: IR.Function) -> None:
+    """Remove blocks that are not reachable from the entry block.
+
+    Performs a BFS from the entry block following all forward edges
+    (terminator targets), then filters ``func.blocks`` to only
+    include reachable blocks.  Phi nodes in surviving blocks are
+    cleaned up to remove incoming entries from deleted blocks.
+    """
+    # ── collect reachable blocks via BFS ──
+    # Block is an unhashable dataclass, so track via id(…).
+    reachable_ids: set[int] = set()
+    worklist = [func.entry]
+
+    while worklist:
+        block = worklist.pop()
+        if id(block) in reachable_ids:
+            continue
+        reachable_ids.add(id(block))
+
+        if block.terminator is None:
+            continue
+
+        term = block.terminator
+        match term:
+            case IR.Br():
+                worklist.append(term.target)
+            case IR.CondBr():
+                worklist.append(term.then_block)
+                worklist.append(term.else_block)
+            case IR.Ret() | IR.Panic() | IR.RuntimeFail() | IR.ProcessExit() | IR.Unreachable():
+                pass
+
+    # ── filter blocks ──
+    func.blocks = [b for b in func.blocks if id(b) in reachable_ids]
+
+    # ── clean up phi nodes ──
+    for block in func.blocks:
+        surviving_phis: list[IR.Phi] = []
+        for phi in block.phis:
+            phi.incoming = [
+                (pred, val) for pred, val in phi.incoming if id(pred) in reachable_ids
+            ]
+            if phi.incoming:
+                surviving_phis.append(phi)
+        block.phis = surviving_phis
+
+
+def _sort_blocks_rpo(func: IR.Function) -> None:
+    """Reorder ``func.blocks`` in reverse post-order.
+
+    Reverse post-order guarantees that for every forward edge
+    A -> B in the CFG, block A appears before block B in the
+    ordered list.  This ensures that when the LLVM translator
+    iterates blocks in list order, every phi node's predecessor
+    values have already been registered.
+
+    Back edges (edges that form cycles, e.g. loop back edges)
+    are detected via an ``in_progress`` set and are skipped.
+    This is safe because loop headers in the current lowering
+    do not carry phi nodes that depend on back-edge values.
+    """
+    # ── build successor map (same pattern as _eliminate_dead_code) ──
+    successors: dict[int, list[IR.Block]] = {}
+    for block in func.blocks:
+        succs: list[IR.Block] = []
+        if block.terminator is not None:
+            match block.terminator:
+                case IR.Br(target=target):
+                    succs.append(target)
+                case IR.CondBr(then_block=then, else_block=else_):
+                    succs.append(then)
+                    succs.append(else_)
+                case IR.Unreachable():
+                    pass
+                case IR.Ret() | IR.Panic() | IR.RuntimeFail() | IR.ProcessExit():
+                    pass
+        successors[id(block)] = succs
+
+    # ── add phi incoming edges ──
+    # If block B has a phi with incoming from block P, P must appear
+    # before B.  Add B as a successor of P so the DFS visits P first.
+    for block in func.blocks:
+        for phi in block.phis:
+            for pred, _ in phi.incoming:
+                successors.setdefault(id(pred), []).append(block)
+
+    # ── DFS from entry, collecting postorder ──
+    visited: set[int] = set()
+    in_progress: set[int] = set()
+    postorder: list[IR.Block] = []
+
+    def dfs(block: IR.Block) -> None:
+        bid = id(block)
+        if bid in visited:
+            return
+        if bid in in_progress:
+            return  # back edge — block already on the DFS stack, skip
+        in_progress.add(bid)
+        for succ in successors.get(bid, []):
+            dfs(succ)
+        in_progress.discard(bid)
+        visited.add(bid)
+        postorder.append(block)
+
+    dfs(func.entry)
+
+    # RPO = reverse of postorder
+    # After DCE every block is reachable from entry, so |rpo| == |blocks|
+    func.blocks = list(reversed(postorder))
+
+
+def _guard_termination(record: CfgFunction) -> None:
+    """Ensure every block has a terminator.
+
+    - void-returning functions: patch unterminated blocks with ``Ret(void_reg)``.
+    - non-void-returning functions: raise ``CodegenError`` if any block is unterminated.
+    """
+    func = record.function
+    for block in func.blocks:
+        if block.terminator is not None:
+            continue
+        if record.return_type == TypeCtx.void_id:
+            block.terminator = IR.Ret(record.void_value())
+        else:
+            raise CodegenError(
+                f"Function '{func.name}' has unterminated block '{block.label}'; "
+                f"non-void functions must have explicit return in all control paths.",
+                record.span,
+            )
+
+
+class Cleanup:
+    """Apply cleanup to every function in a lowered CFG module."""
+
+    def __init__(self, module: CfgModule) -> None:
+        self.__module = module
+
+    def run(self) -> None:
+        for record in self.__module.functions.values():
+            func = record.function
+            _eliminate_dead_code(func)
+            _sort_blocks_rpo(func)
+            _guard_termination(record)

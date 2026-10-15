@@ -1,0 +1,64 @@
+from yianc.analysis.lowering.checker import ExprChecker;
+from yianc.analysis.ty.relations import compatible;
+from yianc.common.ids import TypeId, HirId;
+from yianc.frontend.source import Span;
+from yianc.analysis.hir.node import HirKind, If;
+from yianc.diagnostics.model import AnalysisError;
+from std.core.iter import Iterator, IntoIterator;
+from std.core.result import Result;
+from std.core.option import Option;
+
+impl ExprChecker {
+    pub fn branch(span: Span, condition: HirId, yes: HirId, no: Option<HirId>) -> Result<HirId, AnalysisError> {
+        match no {
+            Some(otherwise) => {
+                let left = self.type_of(yes);
+                let right = self.type_of(otherwise);
+                let common = if compatible(self.ctx, left, right) {
+                    right
+                } elif compatible(self.ctx, right, left) {
+                    left
+                } else {
+                    return Result<HirId, AnalysisError>.Err(self.error(span, "branch types differ"));
+                };
+                let then_value = self.coerce(yes, common)?;
+                let else_value = self.coerce(otherwise, common)?;
+                Result<HirId, AnalysisError>.Ok(self.node(span, common, false, HirKind.If(If(condition, then_value, Option<HirId>.Some(else_value)))))
+            },
+            None => Result<HirId, AnalysisError>.Ok(self.node(span, self.ctx.primitives.void, false, HirKind.If(If(condition, yes, no)))),
+        }
+    }
+
+    pub fn loop_result(span: Span) -> Result<TypeId, AnalysisError> {
+        let frame = self.loops.len() - 1;
+        let result = self.ctx.primitives.never;
+
+        for id in self.loops[frame].exits() {
+            let type_id = match &self.ctx.session.hir.require(*id)?.kind {
+                Break(value) => match value {
+                    Some(id) => self.type_of(*id), None => self.ctx.primitives.void
+                },
+                _ => return Result<TypeId, AnalysisError>.Err(AnalysisError.internal("invalid loop exit node")),
+            };
+
+            if compatible(self.ctx, result, type_id) {
+                result = type_id;
+            } elif !compatible(self.ctx, type_id, result) {
+                return Result<TypeId, AnalysisError>.Err(self.error(span, "loop exits have incompatible value types"));
+            }
+        }
+
+        for id in self.loops[frame].exits() {
+            match &self.ctx.session.hir.require(*id)?.kind {
+                Break(value) => match value {
+                    Some(id) => {
+                        *value = Option<HirId>.Some(self.coerce(*id, result)?);
+                    }, None => {}
+                },
+                _ => {},
+            }
+        }
+
+        Result<TypeId, AnalysisError>.Ok(result)
+    }
+}
