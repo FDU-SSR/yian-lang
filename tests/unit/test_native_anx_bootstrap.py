@@ -435,6 +435,99 @@ class NativeAnxBootstrapTests(unittest.TestCase):
             self.assertEqual((prefix / "share/yian/.native-install").read_bytes(), previous_marker)
             self.assertFalse(python_called.exists())
 
+    def test_lsp_uninstall_allows_reinstall(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="native lsp reinstall ") as temporary:
+            root = Path(temporary)
+            prefix = root / "installed prefix"
+            bundle = root / "bundle"
+            binaries = bundle / "bin"
+            binaries.mkdir(parents=True)
+            for name in ("yianc", "anx", "yian-lsp"):
+                (binaries / name).write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+                (binaries / name).chmod(0o755)
+
+            data = bundle / "share/yian"
+            data.mkdir(parents=True)
+            (data / "resource").write_text("shared resources\n", encoding="utf-8")
+            resource_hash = tree_sha256(data)
+            (data / ".build-info").write_text('{"format": 1}\n', encoding="utf-8")
+            (data / ".native-install").write_text(
+                "yian-native-install-v1\n"
+                f"yianc={file_sha256(binaries / 'yianc')}\n"
+                f"anx={file_sha256(binaries / 'anx')}\n"
+                f"resources={resource_hash}\n"
+                f"build_info_sha256={file_sha256(data / '.build-info')}\n"
+                "yianc_build_mode=raw\nanx_build_mode=raw\noptimization=2\npointer_mode=raw\n",
+                encoding="utf-8",
+            )
+            lsp_data = bundle / "share/yian-lsp"
+            lsp_data.mkdir()
+            (lsp_data / ".build-info").write_text('{"format": 1}\n', encoding="utf-8")
+            (lsp_data / ".native-install").write_text(
+                "yian-lsp-install-v1\n"
+                f"sha256={file_sha256(binaries / 'yian-lsp')}\n"
+                f"build_info_sha256={file_sha256(lsp_data / '.build-info')}\n"
+                "build_mode=raw\noptimization=2\n",
+                encoding="utf-8",
+            )
+
+            def run_script(script: str, *arguments: str) -> None:
+                process = subprocess.run(
+                    ["bash", str(ROOT / "scripts" / script), "--prefix", str(prefix), *arguments],
+                    capture_output=True, text=True, check=False,
+                )
+                self.assertEqual(process.returncode, 0, f"{process.stdout}\n{process.stderr}")
+
+            run_script("_toolchain/publish.sh", "--bundle", str(bundle))
+            run_script("uninstall.sh", "--lsp-only")
+            self.assertFalse((prefix / "bin/yian-lsp").exists())
+            self.assertFalse((prefix / "share/yian-lsp").exists())
+            for name in ("yianc", "anx"):
+                self.assertEqual((prefix / "bin" / name).read_bytes(), (binaries / name).read_bytes())
+            self.assertEqual((prefix / "share/yian/resource").read_text(), "shared resources\n")
+
+            run_script("_toolchain/publish.sh", "--bundle", str(bundle))
+            self.assertEqual(
+                (prefix / "share/yian-lsp/.build-info").read_bytes(),
+                (lsp_data / ".build-info").read_bytes(),
+            )
+            self.assertTrue((prefix / "bin/yian-lsp").is_file())
+            run_script("uninstall.sh")
+            self.assertFalse((prefix / "share/yian-lsp").exists())
+            self.assertFalse((prefix / "share/yian").exists())
+            for name in ("yianc", "anx", "yian-lsp"):
+                self.assertFalse((prefix / "bin" / name).exists())
+
+    def test_lsp_uninstall_preserves_unmatched_build_info(self) -> None:
+        for kind in ("modified", "unrecorded", "symlink"):
+            with self.subTest(kind=kind), tempfile.TemporaryDirectory(prefix="lsp metadata ") as temporary:
+                prefix = Path(temporary) / "prefix"
+                data = prefix / "share/yian-lsp"
+                data.mkdir(parents=True)
+                original = Path(temporary) / "original.json"
+                original.write_text('{"format": 1}\n', encoding="utf-8")
+                info = data / ".build-info"
+                if kind == "symlink":
+                    info.symlink_to(original)
+                else:
+                    info.write_text("modified metadata\n", encoding="utf-8")
+                marker = data / ".native-install"
+                marker_text = "yian-lsp-install-v1\n"
+                if kind != "unrecorded":
+                    marker_text += f"build_info_sha256={file_sha256(original)}\n"
+                marker.write_text(marker_text, encoding="utf-8")
+                previous_info = info.read_bytes()
+                process = subprocess.run(
+                    ["bash", str(ROOT / "scripts/uninstall.sh"), "--lsp-only", "--prefix", str(prefix)],
+                    capture_output=True, text=True, check=False,
+                )
+                self.assertEqual(process.returncode, 1, f"{process.stdout}\n{process.stderr}")
+                self.assertIn("Preserving modified or unmanaged language-server build-info", process.stderr)
+                self.assertEqual(info.read_bytes(), previous_info)
+                self.assertEqual(marker.read_text(), marker_text)
+                self.assertEqual(info.is_symlink(), kind == "symlink")
+                self.assertEqual(original.read_text(), '{"format": 1}\n')
+
     def test_publish_restores_previous_install(self) -> None:
         with tempfile.TemporaryDirectory(prefix="native install rollback ") as temporary:
             root = Path(temporary)

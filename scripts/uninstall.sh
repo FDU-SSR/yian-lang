@@ -72,6 +72,7 @@ NATIVE_MARKER="$NATIVE_DATA_DIR/.native-install"
 LSP_TARGET="$BIN_DIR/yian-lsp"
 LSP_DATA_DIR="$SHARE_DIR/yian-lsp"
 LSP_MARKER="$LSP_DATA_DIR/.native-install"
+LSP_BUILD_INFO="$LSP_DATA_DIR/.build-info"
 
 for directory in "$BIN_DIR" "$SHARE_DIR"; do
     [[ ! -L "$directory" ]] || die "refusing a symlinked installation directory: $directory"
@@ -102,11 +103,18 @@ if [[ -f "$LSP_MARKER" ]] && grep -Fxq 'yian-lsp-install-v1' "$LSP_MARKER"; then
     fi
 
     if [[ "$LSP_REMAINS" -eq 0 ]]; then
-        rm -f -- "$LSP_MARKER"
-        if rmdir "$LSP_DATA_DIR" 2>/dev/null; then
-            printf 'Removed language-server management data under %s\n' "$LSP_DATA_DIR"
+        EXPECTED_LSP_INFO_HASH="$(awk -F= '$1 == "build_info_sha256" { print $2; exit }' "$LSP_MARKER")"
+        if [[ ! -e "$LSP_BUILD_INFO" && ! -L "$LSP_BUILD_INFO" ]] || \
+            { [[ ! -L "$LSP_BUILD_INFO" ]] && matches_digest "$LSP_BUILD_INFO" "$EXPECTED_LSP_INFO_HASH"; }; then
+            rm -f -- "$LSP_BUILD_INFO" "$LSP_MARKER"
+            if rmdir "$LSP_DATA_DIR" 2>/dev/null; then
+                printf 'Removed language-server management data under %s\n' "$LSP_DATA_DIR"
+            else
+                printf 'Kept nonempty management directory %s\n' "$LSP_DATA_DIR"
+            fi
         else
-            printf 'Kept nonempty management directory %s\n' "$LSP_DATA_DIR"
+            printf 'Preserving modified or unmanaged language-server build-info and its record: %s\n' "$LSP_BUILD_INFO" >&2
+            LSP_FAILURE=1
         fi
     fi
 else
