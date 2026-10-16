@@ -10,6 +10,18 @@ YIAN is a statically typed programming language with a Python recovery compiler 
 
 The installed `yianc`, `anx`, and `yian-lsp` commands are native executables. The language server uses the same installed toolchain resources and LLVM runtime libraries.
 
+For a fresh development environment, install the Python recovery dependency from the requirements file, then install the LLVM and native C build tools system-wide:
+
+```bash
+conda create -n yian-env python=3.12 -y
+conda activate yian-env
+python -m pip install -r python/requirements.txt
+bash scripts/setup_llvm_toolchain.sh
+export YIAN_CC=/usr/lib/llvm-22/bin/clang
+```
+
+`setup_llvm_toolchain.sh` does not depend on Python. It installs missing LLVM 22 tools from the official `apt.llvm.org` repository and native C build tools from the distribution repository using `sudo`, then switches unversioned LLVM commands to version 22. Use `--check` to report the current state without installing anything. The script does not install Python packages.
+
 ## Install
 
 Build and install native `yianc` and `anx`, the standard library, and the runtime from this checkout:

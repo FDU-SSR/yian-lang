@@ -24,19 +24,18 @@ yianc lib/src tests/basic/type/alias/imported_scope/types.an tests/basic/type/al
 
 ### 1.1 工具链要求
 
-Python 恢复编译器源码使用 Python 3.12 的泛型函数语法，冷启动因此需要 Python 3.12+。安装元数据和
-安装脚本的最低版本要求均为 Python 3.12；日常 native 编译器不通过 Python CLI 启动。
+Python 恢复编译器源码使用 Python 3.12 的泛型函数语法，冷启动因此需要 Python 3.12+。Python
+安装元数据和冷启动脚本要求 Python 3.12+；LLVM 工具链安装脚本是独立的 shell 脚本，不依赖 Python。日常 native 编译器不通过 Python CLI 启动。
 
 编译器依赖 **LLVM 22**：`llvmlite 0.49`（自带 LLVM 22）、`clang` 22，以及 LLVM 工具（`opt`、`llvm-dis`、`llvm-link`、`llvm-config`）。
 
 ```bash
+python -m pip install -r python/requirements.txt      # Install the Python recovery dependency.
+scripts/setup_llvm_toolchain.sh                    # Install missing LLVM 22 and native C build packages; requires sudo.
 scripts/setup_llvm_toolchain.sh --check            # Report current versions without changes.
-scripts/setup_llvm_toolchain.sh --with-clang-22    # Install LLVM 22 and switch system defaults to 22; requires sudo.
-scripts/setup_llvm_toolchain.sh --with-conda-clang # Alternatively install clang 22 into the current conda environment without sudo.
-scripts/setup_llvm_toolchain.sh --python PATH      # Select the interpreter; defaults to $PYTHON, then python3.
 ```
 
-脚本把 llvmlite 0.49 装进目标环境；`--check` 只报告 llvmlite 与各工具的实际版本。
+`python/requirements.txt` 固定 Python 恢复编译器使用的 llvmlite 版本。LLVM 工具链安装脚本本身不依赖 Python。默认运行 `setup_llvm_toolchain.sh` 会用 sudo 从系统仓库安装缺少的 C 构建工具，并从官方 `apt.llvm.org` 安装缺少的 LLVM 工具，然后切换未版本化命令到 LLVM 22；已安装的软件包保持当前版本。脚本不安装 Python 包。`--check` 只报告各 LLVM 工具的实际版本。
 
 链接阶段使用的 C 编译器按 `$YIAN_CC` → `clang` → `cc` 选择，不隐式回落到带版本号的 `clang-18`/`clang-20`：
 

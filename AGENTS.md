@@ -41,18 +41,23 @@ The Python recovery compiler is maintained for the explicit cold bootstrap input
 
 ## Environment and installation
 
-The supported development environment is Linux with Python 3.12 or newer and the LLVM 22 toolchain: llvmlite 0.49 (which bundles LLVM 22), clang 22, and the LLVM tools (`opt`, `llvm-dis`, `llvm-link`, `llvm-config`). In this workspace, run compiler, package and validation commands in the `yian-env` conda environment. Daily compilation, package operations, tests and benchmarks use installed native binaries; Python runs their orchestration scripts. Python and llvmlite are required by cold recovery:
+The supported development environment is Linux with Python 3.12 or newer and the LLVM 22 toolchain: llvmlite 0.49 (which bundles LLVM 22), clang 22, and the LLVM tools (`opt`, `llvm-dis`, `llvm-link`, `llvm-config`). In this workspace, run compiler, package and validation commands in the `yian-env` conda environment. Daily compilation, package operations, tests and benchmarks use installed native binaries; Python runs their orchestration scripts. Python and llvmlite are required by cold recovery. Install Python dependencies from `python/requirements.txt`; `scripts/setup_llvm_toolchain.sh` installs missing system LLVM and native C build packages and does not install Python packages:
 
 ```bash
+conda create -n yian-env python=3.12 -y
+conda activate yian-env
+python -m pip install -r python/requirements.txt
+bash scripts/setup_llvm_toolchain.sh
+export YIAN_CC=/usr/lib/llvm-22/bin/clang
 conda run --no-capture-output -n yian-env bash scripts/bootstrap_toolchain.sh --prefix "$HOME/.local" --python python
 "$HOME/.local/bin/yianc" --help
 "$HOME/.local/bin/anx" --help
 conda run --no-capture-output -n yian-env bash scripts/setup_llvm_toolchain.sh --check
 ```
 
-`scripts/setup_llvm_toolchain.sh` installs llvmlite into the selected environment. `--with-clang-22` also installs system clang/LLVM packages and switches unversioned commands to 22; `--with-conda-clang` installs the tools into the conda environment. `--check` only reports. Native linking and package C-shim compilation select `YIAN_CC`, then `clang`, then `cc`. `runtime/build.py` uses `clang` and `llvm-ar` on PATH independently of `YIAN_CC`. LLVM consumer packages also validate their native toolchain requirements.
+`python/requirements.txt` pins llvmlite for the Python recovery compiler. `scripts/setup_llvm_toolchain.sh` does not depend on Python; by default it installs missing native C build packages from the distribution repository and LLVM 22 packages from the official `apt.llvm.org` repository using sudo, then switches unversioned commands to LLVM 22. It does not install Python packages; `--check` only reports LLVM tool versions. Native linking and package C-shim compilation select `YIAN_CC`, then `clang`, then `cc`. `runtime/build.py` uses `clang` and `llvm-ar` on PATH independently of `YIAN_CC`. LLVM consumer packages also validate their native toolchain requirements.
 
-`python/pyproject.toml` defines the Python recovery compiler package and its strict Pyright scope. The native package manager is in `bootstrap/anx/`. The language server is the native YIAN package in `lsp/`; only the warm refresh builds and installs it, together with both compiler tools. `python/requirements.txt` also contains benchmark and development dependencies, so it is not the minimal compiler dependency list. Direct Python compiler module invocations from a checkout need `PYTHONPATH=python`; these are reserved for explicit recovery work.
+`python/pyproject.toml` defines the Python recovery compiler package and its strict Pyright scope. The native package manager is in `bootstrap/anx/`. The language server is the native YIAN package in `lsp/`; only the warm refresh builds and installs it, together with both compiler tools. `python/requirements.txt` contains the pinned llvmlite dependency needed for cold recovery; the Python compiler package also declares llvmlite in `pyproject.toml`. Direct Python compiler module invocations from a checkout need `PYTHONPATH=python`; these are reserved for explicit recovery work.
 
 ```bash
 conda run --no-capture-output -n yian-env bash scripts/bootstrap_toolchain.sh --prefix "$HOME/.local" --python python

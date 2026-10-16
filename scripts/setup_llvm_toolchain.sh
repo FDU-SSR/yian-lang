@@ -1,26 +1,32 @@
 #!/usr/bin/env bash
 #
-# Install the LLVM toolchain YIAN needs: llvmlite (which bundles the LLVM
-# libraries the compiler links against) and, optionally, clang plus the LLVM
-# tools at the same major version.
+# Install missing LLVM and native C toolchain packages used by YIAN. Python
+# package dependencies are managed separately through python/requirements.txt.
 #
-#   llvmlite   pip into the target environment; no sudo.  Always installed.
-#   clang      either conda-forge into the environment (no sudo) or
-#              apt.llvm.org system-wide (sudo).  The system-wide route also
-#              switches the unversioned commands (clang, clang-format, opt,
-#              llvm-dis, lld, ...) to that version with update-alternatives.
+# By default, missing packages are installed from the system and apt.llvm.org
+# repositories using sudo, then unversioned commands are switched to LLVM ${LLVM_MAJOR}.
 #
 # Usage: scripts/setup_llvm_toolchain.sh [options]
 set -euo pipefail
 
-# llvmlite 0.49.0 bundles LLVM 22.1.0.  Keep in sync with the llvmlite pin in
-# python/requirements.txt / python/pyproject.toml and with the version note in AGENTS.md.
-TARGET_LLVMLITE="0.49.0"
 LLVM_MAJOR=22
 LLVM_PREFIX="/usr/lib/llvm-${LLVM_MAJOR}"
-APT_PACKAGES="clang-${LLVM_MAJOR} clang-tools-${LLVM_MAJOR} clang-format-${LLVM_MAJOR} clangd-${LLVM_MAJOR} lld-${LLVM_MAJOR} llvm-${LLVM_MAJOR}-tools libclang-${LLVM_MAJOR}-dev"
-CONDA_PACKAGES="clang=${LLVM_MAJOR} clangxx=${LLVM_MAJOR} llvm-tools=${LLVM_MAJOR} clang-format=${LLVM_MAJOR}"
-WHEEL_CACHE="/tmp/whl"
+NATIVE_PACKAGES=(build-essential)
+LLVM_PACKAGES=(
+    clang-${LLVM_MAJOR}
+    clang-tools-${LLVM_MAJOR}
+    clang-format-${LLVM_MAJOR}
+    clangd-${LLVM_MAJOR}
+    lld-${LLVM_MAJOR}
+    llvm-${LLVM_MAJOR}
+    llvm-${LLVM_MAJOR}-dev
+    llvm-${LLVM_MAJOR}-tools
+    libclang-${LLVM_MAJOR}-dev
+)
+APT_PACKAGES=("${NATIVE_PACKAGES[@]}" "${LLVM_PACKAGES[@]}")
+LLVM_KEY_URL="https://apt.llvm.org/llvm-snapshot.gpg.key"
+LLVM_KEYRING="/etc/apt/keyrings/apt.llvm.org.asc"
+LLVM_SOURCE_LIST="/etc/apt/sources.list.d/llvm-${LLVM_MAJOR}.list"
 
 # Commands whose unversioned form is switched to the installed LLVM.  Each one
 # is handled only when the corresponding binary exists in ${LLVM_PREFIX}/bin.
@@ -28,39 +34,28 @@ LLVM_TOOLS="clang clang++ clang-cpp clang-format clang-tidy clangd lld ld.lld \
 opt llc llvm-as llvm-dis llvm-link llvm-ar llvm-ranlib llvm-nm llvm-objdump \
 llvm-objcopy llvm-strip llvm-config llvm-symbolizer llvm-profdata llvm-cov"
 
-PYTHON="${PYTHON:-}"
-PYTHON_EXPLICIT=0
-[[ -n "$PYTHON" ]] && PYTHON_EXPLICIT=1
 CHECK_ONLY=0
-WITH_CLANG=0
-WITH_CONDA_CLANG=0
 
 usage() {
     cat <<EOF
-Install the LLVM ${LLVM_MAJOR} toolchain used by YIAN.
+Check and install the LLVM ${LLVM_MAJOR} toolchain used by YIAN.
 
 Usage: scripts/setup_llvm_toolchain.sh [options]
 
 Options:
   --check             Only report the current state; install nothing.
-  --with-conda-clang  Also install clang / clangxx / llvm-tools / clang-format
-                      from conda-forge into the target environment (no sudo).
-                      The environment's bin/ then shadows the system commands
-                      while it is active.
-  --with-clang-22     Also install the LLVM ${LLVM_MAJOR} packages from
-                      apt.llvm.org (sudo) and switch the unversioned commands
-                      (clang, clang++, clang-format, opt, llvm-dis, lld, ...) to
-                      ${LLVM_MAJOR} with update-alternatives.
-  --python PATH       Python interpreter to use (default: \$PYTHON, then python3).
   -h, --help          Show this help.
 
-Environment:
-  PYTHON              Same as --python.
+Without --check, missing LLVM and native C toolchain packages are installed
+from the system and apt.llvm.org repositories using sudo. Existing packages
+are kept at their installed versions.
 
 Typical fresh setup:
 
   conda create -n yian-env python=3.12 -y && conda activate yian-env
-  scripts/setup_llvm_toolchain.sh --with-clang-22
+  python -m pip install -r python/requirements.txt
+  scripts/setup_llvm_toolchain.sh
+  export YIAN_CC="/usr/lib/llvm-${LLVM_MAJOR}/bin/clang"
   scripts/bootstrap_toolchain.sh --python "\$CONDA_PREFIX/bin/python"
   scripts/refresh_toolchain.sh --anx "\$HOME/.local/bin/anx" --yianc "\$HOME/.local/bin/yianc"
   python3 scripts/run_tests.py --all -q
@@ -76,35 +71,10 @@ note() { printf '%s\n' "$*"; }
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --check)             CHECK_ONLY=1; shift ;;
-        --with-clang-22)     WITH_CLANG=1; shift ;;
-        --with-conda-clang)  WITH_CONDA_CLANG=1; shift ;;
-        --python)
-            [[ $# -ge 2 ]] || die "--python requires a path"
-            PYTHON="$2"; PYTHON_EXPLICIT=1; shift 2 ;;
         -h|--help)           usage; exit 0 ;;
         *)                   die "unknown option: $1 (try --help)" ;;
     esac
 done
-
-# ---- locate and validate the interpreter ------------------------------------
-if [[ -z "$PYTHON" ]]; then
-    if command -v python3 >/dev/null 2>&1; then
-        PYTHON="python3"
-    elif command -v python >/dev/null 2>&1; then
-        PYTHON="python"
-    else
-        die "no python3 on PATH; pass --python PATH"
-    fi
-fi
-command -v "$PYTHON" >/dev/null 2>&1 || die "python not found: $PYTHON"
-"$PYTHON" -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 11) else 1)' \
-    || die "$("$PYTHON" -V 2>&1) is too old; YIAN needs Python >= 3.11"
-note "Interpreter: $("$PYTHON" -c 'import sys; print(sys.executable)')"
-if [[ "$PYTHON_EXPLICIT" -eq 0 && "${CONDA_DEFAULT_ENV:-}" == "base" ]]; then
-    note "warning: auto-detected interpreter belongs to the 'base' conda environment."
-    note "         YIAN is developed in its own environment; use 'conda activate <env>'"
-    note "         or pass --python <env>/bin/python unless you really mean to install there."
-fi
 
 # ---- reporting helpers ------------------------------------------------------
 version_of() {
@@ -120,18 +90,6 @@ version_of() {
     fi
 }
 
-report_llvmlite() {
-    "$PYTHON" - <<'PYEOF' || true
-try:
-    import llvmlite
-    import llvmlite.binding as binding
-except Exception as exc:                      # pragma: no cover - diagnostic path
-    print(f"  llvmlite:     not importable ({exc})")
-else:
-    print(f"  llvmlite:     {llvmlite.__version__}  ->  LLVM {'.'.join(map(str, binding.llvm_version_info))}")
-PYEOF
-}
-
 report_tools() {
     local t path
     for t in clang clang++ clang-format opt llc llvm-dis llvm-link llvm-config lld ld.lld; do
@@ -145,10 +103,6 @@ report_tools() {
 }
 
 report_state() {
-    report_llvmlite
-    if "$PYTHON" -c 'import numba' >/dev/null 2>&1; then
-        note "  warning: numba is installed and pins llvmlite; installing may break it."
-    fi
     report_tools
 }
 
@@ -172,10 +126,101 @@ smoke_test_cc() {
     if "$cc" -O2 "$src" -o "$exe" 2>/dev/null && "$exe"; then
         note "  smoke test: $("$cc" --version | head -1) -> compile+link+run OK"
     else
-        note "  warning: $cc could not compile and link a trivial program;"
-        note "           check the installation before pointing YIAN at it."
+        rm -f "$src" "$exe"
+        die "$cc could not compile, link, and run a trivial program"
     fi
     rm -f "$src" "$exe"
+}
+
+package_is_installed() {
+    local status
+    status="$(dpkg-query -W -f='${db:Status-Status}' "$1" 2>/dev/null || true)"
+    [[ "$status" == "installed" ]]
+}
+
+ensure_llvm_repository() {
+    local codename
+    local -a download_packages=()
+
+    [[ -r /etc/os-release ]] || die "cannot determine the Linux distribution from /etc/os-release"
+    # shellcheck disable=SC1091
+    . /etc/os-release
+    codename="${UBUNTU_CODENAME:-${VERSION_CODENAME:-}}"
+    if [[ -z "$codename" ]] && command -v lsb_release >/dev/null 2>&1; then
+        codename="$(lsb_release -cs 2>/dev/null || true)"
+    fi
+    [[ -n "$codename" ]] || die "cannot determine the distribution codename for apt.llvm.org"
+
+    sudo install -d -m 0755 /etc/apt/keyrings
+    if [[ ! -s "$LLVM_KEYRING" ]]; then
+        package_is_installed ca-certificates || download_packages+=(ca-certificates)
+        if ! command -v curl >/dev/null 2>&1 && ! command -v wget >/dev/null 2>&1; then
+            download_packages+=(curl)
+        fi
+        if ((${#download_packages[@]} > 0)); then
+            note "Installing HTTPS download prerequisites from the distribution repository ..."
+            sudo apt-get update || die "apt-get update failed while preparing the repository key download"
+            sudo apt-get install -y --no-upgrade "${download_packages[@]}" \
+                || die "failed to install repository key download prerequisites"
+        fi
+
+        note "Downloading the official apt.llvm.org signing key ..."
+        if command -v curl >/dev/null 2>&1; then
+            if ! curl -fsSL "$LLVM_KEY_URL" | sudo tee "$LLVM_KEYRING" >/dev/null; then
+                sudo rm -f "$LLVM_KEYRING"
+                die "failed to download the apt.llvm.org signing key"
+            fi
+        elif ! wget -qO- "$LLVM_KEY_URL" | sudo tee "$LLVM_KEYRING" >/dev/null; then
+            sudo rm -f "$LLVM_KEYRING"
+            die "failed to download the apt.llvm.org signing key"
+        fi
+        sudo chmod 0644 "$LLVM_KEYRING"
+    fi
+
+    note "Configuring the official apt.llvm.org repository for ${codename} ..."
+    printf 'deb [signed-by=%s] https://apt.llvm.org/%s/ llvm-toolchain-%s-%s main\n' \
+        "$LLVM_KEYRING" "$codename" "$codename" "$LLVM_MAJOR" \
+        | sudo tee "$LLVM_SOURCE_LIST" >/dev/null
+}
+
+install_missing_toolchain() {
+    local package
+    local -a missing=() missing_llvm=()
+
+    command -v apt-get >/dev/null 2>&1 || die "automatic installation requires apt-get; use --check to inspect tools only"
+    command -v dpkg-query >/dev/null 2>&1 || die "automatic installation requires dpkg-query; use --check to inspect tools only"
+    command -v sudo >/dev/null 2>&1 || die "automatic installation requires sudo; use --check to inspect tools only"
+
+    for package in "${NATIVE_PACKAGES[@]}"; do
+        if ! package_is_installed "$package"; then
+            missing+=("$package")
+        fi
+    done
+    for package in "${LLVM_PACKAGES[@]}"; do
+        if ! package_is_installed "$package"; then
+            missing+=("$package")
+            missing_llvm+=("$package")
+        fi
+    done
+
+    if ((${#missing[@]} > 0)); then
+        note "Missing system packages: ${missing[*]}"
+        if ((${#missing_llvm[@]} > 0)); then
+            ensure_llvm_repository
+        fi
+        sudo apt-get update || die "apt-get update failed"
+        sudo apt-get install -y --no-upgrade "${missing[@]}" \
+            || die "failed to install the missing LLVM toolchain packages"
+    else
+        note "All required system packages are already installed."
+    fi
+
+    for package in "${APT_PACKAGES[@]}"; do
+        package_is_installed "$package" || die "required package is still missing after installation: $package"
+    done
+
+    switch_defaults_to "$LLVM_MAJOR"
+    smoke_test_cc "${LLVM_PREFIX}/bin/clang"
 }
 
 # ---- report current state ---------------------------------------------------
@@ -189,76 +234,10 @@ if [[ "$CHECK_ONLY" -eq 1 ]]; then
     exit 0
 fi
 
-# ---- llvmlite ---------------------------------------------------------------
+# ---- install missing LLVM packages from apt.llvm.org (sudo) -----------------
 note ""
-note "Installing llvmlite==${TARGET_LLVMLITE} (LLVM ${LLVM_MAJOR}) ..."
-PIP_ARGS=(install --upgrade "llvmlite==${TARGET_LLVMLITE}")
-if ! "$PYTHON" -m pip "${PIP_ARGS[@]}"; then
-    if [[ -d "$WHEEL_CACHE" ]]; then
-        note "pip failed; retrying from the local wheel cache $WHEEL_CACHE ..."
-        "$PYTHON" -m pip "${PIP_ARGS[@]}" --find-links "$WHEEL_CACHE" --no-index
-    else
-        die "pip install failed and no local wheel cache is available"
-    fi
-fi
-
-actual="$("$PYTHON" -c 'import llvmlite.binding as b; print(b.llvm_version_info[0])' 2>/dev/null || echo "?")"
-if [[ "$actual" != "$LLVM_MAJOR" ]]; then
-    note "warning: llvmlite reports LLVM $actual, expected $LLVM_MAJOR."
-fi
-
-# ---- optional clang (conda-forge, no sudo) ----------------------------------
-if [[ "$WITH_CONDA_CLANG" -eq 1 ]]; then
-    note ""
-    note "Installing clang / clangxx / llvm-tools / clang-format from conda-forge ..."
-    CONDA_EXE="$(command -v conda || true)"
-    if [[ -z "$CONDA_EXE" ]]; then
-        note "  warning: conda not found on PATH; use --with-clang-22 instead."
-    else
-        CONDA_PREFIX_TARGET="$("$PYTHON" -c 'import sys; print(sys.prefix)')"
-        note "  target environment: $CONDA_PREFIX_TARGET"
-        # shellcheck disable=SC2086
-        if "$CONDA_EXE" install -y -p "$CONDA_PREFIX_TARGET" -c conda-forge $CONDA_PACKAGES; then
-            ENV_CLANG="$CONDA_PREFIX_TARGET/bin/clang"
-            if [[ -x "$ENV_CLANG" ]]; then
-                smoke_test_cc "$ENV_CLANG"
-                note "  use it with: export YIAN_CC=$ENV_CLANG"
-            fi
-        else
-            note "  warning: conda install failed; see the output above."
-        fi
-    fi
-fi
-
-# ---- optional clang (apt.llvm.org, sudo) ------------------------------------
-if [[ "$WITH_CLANG" -eq 1 ]]; then
-    note ""
-    note "Installing LLVM ${LLVM_MAJOR} from apt.llvm.org and switching the defaults (needs sudo) ..."
-    if ! command -v apt-get >/dev/null 2>&1; then
-        note "  warning: apt-get not found; skipping."
-    else
-        CODENAME="$(lsb_release -cs 2>/dev/null || echo unknown)"
-        SOURCE_LIST="/etc/apt/sources.list.d/llvm-${LLVM_MAJOR}.list"
-        if [[ "$CODENAME" == "unknown" ]]; then
-            note "  warning: cannot detect the distribution codename; install LLVM ${LLVM_MAJOR} manually."
-            note "           See https://apt.llvm.org/ for the suite name."
-        else
-            if [[ ! -f "$SOURCE_LIST" ]]; then
-                note "  adding: deb http://apt.llvm.org/${CODENAME}/ llvm-toolchain-${CODENAME}-${LLVM_MAJOR} main"
-                printf 'deb http://apt.llvm.org/%s/ llvm-toolchain-%s-%s main\n' \
-                    "$CODENAME" "$CODENAME" "$LLVM_MAJOR" | sudo tee "$SOURCE_LIST" >/dev/null
-            fi
-            if sudo apt-get update && sudo apt-get install -y $APT_PACKAGES; then
-                switch_defaults_to "$LLVM_MAJOR"
-                smoke_test_cc "/usr/bin/clang"
-            else
-                note "  warning: installing the LLVM ${LLVM_MAJOR} packages failed."
-                note "           apt.llvm.org may not publish LLVM ${LLVM_MAJOR} for ${CODENAME};"
-                note "           nothing was switched."
-            fi
-        fi
-    fi
-fi
+note "Ensuring the LLVM ${LLVM_MAJOR} toolchain is installed ..."
+install_missing_toolchain
 
 # ---- final state ------------------------------------------------------------
 note ""
@@ -267,7 +246,7 @@ report_state
 
 note ""
 note "Next:"
-note "  scripts/bootstrap_toolchain.sh --python \"$("$PYTHON" -c 'import sys; print(sys.executable)')\""
+note "  scripts/bootstrap_toolchain.sh  # uses python3 by default"
 note "  scripts/refresh_toolchain.sh --anx \"\$HOME/.local/bin/anx\" --yianc \"\$HOME/.local/bin/yianc\"  # full native refresh, including LSP"
 note "  python3 scripts/run_tests.py --all -q"
 note "  PYRIGHT_PYTHON_FORCE_VERSION=latest pyright   # strict, from the project root"
