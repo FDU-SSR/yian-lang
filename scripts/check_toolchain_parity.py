@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run selected native compiler cases against fixed behavioral oracles."""
+"""Check the installed native toolchain against fixed behavioral oracles."""
 
 from __future__ import annotations
 
@@ -379,10 +379,18 @@ def oracle_passes(case_id: str, observation: dict[str, Json]) -> bool:
             and run.get("stdout") == ""
             and run.get("stderr") == ""
         )
-    if case_id == "package/std_usage":
+    if case_id in ("package/std_usage", "package/external-cwd"):
         package_map = observation.get("package_map")
         run = observation.get("run")
-        if not isinstance(package_map, dict) or not isinstance(run, dict):
+        command = observation.get("command")
+        project = (
+            Path(command[2])
+            if isinstance(command, list)
+            and len(command) > 2
+            and isinstance(command[2], str)
+            else None
+        )
+        if not isinstance(package_map, dict) or not isinstance(run, dict) or project is None:
             return False
         packages = package_map.get("packages")
         root_name = package_map.get("root")
@@ -394,8 +402,8 @@ def oracle_passes(case_id: str, observation: dict[str, Json]) -> bool:
             and root_name == "stdtest"
             and isinstance(root_package, dict)
             and root_package.get("kind") == "bin"
-            and root_package.get("sourceRoot") == str((Path(cast(str, observation["command"][2])) / "src").resolve())
-            and root_package.get("entry") == str((Path(cast(str, observation["command"][2])) / "src/main.an").resolve())
+            and root_package.get("sourceRoot") == str((project / "src").resolve())
+            and root_package.get("entry") == str((project / "src/main.an").resolve())
             and isinstance(std, dict)
             and std.get("sourceRoot") == observation.get("environment", {}).get("YIAN_LIB")
             and run.get("status") == 0
@@ -521,26 +529,50 @@ def _full(prefix: Path, report_path: Path) -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--case", action="append", dest="case_ids", help="Exact stable case ID; repeat to select cases.")
-    parser.add_argument("--pointer-mode", choices=("fat", "raw", "both"), default="both")
-    parser.add_argument("--list", action="store_true", help="Print native commands and cost without starting tools.")
-    parser.add_argument("--full", action="store_true", help="Run the native compiler corpus and native test suites.")
-    parser.add_argument("--report", type=Path, default=ROOT / "build/toolchain-workflows/toolchain-parity-report.json")
-    parser.add_argument("--prefix", type=Path, default=Path(os.environ.get("YIAN_INSTALL_PREFIX", Path.home() / ".local")))
-    args = parser.parse_args(argv)
-    if args.full and args.case_ids:
-        parser.error("--full cannot be combined with --case")
-    if args.full and args.pointer_mode != "both":
-        parser.error("--full uses the modes defined by native full verification; do not select --pointer-mode")
-    try:
-        selections = select_cases(args.case_ids)
-    except SelectionError as error:
-        parser.error(str(error))
-    modes = _modes(args.pointer_mode)
+    arguments = list(sys.argv[1:] if argv is None else argv)
+    if not arguments:
+        arguments.append("check")
+    elif arguments[0] not in ("check", "full", "-h", "--help"):
+        arguments.insert(0, "check")
 
-    if args.list:
-        if args.full:
+    parser = argparse.ArgumentParser(description=__doc__)
+    commands = parser.add_subparsers(dest="command", required=True)
+    common = argparse.ArgumentParser(add_help=False)
+    common.add_argument(
+        "--report",
+        type=Path,
+        default=ROOT / "build/toolchain-workflows/toolchain-parity-report.json",
+    )
+    common.add_argument(
+        "--prefix",
+        type=Path,
+        default=Path(os.environ.get("YIAN_INSTALL_PREFIX", Path.home() / ".local")),
+    )
+    common.add_argument(
+        "--list",
+        action="store_true",
+        help="Print the planned native commands without running them.",
+    )
+
+    check_parser = commands.add_parser(
+        "check", parents=[common], help="Run selected fixed native behavior oracles (default)."
+    )
+    check_parser.add_argument(
+        "--case",
+        action="append",
+        dest="case_ids",
+        help="Exact stable case ID; repeat to select cases.",
+    )
+    check_parser.add_argument(
+        "--pointer-mode", choices=("fat", "raw", "both"), default="both"
+    )
+    commands.add_parser(
+        "full", parents=[common], help="Run the native compiler corpus and native test suites."
+    )
+    args = parser.parse_args(arguments)
+
+    if args.command == "full":
+        if args.list:
             prefix = args.prefix.expanduser().resolve()
             print(json.dumps({
                 "mode": "full-native",
@@ -551,16 +583,22 @@ def main(argv: list[str] | None = None) -> int:
                                 "--implementation", "native", "--prefix", str(prefix)],
                 "note": "This delegates the full native corpus and suite selection; no tool refresh is performed.",
             }, ensure_ascii=False, indent=2))
-        else:
-            print(json.dumps(_preview(selections, modes, args.prefix.expanduser()), ensure_ascii=False, indent=2))
-        return 0
-    if args.full:
+            return 0
         try:
             return _full(args.prefix, args.report)
         except (IdentityError, NativeToolError) as error:
             _write_report(args.report, {"format": 2, "mode": "full-native", "status": "rejected", "error": str(error)})
             print(f"error: {error}", file=sys.stderr)
             return 1
+
+    try:
+        selections = select_cases(args.case_ids)
+    except SelectionError as error:
+        check_parser.error(str(error))
+    modes = _modes(args.pointer_mode)
+    if args.list:
+        print(json.dumps(_preview(selections, modes, args.prefix.expanduser()), ensure_ascii=False, indent=2))
+        return 0
     try:
         return run_selected(selections, modes, prefix=args.prefix, report_path=args.report)
     except (IdentityError, NativeToolError, OSError, subprocess.SubprocessError) as error:
