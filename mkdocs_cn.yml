@@ -38,11 +38,20 @@ markdown_extensions:
 nav:
   - 首页: index.md
   - 快速开始: 00.quick_start.md
-  - 引言: 01.intro.md
+  - 词法: 01.lexicon.md
   - 类型系统: 02.type_system.md
-  - 方法: 03.methods.md
-  - 语句: 04.statements.md
-  - 泛型: 05.generics.md
-  - 模块: 06.modules.md
-  - 表达式: 07.expression.md
-  - 标准库: 08.standard_library.md
+  - 变量与声明: 03.variables.md
+  - 函数: 04.functions.md
+  - 方法: 05.methods.md
+  - 控制流: 06.control_flow.md
+  - 模式匹配: 07.match.md
+  - 表达式: 08.expressions.md
+  - 运算符重载: 09.operators.md
+  - 泛型: 10.generics.md
+  - 结构体与枚举: 11.structs_enums.md
+  - Trait 与 Impl: 12.traits_impls.md
+  - 模块系统: 13.modules.md
+  - 标准库: 14.standard_library.md
+  - 赋值与显式内存管理: 15.assign_semantics.md
+  - 运行时错误与安全终止: 16.runtime_errors.md
+  - C ABI FFI: 17.ffi.md
