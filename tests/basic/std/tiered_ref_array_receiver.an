@@ -1,10 +1,20 @@
-// T& receivers support array indexing, pointer access, slices, and chained methods.
+// T& receiver method-body array access.
+//
+// Full-array access through a T& receiver exercises the T& to T* array
+// re-anchor (size=N) in the LLVM builder cast path: Index, ptr(), as_slice(),
+// direct array receivers, and chained methods. The original *_fat entry has
+// identical source behavior and no distinct inputs, oracle, or compiler mode.
+// Scalar receiver cases remain in sibling tiered_ref_receiver.an.
+// The basic runner selects this source in both fat and raw pointer modes.
+//
+// Expected output: 0
 
 struct Holder {
     arr: i32[4],
 }
 
 impl Holder {
+    // Index trait through the T& receiver (self.arr[i], i >= 1).
     pub fn get1() -> i32 {
         return self.arr[1];
     }
@@ -13,6 +23,7 @@ impl Holder {
         return self.arr[3];
     }
 
+    // ptr() through T& must retain the full array length.
     pub fn ptr_sum() -> i32 {
         let s: i32 = 0;
         for i in 0..4u64 {
@@ -48,7 +59,7 @@ impl i32[4] {
     }
 }
 
-fn main() {
+fn case_array_tiered_receivers() {
     let h = Holder([10, 20, 30, 40]);
     let hr: Holder& = &h;
     assert hr.get1() == 20: "Index trait self.arr[1] through T&";
@@ -63,4 +74,8 @@ fn main() {
     assert ar.d3() == 40: "(*self)[3] on i32[4]& receiver";
     assert ar.dptr() == 30: "self.ptr()[2] on i32[4]& receiver";
     assert ar.dslice() == 4: "self.as_slice() on i32[4]& receiver";
+}
+
+fn main() {
+    case_array_tiered_receivers();
 }

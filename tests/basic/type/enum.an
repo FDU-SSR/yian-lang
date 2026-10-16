@@ -1,6 +1,10 @@
+// Consolidated basic type and diagnostics scenarios.
+
+
+
+// Named scenario: case_generic_enum_results
 // Test enum type with associated data && match statement
 //
-// Expected output: 0
 
 enum DivResult<T> {
     Ok { value: T, },
@@ -15,7 +19,7 @@ fn safe_div(a: i32, b: i32) -> DivResult<i32> {
     }
 }
 
-fn main() {
+fn case_generic_enum_results() {
     let res1: DivResult<i32> = safe_div(10, 2);
     let res2: DivResult<i32> = safe_div(10, 0);
 
@@ -37,4 +41,25 @@ fn main() {
     }
 
     assert val1 == 5: "safe_div(10, 2) should be 5";
+}
+
+// Named scenario: case_enum_alias_match
+// typedef: `match` on an alias of an enum dispatches on the enum's variants.
+// Matching an enum through a type alias dispatches on the enum's variants.
+
+enum AliasShape { Dot, Sq { s: i32 } }
+
+typedef S = AliasShape;
+
+fn area(v: S) -> i32 { return match v { Dot => 0, Sq(s) => s * s, }; }
+
+fn case_enum_alias_match() { let a: AliasShape = AliasShape.Sq(s=3); assert area(a) == 9; }
+
+
+
+fn main() {
+
+    case_generic_enum_results();
+    case_enum_alias_match();
+
 }

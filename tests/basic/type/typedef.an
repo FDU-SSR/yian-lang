@@ -1,6 +1,10 @@
+// Consolidated basic type and diagnostics scenarios.
+
+
+
+// Named scenario: case_typedef_declarations
 // Test typedefs
 //
-// Expected output: 0
 
 struct Person {
     pub a: i32,
@@ -12,10 +16,79 @@ typedef LL = i64;
 typedef INT2 = i32;
 typedef INT3 = i32;
 
-fn main() {
+fn case_typedef_declarations() {
     let a: i32 = 3;
     let b: LL = 12345;
     let c: INT2 = 4;
     let d: INT3 = 5;
     let p: Pr = Pr(a=1, b=2);
+}
+
+// Named scenario: case_derived_type_aliases
+// typedef: alias to a derived type (pointer / slice / array).
+// Type aliases preserve pointer, slice, and array layouts at use sites.
+
+typedef IntPtr = i32*;
+typedef Bytes = u8[];
+typedef Quad = i32[4];
+
+struct WP { p: i32* }
+struct WS { p: u8[] }
+
+fn case_derived_type_aliases() {
+    assert @sizeof<IntPtr> == @sizeof<WP>: "alias to pointer"
+    assert @sizeof<Bytes> == @sizeof<WS>: "alias to slice"
+    assert @sizeof<Quad> == @sizeof<i32> * 4: "alias to array"
+    let value: i32 = 0;
+    let p: IntPtr = &value
+}
+
+// Named scenario: case_named_struct_aliases
+// typedef: alias to a named type — construct, field access, sizeof.
+// Type aliases preserve construction, field access, and sizeof behavior.
+
+struct Vec2 { x: i32, y: i32 }
+typedef Point = Vec2;
+typedef Int = i64;
+
+fn case_named_struct_aliases() {
+    let p: Point = Point(3, 4)
+    assert p.x == 3: "alias-to-struct: construct + field access"
+    let n: Int = 5
+    assert @sizeof<Int> == @sizeof<i64>: "alias-to-named: sizeof"
+}
+
+// Named scenario: case_reference_aliases
+// Reference aliases must work in local bindings, generic instantiation, and
+// function parameter/return signatures.
+
+typedef Ref<T> = T&;
+typedef IntRef = i32&;
+
+fn alias_identity(value: IntRef) -> IntRef {
+    return value;
+}
+
+fn generic_alias_identity<T>(value: Ref<T>) -> Ref<T> {
+    return value;
+}
+
+fn case_reference_aliases() {
+    let value: i32 = 17;
+    let direct: IntRef = &value;
+    let named: IntRef = alias_identity(direct);
+    let generic: Ref<i32> = generic_alias_identity(direct);
+    assert *named == 17: "named T& alias parameter/return";
+    assert *generic == 17: "generic T& alias parameter/return";
+}
+
+
+
+fn main() {
+
+    case_typedef_declarations();
+    case_derived_type_aliases();
+    case_named_struct_aliases();
+    case_reference_aliases();
+
 }

@@ -2,6 +2,8 @@
 //
 // Expected output:
 // Hello, Yian!
+// Command: Start
+// Command: Pause
 
 from std.core.io import print;
 
@@ -32,7 +34,7 @@ impl str {
     }
 }
 
-fn main() {
+fn case_basic_type_methods() {
     let a: i32 = -5;
     a.inc();
     assert a == -4;
@@ -45,4 +47,105 @@ fn main() {
     let msg: str = "Hello, Yian!";
     msg.println();
 
+}
+
+impl<T> T* {
+    fn get_first() -> T {
+        return (*self)[0];
+    }
+
+    fn size_of() -> u64 {
+        return @sizeof<T>;
+    }
+}
+
+fn case_generic_pointer_methods() {
+    let int_array: i32[3] = [42, 43, 44];
+    let int_pointer: i32* = &int_array[0];
+    assert int_pointer.get_first() == 42: "First element should be 42";
+    assert int_pointer.size_of() == 4: "Size of i32 should be 4";
+
+    let float_array: f64[2] = [3.14, 2.71];
+    let float_pointer: f64* = &float_array[0];
+    assert float_pointer.get_first() == 3.14: "First element should be 3.14";
+    assert float_pointer.size_of() == 8: "Size of f64 should be 8";
+}
+
+struct ImplMethodPair {
+    a: i32,
+    b: i32,
+}
+
+impl ImplMethodPair {
+    pub static fn new(a: i32, b: i32) -> Self {
+        return Self(a=a, b=b);
+    }
+
+    pub fn sum() -> i32 {
+        return self.a + self.b;
+    }
+}
+
+fn case_struct_methods() {
+    let pair: ImplMethodPair = ImplMethodPair.new(3, 4);
+    assert pair.sum() == 7;
+}
+
+enum ImplMethodCommand {
+    Start,
+    Stop,
+    Pause { duration: i32 },
+}
+
+impl ImplMethodCommand {
+    static pub fn new_start() -> ImplMethodCommand {
+        return ImplMethodCommand.Start;
+    }
+
+    static pub fn new_stop() -> ImplMethodCommand {
+        return ImplMethodCommand.Stop;
+    }
+
+    static pub fn new_pause(duration: i32) -> ImplMethodCommand {
+        return ImplMethodCommand.Pause(duration);
+    }
+
+    pub fn execute() {
+        match *self {
+            Start => { print("Command: Start\n"); },
+            Stop => { print("Command: Stop\n"); },
+            Pause => { print("Command: Pause\n"); },
+        }
+    }
+}
+
+fn case_enum_methods() {
+    let command_start: ImplMethodCommand = ImplMethodCommand.new_start();
+    let command_pause: ImplMethodCommand = ImplMethodCommand.new_pause(10);
+    command_start.execute();
+    command_pause.execute();
+}
+
+impl i32 {
+    pub fn is_positive() -> bool {
+        *self > 0
+    }
+
+    pub fn add_one() -> i32 {
+        *self + 1
+    }
+}
+
+fn case_literal_receiver_methods() {
+    assert 5i32.is_positive(): "5 should be positive";
+    assert !(-3i32).is_positive(): "-3 should not be positive";
+    assert 10i32.add_one() == 11: "10 + 1 should be 11";
+}
+
+fn main() {
+    case_basic_type_methods();
+    case_literal_receiver_methods();
+    case_generic_pointer_methods();
+    case_struct_methods();
+    case_enum_methods();
 }

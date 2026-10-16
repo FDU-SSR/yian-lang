@@ -12,7 +12,7 @@ fn pass_empty(value: Empty&) -> Empty& {
     return value;
 }
 
-fn main() {
+fn case_tiered_reference_layout() {
     let value: Value = Value(7);
     let value_ref: Value& = &value;
     let returned: Value& = pass_value(value_ref);
@@ -25,4 +25,21 @@ fn main() {
 
     let expected_ref_size: u64 = comptime if IS_RAW_MODE { 8u64 } else { 16u64 };
     assert @sizeof<Value&> == expected_ref_size: "T& ABI layout";
+}
+
+struct DeleteEmpty {}
+
+fn case_tiered_reference_delete() {
+    let stack_value: DeleteEmpty;
+    let stack_ref: DeleteEmpty& = &stack_value;
+    del stack_ref;
+
+    let heap_value: DeleteEmpty* = dyn[1] DeleteEmpty;
+    let heap_ref: DeleteEmpty& = heap_value;
+    del heap_ref;
+}
+
+fn main() {
+    case_tiered_reference_layout();
+    case_tiered_reference_delete();
 }

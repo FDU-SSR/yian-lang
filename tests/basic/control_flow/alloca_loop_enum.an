@@ -9,7 +9,7 @@ enum Mode {
     C { value: i64, extra: i64 },
 }
 
-fn main() {
+fn case_enum_temporaries_in_loop() {
     let total: i64 = 0;
     let rounds: u64 = 300000;
     let index: u64 = 0;
@@ -30,4 +30,29 @@ fn main() {
     }
 
     assert total == i64(6) * i64(rounds): "enum result mismatch";
+}
+
+fn case_dynamic_index_temporaries_in_loop() {
+    let checksum: i64 = 0;
+    let rounds: u64 = 300000;
+    let index: u64 = 0;
+
+    while index < rounds {
+        let block: i32* = dyn[32] 0i32;
+        let element: u64 = 0;
+        while element < 32 {
+            block[element] = i32(element);
+            element += 1;
+        }
+        checksum += i64(block[0]) + i64(block[31]);
+        del block;
+        index += 1;
+    }
+
+    assert checksum == i64(31) * i64(rounds): "index result mismatch";
+}
+
+fn main() {
+    case_enum_temporaries_in_loop();
+    case_dynamic_index_temporaries_in_loop();
 }

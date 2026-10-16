@@ -2,7 +2,9 @@
 //
 // Expected output: 0
 
-from std.core.ops import PartialEq, PartialOrd, Ordering;
+// Test comparison and ordering traits, including the min/max helpers.
+
+from std.core.ops import PartialEq, PartialOrd, Ordering, max, min;
 
 struct Value<T> {
     pub value: T,
@@ -26,7 +28,7 @@ impl<T> PartialOrd<Value<T>> for Value<T> {
     }
 }
 
-fn main() {
+fn case_comparison_and_ordering() {
     let a: Value<i32> = Value<i32>(5);
     let b: Value<i32> = Value<i32>(10);
     let c: Value<i32> = Value<i32>(5);
@@ -41,4 +43,46 @@ fn main() {
     assert b > a: "Expected b > a";
     assert b >= c: "Expected b >= c";
 
+}
+
+enum Size {
+    Small,
+    Medium,
+    Large,
+}
+
+impl PartialOrd<Size> for Size {
+    fn partial_cmp(rhs: Size&) -> Ordering {
+        match self {
+            Small => match rhs { Small => Ordering.Equal, _ => Ordering.Less },
+            Medium => match rhs { Small => Ordering.Greater, Medium => Ordering.Equal, Large => Ordering.Less },
+            Large => match rhs { Large => Ordering.Equal, _ => Ordering.Greater },
+        }
+    }
+}
+
+impl PartialEq<Size> for Size {
+    fn eq(rhs: Size&) -> bool {
+        match self {
+            Small => match rhs { Small => true, _ => false },
+            Medium => match rhs { Medium => true, _ => false },
+            Large => match rhs { Large => true, _ => false },
+        }
+    }
+}
+
+fn case_min_max_helpers() {
+    let small = Size.Small;
+    let medium = Size.Medium;
+    let large = Size.Large;
+
+    assert small < medium: "Expected Small < Medium";
+    assert max(small, medium) == medium: "Expected max(Small, Medium) == Medium";
+    assert min(medium, large) == medium: "Expected min(Medium, Large) == Medium";
+    assert small != large: "Expected Small != Large";
+}
+
+fn main() {
+    case_comparison_and_ordering();
+    case_min_max_helpers();
 }

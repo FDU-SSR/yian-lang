@@ -1,4 +1,16 @@
-fn main() {
+fn case_inferred_binding() {
     let x = 42;
     let y = x + 10;
+    assert y == 52: "inferred binding result";
+}
+
+fn case_uninitialized_binding() {
+    let x: i32;
+    x = 42;
+    assert x == 42;
+}
+
+fn main() {
+    case_inferred_binding();
+    case_uninitialized_binding();
 }

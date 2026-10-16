@@ -14,7 +14,27 @@ fn true_func() -> bool {
     @panic("true_func should ! be called\n");
 }
 
-fn main() {
+fn case_logical_operator_truth_tables() {
+    let a: i32 = 1;
+    let b: i32 = 2;
+    let c: i32 = 3;
+    if a > 0 && b > 0 {
+        c = c + 1;
+    }
+    assert c == 4: "&& operator failed";
+
+    if a > 0 || b > 0 {
+        c = c + 1;
+    }
+    assert c == 5: "|| operator failed";
+
+    if !(a > 1) {
+        c = c + 1;
+    }
+    assert c == 6: "! operator failed";
+}
+
+fn case_short_circuit_evaluation() {
     if false && false_func() {
         @panic("This should ! be printed\n");
     }
@@ -26,4 +46,9 @@ fn main() {
     let a: bool;
     a = true || true_func();
 
+}
+
+fn main() {
+    case_logical_operator_truth_tables();
+    case_short_circuit_evaluation();
 }

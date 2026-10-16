@@ -35,7 +35,7 @@ fn choose(value: (i32, i32)) -> i32 {
     number
 }
 
-fn main() {
+fn case_pattern_binding_positions() {
     let (a, b) = (2i32, 3i32);
     assert a + b == 5;
     assert add_pair((a, b)) == 5;
@@ -99,4 +99,21 @@ fn main() {
 
     let closure = || ((x, y): (i32, i32)) -> i32 { x + y };
     assert closure((5i32, 6i32)) == 11;
+}
+
+struct Node {
+    pub value: i32,
+    pub next: Option<Node&>,
+}
+
+fn case_recursive_reference_pattern() {
+    let node: Node& = dyn Node(1, Option<Node&>.None);
+    let found = if let Node(value = 1, ..) = node { true } else { false };
+    assert found;
+    del node;
+}
+
+fn main() {
+    case_pattern_binding_positions();
+    case_recursive_reference_pattern();
 }

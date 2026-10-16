@@ -1,20 +1,65 @@
 // Test: structs with user-defined fields can be copied
 
-struct Data {
+struct StructResourceData {
     value: i64,
 }
 
-impl Clone for Data {
-    pub fn clone() -> Self { Data(self.value) }
+impl Clone for StructResourceData {
+    pub fn clone() -> Self { StructResourceData(self.value) }
 }
 
-struct Bad {
+struct StructResourceValue {
     x: i32,
-    d: Data,
+    d: StructResourceData,
+}
+
+fn case_struct_resource_copy() {
+    let b1 = StructResourceValue(1, StructResourceData(42));
+    let b2 = b1;
+    assert b1.d.value == 42 && b2.d.value == 42;
+}
+
+struct NestedResourceInner {
+    data: i64,
+}
+
+impl Clone for NestedResourceInner {
+    pub fn clone() -> Self { NestedResourceInner(self.data) }
+}
+
+struct NestedResourceOuter {
+    a: i32,
+    b: NestedResourceInner,
+}
+
+fn case_nested_resource_copy() {
+    let o1 = NestedResourceOuter(1, NestedResourceInner(42));
+    let o2 = o1;
+    assert o1.b.data == 42 && o2.b.data == 42;
+}
+
+struct EnumResourceData {
+    value: i64,
+}
+
+impl Clone for EnumResourceData {
+    pub fn clone() -> Self { EnumResourceData(self.value) }
+}
+
+enum EnumResourceValue {
+    A { val: i32 },
+    B { val: EnumResourceData },
+}
+
+fn case_enum_resource_copy() {
+    let e1 = EnumResourceValue.A(val=1);
+    let e2 = e1;
+    match e1 { A(val) => assert val == 1, _ => @panic("source changed") }
+    match e2 { A(val) => assert val == 1, _ => @panic("copy changed") }
 }
 
 fn main() {
-    let b1 = Bad(1, Data(42));
-    let b2 = b1;
-    assert b1.d.value == 42 && b2.d.value == 42;
+    case_struct_resource_copy();
+    case_nested_resource_copy();
+    case_enum_resource_copy();
 }

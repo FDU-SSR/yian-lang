@@ -1,6 +1,6 @@
 // Expression-oriented: match as expression
 
-fn main() {
+fn case_match_expression_values() {
     // Block-style match arms
     let x: i32 = match 1 {
         1 => { 100 },
@@ -25,4 +25,16 @@ fn main() {
     };
     assert z == 300: "mixed match arm failed";
 
+}
+
+fn case_loop_break_value() {
+    let x: i32 = loop {
+        break 42;
+    };
+    assert x == 42: "loop break value failed";
+}
+
+fn main() {
+    case_match_expression_values();
+    case_loop_break_value();
 }

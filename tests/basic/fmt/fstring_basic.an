@@ -2,10 +2,51 @@
 
 from std.core.io import print;
 
-fn main() {
+fn case_fstring_basic() {
     let name = "Yian";
     let ver = 1;
     let msg = f"Welcome to {name} v{ver}!";
     print(msg.as_str());
     print("\n");
+}
+
+fn case_fstring_empty() {
+    let e = f"";
+    print(f"empty: [{e}]\n".as_str());
+}
+
+// Escaped braces must stay literal while embedded expressions are formatted.
+fn case_fstring_escaped_braces() {
+    let s = f"\{not an expr\}";
+    print(s.as_str());
+    print("\n");
+
+    let x = 3;
+    let t = f"\{ {x} \}";
+    print(t.as_str());
+    print("\n");
+}
+
+fn case_fstring_expressions() {
+    let a = 10;
+    let b = 20;
+    let msg = f"{a} + {b} = {a + b}";
+    print(msg.as_str());
+    print("\n");
+}
+
+fn case_fstring_nested_expression() {
+    let x = 5;
+    let s = f"if: {if x > 0 { "pos" } else { "neg" }}!";
+    print(s.as_str());
+    print("\n");
+}
+
+fn main() {
+    // Keep this order aligned with the combined output oracle.
+    case_fstring_basic();
+    case_fstring_empty();
+    case_fstring_escaped_braces();
+    case_fstring_expressions();
+    case_fstring_nested_expression();
 }

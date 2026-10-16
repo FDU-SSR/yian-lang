@@ -1,5 +1,0 @@
-from std.core.io import print;
-fn main() {
-    let e = f"";
-    print(f"empty: [{e}]\n".as_str());
-}

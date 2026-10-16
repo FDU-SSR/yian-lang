@@ -1,8 +1,15 @@
+// Consolidated basic pointer and allocation scenarios.
+
+// Combined expected output: Charlie
+
+from std.core.io import print;
+
+
+
 // Test for 'dyn' statement with basic type dynamic memory allocation
 //
-// Expected output: 0
 
-fn main() {
+fn case_basic_dynamic_allocations() {
     let a: i8* = dyn 42i8;
     let val_a: i8 = *a;
     assert val_a == 42;
@@ -23,5 +30,80 @@ fn main() {
     assert d[0] == 10;
     assert d[1] == 20;
     assert d[2] == 30;
+
+}
+
+// dyn[n] value: every element is initialized from one evaluation of `value`.
+//
+
+fn case_repeat_allocation() {
+    // Static size.
+    let a: i32* = dyn[4] 7i32;
+    assert a[0] == 7 && a[3] == 7: "static-size same-value init";
+
+    // Dynamic size drives a runtime loop.
+    let n: u64 = 5;
+    let b: u8* = dyn[n] 0u8;
+    let i: u64 = 0;
+    while i < n {
+        assert b[i] == 0: "dynamic-size same-value init";
+        i += 1;
+    }
+
+    // Elements remain writable and the block stays a whole-block delete target.
+    b[2] = 9;
+    assert b[2] == 9: "element write after init";
+    del a;
+    del b;
+}
+
+// Test for 'dyn' statement with struct type dynamic memory allocation
+//
+// Charlie
+
+
+struct Person {
+    age: i32,
+    name: str,
+}
+
+impl Person {
+    static pub fn new(age: i32, name: str) -> Self {
+        return Self(age, name);
+    }
+
+    pub fn get_age() -> i32 {
+        return self.age;
+    }
+
+    pub fn get_name() -> str {
+        return self.name;
+    }
+}
+
+fn case_struct_allocations() {
+    let p1: Person* = dyn Person.new(25, "Alice");
+    assert p1.get_age() == 25;
+
+    let p2: Person* = dyn Person(30, "Bob");
+    assert p2.get_age() == 30;
+
+    let p3: Person* = dyn[2] Person(0, "");
+    p3[0] = Person.new(22, "Charlie")
+    p3[1] = Person.new(28, "Diana")
+    assert p3[0].get_age() == 22;
+    assert p3[1].get_age() == 28;
+
+    print(p3[0].get_name());
+
+}
+
+
+
+fn main() {
+
+    case_basic_dynamic_allocations();
+    case_repeat_allocation();
+    case_struct_allocations();
 
 }

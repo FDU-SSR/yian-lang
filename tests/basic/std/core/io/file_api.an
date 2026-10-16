@@ -1,10 +1,11 @@
-// Test File API: open, read/write, read_to_string, drop
+// Test file read/write interfaces, convenience helpers, and File errors.
 //
 // Expected output: 0
 
 from std.core.io import File, OpenMode;
+from std.core.fs import read_to_string, write_string, append;
 
-fn main() {
+fn case_file_read_write_api() {
     let path = "/tmp/yian_test_file_api.txt";
 
     // Write with File API
@@ -45,4 +46,46 @@ fn main() {
     assert raw_fd >= 0: "fd should be valid";
     f6.drop();
 
+}
+
+fn case_filesystem_convenience() {
+    let path = "/tmp/yian_test_conv.txt";
+
+    // write_string + read_to_string
+    write_string(path, "convenience test\n").unwrap();
+    let s = *read_to_string(path).unwrap();
+    assert s.as_str() == "convenience test\n": "write_string then read_to_string";
+
+    // write_string overwrites
+    write_string(path, "overwritten\n").unwrap();
+    let s2 = *read_to_string(path).unwrap();
+    assert s2.as_str() == "overwritten\n": "write_string should overwrite";
+
+    // append
+    write_string(path, "first\n").unwrap();
+    append(path, "second\n".as_slice()).unwrap();
+    let s3 = *read_to_string(path).unwrap();
+    assert s3.as_str() == "first\nsecond\n": "append should append";
+}
+
+fn case_file_open_errors() {
+    // Open a non-existent file — should return Err
+    let r = File.open("/tmp/_nonexistent_yian_test_file_.txt", OpenMode.Read);
+    assert r.is_err(): "opening missing file should be Err";
+
+    // Open should succeed for a valid write
+    let r2 = File.open("/tmp/yian_test_err_handling.txt", OpenMode.Write);
+    assert r2.is_ok(): "opening for write should be Ok";
+    r2.unwrap().drop();
+
+    // Re-open for reading should work
+    let r3 = File.open("/tmp/yian_test_err_handling.txt", OpenMode.Read);
+    assert r3.is_ok(): "re-opening should be Ok";
+    r3.unwrap().drop();
+}
+
+fn main() {
+    case_filesystem_convenience();
+    case_file_read_write_api();
+    case_file_open_errors();
 }

@@ -1,7 +1,6 @@
-// raw_slice_ref.an: positive slice/reference cases in raw and fat modes.
+// Positive slice construction and reference conversion cases in fat and raw modes.
 //
-// Exercise valid slice/reference construction from raw pointers; fat/raw/nocheck configurations
-// must all exit zero:
+// The basic runner selects this success entry in both fat and raw pointer modes:
 //   - @slice_from_parts(p,n) constructs T[] and preserves len, checked through s.len().
 //   - Index assertions use s[i], including nested argument passing.
 //   - T* -> T& and T[] -> T& cases.
@@ -14,7 +13,7 @@ fn get_len(s: i32[]) -> u64 {
     s.len()
 }
 
-fn main() {
+fn case_slice_pointer_conversions_and_views() {
     // --- @slice_from_parts(p,n): T[] length through direct method calls ---
     let arr: u64[3] = [10, 20, 30];
     let p: u64* = &arr[0];
@@ -55,4 +54,8 @@ fn main() {
     let sub: str = @str_from_parts(mp, 1);
     assert @str_get_len(sub) == 1: "str from parts preserves len";
     assert *mp == 104: "first byte is 'h' (104)";
+}
+
+fn main() {
+    case_slice_pointer_conversions_and_views();
 }

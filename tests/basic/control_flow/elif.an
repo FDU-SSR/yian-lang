@@ -17,11 +17,25 @@ fn test_elif(x: i32) -> str {
     }
 }
 
-fn main() {
+fn case_elif_chain() {
     assert test_elif(1) == "A": "elif branch 1 failed";
     assert test_elif(2) == "B": "elif branch 2 failed";
     assert test_elif(3) == "C": "elif branch 3 failed";
     assert test_elif(99) == "other": "elif else branch failed";
 
     print(test_elif(2));
+}
+
+fn case_if_else() {
+    let a: i32 = 3;
+    if a > 10 {
+        @panic("a is greater than 10");
+    } else {
+        assert a == 3: "If-else condition failed";
+    }
+}
+
+fn main() {
+    case_if_else();
+    case_elif_chain();
 }

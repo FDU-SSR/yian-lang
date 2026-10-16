@@ -13,7 +13,7 @@ fn abs<T>(a: T) -> T {
     return a;
 }
 
-fn main() {
+fn case_generic_function_calls() {
     // 1) explicit type arguments
     let x: i32 = add<i32>(10, 20);
     assert x == 30: "Expected 30";
@@ -26,4 +26,33 @@ fn main() {
     let n: f64 = abs(-3.2);
     assert n > 3.1 && n < 3.3: "Expected 3.2";
 
+}
+
+fn times_two<T>(value: T) -> T {
+    return value + value;
+}
+
+fn times_five<T>(value: T) -> T {
+    return times_two(value) + times_two(value) + value;
+}
+
+fn times_ten<T>(value: T) -> T {
+    return times_five(value) + times_five(value);
+}
+
+fn case_generic_call_chain() {
+    let x: i32 = times_ten<i32>(3);
+    assert x == 30: "Expected 30";
+    let y: f64 = times_five<f64>(2.0);
+    assert y > 9.9 && y < 10.1: "Expected 10.0";
+
+    let m: i32 = times_two(7);
+    assert m == 14: "Expected 14";
+    let n: f64 = times_ten(1.5);
+    assert n > 14.9 && n < 15.1: "Expected 15.0";
+}
+
+fn main() {
+    case_generic_function_calls();
+    case_generic_call_chain();
 }

@@ -2,13 +2,13 @@
 //
 // Payload field bindings refer to the original fields, not copies.
 
-enum E {
+enum ReadOnlyMatch {
     A { n: i32 },
     B { n: i64 },
 }
 
-fn main() {
-    let e: E = E.A(42);
+fn case_enum_readonly_reference() {
+    let e: ReadOnlyMatch = ReadOnlyMatch.A(42);
 
     match &e {
         A(n) => {
@@ -20,4 +20,66 @@ fn main() {
         },
     }
 
+}
+
+enum MutableMatch {
+    A { n: i32 },
+    B { n: i32 },
+}
+
+fn case_enum_mutable_reference() {
+    let e: MutableMatch = MutableMatch.A(42);
+
+    // The binding refers to the original payload field.
+    match &e {
+        A(n) => {
+            let field: i32& = n;
+            *field = 99;
+        },
+        _ => {
+            assert false;
+        },
+    }
+
+    // Verify the original was mutated
+    match e {
+        A(n) => {
+            assert n == 99;
+        },
+        _ => {
+            assert false;
+        },
+    }
+}
+
+enum State {
+    A { n: i32 },
+    B { n: i32 },
+}
+
+fn change(state: State*) -> bool {
+    *state = State.B(9);
+    return false;
+}
+
+fn case_guard_mutation() {
+    let state = State.A(1);
+    let reference: State& = &state;
+    let result: i32 = match reference {
+        A(n) if change(&state) => *n,
+        whole @ B(n) => {
+            let whole_ref: State& = whole;
+            let field_ref: i32& = n;
+            assert *field_ref == 9;
+            *field_ref
+        },
+        _ => -1,
+    };
+    assert result == 9;
+}
+
+fn main() {
+    case_enum_readonly_reference();
+    case_enum_mutable_reference();
+    case_guard_mutation();
 }

@@ -70,8 +70,8 @@ def __cases() -> list[Case]:
     cases = [
         Case("untyped-integer", "analyze", ("tests/basic/control_flow/comptime_untyped_integer.an",), ("--analyze", "--json"), json_output=True),
         Case("untyped-type-argument", "analyze", ("tests/basic/type/comptime_untyped_argument.an",), ("--analyze", "--json"), json_output=True),
-        Case("integer-conversion", "analyze", ("tests/basic/control_flow/comptime_integer_conversion.an",), ("--analyze", "--json"), json_output=True),
-        Case("float-conversion", "analyze", ("tests/basic/control_flow/comptime_float_conversion.an",), ("--analyze", "--json"), json_output=True),
+        Case("integer-conversion", "analyze", ("tests/basic/control_flow/comptime_untyped_integer.an",), ("--analyze", "--json"), json_output=True),
+        Case("float-conversion", "analyze", ("tests/basic/control_flow/comptime_untyped_integer.an",), ("--analyze", "--json"), json_output=True),
         Case("nonfinite-cast", "analyze", ("tests/basic/diagnostics/comptime_nonfinite_cast.err.an",), ("--analyze", "--json"), json_output=True),
         Case("bool-float-cast", "analyze", ("tests/basic/diagnostics/comptime_bool_float_cast.err.an",), ("--analyze", "--json"), json_output=True),
         Case("bool-integer-constant-error", "analyze", ("tests/basic/diagnostics/comptime_bool_integer_cast.err.an",), ("--analyze", "--json"), json_output=True),
@@ -94,7 +94,7 @@ def __cases() -> list[Case]:
         Case("pattern-condition", "analyze", ("tests/basic/pattern/positions.an",), ("--analyze", "--json"), json_output=True),
         Case("nested-witness", "analyze", ("tests/basic/diagnostics/non_exhaustive_nested.err.an",), ("--analyze", "--json"), json_output=True),
         Case("character-witness", "analyze", ("tests/basic/diagnostics/non_exhaustive_char.err.an",), ("--analyze", "--json"), json_output=True),
-        Case("multiple-main", "analyze", ("tests/basic/array/access.an", "tests/basic/literal/float.an"), ("--analyze", "--json"), json_output=True),
+        Case("multiple-main", "analyze", ("tests/basic/array/access.an", "tests/basic/literal/str.an"), ("--analyze", "--json"), json_output=True),
         Case("default-roots", "cli", ("tests/basic/array/access.an",), ("--analyze", "--json"), json_output=True, root_option=False),
         Case("explicit-root-precedence", "cli", ("tests/basic/array/access.an",), ("--analyze", "--json"), json_output=True, environment=(("YIAN_LIB", "/nonexistent/library"), ("YIAN_ROOT", "/nonexistent/checkout"))),
         Case("analysis-observation-flags", "cli", ("tests/basic/array/access.an",), ("--analyze", "--json", "--profile", "--dump"), json_output=True),
@@ -143,7 +143,7 @@ def __cases() -> list[Case]:
     for flags, name in ((("--check",), "check"), (("--write",), "write"), ((), "stdout")):
         cases.append(Case("crlf-format-" + name, "format", ("tests/compiler_parity/format.an",), ("--format", *flags), standard_library=False, newlines="\r\n"))
     for phase in ("tokens", "ast", "desugared"):
-        cases.append(Case(phase, "frontend", ("tests/basic/literal/float.an", "tests/basic/fmt/fstring_basic.an", "tests/basic/try/generic.an"), ("--frontend-json", phase), standard_library=False, json_output=True))
+        cases.append(Case(phase, "frontend", ("tests/basic/literal/str.an", "tests/basic/fmt/fstring_basic.an", "tests/basic/try/generic.an"), ("--frontend-json", phase), standard_library=False, json_output=True))
     for name, flags in (("format-stdout", ()), ("format-check", ("--check",)), ("format-write", ("--write",))):
         cases.append(Case(name, "format", ("tests/compiler_parity/format.an",), ("--format", *flags), standard_library=False))
     format_fixtures = __ROOT / "tests/format/fixtures"
@@ -163,8 +163,8 @@ def __cases() -> list[Case]:
     cases.append(Case("failed-native-tool", "native", ("tests/basic/array/access.an",), ("-o", "result"), environment=(("YIAN_CC", "/bin/false"),)))
     cases.append(Case("untyped-run", "native", ("tests/basic/control_flow/comptime_untyped_integer.an",), ("-O3", "-o", "result"), run=True))
     cases.append(Case("untyped-type-run", "native", ("tests/basic/type/comptime_untyped_argument.an",), ("-O3", "-o", "result"), run=True))
-    cases.append(Case("integer-conversion-run", "native", ("tests/basic/control_flow/comptime_integer_conversion.an",), ("-O3", "-o", "result"), run=True))
-    cases.append(Case("float-conversion-run", "native", ("tests/basic/control_flow/comptime_float_conversion.an",), ("-O3", "-o", "result"), run=True))
+    cases.append(Case("integer-conversion-run", "native", ("tests/basic/control_flow/comptime_untyped_integer.an",), ("-O3", "-o", "result"), run=True))
+    cases.append(Case("float-conversion-run", "native", ("tests/basic/control_flow/comptime_untyped_integer.an",), ("-O3", "-o", "result"), run=True))
     cases.append(Case("untyped-runtime-comparison", "native", ("tests/basic/control_flow/assert.an",), ("-O3", "-o", "result"), run=True))
     cases.append(Case("boolean-conversion", "native", ("tests/compiler_parity/bool_conversion.an",), ("--allow-ffi", "-O0", "-o", "result"), expected_error="cannot convert bool to an integer"))
     cases.append(Case("boolean-integer-conversion", "native", ("tests/basic/type/bool_integer_cast.err.an",), ("-O0", "-o", "result"), expected_error="cannot convert bool to an integer"))

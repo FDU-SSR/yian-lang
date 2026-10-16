@@ -2,6 +2,8 @@
 //
 // Expected output: 0
 
+from std.core.io import print;
+
 struct Point {
     pub x: i32,
     pub y: i32,
@@ -40,7 +42,7 @@ fn early_return(x: i32) -> i32 {
     return 0;
 }
 
-fn main() {
+fn case_aggregate_and_early_returns() {
     let p: Point = get_point();
     let s: Shape = get_shape();
     let t: (i32, i32) = get_tuple();
@@ -67,4 +69,25 @@ fn main() {
     assert early_return(5) == 0: "early return 0 failed";
     assert early_return(20) == 100: "early return 100 failed";
 
+}
+
+fn do_work(flag: bool) {
+    if flag {
+        print("done");
+        return;
+    }
+    @panic("should not reach here");
+}
+
+fn call_void() {
+    do_work(true);
+}
+
+fn case_void_return() {
+    call_void();
+}
+
+fn main() {
+    case_aggregate_and_early_returns();
+    case_void_return();
 }

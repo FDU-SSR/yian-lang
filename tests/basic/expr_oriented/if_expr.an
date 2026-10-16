@@ -1,7 +1,35 @@
 // Expression-oriented: if as expression
 // if returns the common supertype of both branches
 
-fn main() {
+fn case_if_branch_value() {
     let x: i32 = if true { 10 } else { 20 };
     assert x == 10: "if expression failed";
+}
+
+fn case_return_expression_branch() {
+    let x: i32 = if true {
+        42
+    } else {
+        return;
+    };
+    assert x == 42: "return as expression failed";
+}
+
+fn exit_fn() -> ! {
+    @panic("exiting");
+}
+
+fn case_never_branch_subtype() {
+    let x: i32 = if true {
+        42
+    } else {
+        exit_fn()
+    };
+    assert x == 42: "never type test failed";
+}
+
+fn main() {
+    case_if_branch_value();
+    case_return_expression_branch();
+    case_never_branch_subtype();
 }

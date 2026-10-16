@@ -12,7 +12,7 @@ enum Color {
     Blue,
 }
 
-fn main() {
+fn case_structural_patterns() {
     let point = Point(0, 7);
     let coordinate: i32 = match point {
         Point(x = 0, y = y) => y,
@@ -120,4 +120,18 @@ fn main() {
         },
     };
     assert marker_match;
+}
+
+fn case_large_array_prefix() {
+    let values = [1u8; 1024];
+    let first_is_one = match values {
+        [1, ..] => true,
+        _ => false,
+    };
+    assert first_is_one;
+}
+
+fn main() {
+    case_structural_patterns();
+    case_large_array_prefix();
 }

@@ -1,18 +1,16 @@
-// Test literal tuples and their usage
-//
-// Expected output: 0
+// Named tuple cases keep their original nominal helper types and checks.
 
-struct Pair {
+struct LiteralPair {
     pub first: i32,
     pub second: i32,
 }
 
-fn main() {
+fn case_tuple_literal() {
     let tuple1: (i32, i32) = (10, 20)
     assert tuple1[0] == 10: "tuple1[0] should be 10";
     assert tuple1[1] == 20: "tuple1[1] should be 20";
 
-    let tuple2: (Pair, Pair) = (Pair(1, 2), Pair(3, 4))
+    let tuple2: (LiteralPair, LiteralPair) = (LiteralPair(1, 2), LiteralPair(3, 4))
     assert tuple2[0].first == 1: "tuple2[0].first should be 1";
     assert tuple2[0].second == 2: "tuple2[0].second should be 2";
     assert tuple2[1].first == 3: "tuple2[1].first should be 3";
@@ -23,4 +21,73 @@ fn main() {
     assert tuple3[1][0] == 6: "tuple3[1][0] should be 6";
     assert tuple3[1][1] == 7: "tuple3[1][1] should be 7";
 
+}
+
+struct AccessPair {
+    pub first: i32,
+    pub second: i32,
+}
+
+struct DeclarationPair {
+    pub first: i32,
+    pub second: i32,
+}
+
+struct FunctionPair {
+    pub first: i32,
+    pub second: i32,
+}
+
+fn case_tuple_access() {
+    let tuple1: (AccessPair, AccessPair) = (AccessPair(10, 20), AccessPair(30, 40));
+    let tuple2: (i32, AccessPair)[3] = [(1, AccessPair(2, 3)), (4, AccessPair(5, 6)), (7, AccessPair(8, 9))];
+
+    assert tuple1[0].first == 10: "tuple1[0].first should be 10";
+    assert tuple1[0].second == 20: "tuple1[0].second should be 20";
+    assert tuple1[1].first == 30: "tuple1[1].first should be 30";
+    assert tuple2[1][1].second == 6: "tuple2[1].second should be 6";
+
+    tuple2[0][0] = 5;
+    assert tuple2[0][0] == 5: "tuple2[0][0] should be 5";
+
+    tuple2[2][1] = AccessPair(15, 25);
+    assert tuple2[2][1].first == 15: "tuple2[2][1].first should be 15";
+    assert tuple2[2][1].second == 25: "tuple2[2][1].second should be 25";
+}
+
+fn case_tuple_declaration() {
+    let tuple1: (DeclarationPair, DeclarationPair) = (DeclarationPair(1, 2), DeclarationPair(3, 4));
+    let tuple2: (i32, DeclarationPair)[3] = [
+        (1, DeclarationPair(2, 3)),
+        (2, DeclarationPair(3, 4)),
+        (3, DeclarationPair(4, 5)),
+    ];
+}
+
+fn create_pair_and_number(a: i32, b: i32, num: i32) -> (FunctionPair, i32) {
+    let p: FunctionPair = FunctionPair(a, b);
+    let tmp: (FunctionPair, i32) = (p, num)
+    return tmp;
+}
+
+fn sum_tuple(t: (i32, i32)) -> i32 {
+    return t[0] + t[1];
+}
+
+fn case_tuple_functions() {
+    let result: (FunctionPair, i32) = create_pair_and_number(5, 10, 15)
+    assert result[0].first == 5: "result[0].first should be 5";
+    assert result[0].second == 10: "result[0].second should be 10";
+    assert result[1] == 15: "result[1] should be 15";
+
+    let num_tuple: (i32, i32) = (20, 30)
+    let total: i32 = sum_tuple(num_tuple);
+    assert total == 50: "total should be 50";
+}
+
+fn main() {
+    case_tuple_declaration();
+    case_tuple_access();
+    case_tuple_literal();
+    case_tuple_functions();
 }

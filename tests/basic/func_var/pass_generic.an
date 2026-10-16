@@ -4,12 +4,69 @@
 //
 // Expected output: 0
 
-fn add1(x: i32) -> i32 { return x + 1; }
+fn add1_generic_argument(x: i32) -> i32 { return x + 1; }
 
-fn apply<F>(f: F, n: i32) -> i32 {
+fn apply_generic_argument<F>(f: F, n: i32) -> i32 {
     return f(n);
 }
 
+fn case_generic_function_item_argument() {
+    assert apply_generic_argument(add1_generic_argument, 41) == 42: "call function item passed through a generic";
+}
+
+fn add1_nested_pass(x: i32) -> i32 { return x + 1; }
+
+fn inner_nested_pass<F>(f: F, n: i32) -> i32 {
+    return f(n);
+}
+
+fn outer_nested_pass<G>(g: G, n: i32) -> i32 {
+    return inner_nested_pass(g, n);
+}
+
+fn case_nested_generic_forwarding() {
+    assert outer_nested_pass(add1_nested_pass, 41) == 42: "function item forwarded through two generic layers";
+}
+
+fn add1_two_monomorphizations(x: i32) -> i32 { return x + 1; }
+fn double_two_monomorphizations(x: i32) -> i32 { return x * 2; }
+
+fn apply_two_monomorphizations<F>(f: F, n: i32) -> i32 {
+    return f(n);
+}
+
+fn case_two_function_item_monomorphizations() {
+    assert apply_two_monomorphizations(add1_two_monomorphizations, 10) == 11: "apply<add1>";
+    assert apply_two_monomorphizations(double_two_monomorphizations, 10) == 20: "apply<dbl>";
+}
+
+fn add1_generic_return(x: i32) -> i32 { return x + 1; }
+
+fn identity_function_item<F>(f: F) -> F {
+    return f;
+}
+
+fn case_generic_function_item_return() {
+    let g = identity_function_item(add1_generic_return);
+    assert g(41) == 42: "call function item returned through a generic";
+}
+
+fn add1_two_returns(x: i32) -> i32 { return x + 1; }
+fn double_two_returns(x: i32) -> i32 { return x * 2; }
+
+fn pick_function_item<F>(f: F) -> F { return f; }
+
+fn case_two_returned_function_items() {
+    let a = pick_function_item(add1_two_returns);
+    let b = pick_function_item(double_two_returns);
+    assert a(10) == 11: "returned add1";
+    assert b(10) == 20: "returned dbl";
+}
+
 fn main() {
-    assert apply(add1, 41) == 42: "call function item passed through a generic";
+    case_generic_function_item_argument();
+    case_nested_generic_forwarding();
+    case_two_function_item_monomorphizations();
+    case_generic_function_item_return();
+    case_two_returned_function_items();
 }

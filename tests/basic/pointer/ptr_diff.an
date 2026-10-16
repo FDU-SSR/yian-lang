@@ -1,9 +1,12 @@
+// Consolidated basic pointer and allocation scenarios.
+
+
+
 // Test pointer subtraction: ptr - ptr → i64 element offset
 // LLVM PtrDiff produces i64 via sdiv.
 //
-// Expected output: 0
 
-fn main() {
+fn case_ptr_diff_basic() {
     let arr: i32* = dyn[5] 0i32;
     arr[0] = 1;
     arr[1] = 2;
@@ -16,4 +19,48 @@ fn main() {
 
     let back: i64 = p - q;
     assert back == -2: "Expected back to be -2";
+}
+
+// Same-object pointer difference: ptr - ptr → i64 element offset
+// (result typed i64). Complementary angle to
+// ptr_diff.an: larger array, different offsets, self-diff, explicit i64 width.
+//
+
+fn case_ptr_diff_offsets_and_width() {
+    let arr: i32* = dyn[7] 0i32;
+    arr[0] = 0;
+    arr[1] = 10;
+    arr[2] = 20;
+    arr[3] = 30;
+    arr[4] = 40;
+    arr[5] = 50;
+    arr[6] = 60;
+
+    let p: i32* = arr;
+
+    // (p+5) - (p+1) → 4, typed i64
+    let diff: i64 = (p + 5) - (p + 1);
+    assert diff == 4: "diff == 4";
+    assert @sizeof<i64> == 8: "ptr diff result is 8-byte i64";
+
+    // reverse: negative difference
+    let back: i64 = (p + 1) - (p + 5);
+    assert back == -4: "back == -4";
+
+    // self-diff is 0
+    let z: i64 = p - p;
+    assert z == 0: "self diff == 0";
+
+    // adjacent elements differ by 1
+    let adj: i64 = (p + 3) - (p + 2);
+    assert adj == 1: "adjacent diff == 1";
+}
+
+
+
+fn main() {
+
+    case_ptr_diff_basic();
+    case_ptr_diff_offsets_and_width();
+
 }

@@ -2,21 +2,49 @@
 //
 // Expected output: 0
 
-fn add(a: i8, b: i8) -> i8 {
+fn add_i8_direct(a: i8, b: i8) -> i8 {
     return a + b;
 }
 
-fn sub(a: i8, b: i8) -> i8 {
+fn sub_i8_direct(a: i8, b: i8) -> i8 {
     return a - b;
 }
 
-fn main() {
+fn case_direct_i8_calls() {
     let one: i8 = 1;
     let two: i8 = 2;
-    let three: i8 = add(one, two);
+    let three: i8 = add_i8_direct(one, two);
 
     assert three == 3: "Addition function failed";
-    assert sub(three, one) == two: "Subtraction function failed";
-    assert sub(three, two) == one: "Subtraction function failed";
+    assert sub_i8_direct(three, one) == two: "Subtraction function failed";
+    assert sub_i8_direct(three, two) == one: "Subtraction function failed";
 
+}
+
+struct PointerCallPerson {
+    pub age: i32,
+    pub score: i32,
+}
+
+fn add_i32_pointer(a: i32, b: i32) -> i32 {
+    return a + b;
+}
+
+fn make_pointer_call_person(x: i32, y: i32) -> PointerCallPerson {
+    return PointerCallPerson(x, y);
+}
+
+fn case_function_pointer_calls() {
+    let add_func: fn(i32, i32) -> i32 = &add_i32_pointer;
+    let person_func: fn(i32, i32) -> PointerCallPerson = &make_pointer_call_person;
+
+    let person: PointerCallPerson = person_func(2, 3);
+    assert person.age == 2 && person.score == 3: "person_func should return Person(2, 3)";
+
+    assert add_func(1, 2) == 3: "add_func should return 3";
+}
+
+fn main() {
+    case_direct_i8_calls();
+    case_function_pointer_calls();
 }

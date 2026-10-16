@@ -1,1 +1,6 @@
 Welcome to Yian v1!
+empty: []
+{not an expr}
+{ 3 }
+10 + 20 = 30
+if: pos!

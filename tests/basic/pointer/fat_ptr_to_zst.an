@@ -1,22 +1,25 @@
+// Consolidated basic pointer and allocation scenarios.
+
+
+
 // A pointer to a zero-sized type remains a ZST; comparison and arithmetic do
 // not require a data stride.
 //
-// Expected output: 0
 
-struct Empty {}
+struct VoidPointerEmpty {}
 
-fn main() {
+fn case_void_and_empty_layout() {
     // The pointer itself is a ZST regardless of the fat-pointer representation.
     assert @sizeof<void*> == 0: "@sizeof<void*> == 0"
-    assert @sizeof<Empty*> == 0: "@sizeof<Empty*> == 0"
+    assert @sizeof<VoidPointerEmpty*> == 0: "@sizeof<VoidPointerEmpty*> == 0"
 
     // ZST pointers compare equal (all indistinguishable).
     let p: void* = dyn[1] void
     let q: void* = dyn[1] void
     assert p == q: "void* == void*"
 
-    let e: Empty* = dyn[1] Empty
-    assert e == e: "Empty* == Empty*"
+    let e: VoidPointerEmpty* = dyn[1] VoidPointerEmpty
+    assert e == e: "VoidPointerEmpty* == VoidPointerEmpty*"
 
     // Pointer arithmetic on a ZST pointer must not trap (stride 0).
     let r: void* = p + 0
@@ -28,4 +31,89 @@ fn main() {
     // are indistinguishable.
     let w: void* = dyn[1] void
     assert w == p: "dyn ZST pointers compare equal (indistinguishable)"
+}
+
+// ZST pointer comparison and arithmetic: a pointer whose pointee is
+// zero-sized is itself a ZST (size 0; ZSTs remain zero-sized).
+// All such pointer values are indistinguishable, so == / != always behave as
+// equality; arithmetic participates without trapping (erased at codegen).
+//
+
+struct ZstCmpEmpty {}
+
+fn case_empty_zst_comparisons() {
+    // -- == / != on ZST pointers: all indistinguishable --
+    let p: ZstCmpEmpty* = dyn[1] ZstCmpEmpty;
+    let q: ZstCmpEmpty* = dyn[1] ZstCmpEmpty;
+    assert @sizeof<ZstCmpEmpty*> == 0: "ZstCmpEmpty* is a ZST";
+    assert p == p: "ZST ptr == itself";
+    assert p == q: "two ZST ptrs equal (indistinguishable)";
+    assert !(p != q): "ZST ptr != is false (indistinguishable)";
+    assert !(p != p): "ZST ptr != itself is false";
+
+    // void* ZST pointers likewise
+    let v1: void* = dyn[1] void;
+    let v2: void* = dyn[1] void;
+    assert v1 == v2: "void* == void*";
+    assert !(v1 != v2): "void* != void* is false";
+
+    // -- ZST pointer arithmetic participates without trapping --
+    // ZstCmpEmpty* arithmetic is erased at codegen; all values indistinguishable
+    let e1: ZstCmpEmpty* = p + 1;
+    assert e1 == p: "ZstCmpEmpty* +1 == original (all indistinguishable)";
+    let e2: ZstCmpEmpty* = p + 0;
+    assert e2 == p: "ZstCmpEmpty* +0 == original";
+}
+
+// A pointer to a zero-sized type is itself a ZST; its operations are erased
+// during code generation.
+//
+
+struct PointerZstEmpty {}
+
+fn case_pointer_zst_layout_and_equality() {
+    // @sizeof<ptr-to-ZST> == 0  (pointer itself is ZST)
+    assert @sizeof<void*> == 0: "@sizeof<*void> == 0";
+    assert @sizeof<PointerZstEmpty*> == 0: "@sizeof<*PointerZstEmpty> == 0";
+
+    // ZST pointers created by dyn; equality always true (indistinguishable)
+    let p: void* = dyn[1] void;
+    let q: void* = dyn[1] void;
+    assert p == q: "ZST ptr equality always true";
+
+}
+
+// Extended pointer-to-ZST operations: dereference, allocation, and struct access.
+//
+
+struct ZstOpsEmpty {}
+struct WrapZ { e: ZstOpsEmpty*, v: void* }
+
+fn case_zst_pointer_fields() {
+    // ZST pointers are created by dyn allocation; all values are
+    // indistinguishable (erased at codegen).
+    let p: void* = dyn[1] void;
+    let q: ZstOpsEmpty* = dyn[1] ZstOpsEmpty;
+    assert @sizeof<void*> == 0: "sizeof ptr to void";
+    assert @sizeof<ZstOpsEmpty*> == 0: "sizeof ptr to empty struct";
+
+    // ZST pointer comparison always true (all indistinguishable)
+    assert p == p: "same ZST ptr == itself";
+    let r: void* = dyn[1] void;
+    assert p == r: "two void* ZST ptrs equal (indistinguishable)";
+
+    // struct containing ZST pointer fields (the pointers are ZST)
+    assert @sizeof<WrapZ> == 0: "struct of ZST ptr fields";
+
+}
+
+
+
+fn main() {
+
+    case_void_and_empty_layout();
+    case_empty_zst_comparisons();
+    case_pointer_zst_layout_and_equality();
+    case_zst_pointer_fields();
+
 }

@@ -2,28 +2,82 @@
 //
 // Expected output: 0
 
-struct BigInt {
+from std.core.drop import Drop;
+
+struct CallBigInt {
     value: i64,
 }
 
-impl Clone for BigInt {
-    pub fn clone() -> Self { BigInt(self.value) }
+impl Clone for CallBigInt {
+    pub fn clone() -> Self { CallBigInt(self.value) }
 }
 
-fn consume(v: BigInt) -> i64 { v.value }
+fn consume_call(v: CallBigInt) -> i64 { v.value }
 
-fn read(p: BigInt*) -> i64 { (*p).value }
+fn read_call(p: CallBigInt*) -> i64 { (*p).value }
 
-fn main() {
-    let x: BigInt = BigInt(42);
-    assert consume(x) == 42: "copy then consume";
+fn case_call_value_copy() {
+    let x: CallBigInt = CallBigInt(42);
+    assert consume_call(x) == 42: "copy then consume";
     assert x.value == 42: "source remains readable after call";
 
-    let y: BigInt = BigInt(99);
-    assert consume(y.clone()) == 99: "clone then consume";
+    let y: CallBigInt = CallBigInt(99);
+    assert consume_call(y.clone()) == 99: "clone then consume";
     assert y.value == 99: "y still valid after clone";
 
-    let z: BigInt = BigInt(77);
-    assert read(&z) == 77: "read via pointer";
+    let z: CallBigInt = CallBigInt(77);
+    assert read_call(&z) == 77: "read via pointer";
 
+}
+
+struct FunctionParameterBigInt {
+    value: i64,
+}
+
+impl Clone for FunctionParameterBigInt {
+    pub fn clone() -> Self { FunctionParameterBigInt(self.value) }
+}
+
+fn consume_function_parameter(v: FunctionParameterBigInt) -> i64 { v.value }
+
+fn case_function_parameter_copy() {
+    let x: FunctionParameterBigInt = FunctionParameterBigInt(42);
+    assert consume_function_parameter(x) == 42;
+    assert x.value == 42;
+}
+
+struct Guard {
+    value: i32,
+    drop_count: i32*,
+}
+
+impl Drop for Guard {
+    fn drop() {
+        *self.drop_count += 1;
+    }
+}
+
+fn pass_guard(value: Guard) -> Guard {
+    value
+}
+
+fn case_no_implicit_drop() {
+    let drop_count: i32 = 0;
+    let source = Guard(1, &drop_count);
+    let copy = source;
+    copy = source;
+    let returned = pass_guard(copy);
+    {
+        let scoped = returned;
+        assert scoped.value == 1;
+    }
+    assert drop_count == 0: "ordinary value operations must not call drop";
+    returned.drop();
+    assert drop_count == 1: "explicit drop must call the implementation";
+}
+
+fn main() {
+    case_call_value_copy();
+    case_function_parameter_copy();
+    case_no_implicit_drop();
 }

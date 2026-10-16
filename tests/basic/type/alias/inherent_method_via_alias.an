@@ -1,5 +1,36 @@
+// Consolidated basic type and diagnostics scenarios.
+
+
+
+// Named scenario: case_alias_method_and_deref_path
+// typedef: an alias of a struct keeps its inherent methods and deref paths.
+
+struct Holder { pub v: i32 }
+
+impl Holder { pub fn get() -> i32 { return self.v; } }
+
+typedef H = Holder;
+
+fn case_alias_method_and_deref_path() {
+    let h: H = H(v=8);
+    assert h.get() == 8;
+}
+
+// Named scenario: case_alias_field_and_method
+// typedef: field access and method calls on an aliased struct value.
+
+struct Inner { pub v: i32 }
+
+impl Inner { pub fn twice() -> i32 { return self.v * 2; } }
+
+struct Outer { pub i: Inner }
+
+typedef Wrap = Outer;
+
+fn case_alias_field_and_method() { let w: Wrap = Wrap(i=Inner(v=6)); assert w.i.twice() == 12; }
+
+// Named scenario: case_inherent_method_receiver_alias
 // typedef: methods are reachable through an alias of the receiver's type.
-// Expected output: (exit 0)
 
 struct Vec2 { pub x: i32 }
 
@@ -7,4 +38,14 @@ impl Vec2 { pub fn get() -> i32 { return self.x; } }
 
 typedef P = Vec2;
 
-fn main() { let v: P = P(x=5); assert v.get() == 5; }
+fn case_inherent_method_receiver_alias() { let v: P = P(x=5); assert v.get() == 5; }
+
+
+
+fn main() {
+
+    case_alias_method_and_deref_path();
+    case_alias_field_and_method();
+    case_inherent_method_receiver_alias();
+
+}

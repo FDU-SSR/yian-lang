@@ -1,9 +1,0 @@
-// Test variable declaration without initialization
-//
-// Expected output: 0
-
-fn main() {
-    let x: i32;
-    x = 42;
-    assert x == 42;
-}

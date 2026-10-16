@@ -1,18 +1,86 @@
-// Test string literal
-//
-// Expected output:
-// Hello, World!
-// Hello, world!
-// Line1
-// Line2	Tabbed
+// Literal syntax cases; the string case preserves the original output oracle.
 
 from std.core.io import print;
 
-fn main() {
+fn case_string_literals() {
     let hello: str = "Hello, World!";
     print(hello);
     let chinese: str = "你好，世界！";
     print(chinese);
     let escape: str = "Line1\nLine2\tTabbed";
     print(escape);
+}
+
+fn case_boolean_literals() {
+    let t: bool = true;
+    let f: bool = false;
+    assert t != f: "true should ! equal false";
+
+    let and_result: bool = true && false;
+    assert and_result == false: "true && false should be false";
+
+    let or_result: bool = true || false;
+    assert or_result == true: "true || false should be true";
+
+    let not_result: bool = !true;
+    assert not_result == false: "! true should be false";
+}
+
+fn case_character_literals() {
+    let A: char = 'A';
+    let zhong: char = '中';
+    let slash_n: char = '\n';
+    let null: char = '\0';
+    assert u32(null) == 0: "u32(null) == 0 fail\n";
+    let hex_A: char = '\x41';
+    assert hex_A == A: "hex_A == A fail\n";
+    let hex_zhong: char = '\u{4E2D}';
+    assert hex_zhong == zhong: "hex_zhong == zhong fail\n";
+}
+
+fn case_float_literals() {
+    let point: float = 3.1415;
+    assert point > 3.14 && point < 3.15: "point out of range";
+
+    let exp1: float = 1.5e3;
+    assert exp1 > 1499.0 && exp1 < 1501.0: "exp1 out of range";
+    let exp2: float = 2.5e-2;
+    assert exp2 > 0.024 && exp2 < 0.026: "exp2 out of range";
+
+    let hex1: float = 0x1.91eb86p+1;
+    assert hex1 > 3.14 && hex1 < 3.15: "hex1 out of range";
+    let hex2: float = 0x1.4p-2;
+    assert hex2 > 0.3124 && hex2 < 0.3126: "hex2 out of range";
+
+    let suffix: f32 = 2.5_f32;
+    assert suffix > 2.4 && suffix < 2.6: "suffix out of range";
+    let underline: f64 = 1_000.000_1;
+    assert underline > 1000.0000 && underline < 1000.0002: "underline out of range";
+}
+
+fn case_integer_literals() {
+    let dec: i32 = 42;
+    let hex: i32 = 0x2A;
+    assert dec == hex: "dec != hex";
+    let oct: i32 = 0o52;
+    assert dec == oct: "dec != oct";
+    let bin: i32 = 0b101010;
+    assert dec == bin: "dec != bin";
+    let byte: u8 = b'A';
+    assert byte == 65: "byte != 65";
+    let hex_byte: u8 = b'\x41';
+    assert byte == hex_byte: "byte != hex_byte";
+
+    let suffix: u32 = 0x2A_u32;
+    assert suffix == u32(dec): "suffix != dec as u32";
+    let underline: u64 = 1_000_000;
+    assert underline == 1000000: "underline != 1000000";
+}
+
+fn main() {
+    case_boolean_literals();
+    case_character_literals();
+    case_float_literals();
+    case_integer_literals();
+    case_string_literals();
 }

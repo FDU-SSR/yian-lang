@@ -1,8 +1,12 @@
+// Consolidated basic type and diagnostics scenarios.
+
+
+
+// Named scenario: case_half_precision_literals_and_arithmetic
 // Test f16 (half-precision) type and literal.
 //
-// Expected output: 0
 
-fn main() {
+fn case_half_precision_literals_and_arithmetic() {
     let a: f16 = 1.5;
     assert a > 1.4 && a < 1.6: "f16 value out of range";
 
@@ -17,5 +21,34 @@ fn main() {
 
     let d: f16 = c.clone();
     assert d > 3.9 && d < 4.1: "f16 clone";
+
+}
+
+// Named scenario: case_literal_return_coercions
+// Expression-bodied functions coerce a returned literal to the declared type.
+//
+
+fn get_u8() -> u8 { 100 }
+fn get_i64() -> i64 { -1 }
+fn get_f32() -> f32 { 3.14 }
+
+struct Wrapper { n: u64 }
+impl Wrapper {
+    static fn make() -> u64 { 7 }
+}
+
+fn case_literal_return_coercions() {
+    assert get_u8() == 100: "u8 literal";
+    assert get_i64() == -1: "i64 literal";
+    assert get_f32() >= 3.1 && get_f32() <= 3.2: "f32 literal";
+    assert Wrapper.make() == 7: "method literal";
+}
+
+
+
+fn main() {
+
+    case_half_precision_literals_and_arithmetic();
+    case_literal_return_coercions();
 
 }

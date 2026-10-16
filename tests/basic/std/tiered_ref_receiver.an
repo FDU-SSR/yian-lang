@@ -1,4 +1,12 @@
-// T& receiver method-body coverage.
+// T& receiver method-body coverage — match self payload + scalar forms.
+//
+// A live T& receiver supports matching and reading Option payloads, field
+// access, dereference, a derived field pointer, and chained method calls.
+// The original *_fat entry exercises this same source behavior and has no
+// distinct inputs, oracle, or compiler mode; this case retains its assertions.
+// Array receiver cases remain in the sibling tiered_ref_array_receiver.an.
+//
+// Expected output: 0
 
 from std.core.option import Option;
 
@@ -45,12 +53,14 @@ impl Option<i32> {
     }
 }
 
-fn main() {
+fn case_scalar_tiered_receivers() {
+    // Match self and assert the bound payload value.
     let o: Option<i32> = Option<i32>.Some(42);
     let or: Option<i32>& = &o;
     assert or.payload_is_42(): "match self Some(x) => *x == 42";
     assert or.payload_val() == 42: "match self returns the bound payload value";
 
+    // Exercise field access, dereference, a derived pointer, and chaining.
     let pt = Point(1, 2);
     let pr: Point& = &pt;
     assert pr.read_x() == 1: "self.field read through T&";
@@ -60,4 +70,8 @@ fn main() {
     let xp: i32* = pr.x_addr();
     assert *xp == 1: "&self.field derived pointer";
     assert pr.chain() == 2: "chained self.method() through T&";
+}
+
+fn main() {
+    case_scalar_tiered_receivers();
 }

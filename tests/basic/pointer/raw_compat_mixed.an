@@ -1,31 +1,223 @@
+// Consolidated basic pointer and allocation scenarios.
+
+
+
+// Fat-pointer semantic composite: singly linked list
+// Builds a 3-node chain (1 -> 2 -> 3), walks it via next pointers,
+// then deletes every node.
+//
+// Coverage: dyn allocation + struct field access through pointer +
+//           Option emptiness test (is_some) and del (single-free path).
+//
+
+struct FatLinkedListNode {
+    value: i32,
+    next: Option<FatLinkedListNode*>,
+}
+
+fn case_fat_linked_list() {
+    // Build chain 1 -> 2 -> 3 (tail next = None)
+    let n3: FatLinkedListNode* = dyn FatLinkedListNode(3, Option<FatLinkedListNode*>.None);
+    let n2: FatLinkedListNode* = dyn FatLinkedListNode(2, Option<FatLinkedListNode*>.Some(n3));
+    let n1: FatLinkedListNode* = dyn FatLinkedListNode(1, Option<FatLinkedListNode*>.Some(n2));
+
+    // Walk the chain and assert the value sequence (1, 2, 3)
+    let cur: Option<FatLinkedListNode*> = Option<FatLinkedListNode*>.Some(n1);
+    let expected: i32 = 1;
+    while cur.is_some() {
+        let cn: FatLinkedListNode* = *cur.unwrap();
+        assert cn.value == expected: "linked list value mismatch";
+        expected += 1;
+        if cn.next.is_some() {
+            cur = Option<FatLinkedListNode*>.Some(*cn.next.unwrap());
+        } else {
+            cur = Option<FatLinkedListNode*>.None;
+        };
+    };
+    assert expected == 4: "expected exactly 3 visited nodes";
+
+    // Delete every node; save next before freeing current
+    let p: Option<FatLinkedListNode*> = Option<FatLinkedListNode*>.Some(n1);
+    let count: i32 = 0;
+    while p.is_some() {
+        let pn: FatLinkedListNode* = *p.unwrap();
+        let next: Option<FatLinkedListNode*>;
+        if pn.next.is_some() {
+            next = Option<FatLinkedListNode*>.Some(*pn.next.unwrap());
+        } else {
+            next = Option<FatLinkedListNode*>.None;
+        };
+        del pn;
+        p = next;
+        count += 1;
+    };
+    assert count == 3: "expected exactly 3 deleted nodes";
+}
+
+// raw_compat_alloc.an: raw-pointer compatibility, heap allocation, traversal, and sum assertions.
+//
+// Valid raw-pointer program: dyn allocates an i32 array, then loops write and sum it,
+// asserting sum(1..16)==136 before del releases it.
+// Both fat mode (checks enabled) and raw mode (--raw-pointers, no checks) must exit zero;
+// this test relies on no trap, and fat representation must preserve correctness.
+//
+
+fn case_raw_compat_alloc() {
+    let n: u64 = 16;
+    let arr: i32* = dyn[n] 0i32;
+    let i: u64 = 0;
+    while i < n {
+        arr[i] = i32(i) + 1;
+        i += 1;
+    }
+
+    let s: i32 = 0;
+    let j: u64 = 0;
+    while j < n {
+        s += arr[j];
+        j += 1;
+    }
+    assert s == 136: "sum(1..16) == 136";
+
+    del arr;
+}
+
+// raw_compat_arith.an: raw-pointer arithmetic p+n/p-n, ordering, and assertions.
+//
+// Covers same-object pointer arithmetic, differences, ordering comparisons,
+// and zero-offset identity. The negative-offset case is covered separately by
+// `tests/safety/fat_subslice_underflow.an`.
+//
+
+fn case_raw_compat_arith() {
+    let arr: i32[6] = [10, 20, 30, 40, 50, 60];
+    let p: i32* = &arr[0];
+
+    // Read through p+n.
+    assert *(p + 2) == 30: "*(p+2) == arr[2]";
+    assert *(p + 5) == 60: "*(p+5) == arr[5]";
+
+    // Subslice q=p+4 and identity when n==0.
+    let q: i32* = p + 4;
+    let r: i32* = p + 0;
+    assert r == p: "p+0 == p";
+    let s: i32* = q - 0;
+    assert s == q: "q-0 == q";
+
+    // Pointer difference yields an i64 element offset.
+    let d1: i64 = q - p;
+    assert d1 == 4: "q - p == 4";
+    let d2: i64 = (p + 5) - (p + 1);
+    assert d2 == 4: "(p+5)-(p+1) == 4";
+
+    // Order pointers into the same object.
+    assert p < p + 1: "p < p+1";
+    assert q > p: "q > p";
+    assert p <= p: "p <= p";
+    assert q >= p + 4: "q >= p+4";
+    assert !(q < p): "!(q < p)";
+}
+
+// raw_compat_del.an: raw-pointer allocation, release, and reallocation.
+//
+// Verify the heap remains usable after del: a fresh block can be read/written independently
+// of released pointers. Three allocation/release rounds verify stable heap state.
+// A valid program without UAF/OOB must exit zero in both fat and raw modes.
+//
+
+fn case_raw_compat_del() {
+    let p: i32* = dyn[4] 0i32;
+    p[0] = 7;
+    p[3] = 9;
+    assert p[0] + p[3] == 16: "values before del";
+
+    del p;
+
+    // Reallocate after release; the fresh block is independently usable.
+    let q: i32* = dyn[4] 0i32;
+    q[1] = 5;
+    q[2] = 6;
+    assert q[1] == 5: "q[1] after realloc";
+    assert q[1] + q[2] == 11: "q[1]+q[2] == 11";
+    del q;
+
+    // Allocate again to verify heap state.
+    let r: i32* = dyn[2] 0i32;
+    r[0] = 1;
+    r[1] = 2;
+    assert r[0] + r[1] == 3: "third alloc reads";
+    del r;
+}
+
+// raw_compat_field.an: raw-pointer struct fields and reads/writes through field pointers.
+//
+// Read/write a heap struct and access its fields indirectly through an outer struct's pointer field.
+// This valid program must exit zero in both fat and raw modes.
+//
+
+struct RawCompatFieldPoint {
+    x: i32,
+    y: i32,
+}
+
+struct RawCompatFieldWrap {
+    p: RawCompatFieldPoint*,
+}
+
+fn case_raw_compat_field() {
+    let pt: RawCompatFieldPoint* = dyn RawCompatFieldPoint(1, 2);
+    assert pt.x == 1: "pt.x == 1";
+    assert pt.y == 2: "pt.y == 2";
+
+    // Write fields.
+    pt.x = 10;
+    pt.y = 20;
+    assert pt.x == 10: "pt.x == 10 after write";
+    assert pt.y == 20: "pt.y == 20 after write";
+
+    // Dereference RawCompatFieldWrap.p to read/write the pointed-to struct.
+    let w: RawCompatFieldWrap* = dyn RawCompatFieldWrap(pt);
+    assert w.p.x == 10: "w.p.x == 10 via field pointer";
+    w.p.y = 21;
+    assert pt.y == 21: "write via w.p.y visible at pt.y";
+
+    // Extract the pointer field for independent use.
+    let inner: RawCompatFieldPoint* = w.p;
+    assert inner.x + inner.y == 31: "inner.x + inner.y == 31";
+    inner.x = 100;
+    assert pt.x == 100: "write via inner visible at pt.x";
+
+    del w;
+    del pt;
+}
+
 // raw_compat_mixed.an: allocation, arithmetic, field access, and release.
 //
 // Combine linked-list construction/traversal/release with stack-array arithmetic, differences, and ordering,
 // using dyn, struct fields, and del in a valid program.
 // Both fat and raw modes must exit zero.
 //
-// Expected output: 0
 
-struct Node {
+struct RawCompatMixedNode {
     value: i32,
-    next: Option<Node*>,
+    next: Option<RawCompatMixedNode*>,
 }
 
-fn main() {
+fn case_raw_compat_mixed() {
     // Build and traverse the linked list.
-    let n3: Node* = dyn Node(3, Option<Node*>.None);
-    let n2: Node* = dyn Node(2, Option<Node*>.Some(n3));
-    let n1: Node* = dyn Node(1, Option<Node*>.Some(n2));
+    let n3: RawCompatMixedNode* = dyn RawCompatMixedNode(3, Option<RawCompatMixedNode*>.None);
+    let n2: RawCompatMixedNode* = dyn RawCompatMixedNode(2, Option<RawCompatMixedNode*>.Some(n3));
+    let n1: RawCompatMixedNode* = dyn RawCompatMixedNode(1, Option<RawCompatMixedNode*>.Some(n2));
 
     let sum: i32 = 0;
-    let cur: Option<Node*> = Option<Node*>.Some(n1);
+    let cur: Option<RawCompatMixedNode*> = Option<RawCompatMixedNode*>.Some(n1);
     while cur.is_some() {
-        let cn: Node* = *cur.unwrap();
+        let cn: RawCompatMixedNode* = *cur.unwrap();
         sum = sum + cn.value;
         if cn.next.is_some() {
-            cur = Option<Node*>.Some(*cn.next.unwrap());
+            cur = Option<RawCompatMixedNode*>.Some(*cn.next.unwrap());
         } else {
-            cur = Option<Node*>.None;
+            cur = Option<RawCompatMixedNode*>.None;
         };
     }
     assert sum == 6: "list sum == 6";
@@ -39,19 +231,32 @@ fn main() {
     assert p + 4 > p + 3: "p+4 > p+3";
 
     // Release the whole chain, saving next before del.
-    let d: Option<Node*> = Option<Node*>.Some(n1);
+    let d: Option<RawCompatMixedNode*> = Option<RawCompatMixedNode*>.Some(n1);
     let count: i32 = 0;
     while d.is_some() {
-        let dn: Node* = *d.unwrap();
-        let nx: Option<Node*>;
+        let dn: RawCompatMixedNode* = *d.unwrap();
+        let nx: Option<RawCompatMixedNode*>;
         if dn.next.is_some() {
-            nx = Option<Node*>.Some(*dn.next.unwrap());
+            nx = Option<RawCompatMixedNode*>.Some(*dn.next.unwrap());
         } else {
-            nx = Option<Node*>.None;
+            nx = Option<RawCompatMixedNode*>.None;
         };
         del dn;
         d = nx;
         count += 1;
     }
     assert count == 3: "deleted 3 nodes";
+}
+
+
+
+fn main() {
+
+    case_fat_linked_list();
+    case_raw_compat_alloc();
+    case_raw_compat_arith();
+    case_raw_compat_del();
+    case_raw_compat_field();
+    case_raw_compat_mixed();
+
 }

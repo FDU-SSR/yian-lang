@@ -5,7 +5,30 @@ fn add(a: i32, b: i32) -> i32 {
     return a + b;
 }
 
-fn main() {
+fn case_basic_value_expression() {
     let x: i32 = add(1, 2);
     assert x == 3: "basic add failed";
+}
+
+fn block_tail_value() -> i32 {
+    let x: i32 = 42;
+    x
+}
+
+fn case_block_tail_expression() {
+    assert block_tail_value() == 42;
+}
+
+fn case_block_value_expression() {
+    let x: i32 = {
+        let y: i32 = 10;
+        y + 32
+    };
+    assert x == 42: "block expression failed";
+}
+
+fn main() {
+    case_basic_value_expression();
+    case_block_tail_expression();
+    case_block_value_expression();
 }

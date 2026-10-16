@@ -37,7 +37,7 @@ impl<T> Pair<T> {
     }
 }
 
-fn main() {
+fn case_generic_struct_methods() {
     // 1) explicit type arguments
     let p1: Pair<i32> = Pair<i32>.new(10, 20);
     assert p1.sum() == 30: "Expected sum 30";
@@ -54,4 +54,38 @@ fn main() {
     p2.swap();
     assert p2.first > 2.1 && p2.first < 2.3 && p2.second > 5.4 && p2.second < 5.6: "Expected swapped values";
 
+}
+
+impl i32 {
+    pub fn casted_add<U>(other: U) -> i32 {
+        return *self + i32(other);
+    }
+}
+
+trait CastedSubtract<T> {
+    fn casted_subtract<U>(other: U) -> T;
+}
+
+impl CastedSubtract<i32> for i32 {
+    fn casted_subtract<U>(other: U) -> i32 {
+        return *self - i32(other);
+    }
+}
+
+fn case_generic_method_parameters() {
+    let value: i32 = 50;
+    let add_explicit: i32 = value.casted_add<f64>(25.5);
+    assert add_explicit == 75: "Expected casted_add result 75";
+    let add_inferred: i32 = value.casted_add(20.5);
+    assert add_inferred == 70: "Expected casted_add result 70";
+
+    let subtract_explicit: i32 = value.casted_subtract<f64>(15.5);
+    assert subtract_explicit == 35: "Expected casted_subtract result 35";
+    let subtract_inferred: i32 = value.casted_subtract(10.5);
+    assert subtract_inferred == 40: "Expected casted_subtract result 40";
+}
+
+fn main() {
+    case_generic_struct_methods();
+    case_generic_method_parameters();
 }

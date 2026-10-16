@@ -1,7 +1,25 @@
+// Consolidated basic type and diagnostics scenarios.
+
+
+
+// Named scenario: case_const_generic_array_sizeof
+// const-generic array length in sizeof — exercises the GenericConstExpr path
+// through parse_type → __parse_const_expr → TypeResolver monomorphisation.
+//
+
+impl<T, const N: u64> T[N] {
+    fn total_bytes() -> u64 { @sizeof<T[N]> }
+}
+
+fn case_const_generic_array_sizeof() {
+    let arr = [1u32, 2, 3, 4];
+    assert arr.total_bytes() == @sizeof<u32> * 4: "const-generic length in sizeof";
+}
+
+// Named scenario: case_full_type_grammar_sizeof
 // sizeof accepts the full type grammar: primitives, pointer, slice, function,
 // never, array, tuple, generics, nesting, and const-generic array lengths.
 //
-// Expected output: (exit 0)
 
 // --- reference structs (indirect: @sizeof<Wrapper> = @sizeof<field type>) ---
 struct WP { p: i32* }
@@ -22,7 +40,7 @@ struct WO { p: Option<i32> }
 struct S { a: i32, b: u8 }
 enum E { A, B, C }
 
-fn main() {
+fn case_full_type_grammar_sizeof() {
     let expected_str_size: u64 = comptime if IS_RAW_MODE {
         16u64
     } else {
@@ -89,5 +107,14 @@ fn main() {
     assert @sizeof<(i32*, u8[4])> == @sizeof<M_ptrarr>: "tuple(ptr, arr)";
     assert @sizeof<(fn(i32) -> bool, i32[2])> == @sizeof<M_fnarr>: "tuple(fn, arr)";
     assert @sizeof<(i32*, u8)[2]> == @sizeof<M_ptru8> * 2: "array of tuple(ptr,u8)";
+
+}
+
+
+
+fn main() {
+
+    case_const_generic_array_sizeof();
+    case_full_type_grammar_sizeof();
 
 }

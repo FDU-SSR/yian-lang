@@ -1,13 +1,54 @@
+// Consolidated basic type and diagnostics scenarios.
+
+
+
+// Named scenario: case_generic_argument_alias_impl
+// typedef: generic trait impl + alias as the generic argument.
+
+typedef GenericArgumentCode = u64;
+
+struct GenericArgumentBox<T> { pub v: T }
+
+trait GenericArgumentGet { fn get() -> u64; }
+
+impl<T> GenericArgumentGet for GenericArgumentBox<T> { fn get() -> u64 { return 1u64; } }
+
+fn case_generic_argument_alias_impl() { let a: GenericArgumentBox<GenericArgumentCode> = GenericArgumentBox<GenericArgumentCode>(v=2u64); assert a.get() == 1; }
+
+// Named scenario: case_generic_instance_alias_impl
+// typedef: impl written on an alias of a generic instance.
+// Trait method lookup finds an impl registered through an alias of a generic instance.
+
+struct GenericInstanceBox<T> { pub v: T }
+
+typedef GenericInstanceBoxAlias = GenericInstanceBox<i32>;
+
+trait GenericInstanceDescribe { fn describe() -> i32; }
+
+impl GenericInstanceDescribe for GenericInstanceBoxAlias { fn describe() -> i32 { return 3; } }
+
+fn case_generic_instance_alias_impl() { let b: GenericInstanceBox<i32> = GenericInstanceBox<i32>(v=1); assert b.describe() == 3; }
+
+// Named scenario: case_struct_alias_impl
 // typedef: a trait impl written on a struct alias is found through the struct.
 // Trait method lookup finds an impl registered through a struct alias.
-// Expected output: (exit 0)
 
 typedef P = Vec2;
 
 struct Vec2 { pub x: i32 }
 
-trait Describe { fn describe() -> i32; }
+trait StructAliasDescribe { fn describe() -> i32; }
 
-impl Describe for P { fn describe() -> i32 { return 7; } }
+impl StructAliasDescribe for P { fn describe() -> i32 { return 7; } }
 
-fn main() { let v: Vec2 = Vec2(x=1); assert v.describe() == 7; }
+fn case_struct_alias_impl() { let v: Vec2 = Vec2(x=1); assert v.describe() == 7; }
+
+
+
+fn main() {
+
+    case_generic_argument_alias_impl();
+    case_generic_instance_alias_impl();
+    case_struct_alias_impl();
+
+}

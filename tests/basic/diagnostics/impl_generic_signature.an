@@ -1,3 +1,8 @@
+// Consolidated basic type and diagnostics scenarios.
+
+
+
+// Named scenario: case_generic_impl_signatures
 trait Reader<T> {
     fn read() -> T;
     static fn echo<U>(value: U) -> U;
@@ -17,9 +22,55 @@ impl<T> Reader<T> for Record<T> {
     }
 }
 
-fn main() {
+fn case_generic_impl_signatures() {
     let record = Record<i32>(7);
     assert record.read() == 7;
     assert Reader<i32>.echo<Record<i32>, bool>(true);
     assert Reader<i32>.echo<Record<i32>>(9u64) == 9u64;
+}
+
+// Named scenario: case_qualified_method_candidates
+trait Factory<T> {
+    static fn create(value: T) -> Self;
+}
+
+trait OtherFactory {
+    static fn create<A, B>(first: A, second: B) -> Self;
+}
+
+struct Product {
+    pub value: i32,
+}
+
+impl OtherFactory for Product {
+    static fn create<A, B>(first: A, second: B) -> Self {
+        Product(100)
+    }
+}
+
+impl Factory<i32> for Product {
+    static fn create(value: i32) -> Self {
+        Product(value)
+    }
+}
+
+impl Product {
+    static fn create(value: i32) -> Self {
+        Product(value + 200)
+    }
+}
+
+fn case_qualified_method_candidates() {
+    assert Factory<i32>.create<Product>(7).value == 7;
+    assert OtherFactory.create<Product, i32, bool>(9, true).value == 100;
+    assert Factory<i32>.create<Product>(11).value == 11;
+}
+
+
+
+fn main() {
+
+    case_generic_impl_signatures();
+    case_qualified_method_candidates();
+
 }

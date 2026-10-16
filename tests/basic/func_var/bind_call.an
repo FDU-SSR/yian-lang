@@ -2,9 +2,33 @@
 //
 // Expected output: 0
 
-fn add1(x: i32) -> i32 { return x + 1; }
+fn add1_bind_call(x: i32) -> i32 { return x + 1; }
+
+fn case_bind_and_call() {
+    let f = add1_bind_call; // inferred: f : function item of add1_bind_call (ZST)
+    assert f(41) == 42: "call through function variable";
+}
+
+fn add1_multiple_items(x: i32) -> i32 { return x + 1; }
+fn double_multiple_items(x: i32) -> i32 { return x * 2; }
+
+fn case_distinct_function_items() {
+    let f = add1_multiple_items;
+    let g = double_multiple_items;
+    assert f(10) == 11: "f dispatches to add1";
+    assert g(10) == 20: "g dispatches to dbl";
+}
+
+fn add1_reassignment(x: i32) -> i32 { return x + 1; }
+
+fn case_reassign_same_function() {
+    let f = add1_reassignment;
+    f = add1_reassignment;
+    assert f(1) == 2: "reassign same function";
+}
 
 fn main() {
-    let f = add1; // inferred: f : function item of add1 (ZST)
-    assert f(41) == 42: "call through function variable";
+    case_bind_and_call();
+    case_distinct_function_items();
+    case_reassign_same_function();
 }

@@ -18,7 +18,7 @@ fn pass_through_zst(z: void, n: i32) -> i32 {
     return n; // z is ZST, stripped from params — call must still align
 }
 
-fn main() {
+fn case_comprehensive_integration() {
     // ---- void locals ----
     let v1: void;
     let v2: void;
@@ -68,4 +68,28 @@ fn main() {
     assert @sizeof<Empty*> == 0: "ptr to zst struct is zst";
     assert p == p: "zst ptr equality";
 
+}
+
+struct EnumEmpty {}
+enum E0Focused { Only }
+enum EZ { Z { v: EnumEmpty } }
+enum EV { V { v: void } }
+enum E2 { A, B }
+enum EN { N { v: i32 } }
+
+fn case_enum_layout() {
+    // ZST enums
+    assert @sizeof<E0Focused> == 0: "unit enum";
+    assert @sizeof<EZ> == 0: "single variant ZST payload (empty struct)";
+    assert @sizeof<EV> == 0: "single variant ZST payload (void)";
+
+    // non-ZST: verify unchanged
+    assert @sizeof<E2> > 0: "multi-variant enum still has discriminant";
+    assert @sizeof<EN> > 0: "single non-zst payload > 0";
+
+}
+
+fn main() {
+    case_enum_layout();
+    case_comprehensive_integration();
 }

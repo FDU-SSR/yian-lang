@@ -112,7 +112,7 @@ class TestCase:
     """A single test case."""
 
     name: str
-    """Human-readable name, e.g. 'call/variant_construct.an'."""
+    """Human-readable name, e.g. 'call/func.an'."""
 
     source_files: list[Path]
     """.an files to compile (absolute paths)."""
@@ -254,7 +254,7 @@ def __find_ans(test_rel: str) -> Path | None:
     """Look for a .ans file corresponding to *test_rel*.
 
     *test_rel* is relative to _source_dir:
-      - "call/variant_construct.an"         → …/call/variant_construct.an.ans
+      - "call/func.an"                      → …/call/func.an.ans
       - "error/circular_dep1.err.an"        → …/error/circular_dep1.an.ans
       - "import/func"  (multi-file dir)     → …/import/func.ans
     """
