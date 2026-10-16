@@ -24,7 +24,7 @@ This is a mandatory execution constraint for every task, including planning expe
 - Record implementation and verification separately: `IMPLEMENTED` means implementation complete; `LOCALLY_VERIFIED` means the defined local checks/probes passed; `FULLY_VERIFIED` means every explicitly user-required acceptance item passed within its stated scope; `UNVERIFIED` means necessary verification is missing or invalid; `BLOCKED` means work cannot proceed, with a cause and release condition. `FULLY_VERIFIED` does not imply exhaustive coverage or a full regression unless that exact scope was required and executed.
 - Final reports state actual implementation, local checks/probes and results, batch tests not run, and uncovered risks. Local acceptance can support delivery; never describe it as full-suite/full-regression success or proof that all potential problems are excluded.
 
-YIAN is a statically typed programming language with a Python recovery compiler, a compiler and package manager written in YIAN, a standard library, a C runtime, and editor tooling. The self-hosted compiler and package manager are in `bootstrap/yianc/` and `bootstrap/anx/`. The native compiler is the daily authority; the Python compiler is retained for the explicit cold recovery path and the compatibility it needs. The native source-to-executable pipeline is:
+YIAN is a statically typed programming language with a Python recovery compiler, a compiler and package manager written in YIAN, a standard library, a C runtime, and editor tooling. The self-hosted compiler and package manager are in `yianc/` and `anx/`. The native compiler is the daily authority; the Python compiler is retained for the explicit cold recovery path and the compatibility it needs. The native source-to-executable pipeline is:
 
 `.an source → tokens → AST → desugared AST → HIR → CFG IR → LLVM IR → native executable`
 
@@ -33,8 +33,8 @@ The Python recovery compiler is maintained for the explicit cold bootstrap input
 | Component | Entry point | Responsibility |
 | --- | --- | --- |
 | Python recovery compiler | `PYTHONPATH=python python -m yianc.main`, `python/yianc/main.py` | Builds the raw native `yianc` during explicit cold recovery |
-| Native compiler | installed `yianc`, `bootstrap/yianc/src/main.an` | Source analysis, CFG/LLVM lowering, native emission |
-| Native package manager | installed `anx`, `bootstrap/anx/src/main.an` | Manifest validation, dependency graph, builds and package tests |
+| Native compiler | installed `yianc`, `yianc/src/main.an` | Source analysis, CFG/LLVM lowering, native emission |
+| Native package manager | installed `anx`, `anx/src/main.an` | Manifest validation, dependency graph, builds and package tests |
 | Language server | `yian-lsp`, `lsp/src/main.an` | Native stdio LSP backed by the self-hosted compiler and package manager |
 | Standard library | `lib/src/` | Language-level containers, numeric operations, I/O and CLI APIs |
 | Runtime | `runtime/src/` | Allocation, runtime failures and Linux I/O support |
@@ -57,7 +57,7 @@ conda run --no-capture-output -n yian-env bash scripts/setup_llvm_toolchain.sh -
 
 `python/requirements.txt` pins llvmlite for the Python recovery compiler. `scripts/setup_llvm_toolchain.sh` does not depend on Python; by default it installs missing native C build packages from the distribution repository and LLVM 22 packages from the official `apt.llvm.org` repository using sudo, then switches unversioned commands to LLVM 22. It does not install Python packages; `--check` only reports LLVM tool versions. Native linking and package C-shim compilation select `YIAN_CC`, then `clang`, then `cc`. `runtime/build.py` uses `clang` and `llvm-ar` on PATH independently of `YIAN_CC`. LLVM consumer packages also validate their native toolchain requirements.
 
-`python/pyproject.toml` defines the Python recovery compiler package and its strict Pyright scope. The native package manager is in `bootstrap/anx/`. The language server is the native YIAN package in `lsp/`; only the warm refresh builds and installs it, together with both compiler tools. `python/requirements.txt` contains the pinned llvmlite dependency needed for cold recovery; the Python compiler package also declares llvmlite in `pyproject.toml`. Direct Python compiler module invocations from a checkout need `PYTHONPATH=python`; these are reserved for explicit recovery work.
+`python/pyproject.toml` defines the Python recovery compiler package and its strict Pyright scope. The native package manager is in `anx/`. The language server is the native YIAN package in `lsp/`; only the warm refresh builds and installs it, together with both compiler tools. `python/requirements.txt` contains the pinned llvmlite dependency needed for cold recovery; the Python compiler package also declares llvmlite in `pyproject.toml`. Direct Python compiler module invocations from a checkout need `PYTHONPATH=python`; these are reserved for explicit recovery work.
 
 ```bash
 conda run --no-capture-output -n yian-env bash scripts/bootstrap_toolchain.sh --prefix "$HOME/.local" --python python
@@ -85,7 +85,7 @@ scripts/refresh_toolchain.sh --anx "$HOME/.local/bin/anx" --yianc "$HOME/.local/
 - For a multi-part approved plan, do not stop when one low-level slice passes if dependent work is still required for the planned behavior. Continue through the connected implementation units until the plan's user-visible completion criteria are met; report intermediate findings as progress, not as a request to restart or approve each next slice.
 - Record implementation completion separately from local acceptance. Check task acceptance before closing a task, milestone acceptance before dependent milestones, and final acceptance before the final commit or report, using valid local evidence and minimal probes only by default. Acceptance gates never authorize batch tests or repeated builds. Disclose required gaps and unexecuted extended verification separately.
 - If a test exposes a bug, preserve its intended assertion, investigate and fix it within the authorized design, and revalidate. If blocked by a core design conflict or missing environment, record and report the cause; never weaken the assertion to make it pass.
-- Native compiler verification targets native `yianc` with minimal relevant cases. Check Python recovery behavior only when the changed source or package contract participates in cold bootstrap; that check supports recovery compatibility only. Package-manager changes target `bootstrap/anx/` and verify the native package-map consumer; include the Python recovery compiler only when the cold recipe consumes the changed contract. Record other applicable consumers as unverified if they cannot be checked within the authorized scope.
+- Native compiler verification targets native `yianc` with minimal relevant cases. Check Python recovery behavior only when the changed source or package contract participates in cold bootstrap; that check supports recovery compatibility only. Package-manager changes target `anx/` and verify the native package-map consumer; include the Python recovery compiler only when the cold recipe consumes the changed contract. Record other applicable consumers as unverified if they cannot be checked within the authorized scope.
 - Native evidence must use binaries matching the relevant source changes, environment and install prefix. Reuse a verified current binary; do not reinstall after an iteration that leaves it current. If it is stale, `scripts/refresh_toolchain.sh` is the full native refresh path; a cold bootstrap is a separate prerequisite when no compatible native seed exists. An install or refresh command is not implicit permission for an expensive build. Apply the same rule to LSP-specific checks.
 - Commit only when explicitly requested. A task may be delivered in multiple scoped commits when it contains many independent features. Review tracked and untracked changes, run `git diff --check` and `git diff --cached --check`, stage only the requested scope, and report all commits plus remaining worktree changes. Do not push without authorization.
 - Distinguish executed checks from static review and uncovered behavior. A generic declaration that builds without being instantiated has not been verified at run time; Python-suite success does not establish bootstrap semantic correctness.
@@ -155,16 +155,16 @@ lex
 
 Ordinary `sizeof` expressions retain the queried type identity through HIR and CFG; LLVM lowering supplies the size constant. Immediate compile-time size queries use `python/yianc/target_layout.py` to provide the emitted target's layout. Do not substitute the Python host's object sizes or infer aggregate layout in semantic passes.
 
-`python/yianc/analysis/session.py` serves recovery compiler builds and analysis-only runs. The native language server consumes its native editor-analysis interface in `bootstrap/yianc/`. The recovery compiler retains in-memory document overlays and semantic query APIs in its own implementation; daily editor behavior is provided by native `yianc` and `yian-lsp`, and Python feature parity is not required. Native compilation uses strict failure and distinguishes all checked definitions from definitions selected for code generation.
+`python/yianc/analysis/session.py` serves recovery compiler builds and analysis-only runs. The native language server consumes its native editor-analysis interface in `yianc/`. The recovery compiler retains in-memory document overlays and semantic query APIs in its own implementation; daily editor behavior is provided by native `yianc` and `yian-lsp`, and Python feature parity is not required. Native compilation uses strict failure and distinguishes all checked definitions from definitions selected for code generation.
 
 ## Native compiler
 
-`bootstrap/yianc/` is a hybrid package with a binary and importable modules. It implements source preparation, semantic analysis, HIR-to-CFG lowering, LLVM emission and native linking. Its dependency on `bootstrap/json/` supplies JSON parsing and writing; `bootstrap/llvm/` supplies the LLVM C API bindings. `scripts/bootstrap_toolchain.sh` cold-builds and installs native `yianc` and `anx`; `scripts/refresh_toolchain.sh` refreshes both plus `yian-lsp`.
+`yianc/` is a hybrid package with a binary and importable modules. It implements source preparation, semantic analysis, HIR-to-CFG lowering, LLVM emission and native linking. Its dependency on `bootstrap/json/` supplies JSON parsing and writing; `bootstrap/llvm/` supplies the LLVM C API bindings. `scripts/bootstrap_toolchain.sh` cold-builds and installs native `yianc` and `anx`; `scripts/refresh_toolchain.sh` refreshes both plus `yian-lsp`.
 
 ```bash
 conda run --no-capture-output -n yian-env bash scripts/bootstrap_toolchain.sh --prefix "$HOME/.local" --python python
-"$HOME/.local/bin/anx" build -O2 bootstrap/yianc
-"$HOME/.local/bin/yianc" --frontend-json desugared bootstrap/yianc/src/main.an
+"$HOME/.local/bin/anx" build -O2 yianc
+"$HOME/.local/bin/yianc" --frontend-json desugared yianc/src/main.an
 "$HOME/.local/bin/yianc" --analyze --json --compiler-root . lib/src tests/basic/array/access.an
 "$HOME/.local/bin/yianc" --compiler-root . -O2 -o build/access lib/src tests/basic/array/access.an
 ```
@@ -179,7 +179,7 @@ The native compiler locates runtime resources through `--compiler-root`, nonempt
 
 The middle end supports aggregate and pointer operations, generic types and procedures, trait/method lookup, closures, trait objects, FFI, patterns and compile-time branch selection. It checks root procedures and discovered concrete instances rather than limiting checks to calls reachable from `main`. An unused generic declaration is not evidence that every possible instantiation is valid.
 
-| Directory under `bootstrap/yianc/src/` | Responsibility |
+| Directory under `yianc/src/` | Responsibility |
 | --- | --- |
 | `common/` | Strong ID wrappers, source positions and traversal control |
 | `diagnostics/` | Owned diagnostic model, sink, text and JSON rendering |
@@ -246,7 +246,7 @@ conda run --no-capture-output -n yian-env python scripts/run_tests.py --all -q
 
 # One native formatter fixture, fixed output oracle, fat and raw modes.
 conda run --no-capture-output -n yian-env python scripts/_toolchain/compiler_parity.py --native "$HOME/.local/bin/yianc" --groups format --filter fixture-comments/nested_generics.an --report build/formatter-nested-generics.json
-conda run --no-capture-output -n yian-env "$HOME/.local/bin/anx" fmt --check bootstrap/yianc/src
+conda run --no-capture-output -n yian-env "$HOME/.local/bin/anx" fmt --check yianc/src
 
 # Pure native/C ABI check; it does not build the runtime or run self-tests.
 conda run --no-capture-output -n yian-env python runtime/build.py --check-consistency-only
@@ -260,11 +260,11 @@ For compiler changes, validate native `yianc` with minimal relevant cases. Check
 
 ## anx package manager
 
-`bootstrap/anx/` implements `new [--kind bin|lib|hybrid]` (`--lib` is shorthand for `--kind lib`), `build`, `run`, `check`, `test`, `fmt [--check]`, and `graph`. Projects declare metadata plus `[dependencies]` and `[dev-dependencies]` (visible only to `anx test`, and not compiled by a normal build) in `package.anx`; imports use package names. Native `anx` produces the v2 package-map contract consumed by native `yianc`; the Python recovery compiler consumes it only for cold-bootstrap compatibility. Its build/check/run/test commands share a strict compiler selector: nonempty `YIANC`, otherwise `yianc` on `PATH`; the selected canonical file must be executable ELF. It never invokes a shell or falls back to Python. `anx test` runs the project's tests under `<project>/tests/` in both fat and raw modes by default, and accepts `--pointer-mode {both,fat,raw}`; `--raw-pointers` remains a raw alias and conflicts with an explicit mode.
+`anx/` implements `new [--kind bin|lib|hybrid]` (`--lib` is shorthand for `--kind lib`), `build`, `run`, `check`, `test`, `fmt [--check]`, and `graph`. Projects declare metadata plus `[dependencies]` and `[dev-dependencies]` (visible only to `anx test`, and not compiled by a normal build) in `package.anx`; imports use package names. Native `anx` produces the v2 package-map contract consumed by native `yianc`; the Python recovery compiler consumes it only for cold-bootstrap compatibility. Its build/check/run/test commands share a strict compiler selector: nonempty `YIANC`, otherwise `yianc` on `PATH`; the selected canonical file must be executable ELF. It never invokes a shell or falls back to Python. `anx test` runs the project's tests under `<project>/tests/` in both fat and raw modes by default, and accepts `--pointer-mode {both,fat,raw}`; `--raw-pointers` remains a raw alias and conflicts with an explicit mode.
 
 `bin` supplies an executable entry, `lib` exposes importable sources without an entry, and `hybrid` supplies both. `anx build`/`run` do not emit a library artifact for `lib`; `check`/`test` are the corresponding package operations, subject to verification scope and authorization. Executables are written to the root project's `build/app`. `--release` selects `-O3` unless an explicit `-O` is supplied. `anx run [project] -- ...` forwards arguments to the program. Verify native package-manager changes with minimal relevant fixtures and the daily native compiler; check recovery compatibility only if the cold recipe consumes the changed contract.
 
-`bootstrap/anx/src/manifest/` parses TOML and package declarations; `project/` validates layout, dependencies, ownership and file indexing; `driver/test.an` runs package-local tests. The v2 package map carries FFI permission and optional LLVM shim/link requirements from `[native.llvm]` to the compiler.
+`anx/src/manifest/` parses TOML and package declarations; `project/` validates layout, dependencies, ownership and file indexing; `driver/test.an` runs package-local tests. The v2 package map carries FFI permission and optional LLVM shim/link requirements from `[native.llvm]` to the compiler.
 
 ## Architecture
 
@@ -278,11 +278,11 @@ For compiler changes, validate native `yianc` with minimal relevant cases. Check
 - `python/yianc/codegen/llvm/` lowers CFG nodes with llvmlite and emits target files through `Emitter`.
 - `python/yianc/format/` owns YIAN formatting, fixtures and invariant checks. `python/yianc/cli.py` handles compiler argument scanning; the standard-library `std.cli` provides the argument parser used by the bootstrap CLI.
 - `lib/src/core/`, `num/`, `collections/`, and `ffi/` contain the standard-library primitives, containers, numerical support, synchronous I/O/filesystem/path APIs and FFI helpers.
-- `bootstrap/yianc/` contains the YIAN frontend, middle end, CFG/LLVM backend and native driver; `bootstrap/json/` provides general JSON parsing/writing and its own package tests.
-- `bootstrap/anx/` is the native package manager, with manifest loading, project graph and paths, build/test/format drivers, and diagnostics. It uses the standard-library process API to invoke the selected compiler and native tools.
+- `yianc/` contains the YIAN frontend, middle end, CFG/LLVM backend and native driver; `bootstrap/json/` provides general JSON parsing/writing and its own package tests.
+- `anx/` is the native package manager, with manifest loading, project graph and paths, build/test/format drivers, and diagnostics. It uses the standard-library process API to invoke the selected compiler and native tools.
 - `bootstrap/ffi/` and `bootstrap/llvm/` are FFI consumer packages; the LLVM package uses LLVM 22 C API bindings and declares its C shim and link components through `[native.llvm]`.
 - `runtime/src/{alloc,runtime,io}.c` provide allocation, runtime failures and synchronous Linux I/O. `runtime/include/` declares the ABI; `python/yianc/runtime_lib.py` is the recovery backend's runtime-object/archive builder.
-- `lsp/` is the native YIAN LSP package. It owns stdio JSON-RPC, document/workspace coordination, diagnostics, semantic tokens, formatting, completion, navigation and refactoring. It depends on `bootstrap/yianc/`, `bootstrap/anx/`, the JSON/RPC packages and shared standard-library resources. stdout belongs to the protocol; logs go to stderr or the configured file.
+- `lsp/` is the native YIAN LSP package. It owns stdio JSON-RPC, document/workspace coordination, diagnostics, semantic tokens, formatting, completion, navigation and refactoring. It depends on `yianc/`, `anx/`, the JSON/RPC packages and shared standard-library resources. stdout belongs to the protocol; logs go to stderr or the configured file.
 - `ide-support/` contains the VS Code extension. `bench/` contains benchmark sources, specifications, runners and result data. Check algorithmic equivalence before comparing C/raw/fat timings; retain the environment and commit context of recorded results.
 - `docs/grammar/`, `docs/manual/`, and `docs/anx/` contain language and tooling documentation; `mkdocs_cn.yml` configures the documentation site. `licenses/` contains license texts.
 
@@ -320,4 +320,4 @@ Assignment, argument passing, and return use shallow value copies. They do not i
 - Product and implementation documentation states the repository as it is now. Do not narrate the iteration that produced it: no history or chronology (此前/现在/改为/曾经/第一版/本轮/后续/待办), no changelogs, no plans or promises, no comparison with an earlier state, and no defect-story framing. Write the current fact in the present tense — what the code does, what the rule is, what a value means — and let it stand on its own; when a rule exists because of a hazard, describe the hazard as a property of the current design instead of recounting the defect that motivated the rule. Keep the voice neutral: 「X 是 Y」, not 「X 改成了 Y」 or 「X 以前是 Z」. This applies to `docs/`, `README` files, code comments, docstrings, and commit messages; `.agent/PLANS.md` and `.agent/plans/` are the operational exception defined above.
 - Code comments and product documentation must be self-contained: never rely on a temporary document or its content — an implementation plan (such as those under `.agent/plans/`), a proposal, a TODO list, a bug log, or review notes — or on rule, section, or definition numbers that exist only there. State the fact itself instead; referring to another persistent document is fine. Protocol instructions and operational records may link `.agent/PLANS.md`, task plans, progress files, and their stable IDs, but must remain self-contained for execution and recovery. Existing violations are left in place: fix one when the surrounding code or document is next touched.
 - `CLAUDE.md` must remain a relative symbolic link to `AGENTS.md`.
-- There is no repository CI or installed project pre-commit hook. The daily YIAN formatter is implemented in `bootstrap/yianc/src/format/`; `python/yianc/format/` is a recovery copy. Use minimal relevant local checks under the Strict Local Verification Policy and inspect whitespace before committing.
+- There is no repository CI or installed project pre-commit hook. The daily YIAN formatter is implemented in `yianc/src/format/`; `python/yianc/format/` is a recovery copy. Use minimal relevant local checks under the Strict Local Verification Policy and inspect whitespace before committing.

@@ -2,7 +2,7 @@
 
 本文档说明日常使用的原生 `yianc` 命令行。Python 恢复编译器通过
 `PYTHONPATH=python python -m yianc.main` 显式调用，只维护冷启动所需兼容性，不承诺与 native 完整功能对等。
-安装后的 `yianc` 是由 `bootstrap/yianc/` 构建的原生程序，也是日常编译、分析和格式化的权威入口。
+安装后的 `yianc` 是由 `yianc/` 构建的原生程序，也是日常编译、分析和格式化的权威入口。
 
 ## 1. 基本用法
 
@@ -341,7 +341,7 @@ yianc -t ll -o output.ll lib/src tests/basic/array/assign.an
 `-t exe` 与 `-t obj` 的产物需要运行时库（`runtime/`）：进程级对象（参数、锁槽、键计数器、帧锁影子栈）、失败路径、C 入口包装 `main`，以及堆分配器。
 
 ```text
-bootstrap/yianc/src/codegen/abi/runtime.an 共享帧锁/块头常量与运行时消息
+yianc/src/codegen/abi/runtime.an 共享帧锁/块头常量与运行时消息
 runtime/include/yian_rt.h        C ABI 声明与唯一尺寸类表
 runtime/src/*.c                  C 源码
 runtime/selftest/selftest.c      自测

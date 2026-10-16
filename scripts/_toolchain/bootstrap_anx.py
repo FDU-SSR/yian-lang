@@ -35,10 +35,10 @@ PACKAGE_ORDERS = {
 }
 PACKAGES = {
     "anx": PackageRecipe(
-        "anx", "bootstrap/anx", "hybrid", ("json", "toml", "yianc"), entry="src/main.an"
+        "anx", "anx", "hybrid", ("json", "toml", "yianc"), entry="src/main.an"
     ),
     "yianc": PackageRecipe(
-        "yianc", "bootstrap/yianc", "hybrid", ("json", "llvm"), ffi=True,
+        "yianc", "yianc", "hybrid", ("json", "llvm"), ffi=True,
         entry="src/main.an", llvm_major=22, llvm_components=("core",),
         llvm_sources=("native/host.c",),
     ),

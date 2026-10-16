@@ -72,7 +72,7 @@ int64_t yian_compiler_root(uint8_t *buffer, uint64_t capacity) {
     if (installed >= 0 || installed == -ERANGE) return installed;
 
     static const char source[] = __FILE__;
-    static const char suffix[] = "/bootstrap/yianc/native/host.c";
+    static const char suffix[] = "/yianc/native/host.c";
     size_t length = sizeof(source) - 1;
     size_t suffix_length = sizeof(suffix) - 1;
     if (length < suffix_length || strcmp(source + length - suffix_length, suffix)) return -EINVAL;

@@ -3,15 +3,15 @@ from std.core.drop import Drop;
 from std.core.string import String;
 
 fn main() {
-    let trust = SourceTrust.new("../../../../../lib/src").unwrap(); defer trust.drop();
-    trust.add_test_root("../../../../../tests/basic/std").unwrap();
-    trust.add_test_root("../../../../../tests/safety/std").unwrap();
+    let trust = SourceTrust.new("../../../../lib/src").unwrap(); defer trust.drop();
+    trust.add_test_root("../../../../tests/basic/std").unwrap();
+    trust.add_test_root("../../../../tests/safety/std").unwrap();
 
-    let std_root = normalize_path("../../../../../lib/src").unwrap(); defer std_root.drop();
-    let std_source = normalize_path("../../../../../lib/src/core/slice.an").unwrap(); defer std_source.drop();
-    let basic_source = normalize_path("../../../../../tests/basic/std/core/slice_prim.an").unwrap(); defer basic_source.drop();
-    let safety_source = normalize_path("../../../../../tests/safety/std/del_slice_offset.an").unwrap(); defer safety_source.drop();
-    let unconfigured_test_source = normalize_path("../../../../../tests/basic/array/access.an").unwrap(); defer unconfigured_test_source.drop();
+    let std_root = normalize_path("../../../../lib/src").unwrap(); defer std_root.drop();
+    let std_source = normalize_path("../../../../lib/src/core/slice.an").unwrap(); defer std_source.drop();
+    let basic_source = normalize_path("../../../../tests/basic/std/core/slice_prim.an").unwrap(); defer basic_source.drop();
+    let safety_source = normalize_path("../../../../tests/safety/std/del_slice_offset.an").unwrap(); defer safety_source.drop();
+    let unconfigured_test_source = normalize_path("../../../../tests/basic/array/access.an").unwrap(); defer unconfigured_test_source.drop();
 
     assert trust.stdlib_root() == std_root.as_str(): "standard-library trust stores the canonical source root";
     assert trust.is_stdlib(std_source.as_str()): "standard-library descendants retain standard-library identity";

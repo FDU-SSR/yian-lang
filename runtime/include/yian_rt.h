@@ -9,7 +9,7 @@
  *
  * This header is authoritative for the C runtime ABI and allocation size classes.
  * Compiler protocol constants and failure messages live in
- * bootstrap/yianc/src/codegen/abi/runtime.an. runtime/build.py --check-consistency-only
+ * yianc/src/codegen/abi/runtime.an. runtime/build.py --check-consistency-only
  * compares those fixed declarations and asks Clang to verify the integer assertions.
  */
 
@@ -42,7 +42,7 @@
  * so no word macros are defined here. */
 
 /* Diagnostic for the main wrapper's argument-ABI failure; must match
- * bootstrap/yianc/src/codegen/abi/runtime.an S002 byte-for-byte. */
+ * yianc/src/codegen/abi/runtime.an S002 byte-for-byte. */
 #define YIAN_ABI_FAIL_MESSAGE "yian: safety error [S002]: invalid memory access\n"
 
 /* Allocation-failure diagnostic; must match runtime.an R002 byte-for-byte. */

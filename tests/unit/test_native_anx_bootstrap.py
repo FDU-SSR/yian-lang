@@ -36,6 +36,12 @@ class NativeAnxBootstrapTests(unittest.TestCase):
             yianc_recipe = build_recipe(checkout, root_package="yianc")
             anx_recipe = build_recipe(checkout, root_package="anx")
 
+            self.assertEqual(PACKAGES["yianc"].root, "yianc")
+            self.assertEqual(PACKAGES["anx"].root, "anx")
+            self.assertEqual(
+                anx_recipe.package_map["packages"]["yianc"]["sourceRoot"],
+                str(checkout / "yianc/src"),
+            )
             self.assertEqual(yianc_recipe.package_map["root"], "yianc")
             self.assertEqual(tuple(yianc_recipe.package_map["packages"]), PACKAGE_ORDERS["yianc"])
             self.assertEqual(anx_recipe.package_map["root"], "anx")
@@ -80,11 +86,11 @@ class NativeAnxBootstrapTests(unittest.TestCase):
                 )
 
             for package in ("yianc", "anx"):
-                build = checkout / "bootstrap" / package / "build"
+                build = checkout / package / "build"
                 build.mkdir(parents=True)
                 (build / "app").write_text(f"stale {package} artifact\n", encoding="utf-8")
-            old_yianc = checkout / "bootstrap/yianc/build/app"
-            old_anx = checkout / "bootstrap/anx/build/app"
+            old_yianc = checkout / "yianc/build/app"
+            old_anx = checkout / "anx/build/app"
 
             fake_python = workspace / "selected python" / "python"
             fake_python.parent.mkdir()
@@ -374,7 +380,7 @@ class NativeAnxBootstrapTests(unittest.TestCase):
 
             old_apps = {
                 project: (project / "build/app").read_bytes()
-                for project in (ROOT / "bootstrap/yianc", ROOT / "bootstrap/anx", ROOT / "lsp")
+                for project in (ROOT / "yianc", ROOT / "anx", ROOT / "lsp")
                 if (project / "build/app").is_file()
             }
             succeeded = run_refresh()
@@ -393,12 +399,12 @@ class NativeAnxBootstrapTests(unittest.TestCase):
             self.assertNotEqual(staged_yianc.resolve(), seed_yianc.resolve())
             self.assertNotEqual(staged_anx.resolve(), seed_anx.resolve())
             self.assertEqual(Path(events[2][2]), staged_yianc)
-            self.assertIn(str(ROOT / "bootstrap/yianc"), events[0][3])
-            self.assertIn(str(ROOT / "bootstrap/anx"), events[1][3])
+            self.assertIn(str(ROOT / "yianc"), events[0][3])
+            self.assertIn(str(ROOT / "anx"), events[1][3])
             self.assertIn(str(ROOT / "lsp"), events[2][3])
             for event in events:
                 self.assertIn("--raw-pointers", event[3])
-            for project in (ROOT / "bootstrap/yianc", ROOT / "bootstrap/anx", ROOT / "lsp"):
+            for project in (ROOT / "yianc", ROOT / "anx", ROOT / "lsp"):
                 if project in old_apps:
                     self.assertEqual((project / "build/app").read_bytes(), old_apps[project])
                 else:
@@ -527,10 +533,10 @@ class NativeAnxBootstrapTests(unittest.TestCase):
             self.assertFalse(any(path.name.startswith(".yian-publish-") for path in prefix.iterdir()))
 
             source_root = root / "source checkout"
-            package = source_root / "bootstrap/yianc"
+            package = source_root / "yianc"
             dependency = source_root / "bootstrap/json"
             for package_root, name, dependency_text in (
-                (package, "yianc", 'json = { path = "../json" }\n'),
+                (package, "yianc", 'json = { path = "../bootstrap/json" }\n'),
                 (dependency, "json", ""),
             ):
                 (package_root / "src").mkdir(parents=True)

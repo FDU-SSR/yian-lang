@@ -14,7 +14,7 @@ fn analyze_in_mode(source: str, path: str, raw: bool) -> EditorSnapshot {
     let identity = if raw { "raw:alias-migration" } else { "fat:alias-migration" };
     let inputs = FrozenInputs.new(1u64, 1u64, identity);
     inputs.add(path, source, Option<i64>.Some(1i64));
-    let trust = SourceTrust.new("../../../../lib/src").unwrap();
+    let trust = SourceTrust.new("../../../lib/src").unwrap();
     let options = editor_options(*trust, Option<PackageMap>.None, EditorMode.Full);
     options.raw_pointers = raw;
     let snapshot = *EditorEngine.analyze(&inputs, options).unwrap();
@@ -115,7 +115,7 @@ fn alias_import_navigation_and_completion_retain_provider_identity() {
         "from provider import Public as Imported;\ntypedef Scalar = i64;\ntypedef Local = Imported;\nfn main() { let local: Local; let direct: i32; }\n",
         Option<i64>.Some(1i64));
     inputs.add(provider_path, "typedef Scalar = i32;\npub typedef Public = Scalar;\n", Option<i64>.Some(1i64));
-    let trust = SourceTrust.new("../../../../lib/src").unwrap();
+    let trust = SourceTrust.new("../../../lib/src").unwrap();
     let options = editor_options(*trust, Option<PackageMap>.None, EditorMode.Full);
     options.raw_pointers = IS_RAW_MODE;
     let snapshot = *EditorEngine.analyze(&inputs, options).unwrap();

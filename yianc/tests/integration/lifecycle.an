@@ -108,7 +108,7 @@ fn unfinished_parser() {
     parser.error("owned error", tokens[0].span);
 }
 fn source_trust() -> SourceTrust {
-    match SourceTrust.new("../../../../lib/src") {
+    match SourceTrust.new("../../../lib/src") {
         Ok(value) => value,
         Err(error) => { error.drop(); @panic("could not create source trust"); },
     }
@@ -120,7 +120,7 @@ fn drop_source_paths(paths: Vec<String>&) {
 
 fn append_standard_library(inputs: FrozenInputs&) {
     let roots = Vec<String>.new();
-    roots.push(String.from(&"../../../../lib/src"));
+    roots.push(String.from(&"../../../lib/src"));
     let sources = *collect_sources(&roots).unwrap();
     defer {
         drop_source_paths(&sources);

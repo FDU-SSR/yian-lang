@@ -3,7 +3,7 @@
 `anx` 是 YIAN 的项目与包管理工具：创建项目、按包名解析导入、构建/运行/检查、跑项目测试、
 格式化源码、输出依赖图。
 
-`anx` 是以 YIAN 编写的原生包管理器，源码位于 `bootstrap/anx/`。日常 v2 package map 消费方是 native compiler；
+`anx` 是以 YIAN 编写的原生包管理器，源码位于 `anx/`。日常 v2 package map 消费方是 native compiler；
 Python 恢复编译器只在显式冷启动中消费其固定配方需要的包图。安装方式见[安装与环境](06.install.md)。
 
 - 语言语法与模块系统见[语言参考](../grammar/index.md)（其中 `13.modules.md` 讲 `import` 语法）

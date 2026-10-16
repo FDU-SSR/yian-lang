@@ -10,7 +10,7 @@ Usage from the repository root or any directory:
   python3 runtime/build.py --asan     # Build/run ASan and UBSan self-tests
   python3 runtime/build.py --quiet    # Errors only, for internal compiler calls
 
-Consistency checks compare fixed declarations in bootstrap/yianc/src/codegen/abi/runtime.an
+Consistency checks compare fixed declarations in yianc/src/codegen/abi/runtime.an
 with runtime/include/yian_rt.h. Clang evaluates integer assertions; the C header owns the
 size-class table. Python compiler ABI modules are recovery mirrors, not daily check inputs.
 """
@@ -34,7 +34,7 @@ LIB_OBJECT = BUILD_DIR / "libyian_rt.o"
 LIB_ARCHIVE = BUILD_DIR / "libyian_rt.a"
 SELFTEST_BIN = BUILD_DIR / "selftest"
 SELFTEST_ASAN_BIN = BUILD_DIR / "selftest-asan"
-ABI_SOURCE = ROOT / "bootstrap" / "yianc" / "src" / "codegen" / "abi" / "runtime.an"
+ABI_SOURCE = ROOT / "yianc" / "src" / "codegen" / "abi" / "runtime.an"
 
 CC = "clang"
 CFLAGS = ["-O2", "-fno-strict-aliasing", f"-I{RUNTIME_DIR / 'include'}"]

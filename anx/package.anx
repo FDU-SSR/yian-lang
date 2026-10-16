@@ -5,5 +5,5 @@ version = "0.1.0"
 
 [dependencies]
 yianc = { path = "../yianc" }
-json = { path = "../json" }
-toml = { path = "../toml" }
+json = { path = "../bootstrap/json" }
+toml = { path = "../bootstrap/toml" }

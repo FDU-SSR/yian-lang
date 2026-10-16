@@ -64,8 +64,8 @@ fn layout_is_clean(text: str) -> bool {
 }
 
 fn main() {
-    let input_path = "../../../../tests/format/fixtures/comments/nested_generics.an";
-    let expected_path = "../../../../tests/format/fixtures/comments/nested_generics.expected.an";
+    let input_path = "../../../tests/format/fixtures/comments/nested_generics.an";
+    let expected_path = "../../../tests/format/fixtures/comments/nested_generics.expected.an";
     let input = read_to_string(input_path).unwrap(); defer input.drop();
     let expected = read_to_string(expected_path).unwrap(); defer expected.drop();
     let formatted = format_text(input.as_str(), input_path).unwrap().unwrap(); defer formatted.drop();

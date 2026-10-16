@@ -11,8 +11,8 @@ from typing import Any
 
 BUILD_INFO_FORMAT = 1
 COMPONENT_ROOTS = {
-    "yianc": "bootstrap/yianc",
-    "anx": "bootstrap/anx",
+    "yianc": "yianc",
+    "anx": "anx",
     "yian-lsp": "lsp",
 }
 SOURCE_SUFFIXES = {".an", ".c", ".h"}

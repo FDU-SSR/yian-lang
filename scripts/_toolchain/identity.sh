@@ -3,8 +3,8 @@
 
 yian_component_root() {
     case "$1" in
-        yianc) printf '%s\n' 'bootstrap/yianc' ;;
-        anx) printf '%s\n' 'bootstrap/anx' ;;
+        yianc) printf '%s\n' 'yianc' ;;
+        anx) printf '%s\n' 'anx' ;;
         yian-lsp) printf '%s\n' 'lsp' ;;
         *) printf 'unknown toolchain component: %s\n' "$1" >&2; return 1 ;;
     esac

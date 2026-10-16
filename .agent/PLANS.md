@@ -207,7 +207,7 @@ PLAN 必须为最终验收列出完整清单，按实际任务覆盖：
 
 所有任务默认只选择最小局部检查；纯文档任务可通过针对文本的静态一致性检查验收。命令由 AGENTS 的环境及检查章节、真实脚本、配置和现有测试确定；命令示例不授予执行权限。需要编译器环境时使用仓库根目录及 `yian-env`，记录安装前缀。
 
-- native `yianc` 是日常编译器权威；Python `yianc` 仅为显式 cold recovery 保持所需兼容性，不要求两种实现功能对等。编译器常规验证针对 native 实现；仅当改动影响冷启动输入时才验证 Python recovery 路径。包管理器只有 `bootstrap/anx/` 原生实现；按实际调用检查 v2 package-map 消费者，不因此扩大验证范围。
+- native `yianc` 是日常编译器权威；Python `yianc` 仅为显式 cold recovery 保持所需兼容性，不要求两种实现功能对等。编译器常规验证针对 native 实现；仅当改动影响冷启动输入时才验证 Python recovery 路径。包管理器只有 `anx/` 原生实现；按实际调用检查 v2 package-map 消费者，不因此扩大验证范围。
 - 编译器及包管理器以最小相关案例验证，不自动运行配对套件。`scripts/run_tests.py` 的实际默认值和工具要求以当前实现及同步后的文档为准；过滤参数可能仍匹配大量用例或间接执行整个包测试，必须先检查真实范围与成本。单一实现结果只支持该实现，其他必要消费者无法在授权范围内检查时明确记录缺口。
 - native 验证必须使用与相关源码匹配的二进制，安装和验证采用同一环境及前缀。可复用已有且确认有效的产物；源码漂移后需先用显式的 `scripts/refresh_toolchain.sh` 更新兼容native seed，若没有兼容seed则用 `scripts/bootstrap_toolchain.sh` cold建立，再验证；这些入口仍受昂贵构建授权约束。需要授权而未获授权时先完成独立局部工作，将native验证记为UNVERIFIED，不用旧二进制冒充验证。LSP与compiler/anx一起由warm refresh构建。
 - 各级验收复用有效证据，同一份局部证据可关联多个 ID；每个门禁单独核对适用性，不强制新增一轮运行。

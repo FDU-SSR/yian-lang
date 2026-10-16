@@ -5,8 +5,8 @@ version = "0.1.0"
 ffi = true
 
 [dependencies]
-json = { path = "../json" }
-llvm = { path = "../llvm" }
+json = { path = "../bootstrap/json" }
+llvm = { path = "../bootstrap/llvm" }
 
 [native.llvm]
 major = 22

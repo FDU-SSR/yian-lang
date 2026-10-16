@@ -40,12 +40,12 @@
 
 | 章 | 标题 | 对应源文件 |
 |----|------|-----------|
-| [20](20.anx_overview.md) | anx 概览 | `bootstrap/anx/src/`：模块地图、build 数据流、compiler 契约 |
-| [21](21.anx_manifest.md) | 清单解析与诊断 | `bootstrap/anx/src/manifest/`、`diagnostics/model.an` |
-| [22](22.anx_project.md) | 项目模型与文件归属 | `bootstrap/anx/src/project/model.an`、`project/load.an` |
-| [23](23.anx_graph.md) | 依赖图与 v2 包图 | `bootstrap/anx/src/project/`、native `yianc` 的日常 package-map consumer |
-| [24](24.anx_cli.md) | CLI 与标准库定位 | `bootstrap/anx/src/main.an`、`project/paths.an` |
-| [25](25.anx_tests.md) | anx 项目测试与仓库 fixtures | `bootstrap/anx/src/driver/test.an`、`scripts/run_tests.py` |
+| [20](20.anx_overview.md) | anx 概览 | `anx/src/`：模块地图、build 数据流、compiler 契约 |
+| [21](21.anx_manifest.md) | 清单解析与诊断 | `anx/src/manifest/`、`diagnostics/model.an` |
+| [22](22.anx_project.md) | 项目模型与文件归属 | `anx/src/project/model.an`、`project/load.an` |
+| [23](23.anx_graph.md) | 依赖图与 v2 包图 | `anx/src/project/`、native `yianc` 的日常 package-map consumer |
+| [24](24.anx_cli.md) | CLI 与标准库定位 | `anx/src/main.an`、`project/paths.an` |
+| [25](25.anx_tests.md) | anx 项目测试与仓库 fixtures | `anx/src/driver/test.an`、`scripts/run_tests.py` |
 
 ## 目录 · 分析接口与语言服务器
 
@@ -55,6 +55,6 @@
 | [27](27.language_server.md) | 语言服务器 | `lsp/`、`ide-support/vscode/` |
 | [28](28.formatter.md) | 格式化器 | `python/yianc/format/`、`lsp/src/worker/service.an` |
 | [29](29.ffi.md) | FFI 编译与链接 | native 日常编译器与 anx 包图；另记录 Python 恢复实现 |
-| [30](30.bootstrap.md) | 自举编译器与原生工具链 | `bootstrap/yianc/`、`bootstrap/anx/`、`bootstrap/json/`、`bootstrap/toml/`、`bootstrap/jsonrpc/`、`bootstrap/lsp_protocol/`、`bootstrap/ffi/`、`bootstrap/llvm/` |
+| [30](30.bootstrap.md) | 自举编译器与原生工具链 | `yianc/`、`anx/`、`bootstrap/json/`、`bootstrap/toml/`、`bootstrap/jsonrpc/`、`bootstrap/lsp_protocol/`、`bootstrap/ffi/`、`bootstrap/llvm/` |
 
 > 用户视角的用法见 [anx 用户指南](../anx/index.md)。日常 native compiler CLI 与显式 Python 恢复入口见[编译器命令行手册](../compile_script.md)。

@@ -2,6 +2,8 @@
 
 YIAN is a statically typed programming language with a Python recovery compiler and a native compiler and package manager written in YIAN. The native tools are the daily compiler and package workflow; Python remains for the explicit cold-recovery build and the compatibility it needs.
 
+The native compiler and package manager live in the root `yianc/` and `anx/` packages. Their shared JSON, TOML, LLVM, FFI and protocol libraries live under `bootstrap/`; the Python recovery compiler lives in `python/yianc/`.
+
 ## Requirements
 
 - Linux x86-64.

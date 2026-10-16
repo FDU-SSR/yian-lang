@@ -58,7 +58,7 @@ TESTS_DIR = ROOT_DIR / "tests"
 
 SUITES = ("basic", "safety", "package", "bootstrap")
 BOOTSTRAP_PACKAGES = (
-    "bootstrap/yianc",
+    "yianc",
     "bootstrap/json",
     "bootstrap/toml",
     "bootstrap/jsonrpc",

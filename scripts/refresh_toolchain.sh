@@ -248,9 +248,9 @@ initial_resources_source="$(yian_resource_sha256 "$ROOT_DIR")" || die 'could not
 seed_anx_sha="$(sha256sum -- "$ANX_SEED")"; seed_anx_sha="${seed_anx_sha%% *}"
 seed_yianc_sha="$(sha256sum -- "$YIANC_SEED")"; seed_yianc_sha="${seed_yianc_sha%% *}"
 
-build_component yianc "$ROOT_DIR/bootstrap/yianc" "$YIANC_SEED" "$ANX_SEED"
+build_component yianc "$ROOT_DIR/yianc" "$YIANC_SEED" "$ANX_SEED"
 staged_yianc="$BUNDLE/bin/yianc"
-build_component anx "$ROOT_DIR/bootstrap/anx" "$staged_yianc" "$ANX_SEED"
+build_component anx "$ROOT_DIR/anx" "$staged_yianc" "$ANX_SEED"
 staged_anx="$BUNDLE/bin/anx"
 build_component yian-lsp "$ROOT_DIR/lsp" "$staged_yianc" "$staged_anx"
 staged_lsp="$BUNDLE/bin/yian-lsp"
