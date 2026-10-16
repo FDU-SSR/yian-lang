@@ -1,0 +1,44 @@
+from std.core.iter import Iterator, IntoIterator;
+from std.core.ops import Index;
+from std.core.vec import Vec;
+from std.core.drop import Drop;
+
+// Comment text borrows source storage. A gap owns only the sequence of comment records.
+pub struct Comment { pub text: str, pub own_line: bool, pub blank_before: bool }
+pub struct Gap { pub comments: Vec<Comment>, pub broken: bool, pub blank_before: bool }
+
+impl Drop for Gap { pub fn drop() { self.comments.drop(); } }
+
+pub fn gap(piece: str, start_column: u64) -> Gap {
+    let comments = Vec<Comment>.new();
+    let bytes = piece.as_slice();
+    let index = 0u64;
+    let newlines = 0u64;
+    let own_line = start_column == 0;
+
+    while index < bytes.len() {
+        if bytes[index] == b'\n' {
+            newlines += 1;
+            own_line = true;
+            index += 1;
+            continue;
+        }
+        let line = index + 1 < bytes.len() && bytes[index] == b'/' && bytes[index + 1] == b'/';
+        let block = index + 1 < bytes.len() && bytes[index] == b'/' && bytes[index + 1] == b'*';
+        if line || block {
+            let stop = index + 2;
+            if line { while stop < bytes.len() && bytes[stop] != b'\n' { stop += 1; } } else {
+                while stop + 1 < bytes.len() && !(bytes[stop] == b'*' && bytes[stop + 1] == b'/') { stop += 1; }
+                stop = if stop + 1 < bytes.len() { stop + 2 } else { bytes.len() };
+            }
+            comments.push(Comment(str.from_slice_unchecked(bytes[index..stop]), own_line, newlines >= 2));
+            index = stop;
+            own_line = false;
+            newlines = 0;
+            continue;
+        }
+        if bytes[index] != b' ' && bytes[index] != b'\t' && bytes[index] != b'\r' { own_line = false; }
+        index += 1;
+    }
+    Gap(comments, newlines > 0, newlines >= 2)
+}

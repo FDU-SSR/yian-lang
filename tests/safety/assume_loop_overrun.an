@@ -1,0 +1,20 @@
+// The loop reaches beyond the four-element slice, so the bounds check remains
+// necessary and the out-of-range write triggers a runtime safety error.
+
+from std.core.io import print;
+
+fn main() {
+    let p: i32* = dyn[4] 0i32;
+    p[0] = 0;
+    p[1] = 0;
+    p[2] = 0;
+    p[3] = 0;
+
+    let s: i32[] = p[0u64..4];
+
+    let total: i32 = 0;
+    for i in 0.. (s.len() + 5) {
+        s[i] = 0;
+    }
+    print("unreachable\n");
+}

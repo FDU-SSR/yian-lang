@@ -1,0 +1,231 @@
+from yianc.common.ids import TypeId, DefId, NameId;
+from yianc.frontend.ast.operator import UnaryOperator, BinaryOperator;
+from std.core.drop import Drop;
+from std.core.hash import Hash, Murmur3Hasher;
+from std.core.ops import PartialEq;
+from std.core.vec import Vec;
+
+// Keys own their sequence buffers independently of stored type records.
+pub enum TypeKey {
+    Void,
+    Never,
+    Error,
+    Bool,
+    Char,
+    Str,
+    IntLiteral,
+    FloatLiteral,
+    Integer {
+        bits: u32,
+        signed: bool
+    },
+    CScalar {
+        bits: u32,
+        signed: bool,
+        name: NameId
+    },
+    Float {
+        bits: u32
+    },
+    SelfType {
+        trait_id: TypeId
+    },
+    Pointer {
+        pointee: TypeId
+    },
+    CPointer {
+        pointee: TypeId
+    },
+    Reference {
+        pointee: TypeId
+    },
+    TraitObject {
+        trait_id: TypeId
+    },
+    Slice {
+        element: TypeId
+    },
+    Array {
+        element: TypeId,
+        length: TypeId
+    },
+    Tuple {
+        elements: Vec<TypeId>
+    },
+    FunctionPointer {
+        parameters: Vec<TypeId>,
+        result: TypeId
+    },
+    Nominal {
+        definition: DefId,
+        arguments: Vec<TypeId>
+    },
+    LiteralValue {
+        bits: u64,
+        negative: bool,
+        value_type: TypeId
+    },
+    ConstUnary {
+        op: UnaryOperator, operand: TypeId
+    },
+    ConstBinary {
+        op: BinaryOperator, left: TypeId, right: TypeId
+    },
+}
+
+impl PartialEq<TypeKey> for TypeKey {
+    pub fn eq(other: TypeKey&) -> bool {
+        let pair = (self, other);
+
+        match pair {
+            (TypeKey.Void, TypeKey.Void) => true,
+            (TypeKey.Never, TypeKey.Never) => true,
+            (TypeKey.Error, TypeKey.Error) => true,
+            (TypeKey.Bool, TypeKey.Bool) => true,
+            (TypeKey.Char, TypeKey.Char) => true,
+            (TypeKey.Str, TypeKey.Str) => true,
+            (TypeKey.IntLiteral, TypeKey.IntLiteral) => true,
+            (TypeKey.FloatLiteral, TypeKey.FloatLiteral) => true,
+            (TypeKey.Integer(bits, signed), TypeKey.Integer(other_bits, other_signed)) => *bits == *other_bits && *signed == *other_signed,
+            (TypeKey.CScalar(bits, signed, name), TypeKey.CScalar(other_bits, other_signed, other_name)) => *bits == *other_bits && *signed == *other_signed && *name == *other_name,
+            (TypeKey.Float(bits), TypeKey.Float(other_bits)) => *bits == *other_bits,
+            (TypeKey.SelfType(trait_id), TypeKey.SelfType(other_trait_id)) => *trait_id == *other_trait_id,
+            (TypeKey.Pointer(pointee), TypeKey.Pointer(other_pointee)) => *pointee == *other_pointee,
+            (TypeKey.CPointer(pointee), TypeKey.CPointer(other_pointee)) => *pointee == *other_pointee,
+            (TypeKey.Reference(pointee), TypeKey.Reference(other_pointee)) => *pointee == *other_pointee,
+            (TypeKey.TraitObject(trait_id), TypeKey.TraitObject(other_trait_id)) => *trait_id == *other_trait_id,
+            (TypeKey.Slice(element), TypeKey.Slice(other_element)) => *element == *other_element,
+            (TypeKey.Array(element, length), TypeKey.Array(other_element, other_length)) => *element == *other_element && *length == *other_length,
+            (TypeKey.Tuple(elements), TypeKey.Tuple(other_elements)) => *elements == *other_elements,
+            (TypeKey.FunctionPointer(parameters, result), TypeKey.FunctionPointer(other_parameters, other_result)) => *parameters == *other_parameters && *result == *other_result,
+            (TypeKey.Nominal(definition, arguments), TypeKey.Nominal(other_definition, other_arguments)) => *definition == *other_definition && *arguments == *other_arguments,
+            (TypeKey.LiteralValue(bits, negative, value_type), TypeKey.LiteralValue(other_bits, other_negative, other_value_type)) => *bits == *other_bits && *negative == *other_negative && *value_type == *other_value_type,
+            (TypeKey.ConstUnary(op, operand), TypeKey.ConstUnary(other_op, other_operand)) => *op == *other_op && *operand == *other_operand,
+            (TypeKey.ConstBinary(op, left, right), TypeKey.ConstBinary(other_op, other_left, other_right)) => *op == *other_op && *left == *other_left && *right == *other_right,
+            _ => false,
+        }
+    }
+}
+
+impl Hash<Murmur3Hasher> for TypeKey {
+    pub fn hash(hasher: Murmur3Hasher&) {
+        match self {
+            Void => {
+                0u32.hash(hasher);
+            },
+            Never => {
+                1u32.hash(hasher);
+            },
+            Error => {
+                2u32.hash(hasher);
+            },
+            Bool => {
+                3u32.hash(hasher);
+            },
+            Char => {
+                4u32.hash(hasher);
+            },
+            Str => {
+                5u32.hash(hasher);
+            },
+            IntLiteral => {
+                6u32.hash(hasher);
+            },
+            FloatLiteral => {
+                7u32.hash(hasher);
+            },
+            Integer(bits, signed) => {
+                8u32.hash(hasher);
+                bits.hash(hasher);
+                signed.hash(hasher);
+            },
+            CScalar(bits, signed, name) => {
+                9u32.hash(hasher);
+                bits.hash(hasher);
+                signed.hash(hasher);
+                name.hash(hasher);
+            },
+            Float(bits) => {
+                10u32.hash(hasher);
+                bits.hash(hasher);
+            },
+            SelfType(trait_id) => {
+                11u32.hash(hasher);
+                trait_id.hash(hasher);
+            },
+            Pointer(pointee) => {
+                12u32.hash(hasher);
+                pointee.hash(hasher);
+            },
+            CPointer(pointee) => {
+                13u32.hash(hasher);
+                pointee.hash(hasher);
+            },
+            Reference(pointee) => {
+                14u32.hash(hasher);
+                pointee.hash(hasher);
+            },
+            TraitObject(trait_id) => {
+                15u32.hash(hasher);
+                trait_id.hash(hasher);
+            },
+            Slice(element) => {
+                16u32.hash(hasher);
+                element.hash(hasher);
+            },
+            Array(element, length) => {
+                17u32.hash(hasher);
+                element.hash(hasher);
+                length.hash(hasher);
+            },
+            Tuple(elements) => {
+                18u32.hash(hasher);
+                elements.hash(hasher);
+            },
+            FunctionPointer(parameters, result) => {
+                19u32.hash(hasher);
+                parameters.hash(hasher);
+                result.hash(hasher);
+            },
+            Nominal(definition, arguments) => {
+                20u32.hash(hasher);
+                definition.hash(hasher);
+                arguments.hash(hasher);
+            },
+            LiteralValue(bits, negative, value_type) => {
+                21u32.hash(hasher);
+                bits.hash(hasher);
+                negative.hash(hasher);
+                value_type.hash(hasher);
+            },
+            ConstUnary(op, operand) => {
+                22u32.hash(hasher);
+                op.spelling().hash(hasher);
+                operand.hash(hasher);
+            },
+            ConstBinary(op, left, right) => {
+                23u32.hash(hasher);
+                op.spelling().hash(hasher);
+                left.hash(hasher);
+                right.hash(hasher);
+            },
+        }
+    }
+}
+
+impl Drop for TypeKey {
+    pub fn drop() {
+        match self {
+            Tuple(elements) => {
+                elements.drop();
+            },
+            FunctionPointer(parameters, _) => {
+                parameters.drop();
+            },
+            Nominal(_, arguments) => {
+                arguments.drop();
+            },
+            _ => {},
+        }
+    }
+}

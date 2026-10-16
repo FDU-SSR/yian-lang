@@ -1,0 +1,12 @@
+// `@BitCopy` is not a defined attribute.
+//
+// Expected: compilation error
+
+@BitCopy
+fn foo() -> i32 {
+    return 42;
+}
+
+fn main() {
+    return foo();
+}

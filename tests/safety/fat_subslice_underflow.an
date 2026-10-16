@@ -1,0 +1,13 @@
+// Subtracting past the beginning of this sub-slice triggers a runtime safety error.
+
+fn main() {
+    let p: i32* = dyn[4] 0i32;
+    p[0] = 1;
+    p[1] = 2;
+    p[2] = 3;
+    p[3] = 4;
+
+    let q: i32* = p + 2; // Subslice: base.index=2.
+    let r: i32* = q - 1; // Underflow offset: u64(-1)>=2^63 wraps and causes a safety error.
+    assert false: "unreachable"
+}

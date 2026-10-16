@@ -1,0 +1,6 @@
+[package]
+name = "ffi_bad_import_test"
+kind = "bin"
+
+[dependencies]
+ffi = { path = "../../../bootstrap/ffi" }

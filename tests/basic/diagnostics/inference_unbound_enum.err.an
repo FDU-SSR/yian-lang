@@ -1,0 +1,9 @@
+enum Choice<T> {
+    Value { value: i32 },
+    Other { value: T },
+}
+
+fn main() {
+    // The selected variant must still construct a concrete Choice<T>.
+    Choice.Value(7);
+}

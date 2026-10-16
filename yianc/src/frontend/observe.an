@@ -1,0 +1,75 @@
+from yianc.frontend.lex.token import Token;
+from yianc.frontend.lex.token import KeywordKind;
+from std.num.f64 import to_bits;
+from json.write import Writer;
+from std.core.drop import Drop;
+from std.core.fmt import ToString;
+from std.core.ops import Index;
+from std.core.vec import Vec;
+
+fn token_kind(token: Token&) -> str {
+    match token.kind() {
+        Keyword(_) => "Keyword",
+        Identifier(_) => "Identifier",
+        Punctuator(_) => "Punctuator",
+        Integer(_, _) => "Integer",
+        Float(_, _) => "Float",
+        Character(_) => "Character",
+        StringLiteral(_) => "StringLiteral",
+        FStrStart => "FStrStart",
+        FStrLiteral(_) => "FStrLiteral",
+        FStrExprBegin => "FStrExprBegin",
+        FStrExprEnd => "FStrExprEnd",
+        FStrEnd => "FStrEnd",
+        EndOfFile => "EndOfFile",
+    }
+}
+
+fn append_token(output: Writer&, token: Token&) {
+    output.begin_object();
+    output.key("kind");
+    output.write_string(token_kind(token));
+
+    output.key("raw");
+    output.write_string(token.raw.as_str());
+
+    output.key("value");
+    match token.kind() {
+        Integer(_, _) => {
+            let value = token.integer_value().to_string_radix(10u64);
+            output.write_string(value.as_str());
+            value.drop();
+        },
+        Float(_, _) => {
+            output.write_string("");
+        },
+        FStrExprBegin | FStrExprEnd | FStrEnd => output.write_string(""),
+        _ => output.write_string(token.value()),
+    }
+
+    output.key("suffix");
+    output.write_string(token.suffix());
+    output.key("bits");
+    let bits = match token.kind() { Float(_, _) => to_bits(token.float_value()), _ => 0u64, }.to_string();
+    defer bits.drop();
+    output.write_string(bits.as_str());
+    token.span.write_json(output);
+    output.end_object();
+}
+
+pub fn append_token_file(output: Writer&, path: str, tokens: Vec<Token>&) {
+    output.begin_object();
+    output.key("path");
+    output.write_string(path);
+
+    output.key("tokens");
+    output.begin_array();
+    let index: u64 = 0u64;
+
+    while index < tokens.len() {
+        append_token(output, &tokens[index]);
+        index += 1u64;
+    }
+    output.end_array();
+    output.end_object();
+}

@@ -1,0 +1,25 @@
+// Deletion-view positive (c,stdlib): delete a whole-block @slice_from_parts view.
+// Construct T[] from a dyn heap pointer with data=lock_ptr+8. CheckDelete's
+// is_heap/live/is_raw terms (no slice index, only data comparison)
+// all pass, so del s returns the entire block. Fat/raw/nocheck configurations
+// must exit zero; raw deletion frees directly without checks.
+// Reallocate after del to verify heap stability.
+//
+// Expected output: 0
+
+fn main() {
+    let p: i32* = dyn[4] 0i32;
+    p[0] = 1;
+    p[3] = 4;
+    let s: i32[] = @slice_from_parts(p, 4);
+    assert s.len() == 4: "slice_from_parts preserves the element count";
+    assert s[0] + s[3] == 5: "reads through the parts view";
+    del s;
+
+    // Reallocate after del; the new block is independently usable.
+    let q: i32* = dyn[2] 0i32;
+    q[0] = 9;
+    q[1] = 8;
+    assert q[0] + q[1] == 17: "heap stable after del parts slice";
+    del q;
+}

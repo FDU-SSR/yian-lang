@@ -1,0 +1,7 @@
+[package]
+name = "mathlib"
+kind = "lib"
+version = "0.1.0"
+
+[dependencies]
+inner = { path = "../inner" }

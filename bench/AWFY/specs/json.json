@@ -1,0 +1,16 @@
+{
+  "name": "json",
+  "source": "AWFY",
+  "tags": [
+    "string"
+  ],
+  "argv": [],
+  "check": {
+    "rc": 0
+  },
+  "note": "官方工作单元: 根与 head 为 object, operations 数量 156; 外层默认 14286 次",
+  "scale": {
+    "default": 14286,
+    "c": "argv"
+  }
+}

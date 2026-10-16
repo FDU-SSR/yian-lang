@@ -1,0 +1,16 @@
+{
+  "name": "permute",
+  "source": "AWFY",
+  "tags": [
+    "control"
+  ],
+  "argv": [],
+  "check": {
+    "rc": 0
+  },
+  "note": "官方工作单元: 长度 6 的零初始化数组, 结果 8660; 外层默认 70866 次",
+  "scale": {
+    "default": 70866,
+    "c": "argv"
+  }
+}

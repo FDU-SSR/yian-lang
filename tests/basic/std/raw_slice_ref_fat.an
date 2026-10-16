@@ -1,0 +1,61 @@
+// Positive slice construction and reference conversion cases in fat and raw modes.
+//
+// The basic runner selects this success entry in both fat and raw pointer modes:
+//   - @slice_from_parts(p,n) constructs T[] and preserves len, checked through s.len().
+//   - Index assertions use s[i], including nested argument passing.
+//   - T* -> T& and T[] -> T& cases.
+//   - @str_from_parts construction with length/first-byte assertions.
+// Assertions only, no stdout; successful execution needs no .ans.
+//
+// Expected output: 0
+
+fn get_len(s: i32[]) -> u64 {
+    s.len()
+}
+
+fn case_slice_pointer_conversions_and_views() {
+    // --- @slice_from_parts(p,n): T[] length through direct method calls ---
+    let arr: u64[3] = [10, 20, 30];
+    let p: u64* = &arr[0];
+    let s: u64[] = @slice_from_parts(p, 3);
+    assert s.len() == 3: "slice_from_parts preserves the element count";
+    let l: u64 = s.len();
+    assert l == 3: "len via direct variable binding";
+
+    // --- Index access through Index trait ---
+    let v0: u64 = s[0];
+    let v1: u64 = s[1];
+    let v2: u64 = s[2];
+    assert v0 == 10: "s[0] == 10";
+    assert v1 == 20: "s[1] == 20";
+    assert v2 == 30: "s[2] == 30";
+
+    // --- Nested call passing s as i32[] ---
+    let arr2: i32[3] = [7, 8, 9];
+    let p2b: i32* = &arr2[0];
+    let s3: i32[] = @slice_from_parts(p2b, 3);
+    assert get_len(s3) == 3: "len via nested function parameter";
+    assert s3[2] == 9: "index via nested function parameter";
+
+    // --- T* → T& ---
+    let x: i32 = 42;
+    let p2: i32* = &x;
+    let r: i32& = p2;
+    assert *r == 42: "T*->T& reads through the reference";
+
+    // --- T[] → T& ---
+    let s2: i32[] = @slice_from_parts(p2, 1);
+    let r2: i32& = s2;
+    assert *r2 == 42: "T[]->T& reads through the reference";
+
+    // --- @str_from_parts construction ---
+    let msg: str = "hi";
+    let mp: u8* = @str_get_ptr(msg);
+    let sub: str = @str_from_parts(mp, 1);
+    assert @str_get_len(sub) == 1: "str from parts preserves len";
+    assert *mp == 104: "first byte is 'h' (104)";
+}
+
+fn main() {
+    case_slice_pointer_conversions_and_views();
+}

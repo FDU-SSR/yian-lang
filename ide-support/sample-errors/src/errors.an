@@ -1,0 +1,30 @@
+// Intentionally invalid module for IDE diagnostic checks.
+//
+// Each function exercises an error for the language-server diagnostic sample.
+from sample_errors.helper import Origin, add, double;
+from sample_errors.types import Meters;
+
+// 1) Type mismatch: return str from a function declared i32.
+pub fn wrong_return_type() -> i32 {
+    return "not an integer";
+}
+
+// 2) Undefined name.
+pub fn undefined_name() -> i32 {
+    return not_defined_anywhere;
+}
+
+// 3) Access a nonexistent field.
+pub fn unknown_field(origin: Origin) -> Meters {
+    return origin.z;
+}
+
+// 4) Incorrect argument count.
+pub fn wrong_arity() -> i32 {
+    return add(1);
+}
+
+// 5) Incorrect argument type for the same function.
+pub fn wrong_argument_type() -> i32 {
+    return double("twenty one");
+}

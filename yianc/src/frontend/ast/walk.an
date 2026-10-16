@@ -1,0 +1,1507 @@
+from yianc.common.traversal import WalkControl;
+from yianc.frontend.ast.node import Identifier, IntLiteral, FloatLiteral, CharLiteral, StrLiteral, BoolLiteral, Program, Block, Argument, VarInfo, PatternParam, PatternLet, LetCondition, ElifBranch, MatchArm, Attr, TypeGenericParam, ConstGenericParam, FieldInfo, VariantInfo, MethodDecl, MethodDef, ExternFuncDecl, ImplCondition, CaptureItem, FieldPattern, Expr, TypeSyntax, ConstExpr, Pattern, Item, Literal, RangeBounds, Condition, GenericArgument, GenericParam, Parameter, TraitMember, PatternArguments, TypeSource;
+from std.core.ops import Index;
+from std.core.result import Result;
+
+// Each callback and child edge propagates failure before visiting later children.
+pub trait TryAstVisitor<E> {
+    fn enter_identifier(node: Identifier&) -> Result<WalkControl, E> {
+        Result<WalkControl, E>.Ok(WalkControl.Continue)
+    }
+
+    fn leave_identifier(node: Identifier&) -> Result<(), E> {
+        Result<(), E>.Ok(())
+    }
+
+    fn enter_int_literal(node: IntLiteral&) -> Result<WalkControl, E> {
+        Result<WalkControl, E>.Ok(WalkControl.Continue)
+    }
+
+    fn leave_int_literal(node: IntLiteral&) -> Result<(), E> {
+        Result<(), E>.Ok(())
+    }
+
+    fn enter_float_literal(node: FloatLiteral&) -> Result<WalkControl, E> {
+        Result<WalkControl, E>.Ok(WalkControl.Continue)
+    }
+
+    fn leave_float_literal(node: FloatLiteral&) -> Result<(), E> {
+        Result<(), E>.Ok(())
+    }
+
+    fn enter_char_literal(node: CharLiteral&) -> Result<WalkControl, E> {
+        Result<WalkControl, E>.Ok(WalkControl.Continue)
+    }
+
+    fn leave_char_literal(node: CharLiteral&) -> Result<(), E> {
+        Result<(), E>.Ok(())
+    }
+
+    fn enter_str_literal(node: StrLiteral&) -> Result<WalkControl, E> {
+        Result<WalkControl, E>.Ok(WalkControl.Continue)
+    }
+
+    fn leave_str_literal(node: StrLiteral&) -> Result<(), E> {
+        Result<(), E>.Ok(())
+    }
+
+    fn enter_bool_literal(node: BoolLiteral&) -> Result<WalkControl, E> {
+        Result<WalkControl, E>.Ok(WalkControl.Continue)
+    }
+
+    fn leave_bool_literal(node: BoolLiteral&) -> Result<(), E> {
+        Result<(), E>.Ok(())
+    }
+
+    fn enter_program(node: Program&) -> Result<WalkControl, E> {
+        Result<WalkControl, E>.Ok(WalkControl.Continue)
+    }
+
+    fn leave_program(node: Program&) -> Result<(), E> {
+        Result<(), E>.Ok(())
+    }
+
+    fn enter_block(node: Block&) -> Result<WalkControl, E> {
+        Result<WalkControl, E>.Ok(WalkControl.Continue)
+    }
+
+    fn leave_block(node: Block&) -> Result<(), E> {
+        Result<(), E>.Ok(())
+    }
+
+    fn enter_argument(node: Argument&) -> Result<WalkControl, E> {
+        Result<WalkControl, E>.Ok(WalkControl.Continue)
+    }
+
+    fn leave_argument(node: Argument&) -> Result<(), E> {
+        Result<(), E>.Ok(())
+    }
+
+    fn enter_var_info(node: VarInfo&) -> Result<WalkControl, E> {
+        Result<WalkControl, E>.Ok(WalkControl.Continue)
+    }
+
+    fn leave_var_info(node: VarInfo&) -> Result<(), E> {
+        Result<(), E>.Ok(())
+    }
+
+    fn enter_pattern_param(node: PatternParam&) -> Result<WalkControl, E> {
+        Result<WalkControl, E>.Ok(WalkControl.Continue)
+    }
+
+    fn leave_pattern_param(node: PatternParam&) -> Result<(), E> {
+        Result<(), E>.Ok(())
+    }
+
+    fn enter_pattern_let(node: PatternLet&) -> Result<WalkControl, E> {
+        Result<WalkControl, E>.Ok(WalkControl.Continue)
+    }
+
+    fn leave_pattern_let(node: PatternLet&) -> Result<(), E> {
+        Result<(), E>.Ok(())
+    }
+
+    fn enter_let_condition(node: LetCondition&) -> Result<WalkControl, E> {
+        Result<WalkControl, E>.Ok(WalkControl.Continue)
+    }
+
+    fn leave_let_condition(node: LetCondition&) -> Result<(), E> {
+        Result<(), E>.Ok(())
+    }
+
+    fn enter_elif_branch(node: ElifBranch&) -> Result<WalkControl, E> {
+        Result<WalkControl, E>.Ok(WalkControl.Continue)
+    }
+
+    fn leave_elif_branch(node: ElifBranch&) -> Result<(), E> {
+        Result<(), E>.Ok(())
+    }
+
+    fn enter_match_arm(node: MatchArm&) -> Result<WalkControl, E> {
+        Result<WalkControl, E>.Ok(WalkControl.Continue)
+    }
+
+    fn leave_match_arm(node: MatchArm&) -> Result<(), E> {
+        Result<(), E>.Ok(())
+    }
+
+    fn enter_attr(node: Attr&) -> Result<WalkControl, E> {
+        Result<WalkControl, E>.Ok(WalkControl.Continue)
+    }
+
+    fn leave_attr(node: Attr&) -> Result<(), E> {
+        Result<(), E>.Ok(())
+    }
+
+    fn enter_type_generic_param(node: TypeGenericParam&) -> Result<WalkControl, E> {
+        Result<WalkControl, E>.Ok(WalkControl.Continue)
+    }
+
+    fn leave_type_generic_param(node: TypeGenericParam&) -> Result<(), E> {
+        Result<(), E>.Ok(())
+    }
+
+    fn enter_const_generic_param(node: ConstGenericParam&) -> Result<WalkControl, E> {
+        Result<WalkControl, E>.Ok(WalkControl.Continue)
+    }
+
+    fn leave_const_generic_param(node: ConstGenericParam&) -> Result<(), E> {
+        Result<(), E>.Ok(())
+    }
+
+    fn enter_field_info(node: FieldInfo&) -> Result<WalkControl, E> {
+        Result<WalkControl, E>.Ok(WalkControl.Continue)
+    }
+
+    fn leave_field_info(node: FieldInfo&) -> Result<(), E> {
+        Result<(), E>.Ok(())
+    }
+
+    fn enter_variant_info(node: VariantInfo&) -> Result<WalkControl, E> {
+        Result<WalkControl, E>.Ok(WalkControl.Continue)
+    }
+
+    fn leave_variant_info(node: VariantInfo&) -> Result<(), E> {
+        Result<(), E>.Ok(())
+    }
+
+    fn enter_method_decl(node: MethodDecl&) -> Result<WalkControl, E> {
+        Result<WalkControl, E>.Ok(WalkControl.Continue)
+    }
+
+    fn leave_method_decl(node: MethodDecl&) -> Result<(), E> {
+        Result<(), E>.Ok(())
+    }
+
+    fn enter_method_def(node: MethodDef&) -> Result<WalkControl, E> {
+        Result<WalkControl, E>.Ok(WalkControl.Continue)
+    }
+
+    fn leave_method_def(node: MethodDef&) -> Result<(), E> {
+        Result<(), E>.Ok(())
+    }
+
+    fn enter_extern_func_decl(node: ExternFuncDecl&) -> Result<WalkControl, E> {
+        Result<WalkControl, E>.Ok(WalkControl.Continue)
+    }
+
+    fn leave_extern_func_decl(node: ExternFuncDecl&) -> Result<(), E> {
+        Result<(), E>.Ok(())
+    }
+
+    fn enter_impl_condition(node: ImplCondition&) -> Result<WalkControl, E> {
+        Result<WalkControl, E>.Ok(WalkControl.Continue)
+    }
+
+    fn leave_impl_condition(node: ImplCondition&) -> Result<(), E> {
+        Result<(), E>.Ok(())
+    }
+
+    fn enter_capture_item(node: CaptureItem&) -> Result<WalkControl, E> {
+        Result<WalkControl, E>.Ok(WalkControl.Continue)
+    }
+
+    fn leave_capture_item(node: CaptureItem&) -> Result<(), E> {
+        Result<(), E>.Ok(())
+    }
+
+    fn enter_field_pattern(node: FieldPattern&) -> Result<WalkControl, E> {
+        Result<WalkControl, E>.Ok(WalkControl.Continue)
+    }
+
+    fn leave_field_pattern(node: FieldPattern&) -> Result<(), E> {
+        Result<(), E>.Ok(())
+    }
+
+    fn enter_expr(node: Expr&) -> Result<WalkControl, E> {
+        Result<WalkControl, E>.Ok(WalkControl.Continue)
+    }
+
+    fn leave_expr(node: Expr&) -> Result<(), E> {
+        Result<(), E>.Ok(())
+    }
+
+    fn enter_type_syntax(node: TypeSyntax&) -> Result<WalkControl, E> {
+        Result<WalkControl, E>.Ok(WalkControl.Continue)
+    }
+
+    fn leave_type_syntax(node: TypeSyntax&) -> Result<(), E> {
+        Result<(), E>.Ok(())
+    }
+
+    fn enter_const_expr(node: ConstExpr&) -> Result<WalkControl, E> {
+        Result<WalkControl, E>.Ok(WalkControl.Continue)
+    }
+
+    fn leave_const_expr(node: ConstExpr&) -> Result<(), E> {
+        Result<(), E>.Ok(())
+    }
+
+    fn enter_pattern(node: Pattern&) -> Result<WalkControl, E> {
+        Result<WalkControl, E>.Ok(WalkControl.Continue)
+    }
+
+    fn leave_pattern(node: Pattern&) -> Result<(), E> {
+        Result<(), E>.Ok(())
+    }
+
+    fn enter_item(node: Item&) -> Result<WalkControl, E> {
+        Result<WalkControl, E>.Ok(WalkControl.Continue)
+    }
+
+    fn leave_item(node: Item&) -> Result<(), E> {
+        Result<(), E>.Ok(())
+    }
+}
+
+// Shared nodes are visited once per incoming edge. Errors stop the walk immediately.
+
+// Cleanup belongs to the caller; failed walks do not synthesize leave callbacks.
+pub fn try_walk_type_source<E>(source: TypeSource&, visitor: TryAstVisitor<E>&) -> Result<(), E> {
+    match source {
+        Syntax(value) => {
+            try_walk_type_syntax(*value, visitor)?;
+        },
+        ArgumentType(_) => {},
+        CallableReturnType => {},
+    }
+
+    Result<(), E>.Ok(())
+}
+
+pub fn try_walk_identifier<E>(node: Identifier&, visitor: TryAstVisitor<E>&) -> Result<(), E> {
+    if visitor.enter_identifier(node)? == WalkControl.Skip {
+        return Result<(), E>.Ok(());
+    }
+
+    visitor.leave_identifier(node)?;
+    Result<(), E>.Ok(())
+}
+
+pub fn try_walk_int_literal<E>(node: IntLiteral&, visitor: TryAstVisitor<E>&) -> Result<(), E> {
+    if visitor.enter_int_literal(node)? == WalkControl.Skip {
+        return Result<(), E>.Ok(());
+    }
+
+    visitor.leave_int_literal(node)?;
+    Result<(), E>.Ok(())
+}
+
+pub fn try_walk_float_literal<E>(node: FloatLiteral&, visitor: TryAstVisitor<E>&) -> Result<(), E> {
+    if visitor.enter_float_literal(node)? == WalkControl.Skip {
+        return Result<(), E>.Ok(());
+    }
+
+    visitor.leave_float_literal(node)?;
+    Result<(), E>.Ok(())
+}
+
+pub fn try_walk_char_literal<E>(node: CharLiteral&, visitor: TryAstVisitor<E>&) -> Result<(), E> {
+    if visitor.enter_char_literal(node)? == WalkControl.Skip {
+        return Result<(), E>.Ok(());
+    }
+
+    visitor.leave_char_literal(node)?;
+    Result<(), E>.Ok(())
+}
+
+pub fn try_walk_str_literal<E>(node: StrLiteral&, visitor: TryAstVisitor<E>&) -> Result<(), E> {
+    if visitor.enter_str_literal(node)? == WalkControl.Skip {
+        return Result<(), E>.Ok(());
+    }
+
+    visitor.leave_str_literal(node)?;
+    Result<(), E>.Ok(())
+}
+
+pub fn try_walk_bool_literal<E>(node: BoolLiteral&, visitor: TryAstVisitor<E>&) -> Result<(), E> {
+    if visitor.enter_bool_literal(node)? == WalkControl.Skip {
+        return Result<(), E>.Ok(());
+    }
+
+    visitor.leave_bool_literal(node)?;
+    Result<(), E>.Ok(())
+}
+
+pub fn try_walk_program<E>(node: Program&, visitor: TryAstVisitor<E>&) -> Result<(), E> {
+    if visitor.enter_program(node)? == WalkControl.Skip {
+        return Result<(), E>.Ok(());
+    }
+
+    {
+        let index: u64 = 0;
+
+        while index < (node.data.items).len() {
+            try_walk_item((node.data.items)[index], visitor)?;
+            index += 1;
+        }
+    };
+
+    visitor.leave_program(node)?;
+    Result<(), E>.Ok(())
+}
+
+pub fn try_walk_block<E>(node: Block&, visitor: TryAstVisitor<E>&) -> Result<(), E> {
+    if visitor.enter_block(node)? == WalkControl.Skip {
+        return Result<(), E>.Ok(());
+    }
+
+    {
+        let index: u64 = 0;
+
+        while index < (node.data.parameter_bindings).len() {
+            try_walk_pattern_let((node.data.parameter_bindings)[index], visitor)?;
+            index += 1;
+        }
+    };
+
+    {
+        let index: u64 = 0;
+
+        while index < (node.data.stmts).len() {
+            try_walk_expr((node.data.stmts)[index], visitor)?;
+            index += 1;
+        }
+    };
+
+    visitor.leave_block(node)?;
+    Result<(), E>.Ok(())
+}
+
+pub fn try_walk_argument<E>(node: Argument&, visitor: TryAstVisitor<E>&) -> Result<(), E> {
+    if visitor.enter_argument(node)? == WalkControl.Skip {
+        return Result<(), E>.Ok(());
+    }
+
+    match &(node.data.name) {
+        Some(value) => {
+            try_walk_identifier(*value, visitor)?;
+        },
+        None => {},
+    };
+
+    try_walk_expr(node.data.value, visitor)?;
+    visitor.leave_argument(node)?;
+    Result<(), E>.Ok(())
+}
+
+pub fn try_walk_var_info<E>(node: VarInfo&, visitor: TryAstVisitor<E>&) -> Result<(), E> {
+    if visitor.enter_var_info(node)? == WalkControl.Skip {
+        return Result<(), E>.Ok(());
+    }
+
+    try_walk_identifier(node.data.name, visitor)?;
+    try_walk_type_syntax(node.data.var_type, visitor)?;
+    visitor.leave_var_info(node)?;
+    Result<(), E>.Ok(())
+}
+
+pub fn try_walk_pattern_param<E>(node: PatternParam&, visitor: TryAstVisitor<E>&) -> Result<(), E> {
+    if visitor.enter_pattern_param(node)? == WalkControl.Skip {
+        return Result<(), E>.Ok(());
+    }
+
+    try_walk_pattern(node.data.pattern, visitor)?;
+    try_walk_type_syntax(node.data.var_type, visitor)?;
+    visitor.leave_pattern_param(node)?;
+    Result<(), E>.Ok(())
+}
+
+pub fn try_walk_pattern_let<E>(node: PatternLet&, visitor: TryAstVisitor<E>&) -> Result<(), E> {
+    if visitor.enter_pattern_let(node)? == WalkControl.Skip {
+        return Result<(), E>.Ok(());
+    }
+
+    try_walk_expr(node.data.init_expr, visitor)?;
+    try_walk_type_syntax(node.data.var_type, visitor)?;
+    try_walk_pattern(node.data.pattern, visitor)?;
+
+    match &(node.data.else_branch) {
+        Some(value) => {
+            try_walk_block(*value, visitor)?;
+        },
+        None => {},
+    };
+
+    visitor.leave_pattern_let(node)?;
+    Result<(), E>.Ok(())
+}
+
+pub fn try_walk_let_condition<E>(node: LetCondition&, visitor: TryAstVisitor<E>&) -> Result<(), E> {
+    if visitor.enter_let_condition(node)? == WalkControl.Skip {
+        return Result<(), E>.Ok(());
+    }
+
+    try_walk_expr(node.data.value, visitor)?;
+    try_walk_pattern(node.data.pattern, visitor)?;
+    visitor.leave_let_condition(node)?;
+    Result<(), E>.Ok(())
+}
+
+pub fn try_walk_elif_branch<E>(node: ElifBranch&, visitor: TryAstVisitor<E>&) -> Result<(), E> {
+    if visitor.enter_elif_branch(node)? == WalkControl.Skip {
+        return Result<(), E>.Ok(());
+    }
+
+    try_walk_condition(&(node.data.condition), visitor)?;
+    try_walk_block(node.data.body, visitor)?;
+    visitor.leave_elif_branch(node)?;
+    Result<(), E>.Ok(())
+}
+
+pub fn try_walk_match_arm<E>(node: MatchArm&, visitor: TryAstVisitor<E>&) -> Result<(), E> {
+    if visitor.enter_match_arm(node)? == WalkControl.Skip {
+        return Result<(), E>.Ok(());
+    }
+
+    try_walk_pattern(node.data.pattern, visitor)?;
+
+    match &(node.data.guard) {
+        Some(value) => {
+            try_walk_expr(*value, visitor)?;
+        },
+        None => {},
+    };
+
+    try_walk_block(node.data.body, visitor)?;
+    visitor.leave_match_arm(node)?;
+    Result<(), E>.Ok(())
+}
+
+pub fn try_walk_attr<E>(node: Attr&, visitor: TryAstVisitor<E>&) -> Result<(), E> {
+    if visitor.enter_attr(node)? == WalkControl.Skip {
+        return Result<(), E>.Ok(());
+    }
+
+    visitor.leave_attr(node)?;
+    Result<(), E>.Ok(())
+}
+
+pub fn try_walk_type_generic_param<E>(node: TypeGenericParam&, visitor: TryAstVisitor<E>&) -> Result<(), E> {
+    if visitor.enter_type_generic_param(node)? == WalkControl.Skip {
+        return Result<(), E>.Ok(());
+    }
+
+    try_walk_identifier(node.data.name, visitor)?;
+    visitor.leave_type_generic_param(node)?;
+    Result<(), E>.Ok(())
+}
+
+pub fn try_walk_const_generic_param<E>(node: ConstGenericParam&, visitor: TryAstVisitor<E>&) -> Result<(), E> {
+    if visitor.enter_const_generic_param(node)? == WalkControl.Skip {
+        return Result<(), E>.Ok(());
+    }
+
+    try_walk_identifier(node.data.name, visitor)?;
+    try_walk_type_syntax(node.data.const_type, visitor)?;
+    visitor.leave_const_generic_param(node)?;
+    Result<(), E>.Ok(())
+}
+
+pub fn try_walk_field_info<E>(node: FieldInfo&, visitor: TryAstVisitor<E>&) -> Result<(), E> {
+    if visitor.enter_field_info(node)? == WalkControl.Skip {
+        return Result<(), E>.Ok(());
+    }
+
+    {
+        let index: u64 = 0;
+
+        while index < (node.data.attrs).len() {
+            try_walk_attr((node.data.attrs)[index], visitor)?;
+            index += 1;
+        }
+    };
+
+    try_walk_identifier(node.data.name, visitor)?;
+    try_walk_type_syntax(node.data.field_type, visitor)?;
+    visitor.leave_field_info(node)?;
+    Result<(), E>.Ok(())
+}
+
+pub fn try_walk_variant_info<E>(node: VariantInfo&, visitor: TryAstVisitor<E>&) -> Result<(), E> {
+    if visitor.enter_variant_info(node)? == WalkControl.Skip {
+        return Result<(), E>.Ok(());
+    }
+
+    try_walk_identifier(node.data.name, visitor)?;
+    {
+        let index: u64 = 0;
+
+        while index < (node.data.fields).len() {
+            try_walk_var_info((node.data.fields)[index], visitor)?;
+            index += 1;
+        }
+    };
+
+    visitor.leave_variant_info(node)?;
+    Result<(), E>.Ok(())
+}
+
+pub fn try_walk_method_decl<E>(node: MethodDecl&, visitor: TryAstVisitor<E>&) -> Result<(), E> {
+    if visitor.enter_method_decl(node)? == WalkControl.Skip {
+        return Result<(), E>.Ok(());
+    }
+
+    {
+        let index: u64 = 0;
+
+        while index < (node.data.attrs).len() {
+            try_walk_attr((node.data.attrs)[index], visitor)?;
+            index += 1;
+        }
+    };
+
+    try_walk_identifier(node.data.name, visitor)?;
+    {
+        let index: u64 = 0;
+
+        while index < (node.data.generics).len() {
+            try_walk_generic_param(&((node.data.generics)[index]), visitor)?;
+            index += 1;
+        }
+    };
+
+    {
+        let index: u64 = 0;
+
+        while index < (node.data.params).len() {
+            try_walk_parameter(&((node.data.params)[index]), visitor)?;
+            index += 1;
+        }
+    };
+
+    match &(node.data.ret_type) {
+        Some(value) => {
+            try_walk_type_syntax(*value, visitor)?;
+        },
+        None => {},
+    };
+
+    visitor.leave_method_decl(node)?;
+    Result<(), E>.Ok(())
+}
+
+pub fn try_walk_method_def<E>(node: MethodDef&, visitor: TryAstVisitor<E>&) -> Result<(), E> {
+    if visitor.enter_method_def(node)? == WalkControl.Skip {
+        return Result<(), E>.Ok(());
+    }
+
+    try_walk_method_decl(node.data.decl, visitor)?;
+    try_walk_block(node.data.body, visitor)?;
+    visitor.leave_method_def(node)?;
+    Result<(), E>.Ok(())
+}
+
+pub fn try_walk_extern_func_decl<E>(node: ExternFuncDecl&, visitor: TryAstVisitor<E>&) -> Result<(), E> {
+    if visitor.enter_extern_func_decl(node)? == WalkControl.Skip {
+        return Result<(), E>.Ok(());
+    }
+
+    try_walk_identifier(node.data.name, visitor)?;
+    {
+        let index: u64 = 0;
+
+        while index < (node.data.params).len() {
+            try_walk_var_info((node.data.params)[index], visitor)?;
+            index += 1;
+        }
+    };
+
+    match &(node.data.ret_type) {
+        Some(value) => {
+            try_walk_type_syntax(*value, visitor)?;
+        },
+        None => {},
+    };
+
+    visitor.leave_extern_func_decl(node)?;
+    Result<(), E>.Ok(())
+}
+
+pub fn try_walk_impl_condition<E>(node: ImplCondition&, visitor: TryAstVisitor<E>&) -> Result<(), E> {
+    if visitor.enter_impl_condition(node)? == WalkControl.Skip {
+        return Result<(), E>.Ok(());
+    }
+
+    try_walk_identifier(node.data.name, visitor)?;
+    {
+        let index: u64 = 0;
+
+        while index < (node.data.traits).len() {
+            try_walk_type_syntax((node.data.traits)[index], visitor)?;
+            index += 1;
+        }
+    };
+
+    visitor.leave_impl_condition(node)?;
+    Result<(), E>.Ok(())
+}
+
+pub fn try_walk_capture_item<E>(node: CaptureItem&, visitor: TryAstVisitor<E>&) -> Result<(), E> {
+    if visitor.enter_capture_item(node)? == WalkControl.Skip {
+        return Result<(), E>.Ok(());
+    }
+
+    try_walk_identifier(node.data.name, visitor)?;
+    try_walk_expr(node.data.expr, visitor)?;
+    visitor.leave_capture_item(node)?;
+    Result<(), E>.Ok(())
+}
+
+pub fn try_walk_field_pattern<E>(node: FieldPattern&, visitor: TryAstVisitor<E>&) -> Result<(), E> {
+    if visitor.enter_field_pattern(node)? == WalkControl.Skip {
+        return Result<(), E>.Ok(());
+    }
+
+    try_walk_identifier(node.data.name, visitor)?;
+    try_walk_pattern(node.data.pattern, visitor)?;
+    visitor.leave_field_pattern(node)?;
+    Result<(), E>.Ok(())
+}
+
+pub fn try_walk_expr<E>(node: Expr&, visitor: TryAstVisitor<E>&) -> Result<(), E> {
+    if visitor.enter_expr(node)? == WalkControl.Skip {
+        return Result<(), E>.Ok(());
+    }
+
+    match &node.data {
+        Identifier(name) => {
+            try_walk_identifier(*name, visitor)?;
+        },
+        Literal(literal) => {
+            try_walk_literal(&(*literal), visitor)?;
+        },
+        Binary(op, left, right) => {
+            try_walk_expr(*left, visitor)?;
+            try_walk_expr(*right, visitor)?;
+        },
+        Unary(op, operand) => {
+            try_walk_expr(*operand, visitor)?;
+        },
+        TryExpr(operand) => {
+            try_walk_expr(*operand, visitor)?;
+        },
+        TraitCall(trait, self_type, trait_args, method_name, args) => {
+            try_walk_expr(*trait, visitor)?;
+            try_walk_type_source(self_type, visitor)?;
+            let index: u64 = 0;
+
+            while index < trait_args.len() {
+                match &(*trait_args)[index] {
+                    Some(value) => {
+                        try_walk_type_source(value, visitor)?;
+                    },
+                    None => {}
+                }
+
+                index += 1;
+            }
+
+            try_walk_identifier(*method_name, visitor)?;
+            index = 0;
+
+            while index < args.len() {
+                try_walk_argument((*args)[index], visitor)?;
+                index += 1;
+            }
+        },
+        Call(callee, args) => {
+            try_walk_expr(*callee, visitor)?;
+            {
+                let index: u64 = 0;
+
+                while index < (*args).len() {
+                    try_walk_argument((*args)[index], visitor)?;
+                    index += 1;
+                }
+            };
+        },
+        MethodCall(receiver, method_name, generics, args) => {
+            try_walk_expr(*receiver, visitor)?;
+            try_walk_identifier(*method_name, visitor)?;
+            {
+                let index: u64 = 0;
+
+                while index < (*generics).len() {
+                    try_walk_type_syntax((*generics)[index], visitor)?;
+                    index += 1;
+                }
+            };
+
+            {
+                let index: u64 = 0;
+
+                while index < (*args).len() {
+                    try_walk_argument((*args)[index], visitor)?;
+                    index += 1;
+                }
+            };
+        },
+        FieldAccess(receiver, field_name) => {
+            try_walk_expr(*receiver, visitor)?;
+            try_walk_identifier(*field_name, visitor)?;
+        },
+        Builtin(kind, type_args, args) => {
+            {
+                let index: u64 = 0;
+
+                while index < (*type_args).len() {
+                    try_walk_type_syntax((*type_args)[index], visitor)?;
+                    index += 1;
+                }
+            };
+
+            {
+                let index: u64 = 0;
+
+                while index < (*args).len() {
+                    try_walk_argument((*args)[index], visitor)?;
+                    index += 1;
+                }
+            };
+        },
+        TypeItem(name, generics) => {
+            try_walk_identifier(*name, visitor)?;
+            {
+                let index: u64 = 0;
+
+                while index < (*generics).len() {
+                    try_walk_generic_argument(&((*generics)[index]), visitor)?;
+                    index += 1;
+                }
+            };
+        },
+        Block(block) => {
+            try_walk_block(*block, visitor)?;
+        },
+        Tuple(elements) => {
+            {
+                let index: u64 = 0;
+
+                while index < (*elements).len() {
+                    try_walk_expr((*elements)[index], visitor)?;
+                    index += 1;
+                }
+            };
+        },
+        Array(elements) => {
+            {
+                let index: u64 = 0;
+
+                while index < (*elements).len() {
+                    try_walk_expr((*elements)[index], visitor)?;
+                    index += 1;
+                }
+            };
+        },
+        ArrayRepeat(element, count) => {
+            try_walk_expr(*element, visitor)?;
+            try_walk_expr(*count, visitor)?;
+        },
+        DynValue(value) => {
+            try_walk_expr(*value, visitor)?;
+        },
+        DynBuffer(size, element) => {
+            try_walk_expr(*size, visitor)?;
+            try_walk_expr(*element, visitor)?;
+        },
+        VarDecl(name, var_type, init_expr) => {
+            try_walk_identifier(*name, visitor)?;
+            try_walk_type_syntax(*var_type, visitor)?;
+
+            match &(*init_expr) {
+                Some(value) => {
+                    try_walk_expr(*value, visitor)?;
+                },
+                None => {},
+            };
+        },
+        PatternLet(binding) => {
+            try_walk_pattern_let(*binding, visitor)?;
+        },
+        If(condition, then_branch, elif_branches, else_branch) => {
+            try_walk_condition(&(*condition), visitor)?;
+            try_walk_block(*then_branch, visitor)?;
+            {
+                let index: u64 = 0;
+
+                while index < (*elif_branches).len() {
+                    try_walk_elif_branch((*elif_branches)[index], visitor)?;
+                    index += 1;
+                }
+            };
+
+            match &(*else_branch) {
+                Some(value) => {
+                    try_walk_block(*value, visitor)?;
+                },
+                None => {},
+            };
+        },
+        ComptimeIf(condition, then_branch, else_branch) => {
+            try_walk_expr(*condition, visitor)?;
+            try_walk_block(*then_branch, visitor)?;
+            try_walk_block(*else_branch, visitor)?;
+        },
+        For(pattern, iterable, body) => {
+            try_walk_expr(*iterable, visitor)?;
+            try_walk_pattern(*pattern, visitor)?;
+            try_walk_block(*body, visitor)?;
+        },
+        While(condition, body) => {
+            try_walk_condition(&(*condition), visitor)?;
+            try_walk_block(*body, visitor)?;
+        },
+        Loop(body) => {
+            try_walk_block(*body, visitor)?;
+        },
+        Match(expr, arms) => {
+            try_walk_expr(*expr, visitor)?;
+            {
+                let index: u64 = 0;
+
+                while index < (*arms).len() {
+                    try_walk_match_arm((*arms)[index], visitor)?;
+                    index += 1;
+                }
+            };
+        },
+        Return(expr) => {
+            match &(*expr) {
+                Some(value) => {
+                    try_walk_expr(*value, visitor)?;
+                },
+                None => {},
+            };
+        },
+        Break(expr) => {
+            match &(*expr) {
+                Some(value) => {
+                    try_walk_expr(*value, visitor)?;
+                },
+                None => {},
+            };
+        },
+        Continue => {},
+        Defer(action) => {
+            try_walk_expr(*action, visitor)?;
+        },
+        Assert(condition, message) => {
+            try_walk_expr(*condition, visitor)?;
+
+            match &(*message) {
+                Some(value) => {
+                    try_walk_expr(*value, visitor)?;
+                },
+                None => {},
+            };
+        },
+        Delete(target) => {
+            try_walk_expr(*target, visitor)?;
+        },
+        Semi(expr) => {
+            try_walk_expr(*expr, visitor)?;
+        },
+        ClosureExpr(captures, params, return_type, body) => {
+            {
+                let index: u64 = 0;
+
+                while index < (*captures).len() {
+                    try_walk_capture_item((*captures)[index], visitor)?;
+                    index += 1;
+                }
+            };
+
+            {
+                let index: u64 = 0;
+
+                while index < (*params).len() {
+                    try_walk_parameter(&((*params)[index]), visitor)?;
+                    index += 1;
+                }
+            };
+
+            match &(*return_type) {
+                Some(value) => {
+                    try_walk_type_syntax(*value, visitor)?;
+                },
+                None => {},
+            };
+
+            try_walk_block(*body, visitor)?;
+        },
+        CompileConfig(name) => {},
+        Recovery(children, bindings) => {
+            for child in *children { try_walk_expr(*child, visitor)?; }
+            for name in *bindings { try_walk_identifier(*name, visitor)?; }
+        },
+    };
+
+    visitor.leave_expr(node)?;
+    Result<(), E>.Ok(())
+}
+
+pub fn try_walk_type_syntax<E>(node: TypeSyntax&, visitor: TryAstVisitor<E>&) -> Result<(), E> {
+    if visitor.enter_type_syntax(node)? == WalkControl.Skip {
+        return Result<(), E>.Ok(());
+    }
+
+    match &node.data {
+        IntType(signed, width) => {},
+        FloatType(width) => {},
+        BoolType => {},
+        StrType => {},
+        CharType => {},
+        VoidType => {},
+        NeverType => {},
+        DeducedType => {},
+        CScalarType(name) => {},
+        CPtrType(pointee_type) => {
+            try_walk_type_syntax(*pointee_type, visitor)?;
+        },
+        NamedType(name) => {
+            try_walk_identifier(*name, visitor)?;
+        },
+        ArrayType(element_type, size) => {
+            try_walk_type_syntax(*element_type, visitor)?;
+            try_walk_const_expr(*size, visitor)?;
+        },
+        TupleType(element_types) => {
+            {
+                let index: u64 = 0;
+
+                while index < (*element_types).len() {
+                    try_walk_type_syntax((*element_types)[index], visitor)?;
+                    index += 1;
+                }
+            };
+        },
+        PointerType(pointee_type) => {
+            try_walk_type_syntax(*pointee_type, visitor)?;
+        },
+        RefType(pointee_type) => {
+            try_walk_type_syntax(*pointee_type, visitor)?;
+        },
+        SliceType(element_type) => {
+            try_walk_type_syntax(*element_type, visitor)?;
+        },
+        InstanceType(base, generic_args) => {
+            try_walk_type_syntax(*base, visitor)?;
+            {
+                let index: u64 = 0;
+
+                while index < (*generic_args).len() {
+                    try_walk_generic_argument(&((*generic_args)[index]), visitor)?;
+                    index += 1;
+                }
+            };
+        },
+        FunctionType(param_types, return_type) => {
+            {
+                let index: u64 = 0;
+
+                while index < (*param_types).len() {
+                    try_walk_type_syntax((*param_types)[index], visitor)?;
+                    index += 1;
+                }
+            };
+
+            try_walk_type_syntax(*return_type, visitor)?;
+        },
+    };
+
+    visitor.leave_type_syntax(node)?;
+    Result<(), E>.Ok(())
+}
+
+pub fn try_walk_const_expr<E>(node: ConstExpr&, visitor: TryAstVisitor<E>&) -> Result<(), E> {
+    if visitor.enter_const_expr(node)? == WalkControl.Skip {
+        return Result<(), E>.Ok(());
+    }
+
+    match &node.data {
+        LiteralConstExpr(literal) => {
+            try_walk_int_literal(*literal, visitor)?;
+        },
+        GenericConstExpr(name) => {
+            try_walk_identifier(*name, visitor)?;
+        },
+        UnaryConstExpr(op, operand) => {
+            try_walk_const_expr(*operand, visitor)?;
+        },
+        BinaryConstExpr(op, left, right) => {
+            try_walk_const_expr(*left, visitor)?;
+            try_walk_const_expr(*right, visitor)?;
+        },
+    };
+
+    visitor.leave_const_expr(node)?;
+    Result<(), E>.Ok(())
+}
+
+pub fn try_walk_pattern<E>(node: Pattern&, visitor: TryAstVisitor<E>&) -> Result<(), E> {
+    if visitor.enter_pattern(node)? == WalkControl.Skip {
+        return Result<(), E>.Ok(());
+    }
+
+    match &node.data {
+        WildcardPattern => {},
+        LiteralPattern(literal) => {
+            try_walk_literal(&(*literal), visitor)?;
+        },
+        RangePattern(bounds) => {
+            try_walk_range_bounds(&(*bounds), visitor)?;
+        },
+        NamePattern(name) => {
+            try_walk_identifier(*name, visitor)?;
+        },
+        BindPattern(name, inner) => {
+            try_walk_identifier(*name, visitor)?;
+            try_walk_pattern(*inner, visitor)?;
+        },
+        OrPattern(alternatives) => {
+            {
+                let index: u64 = 0;
+
+                while index < (*alternatives).len() {
+                    try_walk_pattern((*alternatives)[index], visitor)?;
+                    index += 1;
+                }
+            };
+        },
+        ConstructPattern(name, qualifier, arguments, rest) => {
+            try_walk_identifier(*name, visitor)?;
+
+            match &(*qualifier) {
+                Some(value) => {
+                    try_walk_type_syntax(*value, visitor)?;
+                },
+                None => {},
+            };
+
+            try_walk_pattern_arguments(&(*arguments), visitor)?;
+        },
+        TuplePattern(elements) => {
+            {
+                let index: u64 = 0;
+
+                while index < (*elements).len() {
+                    try_walk_pattern((*elements)[index], visitor)?;
+                    index += 1;
+                }
+            };
+        },
+        SequencePattern(prefix, suffix, rest) => {
+            {
+                let index: u64 = 0;
+
+                while index < (*prefix).len() {
+                    try_walk_pattern((*prefix)[index], visitor)?;
+                    index += 1;
+                }
+            };
+
+            {
+                let index: u64 = 0;
+
+                while index < (*suffix).len() {
+                    try_walk_pattern((*suffix)[index], visitor)?;
+                    index += 1;
+                }
+            };
+        },
+    };
+
+    visitor.leave_pattern(node)?;
+    Result<(), E>.Ok(())
+}
+
+pub fn try_walk_item<E>(node: Item&, visitor: TryAstVisitor<E>&) -> Result<(), E> {
+    if visitor.enter_item(node)? == WalkControl.Skip {
+        return Result<(), E>.Ok(());
+    }
+
+    match &node.data {
+        Import(paths, target, alias, end) => {
+            {
+                let index: u64 = 0;
+
+                while index < (*paths).len() {
+                    try_walk_identifier((*paths)[index], visitor)?;
+                    index += 1;
+                }
+            };
+
+            try_walk_identifier(*target, visitor)?;
+
+            match &(*alias) {
+                Some(value) => {
+                    try_walk_identifier(*value, visitor)?;
+                },
+                None => {},
+            };
+        },
+        Alias(attrs, name, generics, target) => {
+            {
+                let index: u64 = 0;
+
+                while index < (*attrs).len() {
+                    try_walk_attr((*attrs)[index], visitor)?;
+                    index += 1;
+                }
+            };
+
+            try_walk_identifier(*name, visitor)?;
+            {
+                let index: u64 = 0;
+
+                while index < (*generics).len() {
+                    try_walk_generic_param(&((*generics)[index]), visitor)?;
+                    index += 1;
+                }
+            };
+
+            try_walk_type_syntax(*target, visitor)?;
+        },
+        FuncDef(attrs, name, generics, params, ret_type, body) => {
+            {
+                let index: u64 = 0;
+
+                while index < (*attrs).len() {
+                    try_walk_attr((*attrs)[index], visitor)?;
+                    index += 1;
+                }
+            };
+
+            try_walk_identifier(*name, visitor)?;
+            {
+                let index: u64 = 0;
+
+                while index < (*generics).len() {
+                    try_walk_generic_param(&((*generics)[index]), visitor)?;
+                    index += 1;
+                }
+            };
+
+            {
+                let index: u64 = 0;
+
+                while index < (*params).len() {
+                    try_walk_parameter(&((*params)[index]), visitor)?;
+                    index += 1;
+                }
+            };
+
+            match &(*ret_type) {
+                Some(value) => {
+                    try_walk_type_syntax(*value, visitor)?;
+                },
+                None => {},
+            };
+
+            try_walk_block(*body, visitor)?;
+        },
+        ConstDef(attrs, name, const_type, value) => {
+            {
+                let index: u64 = 0;
+
+                while index < (*attrs).len() {
+                    try_walk_attr((*attrs)[index], visitor)?;
+                    index += 1;
+                }
+            };
+
+            try_walk_identifier(*name, visitor)?;
+            try_walk_type_syntax(*const_type, visitor)?;
+            try_walk_expr(*value, visitor)?;
+        },
+        OpaqueTypeDef(attrs, name) => {
+            {
+                let index: u64 = 0;
+
+                while index < (*attrs).len() {
+                    try_walk_attr((*attrs)[index], visitor)?;
+                    index += 1;
+                }
+            };
+
+            try_walk_identifier(*name, visitor)?;
+        },
+        ExternBlock(attrs, abi, functions) => {
+            {
+                let index: u64 = 0;
+
+                while index < (*attrs).len() {
+                    try_walk_attr((*attrs)[index], visitor)?;
+                    index += 1;
+                }
+            };
+
+            {
+                let index: u64 = 0;
+
+                while index < (*functions).len() {
+                    try_walk_extern_func_decl((*functions)[index], visitor)?;
+                    index += 1;
+                }
+            };
+        },
+        StructDef(attrs, name, generics, fields) => {
+            {
+                let index: u64 = 0;
+
+                while index < (*attrs).len() {
+                    try_walk_attr((*attrs)[index], visitor)?;
+                    index += 1;
+                }
+            };
+
+            try_walk_identifier(*name, visitor)?;
+            {
+                let index: u64 = 0;
+
+                while index < (*generics).len() {
+                    try_walk_generic_param(&((*generics)[index]), visitor)?;
+                    index += 1;
+                }
+            };
+
+            {
+                let index: u64 = 0;
+
+                while index < (*fields).len() {
+                    try_walk_field_info((*fields)[index], visitor)?;
+                    index += 1;
+                }
+            };
+        },
+        EnumDef(attrs, name, generics, variants) => {
+            {
+                let index: u64 = 0;
+
+                while index < (*attrs).len() {
+                    try_walk_attr((*attrs)[index], visitor)?;
+                    index += 1;
+                }
+            };
+
+            try_walk_identifier(*name, visitor)?;
+            {
+                let index: u64 = 0;
+
+                while index < (*generics).len() {
+                    try_walk_generic_param(&((*generics)[index]), visitor)?;
+                    index += 1;
+                }
+            };
+
+            {
+                let index: u64 = 0;
+
+                while index < (*variants).len() {
+                    try_walk_variant_info((*variants)[index], visitor)?;
+                    index += 1;
+                }
+            };
+        },
+        TraitDef(attrs, name, generics, items) => {
+            {
+                let index: u64 = 0;
+
+                while index < (*attrs).len() {
+                    try_walk_attr((*attrs)[index], visitor)?;
+                    index += 1;
+                }
+            };
+
+            try_walk_identifier(*name, visitor)?;
+            {
+                let index: u64 = 0;
+
+                while index < (*generics).len() {
+                    try_walk_generic_param(&((*generics)[index]), visitor)?;
+                    index += 1;
+                }
+            };
+
+            {
+                let index: u64 = 0;
+
+                while index < (*items).len() {
+                    try_walk_trait_member(&((*items)[index]), visitor)?;
+                    index += 1;
+                }
+            };
+        },
+        Impl(generics, target, trait_type, items, conditions) => {
+            {
+                let index: u64 = 0;
+
+                while index < (*generics).len() {
+                    try_walk_generic_param(&((*generics)[index]), visitor)?;
+                    index += 1;
+                }
+            };
+
+            try_walk_type_syntax(*target, visitor)?;
+
+            match &(*trait_type) {
+                Some(value) => {
+                    try_walk_type_syntax(*value, visitor)?;
+                },
+                None => {},
+            };
+
+            {
+                let index: u64 = 0;
+
+                while index < (*items).len() {
+                    try_walk_method_def((*items)[index], visitor)?;
+                    index += 1;
+                }
+            };
+
+            {
+                let index: u64 = 0;
+
+                while index < (*conditions).len() {
+                    try_walk_impl_condition((*conditions)[index], visitor)?;
+                    index += 1;
+                }
+            };
+        },
+    };
+
+    visitor.leave_item(node)?;
+    Result<(), E>.Ok(())
+}
+
+pub fn try_walk_literal<E>(node: Literal&, visitor: TryAstVisitor<E>&) -> Result<(), E> {
+    match node {
+        Integer(value) => {
+            try_walk_int_literal(*value, visitor)?;
+        },
+        Float(value) => {
+            try_walk_float_literal(*value, visitor)?;
+        },
+        Character(value) => {
+            try_walk_char_literal(*value, visitor)?;
+        },
+        StringLiteral(value) => {
+            try_walk_str_literal(*value, visitor)?;
+        },
+        Boolean(value) => {
+            try_walk_bool_literal(*value, visitor)?;
+        },
+    };
+
+    Result<(), E>.Ok(())
+}
+
+pub fn try_walk_range_bounds<E>(node: RangeBounds&, visitor: TryAstVisitor<E>&) -> Result<(), E> {
+    match node {
+        Integer(lower, upper) => {
+            try_walk_int_literal(*lower, visitor)?;
+            try_walk_int_literal(*upper, visitor)?;
+        },
+        Character(lower, upper) => {
+            try_walk_char_literal(*lower, visitor)?;
+            try_walk_char_literal(*upper, visitor)?;
+        },
+    };
+
+    Result<(), E>.Ok(())
+}
+
+pub fn try_walk_condition<E>(node: Condition&, visitor: TryAstVisitor<E>&) -> Result<(), E> {
+    match node {
+        Expression(value) => {
+            try_walk_expr(*value, visitor)?;
+        },
+        Let(value) => {
+            try_walk_let_condition(*value, visitor)?;
+        },
+    };
+
+    Result<(), E>.Ok(())
+}
+
+pub fn try_walk_generic_argument<E>(node: GenericArgument&, visitor: TryAstVisitor<E>&) -> Result<(), E> {
+    match node {
+        Type(value) => {
+            try_walk_type_syntax(*value, visitor)?;
+        },
+        Constant(value) => {
+            try_walk_const_expr(*value, visitor)?;
+        },
+    };
+
+    Result<(), E>.Ok(())
+}
+
+pub fn try_walk_generic_param<E>(node: GenericParam&, visitor: TryAstVisitor<E>&) -> Result<(), E> {
+    match node {
+        Type(value) => {
+            try_walk_type_generic_param(*value, visitor)?;
+        },
+        Constant(value) => {
+            try_walk_const_generic_param(*value, visitor)?;
+        },
+    };
+
+    Result<(), E>.Ok(())
+}
+
+pub fn try_walk_parameter<E>(node: Parameter&, visitor: TryAstVisitor<E>&) -> Result<(), E> {
+    match node {
+        Named(value) => {
+            try_walk_var_info(*value, visitor)?;
+        },
+        Pattern(value) => {
+            try_walk_pattern_param(*value, visitor)?;
+        },
+    };
+
+    Result<(), E>.Ok(())
+}
+
+pub fn try_walk_trait_member<E>(node: TraitMember&, visitor: TryAstVisitor<E>&) -> Result<(), E> {
+    match node {
+        Declaration(value) => {
+            try_walk_method_decl(*value, visitor)?;
+        },
+        Definition(value) => {
+            try_walk_method_def(*value, visitor)?;
+        },
+    };
+
+    Result<(), E>.Ok(())
+}
+
+pub fn try_walk_pattern_arguments<E>(node: PatternArguments&, visitor: TryAstVisitor<E>&) -> Result<(), E> {
+    match node {
+        None => {},
+        Positional(values) => {
+            {
+                let index: u64 = 0;
+
+                while index < (*values).len() {
+                    try_walk_pattern((*values)[index], visitor)?;
+                    index += 1;
+                }
+            };
+        },
+        Named(values) => {
+            {
+                let index: u64 = 0;
+
+                while index < (*values).len() {
+                    try_walk_field_pattern((*values)[index], visitor)?;
+                    index += 1;
+                }
+            };
+        },
+    };
+
+    Result<(), E>.Ok(())
+}

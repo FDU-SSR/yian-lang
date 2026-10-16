@@ -1,0 +1,17 @@
+// Fat-pointer cross-object difference negative test.
+//
+// CheckPtrDiff preconditions: equal data, valid arithmetic, and no wrap.
+// a/b are independent dyn allocations with unequal data; the precondition fails and exits with code 1.
+
+fn main() {
+    let a: i32* = dyn[2] 0i32;
+    a[0] = 1;
+    a[1] = 2;
+
+    let b: i32* = dyn[2] 0i32;
+    b[0] = 3;
+    b[1] = 4;
+
+    let d: i64 = b - a; // Cross-object pointer difference has unequal data, failing CheckPtrDiff with a safety error.
+    assert d == 0: "unreachable"
+}

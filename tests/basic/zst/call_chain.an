@@ -1,0 +1,27 @@
+// Chained method calls work when intermediate receiver types are zero-sized.
+//
+// Expected output: 0
+
+struct makef1 {}
+struct makef2 {}
+
+fn f() -> makef1 {
+    return makef1();
+}
+
+impl makef1 {
+    fn f1() -> makef2 {
+        return makef2();
+    }
+}
+
+impl makef2 {
+    fn f2() -> i32 {
+        return 5;
+    }
+}
+
+fn main() {
+    assert f().f1().f2() == 5: "call chain works";
+
+}

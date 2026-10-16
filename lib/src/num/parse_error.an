@@ -1,0 +1,10 @@
+pub enum ParseNumberError {
+    Empty,
+    MissingDigits,
+    InvalidDigit,
+    InvalidSeparator,
+    InvalidFormat,
+    InvalidExponent,
+    UnsupportedRadix,
+    Overflow,
+}

@@ -1,0 +1,12 @@
+// Deletion-view negative (b): stack T& fails. let r:i32&=&x creates a stack key
+// with MSB zero; CheckDelete's is_heap term fails,
+// terminating with exit code 1. Even if data matches lock_ptr+8,
+// the heap precondition rejects deletion of stack objects.
+//
+// Expected exit code: 1
+
+fn main() {
+    let x: i32 = 5;
+    let r: i32& = &x;
+    del r;
+}

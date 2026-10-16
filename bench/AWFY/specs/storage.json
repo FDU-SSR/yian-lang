@@ -1,0 +1,16 @@
+{
+  "name": "storage",
+  "source": "AWFY",
+  "tags": [
+    "alloc"
+  ],
+  "argv": [],
+  "check": {
+    "rc": 0
+  },
+  "note": "官方工作单元: 深度 7、分支 4、结果 5461; 外层默认 9885 次",
+  "scale": {
+    "default": 9885,
+    "c": "argv"
+  }
+}

@@ -1,0 +1,65 @@
+// Extended pointer-to-ZST operations: allocation, deref no-op,
+// alloca, and through-struct access.
+//
+// Expected output: 0
+
+struct Empty {}
+struct WrapZ { e: Empty*, v: void* }
+
+fn case_pointer_to_zst_operations() {
+    let p: void* = dyn[1] void;
+    let q: Empty* = dyn[1] Empty;
+    assert @sizeof<void*> == 0: "sizeof ptr to void";
+    assert @sizeof<Empty*> == 0: "sizeof ptr to empty struct";
+
+    // ZST pointer comparison always true (all indistinguishable)
+    assert p == p: "same ZST ptr == itself";
+    let r: void* = dyn[1] void;
+    assert p == r: "all void* values are indistinguishable";
+
+    // struct containing ZST pointer fields (the pointers are ZST)
+    assert @sizeof<WrapZ> == 0: "struct of ZST ptr fields";
+
+}
+
+struct PointerPointeeEmpty {}
+
+fn case_ptr_to_zst_layout() {
+    // @sizeof<ptr-to-ZST> == 0  (pointer itself is ZST)
+    assert @sizeof<void*> == 0: "@sizeof<*void> == 0";
+    assert @sizeof<PointerPointeeEmpty*> == 0: "@sizeof<*Empty> == 0";
+
+    // ZST pointers are created by dyn and carry no runtime representation.
+    let p: void* = dyn[1] void;
+    let q: PointerPointeeEmpty* = dyn[1] PointerPointeeEmpty;
+
+    // ZST pointer equality always true (all indistinguishable)
+    let r1: void* = dyn[1] void;
+    let r2: void* = dyn[1] void;
+    assert r1 == r2: "ZST ptr equality always true";
+
+}
+
+struct AllocatedEmpty {}
+fn unit() -> void { return; }
+
+fn case_dynamic_zst_allocation() {
+    // Repeated allocation of ZST values does not require backing storage.
+    let p: void* = dyn[5] void;
+    let q: AllocatedEmpty* = dyn[3] AllocatedEmpty;
+
+    // del on ZST pointer: must not crash
+    del p;
+    del q;
+
+    // read through pointer (no-op load)
+    let p2: void* = dyn[1] void;
+    let v: void = *p2;
+
+}
+
+fn main() {
+    case_ptr_to_zst_layout();
+    case_pointer_to_zst_operations();
+    case_dynamic_zst_allocation();
+}

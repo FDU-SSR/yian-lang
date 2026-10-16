@@ -1,0 +1,67 @@
+from std.core.hash import Hash, Murmur3Hasher;
+from std.core.ops import PartialEq;
+
+// IDs belong to one CFG owner. Block, value, and local IDs are scoped to a function.
+pub struct FunctionId {
+    pub index: u64,
+}
+
+impl PartialEq<FunctionId> for FunctionId {
+    pub fn eq(other: FunctionId&) -> bool {
+        self.index == other.index
+    }
+}
+
+impl Hash<Murmur3Hasher> for FunctionId {
+    pub fn hash(hasher: Murmur3Hasher&) {
+        self.index.hash(hasher);
+    }
+}
+
+pub struct BlockId {
+    pub index: u64,
+}
+
+impl PartialEq<BlockId> for BlockId {
+    pub fn eq(other: BlockId&) -> bool {
+        self.index == other.index
+    }
+}
+
+impl Hash<Murmur3Hasher> for BlockId {
+    pub fn hash(hasher: Murmur3Hasher&) {
+        self.index.hash(hasher);
+    }
+}
+
+pub struct ValueId {
+    pub index: u64,
+}
+
+impl PartialEq<ValueId> for ValueId {
+    pub fn eq(other: ValueId&) -> bool {
+        self.index == other.index
+    }
+}
+
+impl Hash<Murmur3Hasher> for ValueId {
+    pub fn hash(hasher: Murmur3Hasher&) {
+        self.index.hash(hasher);
+    }
+}
+
+pub struct LocalId {
+    pub index: u64,
+}
+
+impl PartialEq<LocalId> for LocalId {
+    pub fn eq(other: LocalId&) -> bool {
+        self.index == other.index
+    }
+}
+
+impl Hash<Murmur3Hasher> for LocalId {
+    pub fn hash(hasher: Murmur3Hasher&) {
+        self.index.hash(hasher);
+    }
+}

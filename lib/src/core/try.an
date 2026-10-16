@@ -1,0 +1,70 @@
+from std.core.option import Option;
+from std.core.result import Result;
+from std.core.convert import From;
+
+pub enum TryBranch<Output, Residual> {
+    Continue { value: Output },
+    Break { residual: Residual },
+}
+
+pub trait Try<Output, Residual> {
+    static fn branch(value: Self) -> TryBranch<Output, Residual>;
+}
+
+pub trait FromResidual<Residual> {
+    static fn from_residual(residual: Residual) -> Self;
+}
+
+pub struct ResultResidual<E> {
+    pub error: E,
+}
+
+pub struct OptionResidual {}
+
+impl<T, E> Try<T, ResultResidual<E>> for Result<T, E> {
+    pub static fn branch(value: Self) -> TryBranch<T, ResultResidual<E>> {
+        match value {
+            Ok(val) => TryBranch<T, ResultResidual<E>>.Continue(val),
+            Err(error) => TryBranch<T, ResultResidual<E>>.Break(ResultResidual<E>(error)),
+        }
+    }
+}
+
+impl<T, E> Try<T&, ResultResidual<E>> for Result<T, E>& {
+    pub static fn branch(value: Self) -> TryBranch<T&, ResultResidual<E>> {
+        match value {
+            Ok(val) => TryBranch<T&, ResultResidual<E>>.Continue(val),
+            Err(error) => TryBranch<T&, ResultResidual<E>>.Break(ResultResidual<E>(*error)),
+        }
+    }
+}
+
+impl<T> Try<T, OptionResidual> for Option<T> {
+    pub static fn branch(value: Self) -> TryBranch<T, OptionResidual> {
+        match value {
+            Some(val) => TryBranch<T, OptionResidual>.Continue(val),
+            None => TryBranch<T, OptionResidual>.Break(OptionResidual()),
+        }
+    }
+}
+
+impl<T> Try<T&, OptionResidual> for Option<T>& {
+    pub static fn branch(value: Self) -> TryBranch<T&, OptionResidual> {
+        match value {
+            Some(val) => TryBranch<T&, OptionResidual>.Continue(val),
+            None => TryBranch<T&, OptionResidual>.Break(OptionResidual()),
+        }
+    }
+}
+
+impl<U, E, F> FromResidual<ResultResidual<E>> for Result<U, F> if F: From<E> {
+    pub static fn from_residual(residual: ResultResidual<E>) -> Self {
+        Result<U, F>.Err(From<E>.from<F>(&residual.error))
+    }
+}
+
+impl<U> FromResidual<OptionResidual> for Option<U> {
+    pub static fn from_residual(residual: OptionResidual) -> Self {
+        Option<U>.None
+    }
+}

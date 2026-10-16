@@ -1,0 +1,10 @@
+// Test zero-sized void local variables: declaration, no-op assignment, sizeof
+//
+// Expected output: 0
+
+fn main() {
+    let v1: void;
+    let v2: void;
+    v1 = v2; // no-op copy of a zero-sized value
+    assert @sizeof<void> == 0: "@sizeof<void> should be 0";
+}

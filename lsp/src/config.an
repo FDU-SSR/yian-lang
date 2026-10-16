@@ -1,0 +1,183 @@
+from std.core.drop import Drop;
+from std.core.fs import append;
+from std.core.io import Stderr, Stdout;
+from std.core.option import Option;
+from std.core.process import env_var;
+from std.core.result import Result;
+from std.core.string import String;
+from std.core.vec import Vec;
+
+pub struct Config {
+    pub compiler_root: Option<String>,
+    pub raw_pointers: bool,
+    pub log_level: String,
+    pub log_file: Option<String>,
+    pub trace_file: Option<String>,
+}
+
+impl Drop for Config {
+    pub fn drop() {
+        match &self.compiler_root { Some(value) => value.drop(), None => {}, }
+        self.log_level.drop();
+        match &self.log_file { Some(value) => value.drop(), None => {}, }
+        match &self.trace_file { Some(value) => value.drop(), None => {}, }
+    }
+}
+
+fn write_stdout(text: str) {
+    match Stdout.new().write_str(text) {
+        Ok(_) => {},
+        Err(problem) => problem.drop(),
+    }
+}
+
+fn write_stderr(text: str) {
+    match Stderr.new().write_str(text) {
+        Ok(_) => {},
+        Err(problem) => problem.drop(),
+    }
+}
+
+fn log_priority(level: str) -> u8 {
+    match level {
+        "DEBUG" => 0u8,
+        "INFO" => 1u8,
+        "WARNING" => 2u8,
+        _ => 3u8,
+    }
+}
+
+pub fn log(config: Config&, level: str, message: str) {
+    if log_priority(level) < log_priority(config.log_level.as_str()) {
+        return;
+    }
+
+    let line = String.new();
+    line.push_str("[yian-lsp ");
+    line.push_str(level);
+    line.push_str("] ");
+    line.push_str(message);
+    line.push('\n');
+
+    match &config.log_file {
+        Some(path) => match append(path.as_str(), line.as_slice()) {
+            Ok(_) => {},
+            Err(problem) => {
+                problem.drop();
+                write_stderr(line.as_str());
+            },
+        },
+        None => write_stderr(line.as_str()),
+    }
+    line.drop();
+}
+
+fn option_from_environment(name: str, fallback: str) -> String {
+    match env_var(name) {
+        Ok(Some(value)) if value.as_str().as_slice().len() != 0u64 => value,
+        Ok(Some(value)) => { value.drop(); String.from(&fallback) },
+        Ok(None) => String.from(&fallback),
+        Err(problem) => { problem.drop(); String.from(&fallback) },
+        _ => String.from(&fallback),
+    }
+}
+
+fn optional_environment(name: str) -> Option<String> {
+    match env_var(name) {
+        Ok(Some(value)) if value.as_str().as_slice().len() != 0u64 => Option<String>.Some(value),
+        Ok(Some(value)) => { value.drop(); Option<String>.None },
+        Ok(None) => Option<String>.None,
+        Err(problem) => { problem.drop(); Option<String>.None },
+        _ => Option<String>.None,
+    }
+}
+
+pub fn usage() -> str {
+    "Usage: yian-lsp [--stdio] [--compiler-root PATH] [--raw-pointers] [--log-level LEVEL] [--log-file PATH] [--version]\n"
+}
+
+pub fn parse_config(arguments: Vec<String>&) -> Result<Config, i32> {
+    let compiler_root = Option<String>.None;
+    let raw_pointers = false;
+    let log_level = option_from_environment("YIAN_LSP_LOG", "INFO");
+    let log_file = match env_var("YIAN_LSP_LOG_FILE") {
+        Ok(Some(value)) if value.as_str().as_slice().len() != 0u64 => Option<String>.Some(value),
+        Ok(Some(value)) => { value.drop(); Option<String>.None },
+        Ok(None) => Option<String>.None,
+        Err(problem) => { problem.drop(); Option<String>.None },
+        _ => Option<String>.None,
+    };
+    // The native profiler records operation traces when a profile path is requested.
+    let trace_file = match optional_environment("YIAN_LSP_TRACE_FILE") {
+        Some(value) => Option<String>.Some(value),
+        None => optional_environment("YIAN_LSP_PROFILE_FILE"),
+    };
+    let transferred = false;
+    defer {
+        if !transferred {
+            match &compiler_root { Some(value) => value.drop(), None => {}, }
+            log_level.drop();
+            match &log_file { Some(value) => value.drop(), None => {}, }
+            match &trace_file { Some(value) => value.drop(), None => {}, }
+        }
+    };
+    let index = 1u64;
+
+    while index < arguments.len() {
+        let argument = arguments[index].as_str();
+
+        if argument == "--worker" {
+            index += 1u64;
+        } elif argument == "--stdio" {
+            index += 1u64;
+        } elif argument == "--raw-pointers" {
+            raw_pointers = true;
+            index += 1u64;
+        } elif argument == "--help" || argument == "-h" {
+            write_stdout(usage());
+            return Result<Config, i32>.Err(0i32);
+        } elif argument == "--version" {
+            write_stdout("yian-lsp 0.7.0\n");
+            return Result<Config, i32>.Err(0i32);
+        } elif argument == "--compiler-root" || argument == "--log-level" || argument == "--log-file" {
+            if index + 1u64 >= arguments.len() {
+                write_stderr("yian-lsp: option requires a value\n");
+                return Result<Config, i32>.Err(2i32);
+            }
+
+            let value = String.from(&arguments[index + 1u64].as_str());
+            if argument == "--compiler-root" {
+                match &compiler_root { Some(previous) => previous.drop(), None => {}, }
+                compiler_root = Option<String>.Some(value);
+            } elif argument == "--log-file" {
+                match &log_file { Some(previous) => previous.drop(), None => {}, }
+                log_file = Option<String>.Some(value);
+            } else {
+                log_level.drop();
+                log_level = value;
+            }
+            index += 2u64;
+        } else {
+            write_stderr("yian-lsp: unknown option: ");
+            write_stderr(argument);
+            write_stderr("\n");
+            return Result<Config, i32>.Err(2i32);
+        }
+    }
+
+    let level = log_level.as_str();
+    if level != "DEBUG" && level != "INFO" && level != "WARNING" && level != "ERROR" {
+        write_stderr("yian-lsp: invalid log level\n");
+        return Result<Config, i32>.Err(2i32);
+    }
+
+    let config = Config(
+        compiler_root=compiler_root,
+        raw_pointers=raw_pointers,
+        log_level=log_level,
+        log_file=log_file,
+        trace_file=trace_file,
+    );
+    transferred = true;
+    Result<Config, i32>.Ok(config)
+}

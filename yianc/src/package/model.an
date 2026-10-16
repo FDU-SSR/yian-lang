@@ -1,0 +1,168 @@
+from yianc.package.provenance import within;
+from std.core.drop import Drop;
+from std.core.iter import Iterator, IntoIterator;
+from std.core.option import Option;
+from std.core.path import PathBuf;
+from std.core.string import String;
+from std.core.vec import Vec;
+
+pub struct NativeLLVM {
+    pub major: u32,
+    pub components: Vec<String>,
+    pub sources: Vec<String>,
+}
+
+impl Drop for NativeLLVM {
+    pub fn drop() {
+        for component in self.components {
+            component.drop();
+        }
+
+        for source in self.sources {
+            source.drop();
+        }
+
+        self.components.drop();
+        self.sources.drop();
+    }
+}
+
+pub struct PackageSpec {
+    pub name: String,
+    pub source_root: PathBuf,
+    pub kind: String,
+    pub entry: Option<PathBuf>,
+    pub dependencies: Vec<String>,
+    pub allows_ffi: bool,
+    pub native_llvm: Option<NativeLLVM>,
+}
+
+impl Drop for PackageSpec {
+    pub fn drop() {
+        self.name.drop();
+        self.source_root.drop();
+        self.kind.drop();
+
+        match &self.entry {
+            Some(path) => path.drop(),
+            None => {}
+        }
+
+        for dependency in self.dependencies {
+            dependency.drop();
+        }
+
+        self.dependencies.drop();
+
+        match &self.native_llvm {
+            Some(value) => value.drop(),
+            None => {}
+        }
+    }
+}
+
+pub struct PackageMap {
+    root: Option<String>,
+    packages: Vec<PackageSpec>
+}
+
+impl PackageMap {
+    static fn new() -> Self {
+        Self(Option<String>.None, Vec<PackageSpec>.new())
+    }
+
+    pub fn root_name() -> Option<str> {
+        match &self.root {
+            Some(name) => Option<str>.Some(name.as_str()),
+            None => Option<str>.None,
+        }
+    }
+}
+
+impl PackageMap {
+    pub fn len() -> u64 {
+        self.packages.len()
+    }
+
+    // Loaded maps are immutable; returned records remain borrowed until map release.
+    pub fn at(index: u64) -> Option<PackageSpec&> {
+        self.packages.as_slice().get(index)
+    }
+
+    pub fn find(name: str) -> Option<PackageSpec&> {
+        for package in self.packages {
+            if package.name.as_str() == name {
+                return Option<PackageSpec&>.Some(package);
+            }
+        }
+
+        Option<PackageSpec&>.None
+    }
+
+    // Input must be canonical. The borrowed record stays valid until this map is dropped.
+    pub fn package_of(path: str) -> Option<PackageSpec&> {
+        let best = Option<PackageSpec&>.None;
+        let length = 0u64;
+
+        for package in self.packages {
+            let root = package.source_root.as_str();
+
+            if within(path, root) && root.as_slice().len() > length {
+                best = Option<PackageSpec&>.Some(package);
+                length = root.as_slice().len();
+            }
+        }
+
+        best
+    }
+
+    pub fn visible(importer: Option<PackageSpec&>, target: str) -> bool {
+        match importer {
+            None => self.find(target).is_some(),
+            Some(package) => {
+                if package.name.as_str() == target || target == "std" {
+                    return true;
+                }
+
+                for dependency in package.dependencies {
+                    if dependency.as_str() == target {
+                        return true;
+                    }
+                }
+
+                false
+            },
+        }
+    }
+
+    // Compare canonical paths without filesystem access.
+    pub fn is_entry(path: str) -> bool {
+        for package in self.packages {
+            match &package.entry {
+                Some(entry) => {
+                    if entry.as_str() == path {
+                        return true;
+                    }
+                },
+                None => {}
+            }
+        }
+
+        false
+    }
+}
+
+impl Drop for PackageMap {
+    pub fn drop() {
+        for package in self.packages {
+            package.drop();
+        }
+
+        self.packages.drop();
+
+        match &self.root {
+            Some(root) => root.drop(),
+            None => {}
+        }
+    }
+}

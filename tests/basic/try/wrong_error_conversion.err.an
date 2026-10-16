@@ -1,0 +1,15 @@
+from std.core.convert import From;
+
+struct Error {}
+
+impl From<bool> for Error {
+    static fn from(value: bool&) -> Self { Error() }
+}
+
+fn run() -> Result<i32, Error> {
+    Result<i32, Error>.Ok(Result<i32, i32>.Err(3)?)
+}
+
+fn main() {
+    run();
+}

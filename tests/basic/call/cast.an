@@ -1,0 +1,40 @@
+// Test casting between different types
+//
+// Expected output: 0
+
+fn main() {
+    let i: i32 = 42;
+    let f: f64 = 6.6;
+    let ch: char = 'A';
+
+    // Float to int
+    let f_to_i: i32 = i32(f);
+    assert f_to_i == 6: "Float to int cast failed";
+    let f_to_u: u32 = u32(-3.4);
+    assert f_to_u == 0: "Float to unsigned int cast failed";
+
+    // Int to float
+    let i_to_f: f64 = f64(i);
+    assert i_to_f > 41.9 && i_to_f < 42.1: "Int to float cast failed";
+
+    // Float cast
+    let f_to_f: f32 = f32(f);
+    assert f_to_f > 6.5 && f_to_f < 6.7: "Float to float cast failed";
+
+    // Int cast
+    let i_to_i: i8 = i8(i);
+    assert i_to_i == 42: "Int to int cast failed";
+    let i_to_u: u16 = u16(-1);
+    assert i_to_u == 65535: "Int to unsigned int cast failed";
+
+    // Char cast
+    let ch_to_u: u32 = u32(ch);
+    assert ch_to_u == 65: "Char to unsigned int cast failed";
+    let u_to_ch: char = char(66u8);
+    assert u_to_ch == 'B': "Unsigned int to char cast failed";
+    let u16_to_ch: char = char(67u16);
+    assert u16_to_ch == 'C': "u16 to char cast failed";
+    let u32_to_ch: char = char(68u32);
+    assert u32_to_ch == 'D': "u32 to char cast failed";
+
+}

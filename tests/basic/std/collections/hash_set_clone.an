@@ -1,0 +1,80 @@
+// HashSet.clone() copies the table buffers the set itself manages; the String
+// buffers owned by the stored keys stay shared with the original. Removing in
+// one set never affects the other; element cleanup stays with the caller, and a
+// shared buffer is released exactly once.
+from std.collections.hash_set import HashSet;
+from std.core.clone import Clone;
+from std.core.drop import Drop;
+from std.core.hash import Hash, Murmur3Hasher;
+from std.core.ops import PartialEq;
+from std.core.string import String;
+
+struct SKey {
+    tag: String,
+    drops: i32*,
+}
+
+impl Drop for SKey {
+    fn drop() {
+        *self.drops += 1;
+        self.tag.drop();
+    }
+}
+
+impl Hash<Murmur3Hasher> for SKey {
+    fn hash(hasher: Murmur3Hasher&) {
+        hasher.write(self.tag.as_slice());
+    }
+}
+
+impl PartialEq<SKey> for SKey {
+    fn eq(other: SKey&) -> bool {
+        self.tag.as_str() == other.tag.as_str()
+    }
+}
+
+impl Clone for SKey {
+    fn clone() -> Self {
+        SKey(tag=self.tag.clone(), drops=self.drops)
+    }
+}
+
+fn main() {
+    let drops: i32 = 0;
+    let s = HashSet<SKey>.with_capacity(4);
+    s.insert(SKey(tag=String.from(&"alpha"), drops=&drops));
+    s.insert(SKey(tag=String.from(&"beta"), drops=&drops));
+    assert drops == 0 && s.len() == 2;
+
+    let c = s.clone();
+    assert drops == 0: "cloning must not drop the original elements";
+    assert c.len() == 2;
+
+    // The clone owns independent key copies: removing from it keeps s intact.
+    let probe_alpha = SKey(tag=String.from(&"alpha"), drops=&drops);
+    assert c.remove(&probe_alpha);
+    assert drops == 0: "clone remove must not clean the stored element";
+    assert s.contains(&probe_alpha): "original set unaffected by clone removal";
+
+    // Element String buffers are shared with the original; both copies see the same keys, but mutating
+    // elements through the clone could grow/release shared buffers and leave the original dangling.
+    let probe_beta = SKey(tag=String.from(&"beta"), drops=&drops);
+    assert c.contains(&probe_beta) && s.contains(&probe_beta): "clone shares element storage";
+
+    assert s.remove(&probe_alpha);
+    assert drops == 0: "original remove must not clean the stored element";
+
+    // Removed keys are no longer reachable through the sets.  Clean the remaining
+    // keys and lookup values explicitly before freeing table storage; s and c share key
+    // String buffers, so clean each key once.
+    probe_alpha.drop();
+    probe_beta.drop();
+    for key in s {
+        key.drop();
+    }
+    assert drops == 3: "reachable keys are cleaned only by explicit drop";
+    s.drop();
+    assert drops == 3: "set drop releases storage without dropping keys";
+    c.drop();
+    assert drops == 3: "clone drop releases storage without dropping keys";
+}

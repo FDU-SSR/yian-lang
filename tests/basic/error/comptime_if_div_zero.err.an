@@ -1,0 +1,6 @@
+// Division by zero in a compile-time condition has a dedicated diagnostic.
+
+fn main() {
+    let value: i32 = comptime if (1i32 / 0i32) == 0i32 { 1 } else { 2 };
+    assert value == 1;
+}

@@ -1,0 +1,10 @@
+// A generic body is type-checked when a concrete instance is generated; this
+// uninstantiated body does not constrain `T` to support addition.
+
+fn add<T>(a: T, b: T) -> T {
+    return a + b
+}
+
+fn main() {
+    assert add<i32>(1, 2) == 3: "the instantiated body is checked and runs";
+}

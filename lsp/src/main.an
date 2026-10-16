@@ -1,0 +1,41 @@
+from std.core.drop import Drop;
+from std.core.env import args, exit;
+from std.core.string import String;
+from std.core.vec import Vec;
+from lsp.config import Config, log, parse_config;
+from lsp.protocol.server import run_server;
+from lsp.worker.entry import run_worker;
+
+fn release_args(values: Vec<String>&) {
+    for value in *values { value.drop(); }
+    values.drop();
+}
+
+fn is_worker(arguments: Vec<String>&) -> bool {
+    arguments.len() > 1u64 && arguments[1u64].as_str() == "--worker"
+}
+
+fn main() {
+    let arguments = args();
+    let status = if is_worker(&arguments) {
+        run_worker(&arguments)
+    } else {
+        let config = match parse_config(&arguments) {
+            Ok(value) => value,
+            Err(status) => {
+                release_args(&arguments);
+                if status != 0i32 { exit(status); }
+                return;
+            },
+        };
+        defer config.drop();
+        log(&config, "INFO", "protocol server starting");
+        let status = run_server(&config);
+        log(&config, if status == 0i32 { "INFO" } else { "ERROR" },
+            if status == 0i32 { "protocol server stopped" } else { "protocol server failed" });
+        status
+    };
+
+    release_args(&arguments);
+    if status != 0i32 { exit(status); }
+}

@@ -1,0 +1,57 @@
+from std.core.drop import Drop;
+from std.core.option import Option;
+from std.core.string import String;
+
+pub const AX_NO_PROJECT_ROOT: str = "AX001";
+pub const AX_BAD_MANIFEST: str = "AX002";
+pub const AX_DEPENDENCY_PATH_MISSING: str = "AX003";
+pub const AX_DEPENDENCY_MANIFEST_MISSING: str = "AX004";
+pub const AX_DEPENDENCY_NAME_MISMATCH: str = "AX005";
+pub const AX_DEPENDENCY_CYCLE: str = "AX006";
+pub const AX_DUPLICATE_PACKAGE: str = "AX007";
+pub const AX_ENTRY_MISMATCH: str = "AX008";
+pub const AX_RESERVED_PACKAGE_NAME: str = "AX011";
+pub const AX_NESTED_SOURCE_ROOTS: str = "AX013";
+pub const AX_BIN_AS_DEPENDENCY: str = "AX015";
+
+pub struct Diagnostic {
+    code: String,
+    message: String,
+    path: Option<String>,
+    hint: Option<String>,
+}
+
+impl Diagnostic {
+    static pub fn new(code: str, message: str, path: Option<str>, hint: Option<str>) -> Self {
+        let owned_path = match path { Some(value) => Option<String>.Some(String.from(&value)), None => Option<String>.None };
+        let owned_hint = match hint { Some(value) => Option<String>.Some(String.from(&value)), None => Option<String>.None };
+        Self(code=String.from(&code), message=String.from(&message), path=owned_path, hint=owned_hint)
+    }
+
+    pub fn code() -> str { self.code.as_str() }
+    pub fn message() -> str { self.message.as_str() }
+    pub fn path() -> Option<str> {
+        match self.path { Some(value) => Option<str>.Some(value.as_str()), None => Option<str>.None }
+    }
+    pub fn hint() -> Option<str> {
+        match self.hint { Some(value) => Option<str>.Some(value.as_str()), None => Option<str>.None }
+    }
+}
+
+impl Drop for Diagnostic {
+    pub fn drop() {
+        self.code.drop();
+        self.message.drop();
+        match self.path.take() { Some(value) => value.drop(), None => {}, }
+        match self.hint.take() { Some(value) => value.drop(), None => {}, }
+    }
+}
+
+pub fn release_diagnostics(items: Vec<Diagnostic>&) {
+    let index = 0u64;
+    while index < items.len() {
+        items[index].drop();
+        index += 1u64;
+    }
+    items.drop();
+}

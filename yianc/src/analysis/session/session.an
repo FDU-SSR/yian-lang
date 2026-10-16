@@ -1,0 +1,155 @@
+from yianc.common.ids import SourceId, UnitId, TypeId;
+from yianc.analysis.definition.registry import DefinitionRegistry;
+from yianc.analysis.definition.worklist import DefinitionWorklist;
+from yianc.analysis.editor_facts import EditorFacts;
+from yianc.analysis.hir.store import HirStore;
+from yianc.analysis.names import NameInterner;
+from yianc.analysis.symbol.scope import SymbolStore;
+from yianc.analysis.symbol.model import SymbolKind;
+from yianc.analysis.ty.impl_registry import ImplRegistry;
+from yianc.analysis.ty.store import TypeStore;
+from yianc.diagnostics.model import DiagnosticSink;
+from yianc.frontend.prepare import PreparedFile;
+from yianc.frontend.source import SourceManager, SourceFile;
+from yianc.package.model import PackageMap;
+from yianc.package.provenance import SourceTrust;
+from std.collections.arena import Arena;
+from std.core.drop import Drop;
+from std.core.iter import Iterator, IntoIterator;
+from std.core.option import Option;
+
+pub struct CompilationUnit {
+    pub id: UnitId,
+    pub source: SourceId,
+    pub prepared: PreparedFile,
+    pub is_stdlib: bool,
+    pub allows_restricted: bool,
+    pub allows_ffi: bool,
+}
+
+pub enum AnalysisPhase {
+    Prepared,
+    Analyzing,
+    Complete,
+    Failed,
+}
+
+impl Drop for CompilationUnit {
+    pub fn drop() {
+        self.prepared.drop();
+    }
+}
+
+// This owner keeps all source/AST/semantic references alive for one preparation run.
+pub struct AnalysisSession {
+    sources: SourceManager,
+    pub names: NameInterner,
+    units: Arena<CompilationUnit>,
+    pub types: TypeStore,
+    pub symbols: SymbolStore,
+    pub hir: HirStore,
+    pub definitions: DefinitionRegistry,
+    pub editor_facts: EditorFacts,
+    pub worklist: DefinitionWorklist,
+    pub impls: ImplRegistry,
+    pub diagnostics: DiagnosticSink,
+    packages: Option<PackageMap>,
+    trust: SourceTrust,
+    pub raw_pointers: bool,
+    pub editor_recovery: bool,
+    phase: AnalysisPhase,
+}
+
+impl AnalysisSession {
+    // Package metadata and source trust transfer into this owner at construction.
+    static pub fn new(trust: SourceTrust, packages: Option<PackageMap>, raw_pointers: bool) -> Self {
+        Self(SourceManager.new(), NameInterner.new(), Arena<CompilationUnit>.new(), TypeStore.new(),
+            SymbolStore.new(), HirStore.new(), DefinitionRegistry.new(), EditorFacts.new(), DefinitionWorklist.new(),
+            ImplRegistry.new(), DiagnosticSink.new(), packages, trust, raw_pointers, false, AnalysisPhase.Prepared)
+    }
+
+    // A lexed file transfers here; later preparation stages mutate the session-owned payload.
+    pub fn accept(prepared: PreparedFile, permissions: SourcePermissions) -> UnitId {
+        let id = UnitId(self.units.len());
+        self.units.alloc(CompilationUnit(id, prepared.source, prepared,
+            permissions.is_stdlib, permissions.allows_restricted, permissions.allows_ffi));
+        id
+    }
+
+    pub fn unit(id: UnitId) -> Option<CompilationUnit&> {
+        self.units.get(id.index)
+    }
+
+    pub fn source(id: SourceId) -> Option<SourceFile&> {
+        self.sources.get(id.index)
+    }
+
+    pub fn len() -> u64 {
+        self.units.len()
+    }
+
+    pub fn source_manager() -> SourceManager& {
+        &self.sources
+    }
+
+    pub fn package_map() -> Option<PackageMap&> {
+        match &self.packages {
+            Some(value) => Option<PackageMap&>.Some(value),
+            None => Option<PackageMap&>.None,
+        }
+    }
+
+    // Intrinsic identity lives in the session, so editor queries need no resolver.
+    pub fn intrinsic_type(name: str) -> Option<TypeId> {
+        let index = 0u64;
+        while index < self.symbols.symbol_count() {
+            let symbol = self.symbols.symbol_at(index).unwrap();
+            index += 1;
+            if symbol.kind == SymbolKind.Type && self.unit(symbol.unit).unwrap().is_stdlib && self.names.text(symbol.name) == name {
+                match self.types.get(symbol.type_id) {
+                    Some(Nominal(_, _)) => return Option<TypeId>.Some(symbol.type_id),
+                    _ => {},
+                }
+            }
+        }
+        Option<TypeId>.None
+    }
+
+    pub fn stdlib_root() -> str {
+        self.trust.stdlib_root()
+    }
+}
+
+impl Drop for AnalysisSession {
+    pub fn drop() {
+        self.diagnostics.drop();
+        self.worklist.drop();
+        self.definitions.drop();
+        self.editor_facts.drop();
+        self.impls.drop();
+        self.hir.drop();
+        self.symbols.drop();
+        self.types.drop();
+
+        for unit in self.units {
+            unit.drop();
+        }
+
+        self.units.drop();
+
+        match &self.packages {
+            Some(packages) => packages.drop(),
+            None => {}
+        }
+
+        self.trust.drop();
+        self.names.drop();
+        self.sources.drop();
+    }
+}
+
+pub struct SourcePermissions {
+    pub is_stdlib: bool,
+    pub allows_restricted: bool,
+    pub allows_ffi: bool,
+}

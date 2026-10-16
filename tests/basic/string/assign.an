@@ -1,0 +1,25 @@
+// Test assignment of str type
+//
+// Expected output: AliceBobBobCharlie
+
+from std.core.io import print;
+
+struct Person {
+    name: str,
+    age: i32,
+}
+
+fn main() {
+    let s1: str = "Alice";
+    print(s1);
+
+    let p: Person = Person("Bob", 30);
+    print(p.name);
+
+    let p_ptr: Person* = &p;
+    print(p_ptr.name);
+
+    let p_heap: Person* = dyn Person("Charlie", 25);
+    print(p_heap.name);
+
+}

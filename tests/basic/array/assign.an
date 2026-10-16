@@ -1,0 +1,62 @@
+// Test assignment of array variables.
+//
+// Expected output: 0
+
+fn case_array_assignment() {
+    let buff1: i32[5] = [0, 0, 0, 0, 0];
+    let buff2: i32[5];
+    for i in 0..5i32 {
+        buff1[u64(i)] = i * 10 // buff1 = [0, 10, 20, 30, 40]
+    }
+    buff2 = buff1 // assign buff1 to buff2;
+
+    assert buff2[0] == 0: "buff2[0] should be 0";
+    assert buff2[1] == 10: "buff2[1] should be 10";
+    assert buff2[2] == 20: "buff2[2] should be 20";
+    assert buff2[3] == 30: "buff2[3] should be 30";
+    assert buff2[4] == 40: "buff2[4] should be 40";
+
+    buff2[0] = 999 // modify buff2
+    assert buff1[0] == 0: "buff1[0] should still be 0";
+    assert buff2[0] == 999: "buff2[0] should be 999";
+
+    let ptr1: i32[5]* = &buff1;
+    *ptr1 = buff2 // assign buff2 to *ptr1 (which is buff1);
+    assert buff1[0] == 999: "buff1[0] should be 999 after assignment";
+    assert buff1[1] == 10: "buff1[1] should be 10";
+    assert buff1[2] == 20: "buff1[2] should be 20";
+    assert buff1[3] == 30: "buff1[3] should be 30";
+    assert buff1[4] == 40: "buff1[4] should be 40";
+
+}
+
+struct Pair {
+    pub first: i32,
+    pub second: i32,
+}
+
+fn get_array2() -> i32[3] {
+    let arr: i32[3] = [1, 2, 3];
+    return arr;
+}
+
+fn get_pairs() -> Pair[3] {
+    let p1: Pair = Pair(1, 2);
+    let p2: Pair = Pair(2, 3);
+    let p3: Pair = Pair(3, 4);
+    let arr: Pair[3] = [p1, p2, p3];
+    return arr;
+}
+
+fn case_array_return() {
+    let array: i32[3] = get_array2();
+    assert array[0] + array[1] + array[2] == 6: "Sum of array elements should be 6";
+
+    let pairs: Pair[3] = get_pairs();
+    assert pairs[0].second + pairs[1].second + pairs[2].second == 9: "Sum of pairs' second fields should be 9";
+}
+
+fn main() {
+    case_array_assignment();
+    case_array_return();
+}

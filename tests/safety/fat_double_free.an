@@ -1,0 +1,10 @@
+// Fat-pointer double-free negative test for lifetime checks.
+//
+// The second delete fails: the first wrote SENTINEL, so live key comparison
+// fails and LLVM's runtime safety error terminates with exit code 1.
+
+fn main() {
+    let p: i32* = dyn[2] 0i32;
+    del p;
+    del p // Double free: SENTINEL slot fails live with a safety error.
+}

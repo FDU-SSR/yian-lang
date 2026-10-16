@@ -1,0 +1,15 @@
+struct Box<T> {
+    pub value: T,
+}
+
+struct Other<T> {
+    pub value: T,
+}
+
+fn read<T>(box: Box<T>) -> T {
+    box.value
+}
+
+fn main() {
+    read(Other<i32>(7));
+}

@@ -1,0 +1,9 @@
+// A reversed string range must fail before character-boundary checks.
+
+from std.core.io import print;
+
+fn main() {
+    let text: str = "abcd";
+    let s: str = text[3u64..1];
+    print(s);
+}

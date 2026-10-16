@@ -1,0 +1,41 @@
+// bench/ALLOC/an/churn_single.an: same-size churn (fat mode), allocating and releasing whole batches each round.
+//
+// Scale: 1000 rounds * 4096 dyn[4] i32 blocks (16 B payloads).
+// Assert checksum == value 2 read per block * blocks * rounds.
+//
+// Store each batch's pointers in a heap array so they escape and allocations cannot be optimized away in either mode.
+// Raw mode uses churn_single.raw.an with T* elements instead of T[].
+
+from std.core.io import print;
+
+fn main() {
+    let batch_count: u64 = 4096;
+    let rounds: u64 = 1000;  // bench-scale
+    let checksum: i64 = 0;
+
+    let seed = dyn[1] 0i32;
+    let empty: i32[] = seed[0u64..0u64];
+    let round: u64 = 0;
+    while round < rounds {
+        let batch = dyn[batch_count] empty;
+        let i: u64 = 0;
+        while i < batch_count {
+            batch[i] = dyn[4] 0i32;
+            batch[i][0] = 2;
+            i += 1;
+        }
+        let j: u64 = 0;
+        while j < batch_count {
+            let block: i32[] = batch[j];
+            checksum += i64(block[0]);
+            del block;
+            j += 1;
+        }
+        del batch;
+        round += 1;
+    }
+
+    del seed;
+    assert checksum == i64(batch_count) * i64(rounds) * 2: "single-size churn checksum";
+    print("single pass\n");
+}

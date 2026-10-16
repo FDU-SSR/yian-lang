@@ -1,0 +1,27 @@
+// Array decay: T[N] -> T* and T[N]* -> T*.
+
+fn read_first(p: u64*) -> u64 {
+    return *p;
+}
+
+fn main() {
+    let arr: u64[4] = [10, 20, 30, 40];
+    let p: u64* = arr;
+    assert *p == 10;
+    assert p[1] == 20;
+
+    let q: u64* = &arr;
+    assert *q == 10;
+    q += 1;
+    assert *q == 20;
+
+    let r: u64* = arr;
+    *r = 99;
+    assert arr[0] == 99;
+    assert read_first(arr) == 99;
+
+    let matrix: u64[2][2] = [[1, 2], [3, 4]];
+    let row: u64[2]* = &matrix[1];
+    let element: u64* = row;
+    assert *element == 3;
+}

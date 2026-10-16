@@ -1,0 +1,311 @@
+from std.core.path import PathBuf;
+from std.collections.arena import Arena;
+from std.collections.sort import sort_by;
+from std.core.convert import From;
+from std.core.drop import Drop;
+from std.core.fs import Directory, DirEntryKind, metadata, read_to_string, canonicalize, resolve;
+from std.core.io import IoError, IoErrorKind;
+from std.core.ops import Add, AddAssign, Index;
+from std.core.result import Result;
+from std.core.string import String;
+from std.core.vec import Vec;
+from std.core.option import Option;
+from std.core.iter import Iterator, IntoIterator;
+from json.write import Writer;
+
+pub struct Position {
+    pub row: u64,
+    pub column: u64,
+}
+
+pub struct Span {
+    pub start: Position,
+    pub end: Position,
+}
+
+impl Span {
+    // Write start and end coordinates as fields of an already-open JSON object.
+    pub fn write_json(output: Writer&) {
+        output.key("start");
+        output.begin_array();
+        output.write_u64(self.start.row);
+        output.write_u64(self.start.column);
+        output.end_array();
+
+        output.key("end");
+        output.begin_array();
+        output.write_u64(self.end.row);
+        output.write_u64(self.end.column);
+        output.end_array();
+    }
+}
+
+impl Add<Span, Span> for Span {
+    pub fn add(other: Span) -> Span {
+        let start = self.start;
+        if other.start.row < start.row ||
+        (other.start.row == start.row && other.start.column < start.column) {
+            start = other.start;
+        }
+
+        let end = self.end;
+        if other.end.row > end.row ||
+        (other.end.row == end.row && other.end.column > end.column) {
+            end = other.end;
+        }
+
+        return Span(start=start, end=end);
+    }
+}
+
+impl AddAssign<Span, Span> for Span {
+    pub fn add_assign(other: Span) -> Span {
+        let merged = *self + other;
+        self.start = merged.start;
+        self.end = merged.end;
+        return *self;
+    }
+}
+
+pub struct SourceFile {
+    path: String,
+    text: String,
+    canonical: PathBuf,
+}
+
+// An editor input owns its path and text until a preparation call copies both into its session.
+pub struct SourceDocument {
+    pub path: String,
+    pub text: String,
+    pub version: Option<i64>,
+}
+
+impl Drop for SourceDocument {
+    pub fn drop() {
+        self.path.drop();
+        self.text.drop();
+    }
+}
+
+impl SourceFile {
+    pub fn path() -> str { return self.path.as_str(); }
+
+    pub fn canonical_path() -> str { self.canonical.as_str() }
+
+    pub fn text() -> str { return self.text.as_str(); }
+}
+
+impl Drop for SourceFile {
+    pub fn drop() {
+        self.path.drop();
+        self.text.drop();
+        self.canonical.drop();
+    }
+}
+
+pub struct SourceManager {
+    files: Arena<SourceFile>,
+}
+
+impl SourceManager {
+    static pub fn new() -> Self { return Self(files=Arena<SourceFile>.new()); }
+
+    pub fn len() -> u64 { return self.files.len(); }
+
+    pub fn file(id: u64) -> SourceFile& {
+        match self.files.get(id) {
+            Some(file) => file,
+            None => @panic("E599: invalid source ID"),
+        }
+    }
+
+    pub fn get(id: u64) -> Option<SourceFile&> { self.files.get(id) }
+
+    pub fn load(path: str) -> Result<u64, IoError> {
+        let canonical = canonicalize(path)?;
+        let text = match read_source(path) {
+            Ok(value) => value,
+            Err(error) => {
+                canonical.drop();
+                return Result<u64, IoError>.Err(error);
+            },
+        };
+
+        let id = self.files.len();
+        self.files.alloc(SourceFile(path=String.from(&path), text=text, canonical=canonical));
+        Result<u64, IoError>.Ok(val=id)
+    }
+
+    // Editor buffers may refer to paths that do not exist on disk; resolve still canonicalizes their existing prefixes.
+    pub fn load_text(path: str, text: str) -> Result<u64, IoError> {
+        let canonical = resolve(path)?;
+        let canonical_text = canonical.as_str();
+        let display_path = String.from(&canonical_text);
+        let owned_text = String.from(&text);
+        let id = self.files.len();
+        self.files.alloc(SourceFile(path=display_path, text=owned_text, canonical=canonical));
+        Result<u64, IoError>.Ok(val=id)
+    }
+}
+
+// Match text-mode source loading: CRLF and bare CR become one LF before lexing or formatting.
+// The returned buffer has one owner; unchanged UTF-8 input is transferred without copying.
+pub fn read_source(path: str) -> Result<String, IoError> {
+    let raw = read_to_string(path)?;
+    if !raw.as_str().contains_char('\r') { return Result<String, IoError>.Ok(raw); }
+    defer raw.drop();
+
+    let result = String.new();
+    let bytes = raw.as_slice();
+    let begin = 0u64;
+    let index = 0u64;
+    while index < bytes.len() {
+        if bytes[index] != b'\r' { index += 1; continue; }
+        result.push_str(str.from_slice_unchecked(bytes[begin..index]));
+        result.push('\n');
+        index += 1;
+        if index < bytes.len() && bytes[index] == b'\n' { index += 1; }
+        begin = index;
+    }
+    result.push_str(str.from_slice_unchecked(bytes[begin..bytes.len()]));
+    Result<String, IoError>.Ok(result)
+}
+
+impl Drop for SourceManager {
+    pub fn drop() {
+        let index: u64 = 0u64;
+
+        while index < self.files.len() {
+            (*self.files.get(index).unwrap()).drop();
+            index += 1u64;
+        }
+        self.files.drop();
+    }
+}
+
+fn less(left: str, right: str) -> bool {
+    let a = left.as_slice();
+    let b = right.as_slice();
+    let limit = a.len();
+    if b.len() < limit {
+        limit = b.len();
+    }
+
+    let index: u64 = 0u64;
+
+    while index < limit {
+        if a[index] < b[index] {
+            return true;
+        }
+
+        if a[index] > b[index] {
+            return false;
+        }
+        index += 1u64;
+    }
+
+    return a.len() < b.len();
+}
+
+// Sort only paths appended by this directory collection; preceding input roots retain their order.
+fn sort_paths(paths: Vec<String>&, start: u64) {
+    sort_by(paths.as_slice()[start..paths.len()], path_less);
+}
+
+fn path_less(left: String&, right: String&) -> bool {
+    // pathlib orders path components, so directory "cli" sorts before sibling "cli.an".
+    let a = left.as_slice();
+    let b = right.as_slice();
+    let begin_a = 0u64;
+    let begin_b = 0u64;
+    loop {
+        let end_a = begin_a;
+        let end_b = begin_b;
+        while end_a < a.len() && a[end_a] != b'/' { end_a += 1; }
+        while end_b < b.len() && b[end_b] != b'/' { end_b += 1; }
+        let component_a = str.from_slice_unchecked(a[begin_a..end_a]);
+        let component_b = str.from_slice_unchecked(b[begin_b..end_b]);
+        if component_a != component_b { return less(component_a, component_b); }
+        if end_a == a.len() || end_b == b.len() { return end_a == a.len() && end_b != b.len(); }
+        begin_a = end_a + 1;
+        begin_b = end_b + 1;
+    }
+}
+
+// Recurse into actual directories; collect symlinks only when they target source files, never recurse into linked directories.
+fn collect_dir(path: str, paths: Vec<String>&) -> Result<(), IoError> {
+    let directory = Directory.open(path)?;
+    defer directory.drop();
+
+    loop {
+        let entry = match directory.next()? {
+            Some(value) => value,
+            None => {
+                break;
+            },
+        };
+        defer entry.drop();
+        let child = entry.path().as_str();
+        let kind = entry.kind();
+        if kind == DirEntryKind.Directory {
+            collect_dir(child, paths)?;
+        } elif kind == DirEntryKind.File {
+            if entry.name().ends_with(".an") {
+                paths.push(String.from(&child));
+            }
+        } elif kind == DirEntryKind.Link {
+            let info = entry.metadata()?;
+            if info.is_file() && entry.name().ends_with(".an") {
+                paths.push(String.from(&child));
+            }
+        }
+    }
+
+    Result<(), IoError>.Ok(val= ())
+}
+
+fn release_paths(paths: Vec<String>&) {
+    let index = 0u64;
+
+    while index < paths.len() {
+        paths[index].drop();
+        index += 1u64;
+    }
+    paths.drop();
+}
+
+// Preserve command-line root order and sort files within each directory; release collected paths on failure.
+pub fn collect_sources(inputs: Vec<String>&) -> Result<Vec<String>, IoError> {
+    let paths = Vec<String>.new();
+    let transferred = false;
+    defer {
+        if !transferred {
+            release_paths(&paths);
+        }
+    };
+
+    let index = 0u64;
+
+    while index < inputs.len() {
+        let root = inputs[index].as_str();
+        let info = metadata(root)?;
+        if info.is_dir() {
+            let start = paths.len();
+            collect_dir(root, &paths)?;
+            sort_paths(&paths, start);
+        } elif info.is_file() {
+            if root.ends_with(".an") {
+                paths.push(String.from(&root));
+            }
+        } else {
+            let error = IoError.new(IoErrorKind.InvalidInput, "source path is not a file or directory");
+            let contextual = error.with_path(root);
+            error.drop();
+            return Result<Vec<String>, IoError>.Err(msg=contextual);
+        }
+        index += 1u64;
+    }
+
+    transferred = true;
+    Result<Vec<String>, IoError>.Ok(val=paths)
+}

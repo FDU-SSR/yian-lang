@@ -1,0 +1,24 @@
+// raw_coerce_neg.an: T* -> T[] coercion rejection in raw mode.
+//
+// Two coercion forms: direct assignment and argument passing.
+//   Fat mode permits tiered coercion; execution exits zero without output.
+//   Raw mode (--raw-pointers) rejects both forms during type checking.
+//     The rejection diagnostic identifies the invalid coercion.
+// Compilation stops at the first invalid line, the direct assignment.
+//
+// Expected output: 0
+
+fn take(s: i32[]) {
+}
+
+fn main() {
+    let x: i32 = 42;
+    let p: i32* = &x;
+
+    // Form one: let s:i32[]=p, an explicitly annotated T* -> T[] conversion.
+    let s: i32[] = p;
+    assert s.len() == 1: "direct assign coerces T* to T[]";
+
+    // Form two: pass p:i32* to a parameter s:i32[].
+    take(p);
+}

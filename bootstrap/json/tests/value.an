@@ -1,0 +1,27 @@
+from json.value import Value;
+from json.parse import parse;
+from json.write import stringify;
+from std.core.clone import Clone;
+from std.core.drop import Drop;
+from std.core.iter import Iterator;
+from std.num.f64 import to_bits;
+
+fn main() {
+    let count: u64 = 0;
+    while count < 100 {
+        let original = parse("{\"first\":[\"owned\"],\"last\":1.0}").unwrap();
+        let copy = original.clone(); original.drop();
+        let object = copy.as_object().unwrap();
+        let previous = object.insert("first", Value.string("new"));
+        previous.unwrap().drop();
+        let members = object.iter();
+        let (key, _) = *members.next().unwrap();
+        assert key == "first": "replacement retains position";
+        let text = stringify(&copy).unwrap();
+        assert text.as_str() == "{\"first\":\"new\",\"last\":1.0}": "deep clone independent";
+        text.drop(); copy.drop(); count += 1;
+    }
+    let negzero = parse("-0.0").unwrap();
+    match negzero.as_number().unwrap() { Float(value) => { assert to_bits(*value) == 0x8000000000000000u64: "float sign"; }, _ => @panic("float kind") };
+    negzero.drop();
+}

@@ -1,0 +1,133 @@
+// Test iterator adapters, lookahead, and UTF-8 character indices.
+//
+// Expected output: 0
+
+from std.core.iter import Iterator, IteratorExt;
+from std.core.option import Option;
+from std.core.range import Range;
+
+struct Intermittent {
+    state: u64,
+}
+
+impl Iterator<u64> for Intermittent {
+    fn next() -> Option<u64> {
+        let current = self.state;
+        self.state += 1u64;
+        match current {
+            0 => Option<u64>.Some(10u64),
+            1 => Option<u64>.None,
+            2 => Option<u64>.Some(20u64),
+            _ => Option<u64>.None,
+        }
+    }
+}
+
+struct CountIter {
+    calls: u64*,
+}
+
+impl Iterator<u64> for CountIter {
+    fn next() -> Option<u64> {
+        *self.calls += 1u64;
+        Option<u64>.Some(7u64)
+    }
+}
+
+fn add(left: u64, right: u64) -> u64 {
+    left + right
+}
+
+fn pair_matches((index, value): (u64, u64), expected_index: u64, expected_value: u64) -> bool {
+    index == expected_index && value == expected_value
+}
+
+fn char_index_matches((index, value): (u64, char), expected_index: u64, expected_value: char) -> bool {
+    index == expected_index && value == expected_value
+}
+
+fn main() {
+    let enumerated = (4u64..6).enumerate();
+    match enumerated.next() {
+        Some((index, value)) => {
+            assert index == 0u64: "enumerate should start at index zero";
+            assert value == 4u64: "enumerate should preserve its source item";
+        },
+        None => { @panic("enumerate should yield its first item"); },
+    }
+    match enumerated.next() {
+        Some((index, value)) => {
+            assert index == 1u64: "enumerate should increment its index";
+            assert value == 5u64: "enumerate should preserve its next source item";
+        },
+        None => { @panic("enumerate should yield its second item"); },
+    }
+    assert enumerated.next().is_none();
+
+    // Peeking twice is stable; taking the buffer preserves the underlying cursor.
+    let iter = (0u64..4).peekable();
+    assert **iter.peek().unwrap() == 0u64: "peek should expose the first item";
+    assert **iter.peek().unwrap() == 0u64: "repeated peek should not advance";
+    assert **iter.peek_next().unwrap() == 1u64: "peek_next should expose the second item";
+    let (buffered_first, buffered_second) = iter.take_buffered();
+    assert *buffered_first.unwrap() == 0u64: "first buffered item should be recoverable";
+    assert *buffered_second.unwrap() == 1u64: "second buffered item should be recoverable";
+    assert *iter.next().unwrap() == 2u64: "iteration should resume after the buffer";
+    assert *iter.next().unwrap() == 3u64: "the final item should remain available";
+    assert iter.next().is_none(): "range should be exhausted";
+
+    let empty = (0u64..0).peekable();
+    assert empty.peek().is_none(): "empty iterator should have no first item";
+    assert empty.peek_next().is_none(): "empty iterator should have no second item";
+    assert empty.next().is_none(): "empty iterator should remain exhausted";
+
+    // A None result is not cached as permanent exhaustion for a non-fused iterator.
+    let intermittent = Intermittent(state=0u64).peekable();
+    assert *intermittent.next().unwrap() == 10u64;
+    assert intermittent.peek().is_none(): "the second result should be None";
+    assert **intermittent.peek().unwrap() == 20u64: "iteration should continue after None";
+    assert *intermittent.next().unwrap() == 20u64;
+
+    // take(0) must not pull an item from its source.
+    let calls: u64 = 0u64;
+    let counted = CountIter(calls=&calls).take(0u64);
+    assert counted.next().is_none(): "take(0) should be empty";
+    assert calls == 0u64: "take(0) should not advance the source";
+
+    // Generic default methods support closures, chaining, and function values.
+    let factor: u64 = 3u64;
+    let multiply = |captured_factor = factor| (value: u64) -> u64 {
+        value * captured_factor
+    };
+    let mapped = (1u64..4).map<u64>(multiply);
+    assert *mapped.next().unwrap() == 3u64;
+    assert *mapped.next().unwrap() == 6u64;
+    assert *mapped.next().unwrap() == 9u64;
+    assert mapped.next().is_none();
+
+    let limited = (1u64..5).map<u64>(multiply).enumerate().take(2u64);
+    assert pair_matches(*limited.next().unwrap(), 0u64, 3u64): "chained adapters should yield the first indexed value";
+    assert pair_matches(*limited.next().unwrap(), 1u64, 6u64): "chained adapters should yield the second indexed value";
+    assert limited.next().is_none();
+
+    assert (1u64..4).fold(0u64, add) == 6u64: "fold should accept a function";
+    let bonus: u64 = 2u64;
+    let add_bonus = |captured_bonus = bonus| (total: u64, value: u64) -> u64 {
+        total + value + captured_bonus
+    };
+    assert (1u64..4).fold(0u64, add_bonus) == 12u64: "fold should accept a closure";
+
+    // char_indices reports UTF-8 byte offsets, including after multi-byte scalars.
+    let text: str = "Aé中😀";
+    let chars = text.char_indices();
+    assert char_index_matches(*chars.next().unwrap(), 0u64, 'A');
+    assert char_index_matches(*chars.next().unwrap(), 1u64, 'é');
+    assert char_index_matches(*chars.next().unwrap(), 3u64, '中');
+    assert char_index_matches(*chars.next().unwrap(), 6u64, '😀');
+    assert chars.next().is_none();
+
+    // The iterator interface remains usable through a trait object.
+    let range: Range<u64> = 8u64..10;
+    let object: Iterator<u64>& = &range;
+    assert *object.next().unwrap() == 8u64;
+}

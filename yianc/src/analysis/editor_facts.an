@@ -1,0 +1,434 @@
+from yianc.common.ids import SourceId, SymbolId, TypeId, ScopeId, DefId, NameId;
+from yianc.common.location import SourceSpan;
+from std.collections.hash_map import HashMap;
+from std.core.drop import Drop;
+from std.core.hash import Hash, Murmur3Hasher;
+from std.core.iter import Iterator, IntoIterator;
+from std.core.option import Option;
+from std.core.ops import PartialEq;
+from std.core.vec import Vec;
+
+struct NamePosition {
+    source: SourceId,
+    row: u64,
+    column: u64,
+}
+
+impl PartialEq<NamePosition> for NamePosition {
+    pub fn eq(other: NamePosition&) -> bool {
+        self.source == other.source && self.row == other.row && self.column == other.column
+    }
+}
+
+impl Hash<Murmur3Hasher> for NamePosition {
+    pub fn hash(hasher: Murmur3Hasher&) {
+        self.source.hash(hasher);
+        self.row.hash(hasher);
+        self.column.hash(hasher);
+    }
+}
+
+pub struct ResolvedName {
+    pub symbol: SymbolId,
+    pub location: SourceSpan,
+    pub type_id: TypeId,
+    pub context: Option<TypeId>,
+    pub available: bool,
+}
+
+pub enum EditorMemberKind { Field, Variant, Method }
+
+pub struct ExpressionFact {
+    pub location: SourceSpan,
+    pub type_id: TypeId,
+    pub is_place: bool,
+    pub is_static: bool,
+    pub available: bool,
+    pub context: Option<TypeId>,
+}
+
+pub struct ResolvedMember {
+    pub name: NameId,
+    pub kind: EditorMemberKind,
+    pub location: SourceSpan,
+    pub declaration: SourceSpan,
+    pub type_id: TypeId,
+    pub is_declaration: bool,
+    pub available: bool,
+    pub context: Option<TypeId>,
+}
+
+struct ScopeRegion {
+    span: SourceSpan,
+    scope: ScopeId,
+    context: Option<TypeId>,
+    available: bool,
+}
+
+// The snapshot owns one ordered fact list and indexes both query directions.
+pub struct EditorFacts {
+    names: Vec<ResolvedName>,
+    by_position: HashMap<NamePosition, u64>,
+    declarations: HashMap<NamePosition, SymbolId>,
+    parameter_declarations: HashMap<NamePosition, bool>,
+    by_symbol: HashMap<SymbolId, Vec<u64>>,
+    members: Vec<ResolvedMember>,
+    member_positions: HashMap<NamePosition, u64>,
+    members_by_declaration: HashMap<NamePosition, Vec<u64>>,
+    methods_by_definition: HashMap<DefId, SourceSpan>,
+    scopes_by_source: HashMap<SourceId, Vec<ScopeRegion>>,
+    expressions: Vec<ExpressionFact>,
+    expression_ends: HashMap<NamePosition, u64>,
+    pub definition_context: Option<TypeId>,
+    pub reference_facts_complete: bool,
+    incomplete_symbols: HashMap<SymbolId, bool>,
+    incomplete_members: HashMap<NamePosition, bool>,
+}
+
+impl EditorFacts {
+    static pub fn new() -> Self {
+        Self(Vec<ResolvedName>.new(), HashMap<NamePosition, u64>.new(),
+            HashMap<NamePosition, SymbolId>.new(), HashMap<NamePosition, bool>.new(),
+            HashMap<SymbolId, Vec<u64>>.new(),
+            Vec<ResolvedMember>.new(), HashMap<NamePosition, u64>.new(),
+            HashMap<NamePosition, Vec<u64>>.new(), HashMap<DefId, SourceSpan>.new(),
+            HashMap<SourceId, Vec<ScopeRegion>>.new(), Vec<ExpressionFact>.new(), HashMap<NamePosition, u64>.new(), Option<TypeId>.None, true,
+            HashMap<SymbolId, bool>.new(), HashMap<NamePosition, bool>.new())
+    }
+
+    pub fn record_expression(location: SourceSpan, type_id: TypeId, is_place: bool, is_static: bool) {
+        let key = NamePosition(location.source, location.span.end.row, location.span.end.column);
+        let value = ExpressionFact(location, type_id, is_place, is_static, true, self.definition_context);
+        match self.expression_ends.get(&key) {
+            Some(index) => {
+                let previous = &self.expressions[*index];
+                if previous.location.span.start.row == location.span.start.row && previous.location.span.start.column == location.span.start.column {
+                    if previous.type_id != type_id || previous.is_static != is_static || previous.is_place != is_place { previous.available = false; }
+                } elif location.span.start.row < previous.location.span.start.row ||
+                (location.span.start.row == previous.location.span.start.row && location.span.start.column < previous.location.span.start.column) {
+                    *previous = value;
+                }
+                self.expressions.push(value);
+            },
+            None => {
+                self.expression_ends.insert(key, self.expressions.len());
+                self.expressions.push(value);
+            },
+        }
+    }
+
+    pub fn expression_ending_at(source: SourceId, row: u64, column: u64) -> Option<ExpressionFact&> {
+        match self.expression_ends.get(&NamePosition(source, row, column)) {
+            Some(index) if self.expressions[*index].available => Option<ExpressionFact&>.Some(&self.expressions[*index]),
+            _ => Option<ExpressionFact&>.None,
+        }
+    }
+
+    // Keep instance provenance. Conflicting projections are never treated as one reliable fact.
+    pub fn record(symbol: SymbolId, location: SourceSpan, type_id: TypeId) {
+        let key = NamePosition(location.source, location.span.start.row, location.span.start.column);
+        if let Some(index) = self.by_position.get(&key) {
+            let previous = &self.names[*index];
+            if previous.symbol != symbol || previous.type_id != type_id {
+                previous.available = false;
+                self.reference_facts_complete = false;
+                self.incomplete_symbols.insert(previous.symbol, true);
+                self.incomplete_symbols.insert(symbol, true);
+                self.names.push(ResolvedName(symbol, location, type_id, self.definition_context, false));
+            }
+            return;
+        }
+
+        let index = self.names.len();
+        self.names.push(ResolvedName(symbol, location, type_id, self.definition_context, true));
+        let column = location.span.start.column;
+        while column <= location.span.end.column {
+            self.by_position.insert(NamePosition(location.source, location.span.start.row, column), index);
+            column += 1;
+        }
+
+        match self.by_symbol.get(&symbol) {
+            Some(indices) => indices.push(index),
+            None => {
+                let indices = Vec<u64>.new();
+                indices.push(index);
+                self.by_symbol.insert(symbol, indices);
+            },
+        }
+    }
+
+    pub fn at(source: SourceId, row: u64, column: u64) -> Option<ResolvedName&> {
+        let key = NamePosition(source, row, column);
+        match self.by_position.get(&key) {
+            Some(index) if self.names[*index].available => self.names.get(*index),
+            _ => Option<ResolvedName&>.None,
+        }
+    }
+
+    // Declaration lookup is indexed once after analysis, avoiding a symbol-table scan per cursor request.
+    pub fn record_declaration(symbol: SymbolId, location: SourceSpan) {
+        let column = location.span.start.column;
+        while column <= location.span.end.column {
+            self.declarations.insert(NamePosition(location.source, location.span.start.row, column), symbol);
+            column += 1u64;
+        }
+    }
+
+    pub fn declaration_at(source: SourceId, row: u64, column: u64) -> Option<SymbolId> {
+        match self.declarations.get(&NamePosition(source, row, column)) {
+            Some(symbol) => Option<SymbolId>.Some(*symbol),
+            None => Option<SymbolId>.None,
+        }
+    }
+
+    // Syntax owns the parameter category even when lowering adds a same-span binding.
+    pub fn record_parameter_declaration(location: SourceSpan) {
+        let column = location.span.start.column;
+        while column <= location.span.end.column {
+            self.parameter_declarations.insert(
+                NamePosition(location.source, location.span.start.row, column), true);
+            column += 1;
+        }
+    }
+
+    pub fn is_parameter_declaration(source: SourceId, row: u64, column: u64) -> bool {
+        self.parameter_declarations.contains(&NamePosition(source, row, column))
+    }
+
+    static fn member_key(location: SourceSpan) -> NamePosition {
+        NamePosition(location.source, location.span.start.row, location.span.start.column)
+    }
+
+    fn index_member(member: ResolvedMember) {
+        let index = self.members.len();
+        self.members.push(member);
+        let stored = &self.members[index];
+        let column = stored.location.span.start.column;
+        while column <= stored.location.span.end.column {
+            self.member_positions.insert(
+                NamePosition(stored.location.source, stored.location.span.start.row, column), index);
+            column += 1u64;
+        }
+
+        let key = Self.member_key(stored.declaration);
+        match self.members_by_declaration.get(&key) {
+            Some(indices) => indices.push(index),
+            None => {
+                let indices = Vec<u64>.new();
+                indices.push(index);
+                self.members_by_declaration.insert(key, indices);
+            },
+        }
+    }
+
+    // The declaration span is the exact name token; target_span only supplies stable identity.
+    pub fn record_member_declaration(kind: EditorMemberKind, name: NameId,
+        location: SourceSpan, target_span: SourceSpan, type_id: TypeId) {
+        let key = Self.member_key(location);
+        if self.member_positions.contains(&key) {
+            return;
+        }
+        self.index_member(ResolvedMember(name, kind, location, target_span, type_id, true, true, self.definition_context));
+    }
+
+    pub fn record_member_reference(kind: EditorMemberKind, name: NameId,
+        location: SourceSpan, declaration: SourceSpan, type_id: TypeId) {
+        let key = Self.member_key(location);
+        if let Some(index) = self.member_positions.get(&key) {
+            let previous = &self.members[*index];
+            if previous.type_id != type_id || previous.declaration.source != declaration.source ||
+            previous.declaration.span.start.row != declaration.span.start.row ||
+            previous.declaration.span.start.column != declaration.span.start.column {
+                previous.available = false;
+                self.reference_facts_complete = false;
+                self.incomplete_members.insert(Self.member_key(previous.declaration), true);
+                self.incomplete_members.insert(Self.member_key(declaration), true);
+                self.members.push(ResolvedMember(name, kind, location, declaration, type_id, false, false, self.definition_context));
+            }
+            return;
+        }
+        self.index_member(ResolvedMember(name, kind, location, declaration, type_id, false, true, self.definition_context));
+    }
+
+    pub fn record_method_declaration(definition: DefId, name: NameId,
+        location: SourceSpan, type_id: TypeId) {
+        self.methods_by_definition.insert(definition, location);
+        self.record_member_declaration(EditorMemberKind.Method, name, location, location, type_id);
+    }
+
+    pub fn method_declaration(definition: DefId) -> Option<SourceSpan> {
+        match self.methods_by_definition.get(&definition) {
+            Some(location) => Option<SourceSpan>.Some(*location),
+            None => Option<SourceSpan>.None,
+        }
+    }
+
+    // Unrelated generic instance conflicts do not invalidate a complete local reference set.
+    pub fn symbol_references_complete(symbol: SymbolId) -> bool {
+        !self.incomplete_symbols.contains(&symbol)
+    }
+
+    pub fn member_references_complete(declaration: SourceSpan) -> bool {
+        !self.incomplete_members.contains(&Self.member_key(declaration))
+    }
+
+    pub fn member_at(source: SourceId, row: u64, column: u64) -> Option<ResolvedMember&> {
+        match self.member_positions.get(&NamePosition(source, row, column)) {
+            Some(index) if self.members[*index].available => self.members.get(*index),
+            _ => Option<ResolvedMember&>.None,
+        }
+    }
+
+    pub fn member_declaration(declaration: SourceSpan) -> Option<SourceSpan> {
+        let key = Self.member_key(declaration);
+        match self.members_by_declaration.get(&key) {
+            Some(indices) => {
+                for index in *indices {
+                    let member = &self.members[*index];
+                    if member.is_declaration {
+                        return Option<SourceSpan>.Some(member.location);
+                    }
+                }
+                Option<SourceSpan>.None
+            },
+            None => Option<SourceSpan>.None,
+        }
+    }
+
+    pub fn member_occurrences(declaration: SourceSpan, include_declaration: bool) -> Vec<SourceSpan> {
+        let result = Vec<SourceSpan>.new();
+        match self.members_by_declaration.get(&Self.member_key(declaration)) {
+            Some(indices) => {
+                for index in *indices {
+                    let member = &self.members[*index];
+                    if member.available && (include_declaration || !member.is_declaration) {
+                        result.push(member.location);
+                    }
+                }
+            },
+            None => {},
+        }
+        result
+    }
+
+    // Regions are recorded as scopes are created; the narrowest containing span wins.
+    static fn same_context(left: Option<TypeId>, right: Option<TypeId>) -> bool {
+        match left {
+            Some(value) => match right { Some(other) => value == other, None => false },
+            None => right.is_none(),
+        }
+    }
+
+    pub fn record_scope(location: SourceSpan, scope: ScopeId) {
+        match self.scopes_by_source.get(&location.source) {
+            Some(regions) => {
+                let available = true;
+                for region in *regions {
+                    if region.span.span.start.row == location.span.start.row &&
+                    region.span.span.start.column == location.span.start.column &&
+                    region.span.span.end.row == location.span.end.row &&
+                    region.span.span.end.column == location.span.end.column &&
+                    !Self.same_context(region.context, self.definition_context) {
+                        region.available = false;
+                        available = false;
+                    }
+                }
+                regions.push(ScopeRegion(location, scope, self.definition_context, available));
+            },
+            None => {
+                let regions = Vec<ScopeRegion>.new();
+                regions.push(ScopeRegion(location, scope, self.definition_context, true));
+                self.scopes_by_source.insert(location.source, regions);
+            },
+        }
+    }
+
+    static fn before(left_row: u64, left_column: u64, right_row: u64, right_column: u64) -> bool {
+        left_row < right_row || (left_row == right_row && left_column < right_column)
+    }
+
+    static fn contains(span: SourceSpan, row: u64, column: u64) -> bool {
+        !Self.before(row, column, span.span.start.row, span.span.start.column) &&
+        !Self.before(span.span.end.row, span.span.end.column, row, column)
+    }
+
+    static fn narrower(candidate: SourceSpan, current: SourceSpan) -> bool {
+        let starts_later = !Self.before(candidate.span.start.row, candidate.span.start.column,
+            current.span.start.row, current.span.start.column);
+        let ends_earlier = !Self.before(current.span.end.row, current.span.end.column,
+            candidate.span.end.row, candidate.span.end.column);
+        let strictly_narrower = candidate.span.start.row != current.span.start.row ||
+        candidate.span.start.column != current.span.start.column ||
+        candidate.span.end.row != current.span.end.row ||
+        candidate.span.end.column != current.span.end.column;
+        starts_later && ends_earlier && strictly_narrower
+    }
+
+    pub fn scope_at(source: SourceId, row: u64, column: u64) -> Option<ScopeId> {
+        let best = Option<ScopeRegion>.None;
+        match self.scopes_by_source.get(&source) {
+            Some(regions) => {
+                for region in *regions {
+                    if !region.available || !Self.contains(region.span, row, column) {
+                        continue;
+                    }
+
+                    match &best {
+                        Some(current) if !Self.narrower(region.span, current.span) => {},
+                        _ => { best = Option<ScopeRegion>.Some(*region); },
+                    }
+                }
+            },
+            None => {},
+        }
+
+        match best {
+            Some(region) => Option<ScopeId>.Some(region.scope),
+            None => Option<ScopeId>.None,
+        }
+    }
+
+    pub fn references(symbol: SymbolId) -> Vec<SourceSpan> {
+        let result = Vec<SourceSpan>.new();
+        match self.by_symbol.get(&symbol) {
+            Some(indices) => {
+                for index in *indices {
+                    if self.names[*index].available { result.push(self.names[*index].location); }
+                }
+            },
+            None => {},
+        }
+        result
+    }
+
+    pub fn len() -> u64 { self.names.len() }
+}
+
+impl Drop for EditorFacts {
+    pub fn drop() {
+        for entry in self.by_symbol.entries() {
+            entry[1].drop();
+        }
+
+        self.by_symbol.drop();
+        for indices in self.members_by_declaration.values() {
+            indices.drop();
+        }
+        self.members_by_declaration.drop();
+        self.methods_by_definition.drop();
+        self.member_positions.drop();
+        self.members.drop();
+        for regions in self.scopes_by_source.values() {
+            regions.drop();
+        }
+        self.scopes_by_source.drop();
+        self.declarations.drop();
+        self.parameter_declarations.drop();
+        self.by_position.drop();
+        self.names.drop();
+        self.expressions.drop();
+        self.expression_ends.drop();
+        self.incomplete_symbols.drop();
+        self.incomplete_members.drop();
+    }
+}

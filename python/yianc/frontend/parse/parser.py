@@ -1,0 +1,437 @@
+from __future__ import annotations
+
+from yianc.error import CompilerError
+from yianc.frontend.lex.position import SrcSpan
+from yianc.frontend.lex.token import (Keyword, KeywordKind, Punctuator, StrLiteral,
+                                         PunctuatorKind, Token)
+from yianc.frontend.parse import ast as AST
+from yianc.frontend.parse.error import ParseError
+from yianc.frontend.parse.parser_expr import ExprParser
+from yianc.frontend.parse.parser_type import TypeParser
+from yianc.frontend.parse.stream import (EMPTY_SET, SEMI_OR_COMMA,
+                                            SEP_COMMA, SEP_DOT, TERM_RANGLE,
+                                            TERM_RBRACE, TERM_RPAREN,
+                                            TERM_SEMICOLON, TokenStream)
+from yianc.utils.log import CompilerLog
+
+
+def ch_parse(): return CompilerLog.get("parse")
+
+
+class Parser:
+    def __init__(self, tokens: list[Token], *, editor: bool = False):
+        self.__stream = TokenStream(tokens, editor=editor)
+
+        self.__type_parser = TypeParser(self.__stream)
+        self.__expr_parser = ExprParser(self.__stream, self.__type_parser)
+
+    @property
+    def errors(self) -> tuple[ParseError, ...]:
+        return tuple(self.__stream.errors)
+
+    def parse(self) -> AST.Program:
+        """
+        Parses the token stream into an AST.
+        """
+        items: list[AST.ProgramItem] = []
+
+        while not self.__stream.at_end():
+            mark = self.__stream.mark()
+            try:
+                attrs = self.__stream.consume_attrs()
+                match self.__stream.peek():
+                    case Keyword(KeywordKind.Import, _):
+                        if attrs:
+                            raise ParseError("Attributes are not allowed on import statements", attrs[0].span)
+                        items.extend(self.__parse_import())
+                    case Keyword(KeywordKind.From, _):
+                        if attrs:
+                            raise ParseError("Attributes are not allowed on import statements", attrs[0].span)
+                        items.extend(self.__parse_import())
+                    case Keyword(KeywordKind.Typedef, _):
+                        items.append(self.__parse_alias(attrs=attrs))
+                    case Keyword(KeywordKind.Opaque, _):
+                        items.append(self.__parse_opaque_type(attrs))
+                    case Keyword(KeywordKind.Extern, _):
+                        items.append(self.__parse_extern_block(attrs))
+                    case Keyword(KeywordKind.Impl, _):
+                        if attrs:
+                            raise ParseError("Attributes are not allowed on impl blocks", attrs[0].span)
+                        items.append(self.__parse_impl())
+                    case Keyword(KeywordKind.Struct, _):
+                        items.append(self.__parse_struct(attrs=attrs))
+                    case Keyword(KeywordKind.Enum, _):
+                        items.append(self.__parse_enum(attrs=attrs))
+                    case Keyword(KeywordKind.Trait, _):
+                        items.append(self.__parse_trait(attrs=attrs))
+                    case Keyword(KeywordKind.Fn, _):
+                        items.append(self.__parse_func_def(attrs=attrs))
+                    case Keyword(KeywordKind.Const, _):
+                        items.append(self.__parse_const_def(attrs=attrs))
+                    case _:
+                        raise ParseError(f"Expected a declaration keyword (fn, const, struct, enum, trait, impl, typedef, opaque, extern, import, from) but got '{self.__stream.peek()}'", self.__stream.peek().span)
+            except ParseError as error:
+                if not self.__stream.editor:
+                    raise
+                self.__stream.errors.append(error)
+                self.__stream.synchronize(TERM_SEMICOLON | TERM_RBRACE)
+                if not self.__stream.at_end() and not self.__stream.declaration_boundary():
+                    self.__stream.advance()
+                if self.__stream.mark() == mark and not self.__stream.at_end():
+                    self.__stream.advance()
+            if items:
+                ch_parse().trace(lambda: f"parsed {type(items[-1]).__name__}")
+
+        return AST.Program(
+            span=SrcSpan.combine_all([item.span for item in items]),
+            items=items
+        )
+
+    def __parse_opaque_type(self, attrs: list[AST.Attr]) -> AST.OpaqueTypeDef:
+        start = self.__stream.consume_keyword(KeywordKind.Opaque)
+        self.__stream.consume_keyword(KeywordKind.Type)
+        name = self.__stream.consume_identifier()
+        self.__stream.consume_punctuator(PunctuatorKind.Semicolon)
+        return AST.OpaqueTypeDef(span=start.span, attrs=attrs, name=name)
+
+    def __parse_extern_block(self, attrs: list[AST.Attr]) -> AST.ExternBlock:
+        start = self.__stream.consume_keyword(KeywordKind.Extern)
+        abi = self.__stream.next()
+        if not isinstance(abi, StrLiteral) or abi.value != "C":
+            raise ParseError('Only extern "C" is supported', abi.span)
+        self.__stream.consume_punctuator(PunctuatorKind.LBrace)
+        functions = self.__stream.consume_until(self.__parse_extern_function, TERM_RBRACE)
+        self.__stream.consume_punctuator(PunctuatorKind.RBrace)
+        return AST.ExternBlock(span=start.span, attrs=attrs, abi=abi.value, functions=functions)
+
+    def __parse_extern_function(self) -> AST.ExternFuncDecl:
+        problems = len(self.__stream.errors)
+        self.__stream.consume_keyword(KeywordKind.Fn)
+        name = self.__stream.consume_identifier()
+        self.__stream.consume_punctuator(PunctuatorKind.LParen)
+        params = self.__stream.consume_separated(self.__parse_var_info, SEP_COMMA, TERM_RPAREN)
+        self.__stream.consume_punctuator(PunctuatorKind.RParen)
+        ret_type = None
+        next_token = self.__stream.peek()
+        if isinstance(next_token, Punctuator) and next_token.kind == PunctuatorKind.Arrow:
+            self.__stream.advance()
+            ret_type = self.__parse_type()
+        self.__stream.consume_punctuator(PunctuatorKind.Semicolon)
+        return AST.ExternFuncDecl(span=name.span, name=name, params=params, ret_type=ret_type,
+                                  signature_recovered=len(self.__stream.errors) != problems)
+
+    def __parse_import(self) -> list[AST.Import]:
+        result: list[AST.Import] = []
+        match self.__stream.next():
+            case Keyword(KeywordKind.Import, span):
+                # Parse `import xxx.yyy as zzz;`
+                paths = self.__stream.consume_separated(self.__stream.consume_identifier, SEP_DOT, EMPTY_SET)
+                target = paths.pop()
+                alias: AST.Identifier | None = None
+                match self.__stream.peek():
+                    case Keyword(KeywordKind.As, _):
+                        self.__stream.advance()
+                        alias = self.__stream.consume_identifier()
+                    case _:
+                        pass
+                last = alias if alias is not None else target
+                # consume any trailing semicolons/commas between imports
+                token = self.__stream.peek()
+                if isinstance(token, Punctuator) and token.kind in SEMI_OR_COMMA:
+                    self.__stream.advance()
+                    last = token
+                result = [
+                    AST.Import(
+                        span=span, paths=paths, target=target, alias=alias, end=last.span.end.clone()
+                    )
+                ]
+                return result
+
+            case Keyword(KeywordKind.From, span):
+                # Parse `from xxx.yyy import zzz as zzz_alias, www as www_alias;`
+                paths = self.__stream.consume_separated(self.__stream.consume_identifier, SEP_DOT, EMPTY_SET)
+
+                self.__stream.consume_keyword(KeywordKind.Import)
+
+                def parse_target() -> tuple[AST.Identifier, AST.Identifier | None]:
+                    target = self.__stream.consume_identifier()
+                    match self.__stream.peek():
+                        case Keyword(KeywordKind.As, _):
+                            self.__stream.advance()
+                            alias = self.__stream.consume_identifier()
+                            return target, alias
+                        case _:
+                            return target, None
+
+                targets_and_aliases = self.__stream.consume_separated(parse_target, SEP_COMMA, TERM_SEMICOLON)
+                targets, aliases = zip(*targets_and_aliases)
+
+                # The statement's end belongs to every target it introduced.
+                last = aliases[-1] if aliases[-1] is not None else targets[-1]
+                # consume trailing semicolon
+                token = self.__stream.peek()
+                if isinstance(token, Punctuator) and token.kind == PunctuatorKind.Semicolon:
+                    self.__stream.advance()
+                    last = token
+
+                # each target corresponds to a separate import stmt
+                result = [AST.Import(span=span, paths=paths, target=target, alias=alias, end=last.span.end.clone()) for target, alias in zip(targets, aliases)]
+                return result
+
+            case _:
+                raise CompilerError("Unreachable code")
+
+    def __parse_generics(self) -> list[AST.GenericParam]:
+        """Parse generic parameters enclosed in angle brackets.
+
+        Handles both type generic parameters (<T>) and const generic parameters
+        (<const N: u64>). Returns a unified list of GenericParam.
+        """
+        params: list[AST.GenericParam] = []
+        token = self.__stream.peek()
+        if not (isinstance(token, Punctuator) and token.kind == PunctuatorKind.LAngle):
+            return params
+
+        self.__stream.consume_punctuator(PunctuatorKind.LAngle)
+
+        def parse_param() -> AST.GenericParam:
+            token = self.__stream.peek()
+            # const generic: <const N: u64>
+            if isinstance(token, Keyword) and token.kind == KeywordKind.Const:
+                const_span = self.__stream.consume_keyword(KeywordKind.Const).span
+                name = self.__stream.consume_identifier()
+                self.__stream.consume_punctuator(PunctuatorKind.Colon)
+                value_type = self.__type_parser.parse_type()
+                return AST.ConstGenericParam(
+                    span=const_span + value_type.span,
+                    name=name,
+                    value_type=value_type,
+                )
+            # type generic: <T>
+            name = self.__stream.consume_identifier()
+            return AST.TypeGenericParam(span=name.span, name=name)
+
+        params = self.__stream.consume_separated(
+            parse_param,
+            SEP_COMMA,
+            TERM_RANGLE,
+        )
+        self.__stream.consume_punctuator(PunctuatorKind.RAngle)
+        return params
+
+    def __parse_const_def(self, attrs: list[AST.Attr]) -> AST.ConstDef:
+        keyword = self.__stream.consume_keyword(KeywordKind.Const)
+        name = self.__stream.consume_identifier()
+        self.__stream.consume_punctuator(PunctuatorKind.Colon)
+        const_type = self.__type_parser.parse_type()
+        self.__stream.consume_punctuator(PunctuatorKind.Equal)
+        value = self.__expr_parser.parse_expr()
+        end = self.__stream.consume_punctuator(PunctuatorKind.Semicolon)
+        return AST.ConstDef(
+            span=keyword.span + end.span,
+            attrs=attrs,
+            name=AST.Identifier(span=name.span, name=name.name),
+            const_type=const_type,
+            value=value,
+        )
+
+    def __parse_alias(self, attrs: list[AST.Attr]) -> AST.Alias:
+        self.__stream.consume_keyword(KeywordKind.Typedef)
+        name = self.__stream.consume_identifier()
+        generics = self.__parse_generics()
+        self.__stream.consume_punctuator(PunctuatorKind.Equal)
+        target = self.__parse_type()
+        self.__stream.consume_punctuator(PunctuatorKind.Semicolon)
+        return AST.Alias(span=name.span, attrs=attrs, name=name, generics=generics, target=target)
+
+    def __parse_impl(self) -> AST.Impl:
+        span = self.__stream.consume_keyword(KeywordKind.Impl).span
+        generics = self.__parse_generics()
+
+        ty = self.__parse_type()
+
+        token = self.__stream.peek()
+        if isinstance(token, Keyword) and token.kind == KeywordKind.For:
+            trait = ty
+
+            self.__stream.consume_keyword(KeywordKind.For)
+
+            target = self.__parse_type()
+        else:
+            trait = None
+            target = ty
+
+        # optional if-clause: `if T: Clone, U: Debug`
+        conditions: list[tuple[AST.Identifier, list[AST.ASTType]]] = []
+        token = self.__stream.peek()
+        if isinstance(token, Keyword) and token.kind == KeywordKind.If:
+            self.__stream.consume_keyword(KeywordKind.If)
+            conditions = self.__parse_impl_conditions()
+
+        self.__stream.consume_punctuator(PunctuatorKind.LBrace)
+        items = self.__stream.consume_until(self.__parse_method_def, TERM_RBRACE)
+        self.__stream.consume_punctuator(PunctuatorKind.RBrace)
+
+        return AST.Impl(span=span, generics=generics, target=target, trait=trait, items=items, conditions=conditions)
+
+    def __parse_impl_conditions(self) -> list[tuple[AST.Identifier, list[AST.ASTType]]]:
+        conditions: list[tuple[AST.Identifier, list[AST.ASTType]]] = []
+        while True:
+            ident = self.__stream.consume_identifier()
+            self.__stream.consume_punctuator(PunctuatorKind.Colon)
+            traits: list[AST.ASTType] = [self.__parse_type()]
+            token = self.__stream.peek()
+            while isinstance(token, Punctuator) and token.kind == PunctuatorKind.Plus:
+                self.__stream.consume_punctuator(PunctuatorKind.Plus)
+                traits.append(self.__parse_type())
+                token = self.__stream.peek()
+            conditions.append((ident, traits))
+            token = self.__stream.peek()
+            if not (isinstance(token, Punctuator) and token.kind == PunctuatorKind.Comma):
+                break
+            self.__stream.consume_punctuator(PunctuatorKind.Comma)
+        return conditions
+
+    def __parse_struct(self, attrs: list[AST.Attr]) -> AST.StructDef:
+        self.__stream.consume_keyword(KeywordKind.Struct)
+
+        name = self.__stream.consume_identifier()
+        generics = self.__parse_generics()
+
+        self.__stream.consume_punctuator(PunctuatorKind.LBrace)
+        fields = self.__stream.consume_separated(self.__parse_field_info, SEP_COMMA, TERM_RBRACE)
+        self.__stream.consume_punctuator(PunctuatorKind.RBrace)
+
+        return AST.StructDef(span=name.span, attrs=attrs, name=name, generics=generics, fields=fields)
+
+    def __parse_enum(self, attrs: list[AST.Attr]) -> AST.EnumDef:
+        self.__stream.consume_keyword(KeywordKind.Enum)
+
+        name = self.__stream.consume_identifier()
+        generics = self.__parse_generics()
+
+        self.__stream.consume_punctuator(PunctuatorKind.LBrace)
+        variants = self.__stream.consume_separated(self.__parse_variant_info, SEP_COMMA, TERM_RBRACE)
+        self.__stream.consume_punctuator(PunctuatorKind.RBrace)
+
+        return AST.EnumDef(span=name.span, attrs=attrs, name=name, generics=generics, variants=variants)
+
+    def __parse_trait(self, attrs: list[AST.Attr]) -> AST.TraitDef:
+        self.__stream.consume_keyword(KeywordKind.Trait)
+
+        name = self.__stream.consume_identifier()
+        generics = self.__parse_generics()
+
+        self.__stream.consume_punctuator(PunctuatorKind.LBrace)
+        items = self.__stream.consume_until(self.__parse_trait_item, TERM_RBRACE)
+        self.__stream.consume_punctuator(PunctuatorKind.RBrace)
+
+        return AST.TraitDef(span=name.span, attrs=attrs, name=name, generics=generics, items=items)
+
+    def __parse_method_decl(self) -> AST.MethodDecl:
+        problems = len(self.__stream.errors)
+        attrs = self.__stream.consume_attrs()
+
+        self.__stream.consume_keyword(KeywordKind.Fn)
+
+        name = self.__stream.consume_identifier()
+        generics = self.__parse_generics()
+        self.__stream.consume_punctuator(PunctuatorKind.LParen)
+        params = self.__stream.consume_separated(self.__parse_callable_param, SEP_COMMA, TERM_RPAREN)
+        self.__stream.consume_punctuator(PunctuatorKind.RParen)
+
+        token = self.__stream.peek()
+        if isinstance(token, Punctuator) and token.kind == PunctuatorKind.Arrow:
+            self.__stream.consume_punctuator(PunctuatorKind.Arrow)
+            ret_type = self.__parse_type()
+        else:
+            ret_type = None
+
+        return AST.MethodDecl(span=name.span, attrs=attrs, name=name, generics=generics, params=params, ret_type=ret_type,
+                              signature_recovered=len(self.__stream.errors) != problems)
+
+    def __parse_method_def(self, decl: AST.MethodDecl | None = None) -> AST.MethodDef:
+        if decl is None:
+            decl = self.__parse_method_decl()
+
+        body = self.__expr_parser.parse_block()
+
+        return AST.MethodDef(span=decl.span, decl=decl, body=body)
+
+    def __parse_field_info(self) -> AST.FieldInfo:
+        attrs = self.__stream.consume_attrs()
+
+        name = self.__stream.consume_identifier()
+
+        self.__stream.consume_punctuator(PunctuatorKind.Colon)
+
+        field_type = self.__parse_type()
+
+        return AST.FieldInfo(span=name.span, attrs=attrs, name=name, field_type=field_type)
+
+    def __parse_variant_info(self) -> AST.VariantInfo:
+        name = self.__stream.consume_identifier()
+
+        token = self.__stream.peek()
+        if isinstance(token, Punctuator) and token.kind == PunctuatorKind.LBrace:
+            self.__stream.consume_punctuator(PunctuatorKind.LBrace)
+            fields = self.__stream.consume_separated(self.__parse_var_info, SEP_COMMA, TERM_RBRACE)
+            self.__stream.consume_punctuator(PunctuatorKind.RBrace)
+        else:
+            fields: list[AST.VarInfo] = []
+
+        return AST.VariantInfo(span=name.span, name=name, fields=fields)
+
+    def __parse_var_info(self) -> AST.VarInfo:
+        name = self.__stream.consume_identifier()
+
+        self.__stream.consume_punctuator(PunctuatorKind.Colon)
+
+        var_type = self.__parse_type()
+
+        return AST.VarInfo(span=name.span, name=name, var_type=var_type)
+
+    def __parse_callable_param(self) -> AST.VarInfo | AST.PatternParam:
+        pattern = self.__expr_parser.parse_binding_pattern()
+        self.__stream.consume_punctuator(PunctuatorKind.Colon)
+        var_type = self.__parse_type()
+        if isinstance(pattern, AST.NamePattern):
+            return AST.VarInfo(span=pattern.span, name=pattern.name, var_type=var_type)
+        return AST.PatternParam(span=pattern.span, pattern=pattern, var_type=var_type)
+
+    def __parse_trait_item(self) -> AST.TraitItem:
+        decl = self.__parse_method_decl()
+
+        token = self.__stream.peek()
+        if isinstance(token, Punctuator) and token.kind == PunctuatorKind.LBrace:
+            return self.__parse_method_def(decl=decl)
+        for param in decl.params:
+            if isinstance(param, AST.PatternParam):
+                raise ParseError("Parameter patterns require a method body", param.span)
+        # method declaration without body ends with semicolon
+        self.__stream.consume_punctuator(PunctuatorKind.Semicolon)
+        return decl
+
+    def __parse_func_def(self, attrs: list[AST.Attr]) -> AST.FuncDef:
+        self.__stream.consume_keyword(KeywordKind.Fn)
+
+        name = self.__stream.consume_identifier()
+        generics = self.__parse_generics()
+
+        self.__stream.consume_punctuator(PunctuatorKind.LParen)
+        params = self.__stream.consume_separated(self.__parse_callable_param, SEP_COMMA, TERM_RPAREN)
+        self.__stream.consume_punctuator(PunctuatorKind.RParen)
+
+        token = self.__stream.peek()
+        if isinstance(token, Punctuator) and token.kind == PunctuatorKind.Arrow:
+            self.__stream.consume_punctuator(PunctuatorKind.Arrow)
+            ret_type = self.__parse_type()
+        else:
+            ret_type = None
+
+        body = self.__expr_parser.parse_block()
+
+        return AST.FuncDef(span=name.span, attrs=attrs, name=name, generics=generics, params=params, ret_type=ret_type, body=body)
+
+    def __parse_type(self) -> AST.ASTType:
+        return self.__type_parser.parse_type()

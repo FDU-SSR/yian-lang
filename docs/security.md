@@ -1,220 +1,495 @@
-# Key Lock
+# YIAN 内存安全机制概述
 
-指针变量持有 address 和 key，内存管理块保存 lock 和指向实际数据的指针。使用指针访问内存时，key 和 lock 需要匹配。
+本文介绍 YIAN 的内存安全设计。
 
-同一时间只允许一个线程访问同一块内存。
+## 1. 它要解决什么问题
 
-```rust
-enum Ptr<T> {
-    Stack{
-        T* base                 // address
-        u64 offset              // 64 bit offset
-        u64 len                 // 64 bit len, offset < len
-    }
-    Heap{
-        u64 key                 // 64 bit key
-        MemoryBlock<T>* base    // memory block address
-        u64 offset              // 64 bit offset
-    }
-}
+手动管理内存的语言通常会遇到几类典型错误：
 
-struct MemoryBlock<T> {
-    u64 lock        // 64 bit lock
-    u64 size        // 64 bit size
-    T* data         // to buffer
+- 访问数组、切片或对象末尾之外的区域；
+- 指针计算时发生整数溢出，导致地址跑到完全错误的位置；
+- 对象释放后仍然使用旧指针；
+- 同一块内存被释放两次；
+- 函数返回后继续使用指向局部变量的指针；
+- 一块内存被重新分配给其他对象后，旧指针“误以为”自己仍然有效。
+
+这些问题的共同点是：一个普通指针通常只保存一个地址。仅凭地址本身，程序无法判断这个地址属于哪个对象、对象是否仍然存活，以及本次访问是否在对象范围内。
+
+YIAN 的安全模式不把指针看成单纯的地址，而是让指针同时携带“它来自哪里”和“它当前能访问多大范围”等信息。每次真正访问内存前，运行时都会利用这些信息进行检查。
+
+## 2. 核心思路：指针不只保存地址
+
+普通指针可以简单理解为：
+
+```text
+指针 = 一个地址
+```
+
+YIAN 安全模式中的指针还会携带以下信息：
+
+| 信息               | 作用                                       |
+| ------------------ | ------------------------------------------ |
+| 数据地址或地址锚点 | 找到对象或对象中的当前位置                 |
+| 生命周期锁的位置   | 找到记录对象是否仍然有效的地方             |
+| 生命周期键         | 确认这个指针是否属于当前这一轮对象生命周期 |
+| 当前位置           | 表示指针位于对象的第几个元素               |
+| 可访问范围         | 防止访问超过对象末尾                       |
+
+这种带有额外信息的指针通常称为“胖指针”。额外信息是由语言规则和运行时共同维护的安全元数据。
+
+## 3. 三种指针形态
+
+YIAN 将指针能力分成三个层次。它们都保留生命周期信息，但空间信息逐步减少：
+
+```text
+完整指针  →  切片/字符串  →  单个元素引用
+```
+
+### 3.1 完整指针
+
+完整指针可以进行元素级移动和范围计算。除了地址和生命周期信息，它还知道当前位置以及从当前位置开始剩余的可访问元素数量。
+
+它适合表达“我正在一个对象内部移动”的场景，例如遍历数组。
+
+### 3.2 切片和字符串
+
+切片表示一段连续的元素区域。它记录起始位置、长度以及原对象的生命周期信息。
+
+切片不是新的独立对象，而是原对象的一段视图。因此，切片仍然会受到原对象生命周期的约束：原对象释放或失效后，切片也会失效。
+
+从一个有偏移的完整指针生成切片时，切片长度会变成“当前位置到原对象末尾的剩余长度”，而不会继续使用原对象的完整长度。这样可以避免偏移后的切片越过原对象末尾。
+
+### 3.3 单个元素引用
+
+引用表示一个已经确认存在的完整元素。它不再需要保存数组索引和长度，但仍然保留生命周期锁和生命周期键。
+
+引用只能从已经确认有效的元素或非空切片产生：
+
+- 指向对象末尾之后的位置不能转换成引用；
+- 空切片不能转换成引用；
+- 引用访问时仍然要检查对象的生命周期。
+
+因此，引用并不是“永远安全”的地址，而是“空间范围已经在构造时确认，但生命周期仍需要检查”的地址。
+`Trait&` 是 trait object，包含具体值的引用信息和 vtable；fat 模式保留生命周期元数据，
+动态方法调用会检查该引用，raw 模式不提供这些运行时检查。
+
+## 4. 生命周期安全：锁和键
+
+空间检查只能回答“这个位置是否在范围内”，还需要另一套机制回答“这个对象是否还活着”。YIAN 使用生命周期锁和生命周期键解决这个问题。
+
+### 4.1 分配对象时创建生命周期
+
+每次分配堆对象或进入需要取地址的函数帧时，系统都会创建一个新的生命周期，并生成一个新的键。
+
+指针不会只记住对象地址，还会记住一个 64 位生命周期字：
+
+```text
+锁表下标（32 位） + 创建这一轮生命周期时的键（32 位）
+```
+
+所有锁槽都在一张全局锁表里：下标 0 起的一段是函数帧的影子栈槽，接着是字面量与运行环境的两个
+常量槽，其余由分配器按需发放给堆对象。指针携带的下标直接给出锁槽位置，键与锁槽里的键**同宽**
+（都是 32 位），所以 `live` 判定恒为「word 非零 ∧ 读一次 32 位表项 + 比一次 32 位键」。
+`live` 只验证 word 非零与表项键相等；堆键的有限位宽边界见第 4.4 节。
+
+### 4.2 释放对象时立即使锁失效
+
+释放堆对象时，运行时会先把该对象锁表项里的键加一（旧指针携带的键立刻失配），再把内存放回
+运行时的空闲池、把表项下标还给锁表的自由链。
+
+函数返回时则先使整个函数帧的锁槽失效（写入哨兵值），再结束这个函数帧，之后才允许该槽被新的
+函数帧复用。
+
+因此，指向局部变量的旧指针即使保存着一个看起来仍然相同的地址，也会因为生命周期键不匹配而失效。
+
+### 4.3 复用时的键失配
+
+堆内存释放并再次分配时，锁表项的键递增。在键尚未回绕的范围内，新对象的键与旧指针的键不同。
+
+旧指针仍然携带旧键，因此：
+
+```text
+地址相同，不代表生命周期相同
+```
+
+旧指针访问新对象时会被拒绝，而不是因为物理地址相同就重新获得权限。
+
+### 4.4 键耗尽与回绕边界
+
+函数帧的键来自 32 位单调递增计数器（上限保留给帧退出写的哨兵值），耗尽时系统选择明确终止，
+而不是让计数器回绕后重新产生旧键。
+
+堆对象的键是每个锁表项各自维护的 32 位代号，每次发放与释放都递增，没有耗尽终止检查。
+同一个表项累计递增 2^32 次会回绕；一次完整的分配与释放通常递增两次。
+旧指针若跨越整轮键递增仍然保留，可能与新生命周期的键重合。有限堆键不提供无限次复用下的撤销保证。
+
+## 5. 空间安全：每次访问前检查
+
+一次内存访问必须同时满足几个条件：
+
+1. 指针的生命周期仍然有效；
+2. 起始位置没有超出对象范围；
+3. 本次访问的元素数量没有超过剩余长度；
+4. 元素大小、偏移量和最终地址的计算没有发生整数回绕；
+5. 访问的完整跨度都位于同一个有效对象内。
+
+只有全部条件满足后，程序才会真正执行读取、写入或复制操作。任一条件失败，程序会向 `stderr` 输出对应的安全错误，随后以退出码 `1` 立即终止，拒绝执行这次危险操作；错误路径不会展开调用栈或执行用户清理逻辑。
+
+这些运行时检查不跟踪内存单元是否已经初始化。`@alloc<T>(n)` 只分配存储，不为元素赋初值；
+`RawVec<T>.ptr()` 返回覆盖整个容量的指针，而 `RawVec` 不记录已初始化元素数。调用者必须在
+读取某个元素前先写入有效值。fat 指针的范围和生命周期检查不会检测未初始化读取，raw 模式也
+没有相应运行时检查。
+
+### 5.1 支持 one-past 位置，但不能解引用
+
+遍历数组时，指针移动到数组末尾之后一个位置通常很有用，因为它可以作为循环结束标记。YIAN 允许这种位置存在，也允许比较它，但不允许从这个位置读取或写入元素。
+
+因此：
+
+- “末尾之后的位置”可以作为边界值保存；
+- 但不能把它转换成有效元素引用；
+- 也不能对它执行元素访问。
+
+### 5.2 指针算术也受到检查
+
+指针加减不能产生负索引、超过对象范围的索引或整数回绕。即使某个计算结果在机器整数中看起来合法，只要它导致最终字节地址溢出，也会被拒绝。
+
+指针之间的大小关系和差值也不是任意定义的：只有来源相同、锚定在同一个对象上的指针，才可以进行有意义的关系比较或相减。不同对象的指针不能通过比较或相减推导出对象内部关系。
+
+## 6. 堆对象的保护
+
+YIAN 安全模式使用运行时管理的单线程堆池。每个堆块都分为两部分：
+
+```text
+生命周期和分配元数据 | 用户可以访问的对象数据
+```
+
+用户对象只能从数据区域开始访问，堆块前面的元数据区域不属于用户对象的一部分。有效的用户指针不能把堆块头、空闲链信息或生命周期锁当作普通数据访问。
+
+块头固定 **8 字节**：偏移 0 是当前对象的逻辑负载**元素数**（释放检查按指针元素大小折算成字节再比对），偏移 4 是填充；生命周期锁槽在**全局锁表**里，不在块头内，负载从块基址 + 8 处开始，8 字节对齐（块头里的元素数按指针元素大小折算成字节，再与视图覆盖的字节数比对）。分配器不占用块头：物理容量由尺寸类隐含（16 B 到 49152 B 共 36 档，每档约 1.25 倍；更大的请求由独占尺寸的块承担），空闲块的自由链写在空闲负载的首字里。
+
+释放的块回到它所属尺寸类的空闲链，地址空间与映射始终保留：64 KiB 的 slab 页常驻并直接复用，只有大块在超出缓存额度被淘汰时才用 `madvise(MADV_DONTNEED)` 归还物理页。运行时不会 `munmap` 用户块，因此已释放块对应的锁表项仍然可读（读到已换代或尚未发放的键），再次访问会按生命周期判定拒绝，而不是因为地址失效而崩溃。
+
+释放堆对象时，处理顺序是：
+
+1. 检查它确实是有效的堆对象；
+2. 检查释放视图确实覆盖完整堆块，并且能够定位到对象起点；
+3. 先把锁表项里的键加一（旧指针立刻失配）；
+4. 再把表项下标还给锁表自由链、把堆块加入空闲池。
+
+在堆键尚未回绕的范围内，这带来三个结果：
+
+- 释放后的旧指针不能继续读写；
+- 同一个指针第二次释放时会因为生命周期已经失效而被拒绝；
+- 堆块复用不会让旧指针重新获得访问权限。
+
+为了保持这套生命周期协议，释放操作不是对任意地址都开放的。内部指针、偏移后的切片、偏移后的单元素引用、栈地址、字符串字面量以及已经失效的指针都不能直接释放。
+
+有两个重要的完整视图例外：覆盖整个堆块的切片可以释放；满足整块释放条件、并且确实来自堆对象起点的单元素引用也可以释放。无论通过哪种视图释放，运行时释放的都是背后的整个堆块，而不是只释放视图覆盖的那一小段数据。
+
+空容器不持有堆块：`Vec`、`String` 与底层的 `RawVec` 在容量为 0 时把数据指针置为 `@dangling<T>()`——地址取 `align_of::<T>()`（恒非零），胖指针携带字面量锁槽、`index` 与 `size` 均为 0，裸指针模式下就是同一个裸地址。该零元素视图可参与零长度的指针算术与传递，其视图检查通过，但任何真实元素访问都在边界检查处失败；释放按容量为 0 跳过。地址必须非零，是因为省略 tag 的枚举以全零载荷编码 unit 变体，空容器派生的空切片或空字符串若携带全零数据指针，`Some(空值)` 会被误判成 `None`。
+
+## 7. 栈对象的保护
+
+函数中的局部变量通常位于栈上。YIAN 为每个需要取地址的函数帧分配一个独立的生命周期锁，同一函数帧中取得的地址共享这个锁。
+
+函数返回时，整个函数帧的锁会失效。因此，下面这种情况会被拦截：
+
+```text
+函数内部创建局部变量
+    ↓
+返回指向局部变量的地址
+    ↓
+函数返回
+    ↓
+外部继续使用这个地址 → 安全错误并终止
+```
+
+即使下一次函数调用恰好使用了相同的物理栈地址，新的函数帧也会使用新的生命周期键，旧指针不会因此复活。
+
+当前设计的失效粒度是整个函数帧，而不是函数内部的每一个词法作用域。也就是说，某些局部对象可能在更小的作用域结束后仍保持到函数返回；这是设计上的限制，而不是细粒度作用域安全保证。
+
+## 8. 指针转换不会绕过检查
+
+指针只能沿着能力逐渐减少的方向转换：
+
+- 完整指针转换成切片时，必须确认当前位置合法，并把长度缩短到剩余范围；
+- 完整指针转换成引用时，必须确认当前位置确实还有一个完整元素；
+- 切片转换成引用时，切片必须至少包含一个元素；
+- 转换后的值继续携带原来的生命周期锁和键。
+
+转换过程确认的是空间来源，不等于把已经失效的指针重新变成有效指针。一个失效的完整指针即使能够被转换成失效的切片或引用，之后真正访问时仍会因为生命周期检查失败而触发安全错误并终止。
+
+用户代码也不能随意把整数、裸地址或任意内存重新解释成带有伪造元数据的安全指针。否则，所有边界和生命周期检查都可能被绕过，所以这类能力必须被限制在经过审计的运行时或标准库代码中。
+
+## 9. 典型错误是怎样被拦截的
+
+| 错误场景                   | 安全机制的处理                               |
+| -------------------------- | -------------------------------------------- |
+| 数组越界读取               | 检查当前位置和完整访问跨度，失败后报告 S001（未取址裸数组）或 S002（胖指针访问的合并检查）并终止 |
+| 越过对象末尾的系统调用视图 | `@sys_write`/`@sys_read`/`@open` 的胖视图参数按完整跨度检查（S002），而不是只检查起点 |
+| 标准库内的批量复制         | `@memcpy` 只由标准库调用，长度与跨度由调用方保证 |
+| 指针偏移发生整数回绕       | 在地址和跨度计算阶段拒绝回绕                 |
+| 释放后使用                 | 释放时锁失效，旧指针的键不再匹配             |
+| 双重释放                   | 第一次释放后生命周期已经失效，第二次检查失败 |
+| 函数返回后使用局部变量地址 | 返回时帧锁失效，旧地址不能访问               |
+| 堆块被新对象复用           | 堆键尚未回绕时，新对象使用新键，旧指针不能访问新对象 |
+| 释放一个内部指针           | 释放视图必须覆盖完整堆块，内部指针不满足条件 |
+| 空切片转引用               | 转换前检查长度，空切片不能产生引用           |
+| 使用 one-past 指针访问元素 | one-past 只允许作为边界值，解引用会失败      |
+| 用户写入堆块头或锁槽       | 有效用户访问范围不包含运行时元数据区域       |
+
+## 10. 安全边界与可信部分
+
+这套机制不是凭空产生安全性，它依赖一组需要被信任和审计的基础部分：
+
+- 编译器必须正确生成指针元数据和访问检查；
+- 运行时（`runtime/` 的 C 库）必须正确维护堆池、生命周期锁和生命周期键；它是安全关键组件，因此有独立自测与 sanitizer 运行（`python3 runtime/build.py --check` / `--asan`）。`--check-consistency-only` 比对 native `yianc/src/codegen/abi/runtime.an` 与 C 头文件中的 ABI 常量和失败消息，并用 Clang 检查 C 尺寸类表的不变量；该命令不构建运行时或运行自测；
+- 标准库中的受限内存原语必须遵守长度、布局和生命周期约束；
+- 编译后端、目标平台和底层内存分配器必须按约定工作；
+- 普通用户代码不能任意修改胖指针元数据、堆块头或帧锁槽。
+
+标准库可以拥有普通用户代码没有的底层能力，因此它属于整个安全机制的可信基础。增加新的底层原语时，不能只添加一个 API，还需要同时审查它是否可能伪造指针、扩大访问范围或绕过生命周期检查。
+
+当前模型还假设程序是单线程的，不覆盖并发数据竞争。FFI 的 `cptr<T>` 是不带 YIAN 来源、边界和生命周期元数据的 C 地址；`ffi fn` 提取 YIAN 地址时执行当前指针模式适用的检查，但 C 保留地址、访问范围和释放资源的行为由绑定负责。跨 FFI 边界的内存与对象生命周期需要绑定自身管理，详见 [FFI 参考](grammar/17.ffi.md)。
+
+## 11. 这套机制能保证什么，不能保证什么
+
+在可信基础正确、程序运行在单线程环境、堆键尚未回绕、用户代码不能伪造或破坏安全元数据的前提下，YIAN 安全模式执行以下检查：
+
+- 成功执行的用户内存访问位于当前活动对象内部；
+- 地址、偏移量和访问跨度不会通过整数回绕绕过边界；
+- 释放后的堆对象和返回后的栈对象不能被旧指针访问；
+- 双重释放会被拒绝；
+- 物理地址复用不会使旧指针重新有效。
+
+它不能自动保证：
+
+- 程序逻辑正确；
+- 堆分配中的每个元素都已初始化；
+- 输入数据符合业务要求；
+- 多线程程序没有数据竞争；
+- FFI 传入的裸指针生命周期正确；
+- 32 位堆键经历整轮回绕后，跨越该周期保留的旧指针仍然失效；
+- 受限标准库或编译器自身没有实现错误；
+
+## 12. 代码示例
+
+下面的示例使用 YIAN 的胖指针、动态分配、数组和切片语法；其中 `T&`、完整堆块视图释放等行为也遵循当前实现。标有“安全错误”的语句是故意制造的错误场景，用来说明安全检查会在哪里阻止程序；它们不应作为正常程序运行。
+
+### 12.1 正常的指针和切片访问
+
+```yian
+fn main() {
+    let data: i32[5] = [10, 20, 30, 40, 50]
+
+    // Address the array's second element.
+    let p: i32* = &data[1]
+    assert *p == 20
+
+    // A slice views part of the original array without owning independent data.
+    let tail: i32[] = data[1u64..5]
+    assert tail.len() == 4
+    assert tail[0] == 20
+    assert tail[3] == 50
 }
 ```
 
-申请内存, 构造堆指针
+这里的 `p` 和 `tail` 都保留了 `data` 的生命周期信息。只要 `data` 仍然处于当前函数帧中，它们就可以访问各自允许的范围。
 
-```rust
-impl Ptr<T> {
-    static Ptr<T> new_object() {
-        // 生成 key 和 lock
-        u64 key_lock = generate_key_lock()
-        // 首先构造 MemoryBlock
-        T* data = dyn T
-        u64 size = sizeof(T)
-        MemoryBlock<T>* base = dyn MemoryBlock<T>(key_lock, size, data)
-        // 然后构造指针
-        return Ptr<T>.Heap(key_lock, base, 0)
-    }
-    static Ptr<T> new_array(u64 len) {
-        // 生成 key 和 lock
-        u64 key_lock = generate_key_lock()
-        // 首先构造 MemoryBlock
-        T* data = dyn T[len]
-        u64 size = sizeof(T) * len
-        MemoryBlock<T>* base = dyn MemoryBlock<T>(key_lock, size, data)
-        // 然后构造指针
-        return Ptr<T>.Heap(key_lock, base, 0)
-    }
+### 12.2 动态数组的边界检查
+
+```yian
+fn main() {
+    let values: i32* = dyn[3] 0
+
+    values[0] = 10
+    values[1] = 20
+    values[2] = 30
+
+    // Valid indices are zero, one, and two.
+    values[3] = 40  // Safety error S002: past the dynamic array end.
 }
 ```
 
-对栈变量取地址, 构造栈指针. 或者将数组赋值给指针, 使其转换为栈指针
+检查覆盖本次访问的完整跨度。切片访问与受检 IO 的缓冲区检查会验证访问范围；受限内建 `@memcpy`
+使用裸字节复制，调用方必须保证来源、目标、长度与非重叠约定，不能把它视作受检复制接口。
 
-```rust
-impl Ptr<T> {
-    static Ptr<T> address(T* raw_ptr) {
-        return Ptr<T>.Stack(raw_ptr, 0, sizeof(T))
-    }
+### 12.3 one-past 位置可以存在，但不能访问
 
-    static Ptr<T> from_array(T* array, u64 len) {
-        return Ptr<T>.Stack(array, 0, len * sizeof(T))
-    }
+```yian
+fn main() {
+    let data: i32[3] = [10, 20, 30]
+    let first: i32* = &data[0]
+
+    // A one-past-end pointer may be retained as a loop boundary.
+    let end: i32* = first + 3
+
+    // let value: i32 = *end
+    // Safety error S002: one-past-end cannot be dereferenced.
 }
 ```
 
-指针的读写
+这使得“当前指针还没有到达结束位置”的遍历逻辑可以表达出来，同时不会把边界标记误当成一个真实元素。
 
-```rust
-impl Ptr<T> {
-    T read() {
-        match self {
-            Stack as ptr:
-                return ptr.base[ptr.offset]
-            Heap as ptr:
-                // 检查 key 与 lock 匹配
-                assert(ptr.key == ptr.base.lock)
-                // 检查越界
-                assert(ptr.offset != ptr.base.size)
-                return ptr.base.data[ptr.offset]
-        }
-    }
+### 12.4 释放后使用和双重释放
 
-    write(T value) {
-        match self {
-            Stack as ptr:
-                ptr.base[ptr.offset] = value
-            Heap as ptr:
-                // 检查 key 与 lock 匹配
-                assert(ptr.key == ptr.base.lock)
-                // 检查越界
-                assert(ptr.offset != ptr.base.size)
-                ptr.base.data[ptr.offset] = value
-        }
-    }
+释放堆对象后，生命周期锁会立即失效。旧指针即使仍然保存着原来的地址，也不能再访问对象：
+
+```yian
+fn main() {
+    let p: i32* = dyn[1] 0
+    p[0] = 42
+    del p
+
+    p[0] = 7  // Safety error S002: use after free.
 }
 ```
 
-释放内存
+第二次释放也会失败，因为第一次释放已经使 `p` 对应的生命周期失效：
 
-```rust
-impl Ptr<T> {
-    delete() {
-        match self {
-            Stack: panic("Delete stack pointer")
-            Heap as ptr:
-                // 检查 key 和 lock 匹配
-                assert(ptr.key == ptr.base.lock)
-                // 检查是否有偏移
-                assert(ptr.offset == 0)
-                // 释放内存
-                del ptr.base.data
-                // 清空内存管理快
-                ptr.base.lock = 0
-                ptr.base.size = 0
-        }
-    }
+```yian
+fn main() {
+    let p: i32* = dyn[1] 0
+    p[0] = 42
+    del p
+    del p  // Safety error S006: double free.
 }
 ```
 
-指针运算：
+### 12.5 内部指针不能代表整个堆对象
 
-```rust
-// 指针 + 整数
-impl Add<u64, Ptr<T>> for Ptr<T> {
-    Self add(u64 rhs) {
-        match self {
-            Stack as ptr:
-                ptr.offset += rhs * sizeof(T)
-                assert(ptr.offset <= ptr.len)
-            Heap as ptr:
-                // 检查 key 和 lock
-                assert(ptr.key == ptr.base.lock)
-                ptr.offset += rhs * sizeof(T)
-                assert(ptr.offset <= ptr.base.size)
-        }
-    }
-}
+释放目标必须能够代表完整堆块。指向对象内部的偏移指针不能被当成整块对象释放：
 
-// 指针 - 整数
-impl Sub<u64, Ptr<T>> for Ptr<T> {
-    Self sub(u64 rhs) {
-        match self {
-            Stack as ptr:
-                assert(ptr.offset >= rhs * sizeof(T))
-                ptr.offset -= rhs * sizeof(T)
-            Heap as ptr:
-                // 检查 key 和 lock
-                assert(ptr.key == ptr.base.lock)
-                assert(ptr.offset >= rhs * sizeof(T))
-                ptr.offset -= rhs * sizeof(T)
-        }
-    }
-}
+```yian
+fn main() {
+    let p: i32* = dyn[4] 0
+    let inner: i32* = p + 1
 
-// 指针 - 指针
-impl Sub<Ptr<T>, i64> for Ptr<T> {
-    i64 sub(Ptr<T> rhs) {
-        match self {
-            Stack as lptr:
-                match rhs {
-                    Heap: panic("Stack ptr - Heap ptr")
-                    Stack as rptr:
-                        assert(lptr.base == rptr.base)
-                        return (lptr.offset - rptr.offset) / sizeof(T)
-                }
-            Heap as lptr:
-                match rhs {
-                    Stack: panic("Heap ptr - Stack ptr")
-                    Heap as rptr:
-                        assert(lptr.base == rptr.base)
-                        assert(lptr.key == rptr.key)
-                        return (lptr.offset - rptr.offset) / sizeof(T)
-                }
-        }
-    }
+    del inner  // Safety error S006: inner is not the allocation's original base pointer.
 }
 ```
 
-## 通过指针进行遍历
+这样可以避免释放一个对象的中间位置，破坏运行时的堆块记录。
 
-为了使用 `for...in` 遍历一个类型, 该类型必须满足下面的条件:
+### 12.6 分级转换与单个元素引用
 
-必须实现 `GetIterator` trait, 返回一个实现了 `Iterator` trait 的迭代器
+安全模式允许指针逐级减少空间信息，但每一级转换都会保留生命周期锁和生命周期键：
 
-```rust
-struct PtrIter<T> {
-    T* cur
-    T* end
+```yian
+fn bump(r: i32&) -> i32 {
+    *r = *r + 1;
+    *r
 }
 
-impl Iterator<T> for PtrIter<T> {
-    Option<T> next() {
-        if self.cur == self.end {
-            return Option<T>.None
-        } else {
-            T res = *self.cur
-            self.cur += sizeof(T)
-            return Option<T>.Some(res)
-        }
-    }
-}
+fn main() {
+    let value: i32 = 41
+    let p: i32* = &value
 
-impl GetIterator<PtrIter<T>> for Ptr<T> {
-    PtrIter<T> get_iterator() {
-        match self {
-            Stack as ptr:
-                T* begin = ptr.base + ptr.offset
-                T* end = ptr.base + ptr.len
-                return PtrIter<T>(begin, end)
-            Heap as ptr:
-                T* begin = ptr.base.data + ptr.offset
-                T* end = ptr.base.data + ptr.base.size
-                return PtrIter<T>(begin, end)
-        }
-    }
+    // Explicit annotations trigger T* -> T[] and T* -> T& conversions.
+    let view: i32[] = p
+    let reference: i32& = p
+    let reference2: i32& = view
+
+    assert view.len() == 1
+    assert *reference == 41
+    assert *reference2 == 41
+    assert bump(reference) == 42
+    assert value == 42
 }
 ```
+
+`T&` 只表示一个已经确认存在的元素，但它仍然要检查生命周期。切片为空、指针位于 one-past 位置或来源对象已经失效时，都不能成功产生可用的 `T&`。
+
+### 12.7 哪些视图可以释放
+
+覆盖整个堆块的切片可以作为释放目标；指向堆对象起点的合适引用也可以触发整个堆块的释放：
+
+```yian
+fn main() {
+    // This slice covers the entire four-element i32 heap block and can be deleted.
+    let p: i32* = dyn[4] 0
+    let whole: i32[] = p
+    assert whole.len() == 4
+    del whole
+
+    // A reference to the start of a one-element heap object can release its entire block.
+    let p2: i32* = dyn[1] 0
+    p2[0] = 7
+    let r: i32& = &p2[0]
+    assert *r == 7
+    del r
+}
+```
+
+下面的视图只覆盖堆块的一部分，不能释放整个堆块：
+
+```yian
+fn main() {
+    let p: i32* = dyn[3] 0
+    let offset: i32[] = p[1u64..3]
+
+    del offset  // Safety error S006: offset is not a whole-block view.
+}
+```
+
+同理，指向堆对象内部元素的引用也不能作为释放目标：
+
+```yian
+fn main() {
+    let p: i32* = dyn[3] 0
+    let r: i32& = &p[1]
+
+    del r  // Safety error S006: r points inside the heap block, not to its base.
+}
+```
+
+### 12.8 函数返回后的局部变量地址
+
+局部变量的地址只能在对应函数帧仍然有效时使用。下面的代码返回了一个局部变量的引用；函数返回后，访问这个引用会触发生命周期检查：
+
+```yian
+fn make_reference() -> i32& {
+    let local: i32 = 42
+    let r: i32& = &local
+    r
+}
+
+fn main() {
+    let r: i32& = make_reference()
+    let value: i32 = *r  // Safety error S003: the originating frame has exited.
+}
+```
+
+函数返回时，帧锁会先失效，然后函数帧才会结束。即使下一次函数调用恰好使用了相同的物理栈地址，新的函数帧也会使用新的生命周期键，旧引用不会因此重新有效。
+
+### 12.9 堆块复用与旧键
+
+```yian
+fn main() {
+    let first: i32* = dyn[4] 0
+    let old: i32* = first
+    first[0] = 1
+    del first
+
+    let fresh: i32* = dyn[2] 0
+    // The free pool may reuse addresses; old and fresh are not required to have equal addresses here.
+    fresh[0] = 2
+
+    // Even at an equal address, old still carries the previous lifetime key.
+    // let value: i32 = *old
+    // Safety error S002: an old lifetime cannot access a new object.
+
+    del fresh
+}
+```
+
+在堆键未回绕的范围内，地址复用不使旧生命周期键有效；键回绕的边界见第 4.4 节。
+
+## 13. 一句话总结
+
+YIAN 的安全思路可以概括为：
+
+> 让每个指针携带自己的生命周期身份和访问范围，在每次真正触碰内存之前验证这两件事；对象释放或函数返回时立即使身份失效，内存复用时再分配新的身份。
+
+在堆键尚未回绕的范围内，地址本身即使被复用，旧指针也不能凭借相同地址继续访问新的对象。

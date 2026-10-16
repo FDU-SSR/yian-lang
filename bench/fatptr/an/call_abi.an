@@ -1,0 +1,82 @@
+// bench/fatptr/an/call_abi.an: argument-passing microbenchmark.
+//
+// Isolate by-value fat-argument costs. The hot loop calls two functions with identical bodies but
+//       different parameter combinations:
+//       mix_in takes one 24 B fat argument and one scalar;
+//       mix_wide takes two 24 B fat arguments and one scalar. Their difference within one process measures
+//                the cost of one additional fat argument.
+//       Each body performs eight iterations with four accesses, large enough to avoid -O2 inlining, including raw mode,
+//       so all three modes execute actual calls with substantial work per invocation.
+//       Call counts and arguments derive from argc, unknown to the compiler, preventing constant folding.
+// Scale: CALLS per round at the // bench-scale marker; ROUNDS is fixed.
+// C reference: bench/fatptr/c/call_abi.c, same algorithm/scale with 8 B raw pointer fields.
+//
+// Both modes share this source; raw Node*/Node[] use raw pointers/16 B slices.
+from std.core.env import args;
+from std.core.io import print;
+
+struct Node {
+    value: i64,
+}
+
+fn mix_in(p: Node*, n: u64) -> i64 {
+    let acc: i64 = 0;
+    let k: u64 = 0;
+    while k < 8 {
+        let a: i64 = p[n + k].value;
+        let b: i64 = p[n + k + 8u64].value;
+        let c: i64 = p[n + k + 16u64].value;
+        let d: i64 = p[n + k + 24u64].value;
+        acc = acc + a * 3 + b * 5 - c * 7 + d * 11;
+        k += 1;
+    }
+    return acc;
+}
+
+fn mix_wide(p: Node*, view: Node[], n: u64) -> i64 {
+    let acc: i64 = 0;
+    let k: u64 = 0;
+    while k < 8 {
+        let a: i64 = view[n + k].value;
+        let b: i64 = view[n + k + 8u64].value;
+        let c: i64 = view[n + k + 16u64].value;
+        let d: i64 = view[n + k + 24u64].value;
+        acc = acc + a * 3 + b * 5 - c * 7 + d * 11;
+        k += 1;
+    }
+    return acc + p[n].value;
+}
+
+fn main() {
+    let CALLS: u64 = 4096;  // bench-scale
+    let ROUNDS: u64 = 64;
+    let argv = args();
+    let base: u64 = 32 + argv.len();
+    let size: u64 = base + CALLS + 32;
+    let p: Node* = dyn[size] Node(0);
+    let i: u64 = 0;
+    while i < size {
+        p[i] = Node(i64(i));
+        i += 1;
+    }
+    let view: Node[] = p[0u64..size];
+    let acc: i64 = 0;
+    let round: u64 = 0;
+    while round < ROUNDS {
+        i = 0;
+        while i < CALLS {
+            let n: u64 = base + i;
+            acc = acc + mix_in(p, n) + mix_wide(p, view, n);
+            i += 1;
+        }
+        round += 1;
+    }
+    // Per call = sum_{k<8}(3(n+k)+5(n+k+8)-7(n+k+16)+11(n+k+24))+p[n] = 97n+1872.
+    let calls: i64 = i64(CALLS);
+    let b: i64 = i64(base);
+    let sum_n: i64 = calls * b + calls * (calls - 1) / 2;
+    let per_round: i64 = 193 * sum_n + 3744 * calls;
+    assert acc == i64(ROUNDS) * per_round: "call_abi checksum";
+    print("call_abi pass\n");
+    del p;
+}

@@ -1,0 +1,20 @@
+// A one-past-end pointer is valid as a boundary value, but cannot be used as a
+// method receiver because the receiver must designate an element.
+
+impl i32 {
+    pub fn get_val() -> i32 {
+        return *self;
+    }
+}
+
+fn main() {
+    let p: i32* = dyn[4] 0i32;
+    p[0] = 1;
+    p[1] = 2;
+    p[2] = 3;
+    p[3] = 4;
+
+    let end: i32* = p + 4; // one-past-end: index==size, valid arithmetic.
+    let v: i32 = end.get_val(); // one-past-end method calls fail CheckInBounds with a safety error.
+    assert v == 5: "unreachable"
+}

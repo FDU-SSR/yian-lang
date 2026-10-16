@@ -1,0 +1,12 @@
+trait Echo {
+    static fn echo<T>(value: T) -> T;
+}
+
+impl Echo for i32 {
+    // The method must preserve the trait's own generic parameter count.
+    static fn echo<T, U>(value: T) -> T {
+        value
+    }
+}
+
+fn main() {}

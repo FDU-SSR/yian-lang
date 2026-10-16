@@ -1,0 +1,8 @@
+// Test for importing private items from another module
+//
+// Expected compilation error: Symbol 'NonExportableStruct' exists in the imported unit but is not declared 'pub'
+
+from pierr.private import NonExportableStruct;
+
+fn main() {
+}

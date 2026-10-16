@@ -1,0 +1,36 @@
+// Store function items in an array and call an element by index.
+//
+// Expected output: 0
+
+fn add1_array_hold(x: i32) -> i32 { return x + 1; }
+
+fn case_array_holds_function_item() {
+    let arr = [add1_array_hold, add1_array_hold, add1_array_hold];
+    assert arr[0](41) == 42: "call function item from an array element";
+}
+
+struct FunctionItemHolder<F> { f: F }
+
+fn add1_struct_hold(x: i32) -> i32 { return x + 1; }
+
+fn case_struct_field_holds_function_item() {
+    let holder = FunctionItemHolder(f=add1_struct_hold);
+    assert (holder.f)(41) == 42: "call function item stored in a struct field";
+
+    let g = holder.f;
+    assert g(1) == 2: "bind struct field then call";
+}
+
+fn add1_tuple_hold(x: i32) -> i32 { return x + 1; }
+
+fn case_tuple_holds_function_item() {
+    let tuple = (add1_tuple_hold, 5);
+    assert tuple[0](41) == 42: "call function item from a tuple element";
+    assert tuple[1] == 5: "normal tuple element survives the ZST element";
+}
+
+fn main() {
+    case_array_holds_function_item();
+    case_struct_field_holds_function_item();
+    case_tuple_holds_function_item();
+}

@@ -1,0 +1,5 @@
+// Comment-only sources preserve every comment.
+
+/* A block comment
+    spanning two lines. */
+// Final comment.

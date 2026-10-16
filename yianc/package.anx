@@ -1,0 +1,14 @@
+[package]
+name = "yianc"
+kind = "hybrid"
+version = "0.1.0"
+ffi = true
+
+[dependencies]
+json = { path = "../bootstrap/json" }
+llvm = { path = "../bootstrap/llvm" }
+
+[native.llvm]
+major = 22
+components = ["core"]
+sources = ["native/host.c"]

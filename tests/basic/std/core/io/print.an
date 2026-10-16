@@ -1,0 +1,10 @@
+// Test print and eprint (stdout/stderr via convenience functions)
+//
+// Expected output:
+// stdout ok
+
+from std.core.io import print;
+
+fn main() {
+    print("stdout ok\n");
+}

@@ -1,0 +1,16 @@
+{
+  "name": "nbody",
+  "source": "AWFY",
+  "tags": [
+    "numeric"
+  ],
+  "argv": [],
+  "check": {
+    "rc": 0
+  },
+  "note": "官方工作单元: 250000 步, 最终能量 -0.1690859889909308; 外层默认 196 次",
+  "scale": {
+    "default": 196,
+    "c": "argv"
+  }
+}

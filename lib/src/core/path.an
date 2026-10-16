@@ -1,0 +1,83 @@
+from std.core.string import String;
+from std.core.option import Option;
+from std.core.drop import Drop;
+from std.core.range import Range;
+from std.core.ops import Index;
+
+pub struct Path { value: str }
+impl Path {
+    static pub fn new(value: str) -> Self { Self(value=value) }
+    pub fn as_str() -> str { self.value }
+    pub fn is_absolute() -> bool { self.value.starts_with("/") }
+    fn end() -> u64 {
+        let bytes = self.value.as_slice();
+        let end = bytes.len();
+        while end > 1u64 && bytes[end - 1u64] == b'/' { end -= 1u64; }
+        end
+    }
+    pub fn file_name() -> Option<str> {
+        let bytes = self.value.as_slice(); let end = self.end();
+        if end == 0u64 || (end == 1u64 && bytes[0] == b'/') { return Option<str>.None; }
+        let start = end;
+        while start > 0u64 && bytes[start - 1u64] != b'/' { start -= 1u64; }
+        let name = str.from_slice_unchecked(bytes[start..end]);
+        if name == "." || name == ".." { return Option<str>.None; }
+        Option<str>.Some(name)
+    }
+    pub fn parent() -> Option<Path> {
+        let bytes = self.value.as_slice(); let end = self.end();
+        if end == 0u64 || (end == 1u64 && bytes[0] == b'/') { return Option<Path>.None; }
+        let start = end;
+        while start > 0u64 && bytes[start - 1u64] != b'/' { start -= 1u64; }
+        while start > 1u64 && bytes[start - 1u64] == b'/' { start -= 1u64; }
+        Option<Path>.Some(Path.new(str.from_slice_unchecked(bytes[0u64..start])))
+    }
+    pub fn extension() -> Option<str> {
+        let name = match self.file_name() { Some(value) => value, None => return Option<str>.None, };
+        let bytes = name.as_slice(); let i = bytes.len();
+        while i > 0u64 {
+            i -= 1u64;
+            if bytes[i] == b'.' {
+                if i == 0u64 { return Option<str>.None; }
+                return Option<str>.Some(str.from_slice_unchecked(bytes[(i + 1u64)..bytes.len()]));
+            }
+        }
+        Option<str>.None
+    }
+    pub fn join(other: str) -> PathBuf {
+        if other.starts_with("/") { return PathBuf.from(other); }
+        let output = String.from(&self.value);
+        if other.as_slice().len() != 0u64 {
+            if self.value.as_slice().len() != 0u64 && !self.value.ends_with("/") { output.push('/'); }
+            output.push_str(other);
+        }
+        PathBuf(value=output)
+    }
+    pub fn with_extension(extension: str) -> PathBuf {
+        if self.file_name().is_none() { return PathBuf.from(self.value); }
+        let end = self.end(); let prefix_end = end;
+        match self.extension() { Some(value) => { prefix_end = end - value.as_slice().len() - 1u64; }, None => {}, }
+        let prefix = str.from_slice_unchecked(self.value.as_slice()[0u64..prefix_end]);
+        let output = String.from(&prefix);
+        if extension.as_slice().len() != 0u64 { output.push('.'); output.push_str(extension); }
+        PathBuf(value=output)
+    }
+}
+pub struct PathBuf { value: String }
+impl PathBuf {
+    static pub fn new() -> Self { Self(value=String.new()) }
+    static pub fn from(value: str) -> Self { Self(value=String.from(&value)) }
+    pub fn as_str() -> str { self.value.as_str() }
+    pub fn as_path() -> Path { Path.new(self.value.as_str()) }
+    pub fn push(other: str) {
+        let next = self.as_path().join(other);
+        self.value.drop();
+        *self = next;
+    }
+    pub fn into_string() -> String {
+        let result = self.value;
+        self.value = String.new();
+        result
+    }
+}
+impl Drop for PathBuf { pub fn drop() { self.value.drop(); } }

@@ -1,0 +1,11 @@
+// Fat-pointer use-after-free negative test for lifetime checks.
+//
+// del p writes SENTINEL to the block's lock slot; *p then fails live key comparison,
+// terminating with LLVM's runtime safety error and exit code 1.
+
+fn main() {
+    let p: i32* = dyn[2] 0i32;
+    p[0] = 1;
+    del p;
+    p[0] = 99 // UAF: SENTINEL slot fails live with a safety error.
+}

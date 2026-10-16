@@ -1,0 +1,31 @@
+from json.write import Writer;
+from json.error import WriteError;
+from json.parse import parse;
+from std.core.drop import Drop;
+from std.num.f64 import from_bits;
+
+fn main() {
+    let writer = Writer.new(); defer writer.drop();
+    writer.begin_object(); writer.key("values"); writer.begin_array();
+    writer.write_null(); writer.write_bool(true); writer.write_u64(18446744073709551615u64);
+    writer.write_i64(-9223372036854775807i64 - 1i64); writer.write_f64(1.0_f64);
+    writer.write_f64(from_bits(0x8000000000000000u64)); writer.write_string("\"\\\n\0😀");
+    writer.end_array(); writer.end_object();
+    let text = writer.finish().unwrap(); defer text.drop();
+    assert text.as_str() == "{\"values\":[null,true,18446744073709551615,-9223372036854775808,1.0,-0.0,\"\\\"\\\\\\n\\u0000😀\"]}": "incremental output";
+    let value = parse(text.as_str()).unwrap(); value.drop();
+    assert writer.finish().is_err(): "finish terminal";
+    let empty = Writer.new(); assert *empty.finish().unwrap_err() == WriteError.Incomplete: "empty root"; empty.drop();
+    let bad = Writer.new(); bad.begin_object(); bad.write_null(); bad.end_array();
+    assert *bad.finish().unwrap_err() == WriteError.InvalidState: "first error sticky"; bad.drop();
+    let dangling = Writer.new(); dangling.begin_object(); dangling.key("a"); dangling.end_object();
+    assert dangling.finish().is_err(): "key needs value"; dangling.drop();
+    let infinite = Writer.new(); infinite.write_f64(from_bits(0x7ff0000000000000u64));
+    assert *infinite.finish().unwrap_err() == WriteError.NonFiniteNumber: "nonfinite rejected"; infinite.drop();
+    let nan = Writer.new(); nan.write_f64(from_bits(0x7ff8000000000000u64));
+    assert *nan.finish().unwrap_err() == WriteError.NonFiniteNumber: "NaN rejected"; nan.drop();
+    let depth = Writer.with_max_depth(1u64); depth.begin_array(); depth.begin_array();
+    assert *depth.finish().unwrap_err() == WriteError.DepthLimit: "writer depth"; depth.drop();
+    let second = Writer.new(); second.write_null(); second.write_bool(true);
+    assert second.finish().is_err(): "single root"; second.drop();
+}

@@ -1,0 +1,30 @@
+// Test break statement in a for loop
+//
+// Expected output: 0
+
+fn case_for_break() {
+    let ret: i32 = -66;
+    for i in 0..10 {
+        if i == 5 {
+            ret = 66;
+            break;
+        }
+    }
+    assert ret == 66: "Break statement failed";
+}
+
+fn case_for_continue() {
+    let sum: i32 = 0;
+    for i in 0..16 {
+        if i > 10 {
+            continue;
+        }
+        sum += i
+    }
+    assert sum == 55: "Continue statement failed";
+}
+
+fn main() {
+    case_for_break();
+    case_for_continue();
+}

@@ -1,0 +1,17 @@
+// Tiered pointers (T& live-only check): dangling T& causes a runtime safety error.
+//
+// The T& is derived from a slice element (s[0], i.e. T[]→T*→T&). The slice
+// view inherits the real heap lock of the `dyn` backing block; after `del p`
+// the block-header lock slot is SENTINEL. Deref of the
+// stale reference fails live (slot ≠ key) → fail-stop → Exit code 1.
+//
+// Expected exit code: 1
+
+fn main() {
+    let p: i32* = dyn[3] 0i32;
+    p[0] = 1;
+    let s: i32[] = p[0u64..3]; // Slice view inherits the actual lock.
+    let r: i32& = s.ptr(); // slice element → T* → T&
+    del p; // backing freed → lock slot SENTINEL
+    *r = 99 // Dangling reference fails live with a safety error.
+}

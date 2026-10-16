@@ -1,0 +1,101 @@
+// Test method calls
+//
+// Expected output: 0
+
+struct InherentCallPerson {
+    pub age: i32,
+    pub weight: float,
+}
+
+impl InherentCallPerson {
+    static pub fn new(age: i32, weight: float) -> InherentCallPerson {
+        return InherentCallPerson(age, weight);
+    }
+
+    pub fn get_age() -> i32 {
+        return self.age;
+    }
+
+    pub fn weight_gt(weight: float) -> bool {
+        return self.weight > weight;
+    }
+}
+
+fn case_inherent_method_calls() {
+    let p: InherentCallPerson = InherentCallPerson.new(20, 65.5);
+    assert p.age == 20 && p.weight > 65.0: "Person.new failed";
+
+    let age: i32 = p.get_age();
+    assert age == 20: "get_age method failed";
+
+    if p.weight_gt(70.0) {
+        @panic("Weight comparison failed");
+    }
+
+}
+
+trait WalkableCall {
+    static pub fn walk_info() -> i32;
+
+    pub fn walk(distance: i32) -> i32;
+}
+
+struct WalkableCallDog {
+    pub age: i32,
+}
+
+impl WalkableCall for WalkableCallDog {
+    static pub fn walk_info() -> i32 {
+        return 10;
+    }
+
+    pub fn walk(distance: i32) -> i32 {
+        return distance + self.age;
+    }
+}
+
+fn case_trait_method_calls() {
+    let dog: WalkableCallDog = WalkableCallDog(5);
+    assert WalkableCallDog.walk_info() == 10: "Dog walk_info method failed";
+    let total_distance: i32 = dog.walk(10);
+    assert total_distance == 15: "Dog walk method failed";
+}
+
+impl i32 {
+    pub fn reference_double() -> i32 {
+        return *self * 2;
+    }
+}
+
+struct ReferenceReceiverPair {
+    a: i32,
+    b: i32,
+}
+
+impl ReferenceReceiverPair {
+    pub fn sum() -> i32 {
+        return self.a + self.b;
+    }
+
+    pub fn swap() -> ReferenceReceiverPair {
+        return ReferenceReceiverPair(self.b, self.a);
+    }
+}
+
+fn case_reference_receiver_methods() {
+    let x: i32 = 21;
+    let reference: i32& = &x;
+    let value: i32 = reference.reference_double();
+    assert value == 42: "T& direct method call";
+
+    let pair = ReferenceReceiverPair(1, 2);
+    let pair_ref: ReferenceReceiverPair& = &pair;
+    let sum: i32 = pair_ref.swap().sum();
+    assert sum == 3: "chained T& method calls";
+}
+
+fn main() {
+    case_inherent_method_calls();
+    case_trait_method_calls();
+    case_reference_receiver_methods();
+}

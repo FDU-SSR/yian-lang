@@ -1,0 +1,71 @@
+// bench/AWFY/an/mand.an: Mandelbrot bitmap checksum (AWFY Mandelbrot).
+//
+// Official work unit: size=500, 50 complex iterations, result 191.
+// Outer repetitions repeat the complete image calculation.
+
+fn mandelbrot(size: i32) -> i32 {
+    let sum: i32 = 0;
+    let byte_acc: i32 = 0;
+    let bit_num: i32 = 0;
+    let y: i32 = 0;
+
+    while y < size {
+        let ci: f64 = (2.0 * f64(y) / f64(size)) - 1.0;
+        let x: i32 = 0;
+        while x < size {
+            let zrzr: f64 = 0.0;
+            let zi: f64 = 0.0;
+            let zizi: f64 = 0.0;
+            let cr: f64 = (2.0 * f64(x) / f64(size)) - 1.5;
+
+            let z: i32 = 0;
+            let not_done: bool = true;
+            let escape: i32 = 0;
+            while not_done && z < 50 {
+                let zr: f64 = zrzr - zizi + cr;
+                zi = 2.0 * zr * zi + ci;
+                zrzr = zr * zr;
+                zizi = zi * zi;
+
+                if zrzr + zizi > 4.0 {
+                    not_done = false;
+                    escape = 1;
+                }
+                z += 1;
+            }
+
+            byte_acc = (byte_acc * 2) + escape;
+            bit_num += 1;
+            if bit_num == 8 {
+                sum ^= byte_acc;
+                byte_acc = 0;
+                bit_num = 0;
+            } else {
+                if x == size - 1 {
+                    let shift: i32 = 1;
+                    let j: i32 = 0;
+                    while j < 8 - bit_num {
+                        shift *= 2;
+                        j += 1;
+                    }
+                    byte_acc *= shift;
+                    sum ^= byte_acc;
+                    byte_acc = 0;
+                    bit_num = 0;
+                }
+            }
+            x += 1;
+        }
+        y += 1;
+    }
+    return sum;
+}
+
+fn main() {
+    let ITER: u64 = 69;  // bench-scale
+    let iter: u64 = 0;
+    while iter < ITER {
+        assert mandelbrot(500) == 191: "mand: checksum is not correct";
+        iter += 1;
+    }
+}

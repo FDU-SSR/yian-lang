@@ -1,0 +1,15 @@
+{
+  "name": "fann",
+  "source": "BG",
+  "tags": [
+    "numeric"
+  ],
+  "argv": [],
+  "check": {
+    "rc": 51,
+    "stdout_contains": [
+      "51"
+    ]
+  },
+  "note": "rc==51, stdout 含 \"51\""
+}

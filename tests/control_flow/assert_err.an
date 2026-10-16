@@ -1,8 +1,0 @@
-// Test failing assertions
-//
-// Expected runtime error: This should fail
-
-fn main() -> i32 {
-    assert false: "This should fail\n";
-    return 0;
-}

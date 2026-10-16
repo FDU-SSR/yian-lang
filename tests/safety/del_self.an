@@ -1,0 +1,18 @@
+// `del self` applies the ordinary deletion checks to the method receiver.
+// This receiver refers to a stack value, so deletion ends with a runtime safety error.
+
+struct S {
+    v: i32,
+}
+
+impl S {
+    pub fn bad() {
+        del self;
+    }
+}
+
+fn main() {
+    let s = S(1);
+    let r: S& = &s;
+    r.bad();
+}

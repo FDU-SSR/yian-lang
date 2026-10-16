@@ -1,0 +1,48 @@
+struct Box<T> {
+    pub value: T,
+}
+
+struct Tag<T> {
+    pub value: i32,
+}
+
+enum Choice<T> {
+    Value { value: i32 },
+    Other { value: T },
+}
+
+fn identity<T>(value: i32) -> i32 {
+    value
+}
+
+fn read<T>(box: Box<T>) -> T {
+    box.value
+}
+
+fn main() {
+    assert identity<bool>(7) == 7;
+    assert Tag<bool>(7).value == 7;
+    assert read(Box<i32>(9)) == 9;
+
+    let choice = Choice<bool>.Value(11);
+
+    match choice {
+        Value(value) => assert value == 11,
+        Other(_) => @panic("unexpected variant"),
+    }
+
+    // Both constructor forms derive the enum identity from the selected payload.
+    let positional = Choice.Other(true);
+
+    match positional {
+        Other(value) => assert value,
+        Value(_) => @panic("unexpected variant"),
+    }
+
+    let named = Choice.Other(value=false);
+
+    match named {
+        Other(value) => assert !value,
+        Value(_) => @panic("unexpected variant"),
+    }
+}

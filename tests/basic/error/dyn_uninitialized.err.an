@@ -1,0 +1,7 @@
+// User code cannot ask for uninitialized heap memory: a bare type in
+// initializer position is rejected with a diagnostic that names `@alloc<T>(n)`.
+
+fn main() {
+    let p: i32* = dyn[4] i32;
+    del p;
+}

@@ -1,0 +1,132 @@
+from std.core.drop import Drop;
+from std.core.option import Option;
+from std.core.string import String;
+from std.core.vec import Vec;
+from std.core.path import PathBuf;
+from anx.diagnostics.model import Diagnostic, release_diagnostics;
+
+pub enum PackageKind { Bin, Lib, Hybrid }
+
+pub struct DependencySpec { key: String, path: PathBuf }
+
+impl DependencySpec {
+    static pub fn new(key: str, path: PathBuf) -> Self { Self(key=String.from(&key), path=path) }
+    pub fn key() -> str { self.key.as_str() }
+    pub fn path() -> str { self.path.as_str() }
+}
+
+impl Drop for DependencySpec {
+    pub fn drop() { self.key.drop(); self.path.drop(); }
+}
+
+pub struct NativeLLVM { major: u64, components: Vec<String>, sources: Vec<PathBuf> }
+
+impl NativeLLVM {
+    static pub fn new(major: u64, components: Vec<String>, sources: Vec<PathBuf>) -> Self {
+        Self(major=major, components=components, sources=sources)
+    }
+    pub fn major() -> u64 { self.major }
+    pub fn components_len() -> u64 { self.components.len() }
+    pub fn component(index: u64) -> str { self.components[index].as_str() }
+    pub fn sources_len() -> u64 { self.sources.len() }
+    pub fn source(index: u64) -> str { self.sources[index].as_str() }
+
+    pub fn clone_native() -> NativeLLVM {
+        let components = Vec<String>.new();
+        let index = 0u64;
+        while index < self.components.len() {
+            components.push(String.from(&self.components[index].as_str()));
+            index += 1u64;
+        }
+        let sources = Vec<PathBuf>.new();
+        index = 0u64;
+        while index < self.sources.len() {
+            sources.push(PathBuf.from(self.sources[index].as_str()));
+            index += 1u64;
+        }
+        NativeLLVM.new(self.major, components, sources)
+    }
+}
+
+impl Drop for NativeLLVM {
+    pub fn drop() {
+        let index = 0u64;
+        while index < self.components.len() { self.components[index].drop(); index += 1u64; }
+        self.components.drop();
+        index = 0u64;
+        while index < self.sources.len() { self.sources[index].drop(); index += 1u64; }
+        self.sources.drop();
+    }
+}
+
+pub struct Manifest {
+    name: String,
+    kind: PackageKind,
+    entry: Option<String>,
+    version: String,
+    dependencies: Vec<DependencySpec>,
+    dev_dependencies: Vec<DependencySpec>,
+    ffi_allowed: bool,
+    native_llvm: Option<NativeLLVM>,
+}
+
+impl Manifest {
+    static pub fn new(name: str, kind: PackageKind, entry: Option<String>, version: str,
+        dependencies: Vec<DependencySpec>, dev_dependencies: Vec<DependencySpec>, ffi_allowed: bool,
+        native_llvm: Option<NativeLLVM>) -> Self {
+        Self(name=String.from(&name), kind=kind, entry=entry, version=String.from(&version),
+            dependencies=dependencies, dev_dependencies=dev_dependencies, ffi_allowed=ffi_allowed,
+            native_llvm=native_llvm)
+    }
+    pub fn name() -> str { self.name.as_str() }
+    pub fn kind() -> PackageKind { self.kind }
+    pub fn entry() -> Option<str> {
+        match self.entry { Some(value) => Option<str>.Some(value.as_str()), None => Option<str>.None }
+    }
+    pub fn version() -> str { self.version.as_str() }
+    pub fn dependency_count() -> u64 { self.dependencies.len() }
+    pub fn dependency(index: u64) -> DependencySpec& { &self.dependencies[index] }
+    pub fn dev_dependency_count() -> u64 { self.dev_dependencies.len() }
+    pub fn dev_dependency(index: u64) -> DependencySpec& { &self.dev_dependencies[index] }
+    pub fn allows_ffi() -> bool { self.ffi_allowed }
+    pub fn native_llvm() -> Option<NativeLLVM&> {
+        match &self.native_llvm { Some(value) => Option<NativeLLVM&>.Some(value), None => Option<NativeLLVM&>.None }
+    }
+}
+
+impl Drop for Manifest {
+    pub fn drop() {
+        self.name.drop();
+        match self.entry.take() { Some(value) => value.drop(), None => {}, }
+        self.version.drop();
+        let index = 0u64;
+        while index < self.dependencies.len() { self.dependencies[index].drop(); index += 1u64; }
+        self.dependencies.drop();
+        index = 0u64;
+        while index < self.dev_dependencies.len() { self.dev_dependencies[index].drop(); index += 1u64; }
+        self.dev_dependencies.drop();
+        match self.native_llvm.take() { Some(value) => value.drop(), None => {}, }
+    }
+}
+
+pub struct ManifestReport { manifest: Option<Manifest>, diagnostics: Vec<Diagnostic> }
+
+impl ManifestReport {
+    static pub fn new(manifest: Option<Manifest>, diagnostics: Vec<Diagnostic>) -> Self {
+        Self(manifest=manifest, diagnostics=diagnostics)
+    }
+    pub fn take_manifest() -> Option<Manifest> { self.manifest.take() }
+    pub fn diagnostics() -> Vec<Diagnostic>& { &self.diagnostics }
+    pub fn take_diagnostics() -> Vec<Diagnostic> {
+        let result = self.diagnostics;
+        self.diagnostics = Vec<Diagnostic>.new();
+        result
+    }
+}
+
+impl Drop for ManifestReport {
+    pub fn drop() {
+        match self.manifest.take() { Some(value) => value.drop(), None => {}, }
+        release_diagnostics(&self.diagnostics);
+    }
+}

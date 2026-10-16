@@ -1,0 +1,56 @@
+// bench/fatptr/an/chase.an: node-size/cache-footprint microbenchmark.
+//
+// Chase a linked list. Each node contains i64 and Option<Node&>, so its size directly reflects
+//       representation size: raw 16 B, fat 32 B (24 B reference plus 8 B value). These are the endpoints of
+//       the node-size/cache-footprint curve. Exceed LLC capacity to expose differences in miss rates.
+// Scale: NODES at the // bench-scale marker; ROUNDS is fixed.
+// C reference: bench/fatptr/c/chase.c, same algorithm/scale with 16 B nodes.
+//
+// Build the chain tail-to-head, keeping head at the built prefix; each round follows it and sums value,
+//           then release every node with del.
+//
+// Both modes share this source; raw Option<Node&> is an 8 B pointer.
+from std.core.io import print;
+
+struct Node {
+    value: i64,
+    next: Option<Node&>,
+}
+
+fn main() {
+    let NODES: u64 = 4000000;  // bench-scale
+    let ROUNDS: u64 = 8;
+    let head: Option<Node&> = Option<Node&>.None;
+    let i: u64 = NODES;
+    while i > 0 {
+        head = Option<Node&>.Some(dyn Node(i64(i), head));
+        i -= 1;
+    }
+    let acc: i64 = 0;
+    let round: u64 = 0;
+    while round < ROUNDS {
+        let cur: Option<Node&> = head;
+        while true {
+            match cur {
+                None => { break; },
+                Some(node) => {
+                    acc = acc + node.value;
+                    cur = node.next;
+                }
+            }
+        }
+        round += 1;
+    }
+    assert acc == i64(ROUNDS) * (i64(NODES) * (i64(NODES) + 1) / 2): "chase checksum";
+    print("chase pass\n");
+    while true {
+        match head {
+            None => { break; },
+            Some(node) => {
+                let next: Option<Node&> = node.next;
+                del node;
+                head = next;
+            }
+        }
+    }
+}

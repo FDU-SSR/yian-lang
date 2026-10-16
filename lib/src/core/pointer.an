@@ -1,0 +1,24 @@
+from std.core.ops import Index;
+from std.core.range import Range;
+
+impl<T> Index<u64, T*> for T* {
+    fn index(index: u64&) -> T* {
+        *self + *index
+    }
+}
+
+impl<T> Index<Range<u64>, T[]> for T* {
+    fn index(range: Range<u64>&) -> T[] {
+        if (*range).start > (*range).end {
+            @runtime_fail("S001");
+        }
+        // Validate the end against the source pointer's remaining extent
+        // before forming the range length.  Pointer arithmetic performs the
+        // upper-bound check in fat mode; raw/no-check modes retain their
+        // existing diagnostic contract.
+        let end_ptr: T* = *self + (*range).end;
+        let start: T* = *self + (*range).start;
+        let len: u64 = (*range).end - (*range).start;
+        @slice_from_parts(start, len)
+    }
+}

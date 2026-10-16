@@ -1,0 +1,106 @@
+// Test structs containing zero-sized fields, and all-zero-sized structs.
+// A ZST field occupies a `{}` slot: it adds no size and does not shift the
+// index of neighbouring real fields. A struct whose every field is zero-sized
+// is itself zero-sized.
+//
+// Expected output: 0
+
+struct Mixed { a: i32, z: void }
+struct AllZst { x: void, y: void }
+
+fn unit_struct() -> void { return; }
+
+fn case_struct_layout_operations() {
+    let s: Mixed = Mixed(10, unit_struct());
+    s.a = 42;
+    s.z = unit_struct(); // no-op store into a zero-sized field
+    assert s.a == 42: "real field around a zst field works";
+    assert @sizeof<Mixed> == @sizeof<i32>: "zst field adds no size";
+
+    let az: AllZst = AllZst(unit_struct(), unit_struct());
+    az.x = unit_struct(); // field access on an all-zst struct
+    assert @sizeof<AllZst> == 0: "all-zst struct is zero-sized";
+
+}
+
+struct WrapMixed { p: (i32, void) }
+struct WrapAll { p: (void, void) }
+
+fn unit_tuple() -> void { return; }
+
+fn case_tuple_layout_operations() {
+    let m: (i32, void) = (7, unit_tuple());
+    assert m[0] == 7: "real tuple element around a zst element works";
+
+    // all-zst tuple: construct and no-op copy, must not crash
+    let z: (void, void) = (unit_tuple(), unit_tuple());
+    let z2: (void, void) = z;
+
+    assert @sizeof<WrapMixed> == @sizeof<i32>: "(i32, void) contributes only i32";
+    assert @sizeof<WrapAll> == 0: "(void, void) is zero-sized";
+
+}
+
+fn case_zero_array_operations() {
+    let a: i32[0];
+    let b: i32[0];
+    b = a; // no-op copy of a zero-sized array
+
+    // an array whose element is itself zero-sized is also zero-sized
+    let c: void[4];
+    let d: void[4];
+    d = c;
+
+    assert @sizeof<void> == 0: "@sizeof<void> should be 0";
+}
+
+struct NoZst { a: i32, c: f64 } // i32+f64, no zst field
+struct Mixed3 { a: i32, z: void, c: f64 }
+struct Mixed5 { a: void, b: i32, c: void, d: f64, e: void }
+struct NestedZ { x: (void, void), y: i32 }
+struct AllZst2 { a: void, b: ! }
+
+fn case_mixed_layouts() {
+    // mixed tuple / struct with zst fields — compare with equivalent no-zst struct
+    assert @sizeof<(i32, void, f64)> == @sizeof<NoZst>: "triple with zst";
+    assert @sizeof<(void, i32, void, f64, void)> == @sizeof<NoZst>: "quintuple with 3 zst";
+    assert @sizeof<Mixed3> == @sizeof<NoZst>: "Mixed3 struct";
+
+    // ZST array with non-zero length
+    assert @sizeof<void[4]> == 0: "void[4]";
+    assert @sizeof<void[2][3]> == 0: "void[2][3] nested zst array";
+
+    // all-zst struct
+    assert @sizeof<AllZst2> == 0: "all-zst struct with never";
+
+}
+
+impl<T, const N: u64> T[N] {
+    fn count() -> u64 { N }
+}
+
+fn case_extended_arrays() {
+    // non-zero length ZST arrays (element is ZST → whole array is ZST)
+    assert @sizeof<void[3]> == 0: "void[3]";
+    assert @sizeof<void[100]> == 0: "void[100]";
+
+    // multi-dimensional ZST arrays
+    assert @sizeof<void[2][4]> == 0: "void[2][4]";
+
+    // ZST array in generic context
+    let arr: void[5];
+    assert arr.count() == 5: "generic count on ZST array";
+
+    // zero-length array of non-ZST element (length=0 → whole array is ZST)
+    assert @sizeof<i32[0]> == 0: "i32[0]";
+    assert @sizeof<i32[0][5]> == 0: "i32[0][5] nested zero-length";
+
+}
+
+fn main() {
+    case_struct_layout_operations();
+    case_tuple_layout_operations();
+    case_zero_array_operations();
+    case_mixed_layouts();
+    case_extended_arrays();
+}

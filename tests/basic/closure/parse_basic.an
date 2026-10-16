@@ -1,0 +1,79 @@
+// Closure parse test: basic capture and call.
+//
+// Expected output: 0
+
+fn case_basic_capture_call() {
+    let x: i32 = 5;
+    let c = |x_in = x| (y: i32) -> i32 {
+        x_in + y
+    };
+    assert c(10) == 15: "basic closure call";
+}
+
+fn case_expression_capture() {
+    let a: i32 = 3;
+    let b: i32 = 4;
+    let c = |sum = a + b| (x: i32) -> i32 {
+        sum * x
+    };
+    assert c(2) == 14: "expression capture closure";
+}
+
+fn case_multiple_captures() {
+    let a: i32 = 1;
+    let b: i32 = 2;
+    let c = |v1 = a, v2=b| (x: i32) -> i32 {
+        v1 + v2 + x
+    };
+    assert c(3) == 6: "multi-capture closure";
+}
+
+fn case_no_capture() {
+    let c = || (x: i32) -> i32 {
+        x * 2
+    };
+    assert c(21) == 42: "no-capture closure call";
+}
+
+fn case_no_parameters() {
+    let x: i32 = 42;
+    let c = |x_in = x| () -> i32 {
+        x_in
+    };
+    assert c() == 42: "no-param closure call";
+}
+
+fn case_pointer_capture() {
+    let x: i32 = 10;
+    let c = |p = &x| (d: i32) -> void {
+        *p = *p + d;
+    };
+    c(5);
+    assert x == 15: "pointer capture closure";
+}
+
+fn case_void_return() {
+    let x: i32 = 0;
+    let c = |x_ptr = &x| (delta: i32) {
+        *x_ptr = *x_ptr + delta;
+    };
+    c(5);
+    assert x == 5: "closure with void return";
+}
+
+fn case_non_simple_aggregate_capture() {
+    let v: Vec<i32> = Vec<i32>.new();
+    let c = |v_in = v| () {};
+    assert v.len() == 0;
+}
+
+fn main() {
+    case_basic_capture_call();
+    case_expression_capture();
+    case_multiple_captures();
+    case_no_capture();
+    case_no_parameters();
+    case_pointer_capture();
+    case_void_return();
+    case_non_simple_aggregate_capture();
+}

@@ -1,0 +1,7 @@
+fn main() {
+    let value: Option<i32> = Option<i32>.Some(1);
+    let result: i32 = match value {
+        Some(x) | None => 1,
+        _ => 0,
+    };
+}

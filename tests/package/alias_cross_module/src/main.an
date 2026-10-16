@@ -1,0 +1,14 @@
+// typedef: an alias imported from another unit, used in a trait impl and a call.
+// An impl on an imported type alias is available through the aliased type.
+// Expected output: (exit 0)
+
+from aliasdemo.kinds import Code;
+
+trait Describe { fn describe() -> u64; }
+
+impl Describe for Code { fn describe() -> u64 { return 9u64; } }
+
+fn main() {
+    let c: u64 = 1u64;
+    assert c.describe() == 9u64;
+}

@@ -1,0 +1,11 @@
+// A representable large allocation succeeds, and its final element can be read/written.
+//
+// dyn[2^30] 0u8 occupies 1 GB, far below 2^64; i128 overflow checks must not reject it.
+// Write/read the final element (2^30-1) to verify the entire allocation.
+
+fn main() {
+    let p: u8* = dyn[1073741824] 0u8; // 2^30 elements * 1 B = 1 GB.
+    p[1073741823] = 42; // Write the final element.
+    assert p[1073741823] == 42: "large alloc ok";
+    del p;
+}

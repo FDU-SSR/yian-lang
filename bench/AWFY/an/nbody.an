@@ -1,0 +1,185 @@
+// bench/AWFY/an/nbody.an: N-body gravitational simulation (shootout nbody).
+//
+// Reference: AWFY benchmarks/Java/src/NBody.java; see AWFY LICENSE.md.
+// Semantic reference: bench/AWFY/c/nbody.c, the project's C implementation.
+// Scale: each work unit performs 250000 advance steps; final energy is
+//       -0.1690859889909308。
+//
+// Distances use std.num.f64.sqrt (llvm.sqrt.f64 -> sqrtsd), the same primitive as the C reference's
+//     libm sqrt; assert the exact official final energy.
+//
+// Algorithm: Newtonian integration for five bodies (sun and four planets). advance() updates
+//       pairwise velocities and positions; energy() checks total energy against the official result.
+//
+// Array representation: bodies in advance/energy/offset_momentum/init_bodies uses
+//   Planet[] block-access semantics without an index field. main binds bodies directly as Planet[]:
+//   let x:T[]=dyn[n] T; deleting the whole view with del T[] is valid.
+//
+// Fat and raw modes share this source.
+// Use inferred dyn types and x[0u64..n] range views for both modes, retaining fat-mode checks.
+from std.num.f64 import sqrt;
+
+struct Planet {
+    x: f64,
+    y: f64,
+    z: f64,
+    vx: f64,
+    vy: f64,
+    vz: f64,
+    mass: f64,
+}
+
+fn advance(nbodies: u64, bodies: Planet[], dt: f64) {
+    let i: u64 = 0;
+    while i < nbodies {
+        let b: Planet = bodies[i];
+        let j: u64 = i + 1;
+        while j < nbodies {
+            let b2: Planet = bodies[j];
+
+            let dx: f64 = b.x - b2.x;
+            let dy: f64 = b.y - b2.y;
+            let dz: f64 = b.z - b2.z;
+
+            let distanced: f64 = dx * dx + dy * dy + dz * dz;
+            let distance: f64 = sqrt(distanced);
+            let mag: f64 = dt / (distanced * distance);
+
+            b.vx -= dx * b2.mass * mag;
+            b.vy -= dy * b2.mass * mag;
+            b.vz -= dz * b2.mass * mag;
+
+            b2.vx += dx * b.mass * mag;
+            b2.vy += dy * b.mass * mag;
+            b2.vz += dz * b.mass * mag;
+
+            bodies[j] = b2;
+            j += 1;
+        }
+        bodies[i] = b;
+        i += 1;
+    }
+
+    let k: u64 = 0;
+    while k < nbodies {
+        let b3: Planet = bodies[k];
+        b3.x += b3.vx * dt;
+        b3.y += b3.vy * dt;
+        b3.z += b3.vz * dt;
+        bodies[k] = b3;
+        k += 1;
+    }
+}
+
+fn energy(nbodies: u64, bodies: Planet[]) -> f64 {
+    let e: f64 = 0.0;
+    let i: u64 = 0;
+    while i < nbodies {
+        let b: Planet = bodies[i];
+
+        e += 0.5 * b.mass * (b.vx * b.vx + b.vy * b.vy + b.vz * b.vz);
+
+        let j: u64 = i + 1;
+        while j < nbodies {
+            let b2: Planet = bodies[j];
+
+            let dx: f64 = b.x - b2.x;
+            let dy: f64 = b.y - b2.y;
+            let dz: f64 = b.z - b2.z;
+
+            let distance: f64 = sqrt(dx * dx + dy * dy + dz * dz);
+
+            e -= (b.mass * b2.mass) / distance;
+            j += 1;
+        }
+        i += 1;
+    }
+    return e;
+}
+
+fn offset_momentum(nbodies: u64, bodies: Planet[]) {
+    let px: f64 = 0.0;
+    let py: f64 = 0.0;
+    let pz: f64 = 0.0;
+    let pi: f64 = 3.141592653589793;
+    let solar_mass: f64 = 4.0 * pi * pi;
+
+    let i: u64 = 0;
+    while i < nbodies {
+        let b: Planet = bodies[i];
+        px += b.vx * b.mass;
+        py += b.vy * b.mass;
+        pz += b.vz * b.mass;
+        i += 1;
+    }
+
+    let b0: Planet = bodies[0];
+    b0.vx = -px / solar_mass;
+    b0.vy = -py / solar_mass;
+    b0.vz = -pz / solar_mass;
+    bodies[0] = b0;
+}
+
+fn init_bodies(bodies: Planet[]) {
+    let pi: f64 = 3.141592653589793;
+    let solar_mass: f64 = 4.0 * pi * pi;
+    let days_per_year: f64 = 365.24;
+
+    bodies[0] = Planet(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, solar_mass);
+    bodies[1] = Planet(
+        4.84143144246472090e+00,
+        -1.16032004402742839e+00,
+        -1.03622044471123109e-01,
+        1.66007664274403694e-03 * days_per_year,
+        7.69901118419740425e-03 * days_per_year,
+        -6.90460016972063023e-05 * days_per_year,
+        9.54791938424326609e-04 * solar_mass
+    );
+    bodies[2] = Planet(
+        8.34336671824457987e+00,
+        4.12479856412430479e+00,
+        -4.03523417114321381e-01,
+        -2.76742510726862411e-03 * days_per_year,
+        4.99852801234917238e-03 * days_per_year,
+        2.30417297573763929e-05 * days_per_year,
+        2.85885980666130812e-04 * solar_mass
+    );
+    bodies[3] = Planet(
+        1.28943695621391310e+01,
+        -1.51111514016986312e+01,
+        -2.23307578892655734e-01,
+        2.96460137564761618e-03 * days_per_year,
+        2.37847173959480950e-03 * days_per_year,
+        -2.96589568540237556e-05 * days_per_year,
+        4.36624404335156298e-05 * solar_mass
+    );
+    bodies[4] = Planet(
+        1.53796971148509165e+01,
+        -2.59193146099879641e+01,
+        1.79258772950371181e-01,
+        2.68067772490389322e-03 * days_per_year,
+        1.62824170038242295e-03 * days_per_year,
+        -9.51592254519715870e-05 * days_per_year,
+        5.15138902046611451e-05 * solar_mass
+    );
+}
+
+fn main() {
+    let ITER: u64 = 196;  // bench-scale
+    let iter: u64 = 0;
+    while iter < ITER {
+        let bodies = dyn[5] Planet(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0);
+        let bs: Planet[] = bodies[0u64..5u64];
+        init_bodies(bs);
+        offset_momentum(5, bs);
+        let step: u64 = 0;
+        while step < 250000 {
+            advance(5, bs, 0.01);
+            step += 1;
+        }
+        let result: f64 = energy(5, bs);
+        assert result == -0.1690859889909308: "nbody: final energy is not correct";
+        del bodies;
+        iter += 1;
+    }
+}

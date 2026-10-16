@@ -1,0 +1,89 @@
+from std.core.string import String;
+from std.core.drop import Drop;
+
+pub enum Method {
+    Initialize,
+    Initialized,
+    Shutdown,
+    Exit,
+    DidOpen,
+    DidChange,
+    DidSave,
+    DidClose,
+    PublishDiagnostics,
+    Definition,
+    Hover,
+    DocumentSymbol,
+    SemanticTokensFull,
+    SemanticTokensRefresh,
+    Completion,
+    SignatureHelp,
+    References,
+    DocumentHighlight,
+    PrepareRename,
+    Rename,
+    Formatting,
+    CodeAction,
+    WorkspaceDidChangeWatchedFiles,
+    ApplyWorkspaceEdit,
+    RegisterCapability,
+    UnregisterCapability,
+    Unknown { name: String },
+}
+
+impl Method {
+    static pub fn from_name(name: str) -> Self {
+        match name {
+            "initialize" => Self.Initialize,
+            "initialized" => Self.Initialized,
+            "shutdown" => Self.Shutdown,
+            "exit" => Self.Exit,
+            "textDocument/didOpen" => Self.DidOpen,
+            "textDocument/didChange" => Self.DidChange,
+            "textDocument/didSave" => Self.DidSave,
+            "textDocument/didClose" => Self.DidClose,
+            "textDocument/publishDiagnostics" => Self.PublishDiagnostics,
+            "textDocument/definition" => Self.Definition,
+            "textDocument/hover" => Self.Hover,
+            "textDocument/documentSymbol" => Self.DocumentSymbol,
+            "textDocument/semanticTokens/full" => Self.SemanticTokensFull,
+            "workspace/semanticTokens/refresh" => Self.SemanticTokensRefresh,
+            "textDocument/completion" => Self.Completion,
+            "textDocument/signatureHelp" => Self.SignatureHelp,
+            "textDocument/references" => Self.References,
+            "textDocument/documentHighlight" => Self.DocumentHighlight,
+            "textDocument/prepareRename" => Self.PrepareRename,
+            "textDocument/rename" => Self.Rename,
+            "textDocument/formatting" => Self.Formatting,
+            "textDocument/codeAction" => Self.CodeAction,
+            "workspace/didChangeWatchedFiles" => Self.WorkspaceDidChangeWatchedFiles,
+            "workspace/applyEdit" => Self.ApplyWorkspaceEdit,
+            "client/registerCapability" => Self.RegisterCapability,
+            "client/unregisterCapability" => Self.UnregisterCapability,
+            _ => Self.Unknown(String.from(&name)),
+        }
+    }
+
+    pub fn name() -> str {
+        match self {
+            Initialize => "initialize", Initialized => "initialized", Shutdown => "shutdown", Exit => "exit",
+            DidOpen => "textDocument/didOpen", DidChange => "textDocument/didChange",
+            DidSave => "textDocument/didSave", DidClose => "textDocument/didClose",
+            PublishDiagnostics => "textDocument/publishDiagnostics", Definition => "textDocument/definition",
+            Hover => "textDocument/hover", DocumentSymbol => "textDocument/documentSymbol",
+            SemanticTokensFull => "textDocument/semanticTokens/full",
+            SemanticTokensRefresh => "workspace/semanticTokens/refresh",
+            Completion => "textDocument/completion", SignatureHelp => "textDocument/signatureHelp",
+            References => "textDocument/references", DocumentHighlight => "textDocument/documentHighlight",
+            PrepareRename => "textDocument/prepareRename", Rename => "textDocument/rename",
+            Formatting => "textDocument/formatting", CodeAction => "textDocument/codeAction",
+            WorkspaceDidChangeWatchedFiles => "workspace/didChangeWatchedFiles",
+            ApplyWorkspaceEdit => "workspace/applyEdit", RegisterCapability => "client/registerCapability",
+            UnregisterCapability => "client/unregisterCapability", Unknown(name) => name.as_str(),
+        }
+    }
+}
+
+impl Drop for Method {
+    pub fn drop() { if let Unknown(name) = self { name.drop(); }; }
+}

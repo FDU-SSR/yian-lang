@@ -1,0 +1,338 @@
+from __future__ import annotations
+
+from collections.abc import Sequence
+from typing import TYPE_CHECKING
+
+from yianc.analysis.ty import ty as Type
+from yianc.error import CompilerError
+from yianc.frontend.lex.position import SrcSpan
+
+if TYPE_CHECKING:
+    from yianc.analysis.ty.context import TypeCtx
+
+
+class TypeSpace:
+    def __init__(self, ctx: TypeCtx):
+        self.__ctx = ctx
+        self.__space: dict[int, Type.Ty] = {}
+        self.__next_id = 500
+
+        self.__pointer_cache: dict[int, int] = {}
+        self.__cptr_cache: dict[int, int] = {}
+        self.__ref_cache: dict[int, int] = {}
+        self.__trait_object_cache: dict[int, int] = {}
+        self.__slice_cache: dict[int, int] = {}
+        self.__array_cache: dict[tuple[int, int], int] = {}
+        self.__tuple_cache: dict[tuple[int, ...], int] = {}
+        self.__function_pointer_cache: dict[tuple[tuple[int, ...], int], int] = {}
+        self.__instance_cache: dict[tuple[int, tuple[int, ...]], int] = {}
+        self.__initialized_definitions: set[int] = set()
+        self.__literal_cache: dict[tuple[int | bool, int], int] = {}
+        self.__self_type_cache: dict[int, int] = {}
+
+        self.__add_intrinsic_types()
+
+    def __iter__(self):
+        return iter(self.__space)
+
+    def __contains__(self, type_id: int) -> bool:
+        return type_id in self.__space
+
+    def __getitem__(self, type_id: int) -> Type.Ty:
+        if type_id not in self.__space:
+            raise CompilerError(f"Type ID {type_id} does not exist in the type context")
+        return self.__space[type_id]
+
+    def items(self):
+        return self.__space.items()
+
+    def __setitem__(self, type_id: int, ty: Type.Ty) -> None:
+        self.__space[type_id] = ty
+
+    def __force_add_type(self, ty: Type.Ty) -> None:
+        self.__space[ty.type_id] = ty
+
+    def __add_intrinsic_types(self) -> None:
+        self.__force_add_type(Type.NeverType(type_id=self.__ctx.never_id))
+        self.__force_add_type(Type.VoidType(type_id=self.__ctx.void_id))
+        self.__force_add_type(Type.ErrorType(type_id=self.__ctx.error_id))
+        self.__force_add_type(Type.BoolType(type_id=self.__ctx.bool_id))
+        self.__force_add_type(Type.CharType(type_id=self.__ctx.char_id))
+        self.__force_add_type(Type.StrType(type_id=self.__ctx.str_id))
+
+        self.__force_add_type(Type.IntType(type_id=self.__ctx.i8_id, size=1, signed=True))
+        self.__force_add_type(Type.IntType(type_id=self.__ctx.i16_id, size=2, signed=True))
+        self.__force_add_type(Type.IntType(type_id=self.__ctx.i32_id, size=4, signed=True))
+        self.__force_add_type(Type.IntType(type_id=self.__ctx.i64_id, size=8, signed=True))
+
+        self.__force_add_type(Type.IntType(type_id=self.__ctx.u8_id, size=1, signed=False))
+        self.__force_add_type(Type.IntType(type_id=self.__ctx.u16_id, size=2, signed=False))
+        self.__force_add_type(Type.IntType(type_id=self.__ctx.u32_id, size=4, signed=False))
+        self.__force_add_type(Type.IntType(type_id=self.__ctx.u64_id, size=8, signed=False))
+
+        self.__force_add_type(Type.FloatType(type_id=self.__ctx.f16_id, size=2))
+        self.__force_add_type(Type.FloatType(type_id=self.__ctx.f32_id, size=4))
+        self.__force_add_type(Type.FloatType(type_id=self.__ctx.f64_id, size=8))
+
+        self.__force_add_type(Type.IntLiteralType(type_id=self.__ctx.int_literal_id))
+        self.__force_add_type(Type.FloatLiteralType(type_id=self.__ctx.float_literal_id))
+        self.__force_add_type(Type.CScalarType(type_id=self.__ctx.c_int_id, size=4, signed=True, c_name="c_int"))
+        self.__force_add_type(Type.CScalarType(type_id=self.__ctx.c_uint_id, size=4, signed=False, c_name="c_uint"))
+        self.__force_add_type(Type.CScalarType(type_id=self.__ctx.c_size_id, size=8, signed=False, c_name="c_size"))
+        self.__force_add_type(Type.CScalarType(type_id=self.__ctx.c_char_id, size=1, signed=True, c_name="c_char"))
+
+    def __add_type(self, ty: Type.Ty) -> int:
+        if ty.type_id == -1:
+            ty.type_id = self.__next_id
+            self.__next_id += 1
+
+        if ty.type_id in self.__space:
+            raise CompilerError(f"Type ID {ty.type_id} already exists in the type context")
+
+        self.__space[ty.type_id] = ty
+        return ty.type_id
+
+    def alloc_generic(self, name: str) -> int:
+        return self.__add_type(Type.GenericType(type_id=-1, name=name))
+
+    def alloc_self_type(self, trait_type_id: int) -> int:
+        if trait_type_id in self.__self_type_cache:
+            return self.__self_type_cache[trait_type_id]
+
+        self_type_id = self.__add_type(Type.SelfType(type_id=-1, trait_type_id=trait_type_id))
+        self.__self_type_cache[trait_type_id] = self_type_id
+        return self_type_id
+
+    def alloc_const_generic(self, name: str, value_type: int) -> int:
+        return self.__add_type(Type.ConstGenericType(type_id=-1, name=name, value_type=value_type))
+
+    def alloc_literal_value(self, value: int | bool, value_type: int) -> int:
+        key = (value, value_type)
+        if key in self.__literal_cache:
+            return self.__literal_cache[key]
+        ty_id = self.__add_type(Type.LiteralValueType(type_id=-1, value=value, value_type=value_type))
+        self.__literal_cache[key] = ty_id
+        return ty_id
+
+    def alloc_pointer(self, pointee_type: int) -> int:
+        if pointee_type in self.__pointer_cache:
+            return self.__pointer_cache[pointee_type]
+
+        pointer_ty = Type.PointerType(type_id=-1, pointee_type=pointee_type)
+        pointer_ty_id = self.__add_type(pointer_ty)
+        self.__pointer_cache[pointee_type] = pointer_ty_id
+        return pointer_ty_id
+
+    def alloc_cptr(self, pointee_type: int) -> int:
+        if pointee_type not in self.__cptr_cache:
+            self.__cptr_cache[pointee_type] = self.__add_type(Type.CPtrType(type_id=-1, pointee_type=pointee_type))
+        return self.__cptr_cache[pointee_type]
+
+    def alloc_opaque(self, name: str, span: SrcSpan) -> int:
+        return self.__add_type(Type.OpaqueType(type_id=-1, name=name, span=span))
+
+    def alloc_ref(self, pointee_type: int) -> int:
+        if pointee_type in self.__ref_cache:
+            return self.__ref_cache[pointee_type]
+
+        ref_ty = Type.RefType(type_id=-1, pointee_type=pointee_type)
+        ref_ty_id = self.__add_type(ref_ty)
+        self.__ref_cache[pointee_type] = ref_ty_id
+        return ref_ty_id
+
+    def alloc_trait_object(self, trait_type_id: int) -> int:
+        if trait_type_id in self.__trait_object_cache:
+            return self.__trait_object_cache[trait_type_id]
+        object_ty = Type.TraitObjectType(type_id=-1, trait_type_id=trait_type_id)
+        object_ty_id = self.__add_type(object_ty)
+        self.__trait_object_cache[trait_type_id] = object_ty_id
+        return object_ty_id
+
+    def alloc_slice(self, element_type: int) -> int:
+        if element_type in self.__slice_cache:
+            return self.__slice_cache[element_type]
+
+        slice_ty = Type.SliceType(type_id=-1, element_type=element_type)
+        slice_ty_id = self.__add_type(slice_ty)
+        self.__slice_cache[element_type] = slice_ty_id
+        return slice_ty_id
+
+    def alloc_array(self, element_type: int, length: int) -> int:
+        # length is a TypeId: LiteralValueType (concrete) or ConstGenericType (generic)
+        key = (element_type, length)
+        if key in self.__array_cache:
+            return self.__array_cache[key]
+
+        array_ty = Type.ArrayType(type_id=-1, element_type=element_type, length=length)
+        array_ty_id = self.__add_type(array_ty)
+        self.__array_cache[key] = array_ty_id
+        return array_ty_id
+
+    def alloc_tuple(self, element_types: Sequence[int]) -> int:
+        key = tuple(element_types)
+        if key in self.__tuple_cache:
+            return self.__tuple_cache[key]
+
+        tuple_ty = Type.TupleType(type_id=-1, element_types=key)
+        tuple_ty_id = self.__add_type(tuple_ty)
+        self.__tuple_cache[key] = tuple_ty_id
+        return tuple_ty_id
+
+    def alloc_function_pointer(self, param_types: Sequence[int], return_type: int) -> int:
+        key = (tuple(param_types), return_type)
+        if key in self.__function_pointer_cache:
+            return self.__function_pointer_cache[key]
+
+        function_pointer_ty = Type.FunctionPointerType(type_id=-1, parameter_types=key[0], return_type=return_type)
+        function_pointer_ty_id = self.__add_type(function_pointer_ty)
+        self.__function_pointer_cache[key] = function_pointer_ty_id
+        return function_pointer_ty_id
+
+
+    def alloc_struct(self, name: str, span: SrcSpan, *, intrinsic: bool = False) -> int:
+        struct_def = Type.StructDef(name=name, span=span)
+        struct_ty = Type.StructType(type_id=-1, custom_def=struct_def)
+
+        if intrinsic and name == "Range":
+            struct_ty.type_id = self.__ctx.Range_id
+
+        return self.__add_type(struct_ty)
+
+    def alloc_unnamed_struct(self, owner: str, field_names: list[str], field_types: list[int], generics: Sequence[int], span: SrcSpan, field_spans: list[SrcSpan] | None = None) -> int:
+        if len(field_names) != len(field_types):
+            raise CompilerError(f"Field names and types count mismatch for unnamed struct in {owner}")
+
+        struct_def = Type.StructDef(name=f"{owner}::{{unnamed}}", span=span)
+        for index, (field_name, field_type) in enumerate(zip(field_names, field_types)):
+            # `field_spans` keeps the written name of fields that came from an
+            # enum variant's payload declaration, so an editor can jump to them.
+            field_span = None if field_spans is None else field_spans[index]
+            struct_def.fields.append(Type.StructField(name=field_name, type_id=field_type, access_mode=Type.AccessMode.Public, index=index, span=field_span))
+        struct_ty = Type.StructType(type_id=-1, custom_def=struct_def)
+        type_id = self.__add_type(struct_ty)
+        self.bind_template(type_id, generics)
+        return type_id
+
+    def alloc_enum(self, name: str, span: SrcSpan, *, intrinsic: bool = False) -> int:
+        enum_def = Type.EnumDef(name=name, span=span)
+        enum_ty = Type.EnumType(type_id=-1, custom_def=enum_def)
+
+        if intrinsic and name == "Option":
+            enum_ty.type_id = self.__ctx.Option_id
+        elif intrinsic and name == "Result":
+            enum_ty.type_id = self.__ctx.Result_id
+
+        return self.__add_type(enum_ty)
+
+    def alloc_trait(self, name: str, span: SrcSpan, *, intrinsic: bool = False) -> int:
+        trait_def = Type.TraitDef(name=name, span=span)
+        trait_ty = Type.TraitType(type_id=-1, custom_def=trait_def)
+
+        intrinsic_mapping = {
+            "Add": self.__ctx.add_id,
+            "Sub": self.__ctx.sub_id,
+            "Mul": self.__ctx.mul_id,
+            "Div": self.__ctx.div_id,
+            "Rem": self.__ctx.rem_id,
+            "Neg": self.__ctx.neg_id,
+            "BitAnd": self.__ctx.bitand_id,
+            "BitOr": self.__ctx.bitor_id,
+            "BitXor": self.__ctx.bitxor_id,
+            "BitNot": self.__ctx.bitnot_id,
+            "Shl": self.__ctx.shl_id,
+            "Shr": self.__ctx.shr_id,
+            "PartialEq": self.__ctx.partial_eq_id,
+            "PartialOrd": self.__ctx.partial_ord_id,
+            "Index": self.__ctx.index_id,
+            "Contains": self.__ctx.contains_id,
+            "Deref": self.__ctx.deref_id,
+            "Delete": self.__ctx.delete_id,
+            # Compound assignment
+            "AddAssign": self.__ctx.add_assign_id,
+            "SubAssign": self.__ctx.sub_assign_id,
+            "MulAssign": self.__ctx.mul_assign_id,
+            "DivAssign": self.__ctx.div_assign_id,
+            "RemAssign": self.__ctx.rem_assign_id,
+            "BitAndAssign": self.__ctx.bitand_assign_id,
+            "BitOrAssign": self.__ctx.bitor_assign_id,
+            "BitXorAssign": self.__ctx.bitxor_assign_id,
+            "ShlAssign": self.__ctx.shl_assign_id,
+            "ShrAssign": self.__ctx.shr_assign_id,
+        }
+        if intrinsic and name in intrinsic_mapping:
+            trait_ty.type_id = intrinsic_mapping[name]
+
+        return self.__add_type(trait_ty)
+
+    def alloc_method(self, name: str, span: SrcSpan) -> int:
+        method_def = Type.MethodDef(name=name, span=span)
+        method_ty = Type.MethodType(type_id=-1, custom_def=method_def)
+        return self.__add_type(method_ty)
+
+    def alloc_function(self, name: str, span: SrcSpan) -> int:
+        function_def = Type.FunctionDef(name=name, span=span)
+        function_ty = Type.FunctionType(type_id=-1, custom_def=function_def)
+        return self.__add_type(function_ty)
+
+    def alloc_closure(self, captured_vars: list[Type.CapturedVar], parameters: list[Type.Parameter], return_type: int, span: SrcSpan) -> int:
+        closure_ty = Type.ClosureType(
+            type_id=-1,
+            captured_vars=captured_vars,
+            parameters=parameters,
+            return_type=return_type,
+            span=span,
+        )
+        return self.__add_type(closure_ty)
+
+    def alloc_range(self, type_id: int) -> int:
+        return self.alloc_instance(self.__ctx.Range_id, [type_id])
+
+    def bind_template(self, type_id: int, generics: Sequence[int], arguments: Sequence[int] | None = None) -> None:
+        """Register a declaration's identity once its parameter binders exist."""
+        ty = self.__space[type_id]
+        if not isinstance(ty, Type.CustomType):
+            raise CompilerError("only named declarations have generic parameters")
+        definition_id = id(ty.custom_def)
+        if definition_id in self.__initialized_definitions:
+            raise CompilerError("generic declaration identity is already registered")
+        args = tuple(generics if arguments is None else arguments)
+        if len(args) != len(generics):
+            raise CompilerError("generic declaration argument count mismatch")
+        ty.custom_def.generics = tuple(generics)
+        ty.generic_args = args
+        self.__initialized_definitions.add(definition_id)
+        self.__instance_cache[(definition_id, args)] = type_id
+
+    def alloc_instance(self, type_id: int, generic_args: Sequence[int]) -> int:
+        ty = self.__space[type_id]
+        args = tuple(generic_args)
+
+        if not isinstance(ty, Type.CustomType):
+            raise ValueError(f"Type ID {type_id} is not a custom type and cannot be instantiated")
+        if len(ty.custom_def.generics) != len(args):
+            raise ValueError(f"Generic argument count mismatch for type ID {type_id}")
+
+        if len(ty.custom_def.generics) == 0:
+            if len(generic_args) != 0:
+                raise ValueError(f"Type ID {type_id} is not generic and cannot be instantiated with generic arguments")
+            return type_id
+
+        key = (id(ty.custom_def), args)
+        if key in self.__instance_cache:
+            return self.__instance_cache[key]
+
+        match ty:
+            case Type.StructType(custom_def=struct_def):
+                instance_ty = Type.StructType(type_id=-1, custom_def=struct_def, generic_args=args)
+            case Type.EnumType(custom_def=enum_def):
+                instance_ty = Type.EnumType(type_id=-1, custom_def=enum_def, generic_args=args)
+            case Type.TraitType(custom_def=trait_def):
+                instance_ty = Type.TraitType(type_id=-1, custom_def=trait_def, generic_args=args)
+            case Type.MethodType(custom_def=method_def):
+                instance_ty = Type.MethodType(type_id=-1, custom_def=method_def, generic_args=args)
+            case Type.FunctionType(custom_def=function_def):
+                instance_ty = Type.FunctionType(type_id=-1, custom_def=function_def, generic_args=args)
+
+        instance_ty_id = self.__add_type(instance_ty)
+        self.__instance_cache[key] = instance_ty_id
+        return instance_ty_id

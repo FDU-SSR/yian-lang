@@ -1,0 +1,5 @@
+from dep.ops import helper;
+
+fn main() {
+    assert helper() == 42: "the dependency is usable";
+}

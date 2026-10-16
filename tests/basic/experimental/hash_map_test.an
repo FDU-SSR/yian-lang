@@ -1,0 +1,97 @@
+from std.core.hash import Hash, Murmur3Hasher, Murmur3BuildHasher;
+from std.collections.hash_map import HashMap;
+from std.core.drop import Drop;
+from std.core.ops import PartialEq;
+
+// Simple hashable key type.
+pub struct MyKey {
+    pub id: u64,
+}
+
+impl Drop for MyKey {
+    fn drop() {}
+}
+
+impl PartialEq<MyKey> for MyKey {
+    fn eq(other: MyKey&) -> bool {
+        return self.id == other.id;
+    }
+}
+
+// Implement Hash for MyKey using the standard hasher.
+impl Hash<Murmur3Hasher> for MyKey {
+    fn hash(hasher: Murmur3Hasher&) {
+        let text = self.id.to_string();
+        hasher.write(text.as_slice());
+    }
+}
+
+// ---------- Tests begin ----------
+fn main() {
+    // === Test 1: basic construction ===
+    let map1: HashMap<MyKey, i64> = HashMap<MyKey, i64>.with_capacity_and_hasher(
+        0,
+        Murmur3BuildHasher.with_seed(0)
+    )
+    assert map1.len() == 0: "new map should have size 0"
+    assert map1.is_empty(): "new map should be empty"
+
+    // === Test 2: insert and get ===
+    let map2: HashMap<MyKey, i64> = HashMap<MyKey, i64>.with_capacity_and_hasher(
+        4,
+        Murmur3BuildHasher.with_seed(0)
+    )
+
+    map2.insert(MyKey(1), 100)
+    assert map2.len() == 1: "size should be 1 after insert"
+    assert **map2.get(&MyKey(1)).unwrap() == 100: "get should return inserted value"
+    assert map2.contains(&MyKey(1)): "contains should find inserted key"
+
+    // === Test 3: overwrite ===
+    map2.insert(MyKey(1), 200)
+    assert map2.len() == 1: "size should ! change after overwrite"
+    assert **map2.get(&MyKey(1)).unwrap() == 200: "get should return overwritten value"
+
+    // === Test 4: insert/query multiple keys ===
+    map2.insert(MyKey(2), 300)
+    map2.insert(MyKey(3), 400)
+    assert map2.len() == 3: "size should reflect all inserted keys"
+    assert **map2.get(&MyKey(2)).unwrap() == 300: "get key 2"
+    assert **map2.get(&MyKey(3)).unwrap() == 400: "get key 3"
+
+    // === Test 5: get a missing key ===
+    assert map2.get(&MyKey(99)).is_none(): "get missing key should return None"
+
+    // === Test 6: remove ===
+    map2.remove(&MyKey(2))
+    assert map2.len() == 2: "size should decrement after remove"
+    assert map2.get(&MyKey(2)).is_none(): "removed key should return None"
+    // Other keys remain unaffected.
+    assert **map2.get(&MyKey(1)).unwrap() == 200: "key 1 should still exist"
+    assert **map2.get(&MyKey(3)).unwrap() == 400: "key 3 should still exist"
+
+    // Removing a missing key does not fail.
+    map2.remove(&MyKey(99))
+    assert map2.len() == 2: "remove missing key should ! change size"
+
+    // === Test 7: trigger resize ===
+    let map3: HashMap<MyKey, i64> = HashMap<MyKey, i64>.with_capacity_and_hasher(
+        4,
+        Murmur3BuildHasher.with_seed(0)
+    )
+    map3.insert(MyKey(10), 1)
+    map3.insert(MyKey(20), 2)
+    map3.insert(MyKey(30), 3)
+    // growth_left should be zero; the next insertion triggers resizing.
+    map3.insert(MyKey(40), 4)
+    assert map3.len() == 4: "size should be 4 after inserts"
+    assert **map3.get(&MyKey(10)).unwrap() == 1: "key 10 after resize"
+    assert **map3.get(&MyKey(20)).unwrap() == 2: "key 20 after resize"
+    assert **map3.get(&MyKey(30)).unwrap() == 3: "key 30 after resize"
+    assert **map3.get(&MyKey(40)).unwrap() == 4: "key 40 after resize"
+
+    // === Test 8: contains ===
+    assert map3.contains(&MyKey(10)): "contains existing key"
+    assert !map3.contains(&MyKey(99)): "contains missing key"
+
+}

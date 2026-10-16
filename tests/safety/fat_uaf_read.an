@@ -1,0 +1,11 @@
+// Fat-pointer UAF read negative test; fat_uaf.an covers writes.
+//
+// del p writes slot SENTINEL; reading *p fails live key comparison,
+// terminating with LLVM's runtime safety error and exit code 1.
+
+fn main() {
+    let p: i32* = dyn[2] 0i32;
+    p[0] = 1;
+    del p;
+    let v: i32 = p[0] // UAF read: SENTINEL slot fails live with a safety error.
+}

@@ -1,0 +1,5 @@
+// Scalar types do not have a default or no-op Drop implementation.
+fn main() {
+    let value: i32 = 1;
+    value.drop();
+}

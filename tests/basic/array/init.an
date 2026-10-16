@@ -1,0 +1,44 @@
+// Test array initialization with literal values
+//
+// Expected output: 0
+
+fn case_literal_initialization() {
+    let array: i32[6] = [10, 7, 8, 9, 1, 5];
+    assert array[0] == 10: "array[0] should be 10";
+
+    let float_array: f64[4] = [1.1, 2.2, 3.3, 4.4];
+    assert float_array[2] > 2.0 && float_array[2] < 4.0: "float_array[2] should be 3.3";
+
+    let char_array: char[5] = ['a', 'b', 'c', 'd', 'e'];
+    assert char_array[4] == 'e': "char_array[4] should be 'e'";
+
+    let bool_array: bool[3] = [true, false, true];
+    assert bool_array[1] == false: "bool_array[1] should be false";
+
+}
+
+fn get_num(a: i32) -> i32 {
+    return a;
+}
+
+struct Person {
+    pub age: i32,
+    pub score: i64,
+}
+
+fn case_computed_initialization() {
+    let arr: i32[3] = [get_num(1), get_num(2), get_num(3)]
+    assert arr[1] == 2: "arr[1] should be 2"
+
+    let p_arr: Person[3] = [
+        Person(age=12, score=60),
+        Person(age=13, score=70),
+        Person(age=14, score=80)
+    ]
+    assert p_arr[2].score == 80: "p_arr[2].score should be 80"
+}
+
+fn main() {
+    case_literal_initialization();
+    case_computed_initialization();
+}

@@ -1,0 +1,17 @@
+{
+  "name": "churn_single",
+  "source": "ALLOC",
+  "tags": [
+    "alloc"
+  ],
+  "argv": [],
+  "check": {
+    "rc": 0
+  },
+  "note": "fat/raw stdout 一致 (无 C 权威; 对照态是 libc malloc/free)",
+  "scale": {
+    "default": 1000,
+    "fast": 100,
+    "c": "none"
+  }
+}

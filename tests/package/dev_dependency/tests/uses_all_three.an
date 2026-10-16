@@ -1,0 +1,11 @@
+// A test may import the root package (hybrid), its dependencies and its
+// dev-dependencies.
+from demo.helper import label;
+from mathlib.ops import add;
+from testkit.helpers import triple;
+
+fn main() {
+    assert label() == 7: "root package";
+    assert add(2, 3) == 5: "declared dependency";
+    assert triple(14) == 42: "dev-dependency";
+}

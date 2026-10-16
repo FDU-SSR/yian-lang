@@ -1,0 +1,51 @@
+// Traits, default methods, and conditional implementations for navigation, completion, and hover.
+from sample.types import Meters;
+
+pub trait Measured {
+    // Default method: callable without an override; the editor should navigate to this trait declaration.
+    fn label() -> str {
+        return "measured";
+    }
+
+    fn measure() -> Meters;
+}
+
+pub struct Rect {
+    pub width: Meters,
+    pub height: Meters,
+}
+
+impl Measured for Rect {
+    fn measure() -> Meters {
+        return self.width * self.height;
+    }
+}
+
+pub struct Circle {
+    pub radius: Meters,
+}
+
+impl Measured for Circle {
+    fn label() -> str {
+        return "circle";
+    }
+
+    fn measure() -> Meters {
+        return 3.0 * self.radius * self.radius;
+    }
+}
+
+pub struct Bagged<T> {
+    pub value: T,
+}
+
+// Conditional implementation: Bagged<T> is measurable only when T is measurable.
+impl<T> Measured for Bagged<T> if T: Measured {
+    fn label() -> str {
+        return "bagged";
+    }
+
+    fn measure() -> Meters {
+        return self.value.measure();
+    }
+}

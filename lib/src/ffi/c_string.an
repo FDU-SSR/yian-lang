@@ -1,0 +1,19 @@
+from std.core.result import Result;
+from std.core.vec import Vec;
+
+// Construct an independent NUL-terminated byte buffer; an error identifies the first input NUL byte.
+pub fn c_string_bytes(value: str) -> Result<Vec<u8>, u64> {
+    let input = value.as_slice();
+    let index: u64 = 0;
+    while index < input.len() {
+        if input[index] == 0u8 {
+            return Result<Vec<u8>, u64>.Err(msg=index);
+        }
+        index += 1;
+    }
+
+    let output = Vec<u8>.with_capacity(input.len() + 1u64);
+    output.extend_from_slice(input);
+    output.push(0u8);
+    return Result<Vec<u8>, u64>.Ok(val=output);
+}

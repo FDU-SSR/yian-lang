@@ -1,0 +1,15 @@
+// A one-past-end pointer is a valid boundary value, but reading a nested field
+// through it triggers a runtime bounds error before the field access.
+
+struct Inner { v: i32 }
+struct Node { inner: Inner, tag: i32 }
+
+fn main() {
+    let arr: Node* = dyn[2] Node(Inner(0), 0);
+    arr[0].inner.v = 1;
+    arr[1].inner.v = 2;
+
+    // Read a nested field through a one-past-end pointer.
+    let g: i32 = (arr + 2).inner.v;
+    assert g == 3: "unreachable if safety error works"
+}

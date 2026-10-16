@@ -1,0 +1,15 @@
+{
+  "name": "revcomp",
+  "source": "BG",
+  "tags": [
+    "string"
+  ],
+  "argv": [],
+  "check": {
+    "rc": 0,
+    "stdout_contains": [
+      "128"
+    ]
+  },
+  "note": "rc==0, stdout 含 \"128\" (Checksum:)"
+}

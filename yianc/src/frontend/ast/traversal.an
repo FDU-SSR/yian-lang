@@ -1,0 +1,1774 @@
+from yianc.frontend.ast.walk import TryAstVisitor, try_walk_type_source, try_walk_identifier, try_walk_int_literal, try_walk_float_literal, try_walk_char_literal, try_walk_str_literal, try_walk_bool_literal, try_walk_program, try_walk_block, try_walk_argument, try_walk_var_info, try_walk_pattern_param, try_walk_pattern_let, try_walk_let_condition, try_walk_elif_branch, try_walk_match_arm, try_walk_attr, try_walk_type_generic_param, try_walk_const_generic_param, try_walk_field_info, try_walk_variant_info, try_walk_method_decl, try_walk_method_def, try_walk_extern_func_decl, try_walk_impl_condition, try_walk_capture_item, try_walk_field_pattern, try_walk_expr, try_walk_type_syntax, try_walk_const_expr, try_walk_pattern, try_walk_item, try_walk_literal, try_walk_range_bounds, try_walk_condition, try_walk_generic_argument, try_walk_generic_param, try_walk_parameter, try_walk_trait_member, try_walk_pattern_arguments;
+from yianc.common.traversal import WalkControl;
+from std.core.result import Result;
+from yianc.frontend.ast.node import Identifier, IntLiteral, FloatLiteral, CharLiteral, StrLiteral, BoolLiteral, Program, Block, Argument, VarInfo, PatternParam, PatternLet, LetCondition, ElifBranch, MatchArm, Attr, TypeGenericParam, ConstGenericParam, FieldInfo, VariantInfo, MethodDecl, MethodDef, ExternFuncDecl, ImplCondition, CaptureItem, FieldPattern, Expr, TypeSyntax, ConstExpr, Pattern, Item, Literal, RangeBounds, Condition, GenericArgument, GenericParam, Parameter, TraitMember, PatternArguments;
+from std.core.ops import Index;
+from yianc.frontend.ast.node import TypeSource;
+
+// Traversal follows child references; shared nodes are visited once per incoming edge.
+// Binding inputs precede patterns; block parameter bindings precede statements.
+pub fn walk_type_source(source: TypeSource&, visitor: AstVisitor&) {
+    let adapter = VisitorAdapter(visitor);
+    try_walk_type_source<()>(source, &adapter);
+}
+
+pub fn rewrite_type_source(source: TypeSource&, rewriter: AstRewriter&) {
+    match source {
+        Syntax(value) => {
+            *value = rewriter.rewrite_type_syntax(*value);
+        },
+        ArgumentType(_) => {},
+        CallableReturnType => {},
+    }
+}
+
+// Returning false from enter skips the node's children and leave callback without affecting other branches.
+pub trait AstVisitor {
+    fn enter_identifier(node: Identifier&) -> bool { true }
+
+    fn leave_identifier(node: Identifier&) {}
+
+    fn enter_int_literal(node: IntLiteral&) -> bool { true }
+
+    fn leave_int_literal(node: IntLiteral&) {}
+
+    fn enter_float_literal(node: FloatLiteral&) -> bool { true }
+
+    fn leave_float_literal(node: FloatLiteral&) {}
+
+    fn enter_char_literal(node: CharLiteral&) -> bool { true }
+
+    fn leave_char_literal(node: CharLiteral&) {}
+
+    fn enter_str_literal(node: StrLiteral&) -> bool { true }
+
+    fn leave_str_literal(node: StrLiteral&) {}
+
+    fn enter_bool_literal(node: BoolLiteral&) -> bool { true }
+
+    fn leave_bool_literal(node: BoolLiteral&) {}
+
+    fn enter_program(node: Program&) -> bool { true }
+
+    fn leave_program(node: Program&) {}
+
+    fn enter_block(node: Block&) -> bool { true }
+
+    fn leave_block(node: Block&) {}
+
+    fn enter_argument(node: Argument&) -> bool { true }
+
+    fn leave_argument(node: Argument&) {}
+
+    fn enter_var_info(node: VarInfo&) -> bool { true }
+
+    fn leave_var_info(node: VarInfo&) {}
+
+    fn enter_pattern_param(node: PatternParam&) -> bool { true }
+
+    fn leave_pattern_param(node: PatternParam&) {}
+
+    fn enter_pattern_let(node: PatternLet&) -> bool { true }
+
+    fn leave_pattern_let(node: PatternLet&) {}
+
+    fn enter_let_condition(node: LetCondition&) -> bool { true }
+
+    fn leave_let_condition(node: LetCondition&) {}
+
+    fn enter_elif_branch(node: ElifBranch&) -> bool { true }
+
+    fn leave_elif_branch(node: ElifBranch&) {}
+
+    fn enter_match_arm(node: MatchArm&) -> bool { true }
+
+    fn leave_match_arm(node: MatchArm&) {}
+
+    fn enter_attr(node: Attr&) -> bool { true }
+
+    fn leave_attr(node: Attr&) {}
+
+    fn enter_type_generic_param(node: TypeGenericParam&) -> bool { true }
+
+    fn leave_type_generic_param(node: TypeGenericParam&) {}
+
+    fn enter_const_generic_param(node: ConstGenericParam&) -> bool { true }
+
+    fn leave_const_generic_param(node: ConstGenericParam&) {}
+
+    fn enter_field_info(node: FieldInfo&) -> bool { true }
+
+    fn leave_field_info(node: FieldInfo&) {}
+
+    fn enter_variant_info(node: VariantInfo&) -> bool { true }
+
+    fn leave_variant_info(node: VariantInfo&) {}
+
+    fn enter_method_decl(node: MethodDecl&) -> bool { true }
+
+    fn leave_method_decl(node: MethodDecl&) {}
+
+    fn enter_method_def(node: MethodDef&) -> bool { true }
+
+    fn leave_method_def(node: MethodDef&) {}
+
+    fn enter_extern_func_decl(node: ExternFuncDecl&) -> bool { true }
+
+    fn leave_extern_func_decl(node: ExternFuncDecl&) {}
+
+    fn enter_impl_condition(node: ImplCondition&) -> bool { true }
+
+    fn leave_impl_condition(node: ImplCondition&) {}
+
+    fn enter_capture_item(node: CaptureItem&) -> bool { true }
+
+    fn leave_capture_item(node: CaptureItem&) {}
+
+    fn enter_field_pattern(node: FieldPattern&) -> bool { true }
+
+    fn leave_field_pattern(node: FieldPattern&) {}
+
+    fn enter_expr(node: Expr&) -> bool { true }
+
+    fn leave_expr(node: Expr&) {}
+
+    fn enter_type_syntax(node: TypeSyntax&) -> bool { true }
+
+    fn leave_type_syntax(node: TypeSyntax&) {}
+
+    fn enter_const_expr(node: ConstExpr&) -> bool { true }
+
+    fn leave_const_expr(node: ConstExpr&) {}
+
+    fn enter_pattern(node: Pattern&) -> bool { true }
+
+    fn leave_pattern(node: Pattern&) {}
+
+    fn enter_item(node: Item&) -> bool { true }
+
+    fn leave_item(node: Item&) {}
+}
+
+// Default methods rewrite children before returning the current node; overrides control recursion and replacement.
+// Children helpers only update child references, never replace the root; replacement nodes are not revisited automatically.
+pub trait AstRewriter {
+    fn rewrite_identifier(node: Identifier&) -> Identifier& { node }
+
+    fn rewrite_int_literal(node: IntLiteral&) -> IntLiteral& { node }
+
+    fn rewrite_float_literal(node: FloatLiteral&) -> FloatLiteral& { node }
+
+    fn rewrite_char_literal(node: CharLiteral&) -> CharLiteral& { node }
+
+    fn rewrite_str_literal(node: StrLiteral&) -> StrLiteral& { node }
+
+    fn rewrite_bool_literal(node: BoolLiteral&) -> BoolLiteral& { node }
+
+    fn rewrite_program(node: Program&) -> Program& {
+        rewrite_program_children(node, self);
+        node
+    }
+
+    fn rewrite_block(node: Block&) -> Block& {
+        rewrite_block_children(node, self);
+        node
+    }
+
+    fn rewrite_argument(node: Argument&) -> Argument& {
+        rewrite_argument_children(node, self);
+        node
+    }
+
+    fn rewrite_var_info(node: VarInfo&) -> VarInfo& {
+        rewrite_var_info_children(node, self);
+        node
+    }
+
+    fn rewrite_pattern_param(node: PatternParam&) -> PatternParam& {
+        rewrite_pattern_param_children(node, self);
+        node
+    }
+
+    fn rewrite_pattern_let(node: PatternLet&) -> PatternLet& {
+        rewrite_pattern_let_children(node, self);
+        node
+    }
+
+    fn rewrite_let_condition(node: LetCondition&) -> LetCondition& {
+        rewrite_let_condition_children(node, self);
+        node
+    }
+
+    fn rewrite_elif_branch(node: ElifBranch&) -> ElifBranch& {
+        rewrite_elif_branch_children(node, self);
+        node
+    }
+
+    fn rewrite_match_arm(node: MatchArm&) -> MatchArm& {
+        rewrite_match_arm_children(node, self);
+        node
+    }
+
+    fn rewrite_attr(node: Attr&) -> Attr& { node }
+
+    fn rewrite_type_generic_param(node: TypeGenericParam&) -> TypeGenericParam& {
+        rewrite_type_generic_param_children(node, self);
+        node
+    }
+
+    fn rewrite_const_generic_param(node: ConstGenericParam&) -> ConstGenericParam& {
+        rewrite_const_generic_param_children(node, self);
+        node
+    }
+
+    fn rewrite_field_info(node: FieldInfo&) -> FieldInfo& {
+        rewrite_field_info_children(node, self);
+        node
+    }
+
+    fn rewrite_variant_info(node: VariantInfo&) -> VariantInfo& {
+        rewrite_variant_info_children(node, self);
+        node
+    }
+
+    fn rewrite_method_decl(node: MethodDecl&) -> MethodDecl& {
+        rewrite_method_decl_children(node, self);
+        node
+    }
+
+    fn rewrite_method_def(node: MethodDef&) -> MethodDef& {
+        rewrite_method_def_children(node, self);
+        node
+    }
+
+    fn rewrite_extern_func_decl(node: ExternFuncDecl&) -> ExternFuncDecl& {
+        rewrite_extern_func_decl_children(node, self);
+        node
+    }
+
+    fn rewrite_impl_condition(node: ImplCondition&) -> ImplCondition& {
+        rewrite_impl_condition_children(node, self);
+        node
+    }
+
+    fn rewrite_capture_item(node: CaptureItem&) -> CaptureItem& {
+        rewrite_capture_item_children(node, self);
+        node
+    }
+
+    fn rewrite_field_pattern(node: FieldPattern&) -> FieldPattern& {
+        rewrite_field_pattern_children(node, self);
+        node
+    }
+
+    fn rewrite_expr(node: Expr&) -> Expr& {
+        rewrite_expr_children(node, self);
+        node
+    }
+
+    fn rewrite_type_syntax(node: TypeSyntax&) -> TypeSyntax& {
+        rewrite_type_syntax_children(node, self);
+        node
+    }
+
+    fn rewrite_const_expr(node: ConstExpr&) -> ConstExpr& {
+        rewrite_const_expr_children(node, self);
+        node
+    }
+
+    fn rewrite_pattern(node: Pattern&) -> Pattern& {
+        rewrite_pattern_children(node, self);
+        node
+    }
+
+    fn rewrite_item(node: Item&) -> Item& {
+        rewrite_item_children(node, self);
+        node
+    }
+}
+
+pub fn walk_identifier(node: Identifier&, visitor: AstVisitor&) {
+    let adapter = VisitorAdapter(visitor);
+    try_walk_identifier<()>(node, &adapter);
+}
+
+pub fn walk_int_literal(node: IntLiteral&, visitor: AstVisitor&) {
+    let adapter = VisitorAdapter(visitor);
+    try_walk_int_literal<()>(node, &adapter);
+}
+
+pub fn walk_float_literal(node: FloatLiteral&, visitor: AstVisitor&) {
+    let adapter = VisitorAdapter(visitor);
+    try_walk_float_literal<()>(node, &adapter);
+}
+
+pub fn walk_char_literal(node: CharLiteral&, visitor: AstVisitor&) {
+    let adapter = VisitorAdapter(visitor);
+    try_walk_char_literal<()>(node, &adapter);
+}
+
+pub fn walk_str_literal(node: StrLiteral&, visitor: AstVisitor&) {
+    let adapter = VisitorAdapter(visitor);
+    try_walk_str_literal<()>(node, &adapter);
+}
+
+pub fn walk_bool_literal(node: BoolLiteral&, visitor: AstVisitor&) {
+    let adapter = VisitorAdapter(visitor);
+    try_walk_bool_literal<()>(node, &adapter);
+}
+
+pub fn walk_program(node: Program&, visitor: AstVisitor&) {
+    let adapter = VisitorAdapter(visitor);
+    try_walk_program<()>(node, &adapter);
+}
+
+pub fn walk_block(node: Block&, visitor: AstVisitor&) {
+    let adapter = VisitorAdapter(visitor);
+    try_walk_block<()>(node, &adapter);
+}
+
+pub fn walk_argument(node: Argument&, visitor: AstVisitor&) {
+    let adapter = VisitorAdapter(visitor);
+    try_walk_argument<()>(node, &adapter);
+}
+
+pub fn walk_var_info(node: VarInfo&, visitor: AstVisitor&) {
+    let adapter = VisitorAdapter(visitor);
+    try_walk_var_info<()>(node, &adapter);
+}
+
+pub fn walk_pattern_param(node: PatternParam&, visitor: AstVisitor&) {
+    let adapter = VisitorAdapter(visitor);
+    try_walk_pattern_param<()>(node, &adapter);
+}
+
+pub fn walk_pattern_let(node: PatternLet&, visitor: AstVisitor&) {
+    let adapter = VisitorAdapter(visitor);
+    try_walk_pattern_let<()>(node, &adapter);
+}
+
+pub fn walk_let_condition(node: LetCondition&, visitor: AstVisitor&) {
+    let adapter = VisitorAdapter(visitor);
+    try_walk_let_condition<()>(node, &adapter);
+}
+
+pub fn walk_elif_branch(node: ElifBranch&, visitor: AstVisitor&) {
+    let adapter = VisitorAdapter(visitor);
+    try_walk_elif_branch<()>(node, &adapter);
+}
+
+pub fn walk_match_arm(node: MatchArm&, visitor: AstVisitor&) {
+    let adapter = VisitorAdapter(visitor);
+    try_walk_match_arm<()>(node, &adapter);
+}
+
+pub fn walk_attr(node: Attr&, visitor: AstVisitor&) {
+    let adapter = VisitorAdapter(visitor);
+    try_walk_attr<()>(node, &adapter);
+}
+
+pub fn walk_type_generic_param(node: TypeGenericParam&, visitor: AstVisitor&) {
+    let adapter = VisitorAdapter(visitor);
+    try_walk_type_generic_param<()>(node, &adapter);
+}
+
+pub fn walk_const_generic_param(node: ConstGenericParam&, visitor: AstVisitor&) {
+    let adapter = VisitorAdapter(visitor);
+    try_walk_const_generic_param<()>(node, &adapter);
+}
+
+pub fn walk_field_info(node: FieldInfo&, visitor: AstVisitor&) {
+    let adapter = VisitorAdapter(visitor);
+    try_walk_field_info<()>(node, &adapter);
+}
+
+pub fn walk_variant_info(node: VariantInfo&, visitor: AstVisitor&) {
+    let adapter = VisitorAdapter(visitor);
+    try_walk_variant_info<()>(node, &adapter);
+}
+
+pub fn walk_method_decl(node: MethodDecl&, visitor: AstVisitor&) {
+    let adapter = VisitorAdapter(visitor);
+    try_walk_method_decl<()>(node, &adapter);
+}
+
+pub fn walk_method_def(node: MethodDef&, visitor: AstVisitor&) {
+    let adapter = VisitorAdapter(visitor);
+    try_walk_method_def<()>(node, &adapter);
+}
+
+pub fn walk_extern_func_decl(node: ExternFuncDecl&, visitor: AstVisitor&) {
+    let adapter = VisitorAdapter(visitor);
+    try_walk_extern_func_decl<()>(node, &adapter);
+}
+
+pub fn walk_impl_condition(node: ImplCondition&, visitor: AstVisitor&) {
+    let adapter = VisitorAdapter(visitor);
+    try_walk_impl_condition<()>(node, &adapter);
+}
+
+pub fn walk_capture_item(node: CaptureItem&, visitor: AstVisitor&) {
+    let adapter = VisitorAdapter(visitor);
+    try_walk_capture_item<()>(node, &adapter);
+}
+
+pub fn walk_field_pattern(node: FieldPattern&, visitor: AstVisitor&) {
+    let adapter = VisitorAdapter(visitor);
+    try_walk_field_pattern<()>(node, &adapter);
+}
+
+pub fn walk_expr(node: Expr&, visitor: AstVisitor&) {
+    let adapter = VisitorAdapter(visitor);
+    try_walk_expr<()>(node, &adapter);
+}
+
+pub fn walk_type_syntax(node: TypeSyntax&, visitor: AstVisitor&) {
+    let adapter = VisitorAdapter(visitor);
+    try_walk_type_syntax<()>(node, &adapter);
+}
+
+pub fn walk_const_expr(node: ConstExpr&, visitor: AstVisitor&) {
+    let adapter = VisitorAdapter(visitor);
+    try_walk_const_expr<()>(node, &adapter);
+}
+
+pub fn walk_pattern(node: Pattern&, visitor: AstVisitor&) {
+    let adapter = VisitorAdapter(visitor);
+    try_walk_pattern<()>(node, &adapter);
+}
+
+pub fn walk_item(node: Item&, visitor: AstVisitor&) {
+    let adapter = VisitorAdapter(visitor);
+    try_walk_item<()>(node, &adapter);
+}
+
+pub fn walk_literal(node: Literal&, visitor: AstVisitor&) {
+    let adapter = VisitorAdapter(visitor);
+    try_walk_literal<()>(node, &adapter);
+}
+
+pub fn walk_range_bounds(node: RangeBounds&, visitor: AstVisitor&) {
+    let adapter = VisitorAdapter(visitor);
+    try_walk_range_bounds<()>(node, &adapter);
+}
+
+pub fn walk_condition(node: Condition&, visitor: AstVisitor&) {
+    let adapter = VisitorAdapter(visitor);
+    try_walk_condition<()>(node, &adapter);
+}
+
+pub fn walk_generic_argument(node: GenericArgument&, visitor: AstVisitor&) {
+    let adapter = VisitorAdapter(visitor);
+    try_walk_generic_argument<()>(node, &adapter);
+}
+
+pub fn walk_generic_param(node: GenericParam&, visitor: AstVisitor&) {
+    let adapter = VisitorAdapter(visitor);
+    try_walk_generic_param<()>(node, &adapter);
+}
+
+pub fn walk_parameter(node: Parameter&, visitor: AstVisitor&) {
+    let adapter = VisitorAdapter(visitor);
+    try_walk_parameter<()>(node, &adapter);
+}
+
+pub fn walk_trait_member(node: TraitMember&, visitor: AstVisitor&) {
+    let adapter = VisitorAdapter(visitor);
+    try_walk_trait_member<()>(node, &adapter);
+}
+
+pub fn walk_pattern_arguments(node: PatternArguments&, visitor: AstVisitor&) {
+    let adapter = VisitorAdapter(visitor);
+    try_walk_pattern_arguments<()>(node, &adapter);
+}
+
+pub fn rewrite_program_children(node: Program&, rewriter: AstRewriter&) {
+    {
+        let index: u64 = 0;
+
+        while index < (node.data.items).len() {
+            (node.data.items)[index] = rewriter.rewrite_item((node.data.items)[index]);
+            index += 1;
+        }
+    };
+}
+
+pub fn rewrite_block_children(node: Block&, rewriter: AstRewriter&) {
+    {
+        let index: u64 = 0;
+
+        while index < (node.data.parameter_bindings).len() {
+            (node.data.parameter_bindings)[index] = rewriter.rewrite_pattern_let((node.data.parameter_bindings)[index]);
+            index += 1;
+        }
+    };
+    {
+        let index: u64 = 0;
+
+        while index < (node.data.stmts).len() {
+            (node.data.stmts)[index] = rewriter.rewrite_expr((node.data.stmts)[index]);
+            index += 1;
+        }
+    };
+}
+
+pub fn rewrite_argument_children(node: Argument&, rewriter: AstRewriter&) {
+    match &(node.data.name) {
+        Some(value) => {
+            *value = rewriter.rewrite_identifier(*value);
+        },
+        None => {},
+    };
+    node.data.value = rewriter.rewrite_expr(node.data.value);
+}
+
+pub fn rewrite_var_info_children(node: VarInfo&, rewriter: AstRewriter&) {
+    node.data.name = rewriter.rewrite_identifier(node.data.name);
+    node.data.var_type = rewriter.rewrite_type_syntax(node.data.var_type);
+}
+
+pub fn rewrite_pattern_param_children(node: PatternParam&, rewriter: AstRewriter&) {
+    node.data.pattern = rewriter.rewrite_pattern(node.data.pattern);
+    node.data.var_type = rewriter.rewrite_type_syntax(node.data.var_type);
+}
+
+pub fn rewrite_pattern_let_children(node: PatternLet&, rewriter: AstRewriter&) {
+    node.data.init_expr = rewriter.rewrite_expr(node.data.init_expr);
+    node.data.var_type = rewriter.rewrite_type_syntax(node.data.var_type);
+    node.data.pattern = rewriter.rewrite_pattern(node.data.pattern);
+    match &(node.data.else_branch) {
+        Some(value) => {
+            *value = rewriter.rewrite_block(*value);
+        },
+        None => {},
+    };
+}
+
+pub fn rewrite_let_condition_children(node: LetCondition&, rewriter: AstRewriter&) {
+    node.data.value = rewriter.rewrite_expr(node.data.value);
+    node.data.pattern = rewriter.rewrite_pattern(node.data.pattern);
+}
+
+pub fn rewrite_elif_branch_children(node: ElifBranch&, rewriter: AstRewriter&) {
+    rewrite_condition(&(node.data.condition), rewriter);
+    node.data.body = rewriter.rewrite_block(node.data.body);
+}
+
+pub fn rewrite_match_arm_children(node: MatchArm&, rewriter: AstRewriter&) {
+    node.data.pattern = rewriter.rewrite_pattern(node.data.pattern);
+    match &(node.data.guard) {
+        Some(value) => {
+            *value = rewriter.rewrite_expr(*value);
+        },
+        None => {},
+    };
+    node.data.body = rewriter.rewrite_block(node.data.body);
+}
+
+pub fn rewrite_type_generic_param_children(node: TypeGenericParam&, rewriter: AstRewriter&) {
+    node.data.name = rewriter.rewrite_identifier(node.data.name);
+}
+
+pub fn rewrite_const_generic_param_children(node: ConstGenericParam&, rewriter: AstRewriter&) {
+    node.data.name = rewriter.rewrite_identifier(node.data.name);
+    node.data.const_type = rewriter.rewrite_type_syntax(node.data.const_type);
+}
+
+pub fn rewrite_field_info_children(node: FieldInfo&, rewriter: AstRewriter&) {
+    {
+        let index: u64 = 0;
+
+        while index < (node.data.attrs).len() {
+            (node.data.attrs)[index] = rewriter.rewrite_attr((node.data.attrs)[index]);
+            index += 1;
+        }
+    };
+    node.data.name = rewriter.rewrite_identifier(node.data.name);
+    node.data.field_type = rewriter.rewrite_type_syntax(node.data.field_type);
+}
+
+pub fn rewrite_variant_info_children(node: VariantInfo&, rewriter: AstRewriter&) {
+    node.data.name = rewriter.rewrite_identifier(node.data.name);
+    {
+        let index: u64 = 0;
+
+        while index < (node.data.fields).len() {
+            (node.data.fields)[index] = rewriter.rewrite_var_info((node.data.fields)[index]);
+            index += 1;
+        }
+    };
+}
+
+pub fn rewrite_method_decl_children(node: MethodDecl&, rewriter: AstRewriter&) {
+    {
+        let index: u64 = 0;
+
+        while index < (node.data.attrs).len() {
+            (node.data.attrs)[index] = rewriter.rewrite_attr((node.data.attrs)[index]);
+            index += 1;
+        }
+    };
+    node.data.name = rewriter.rewrite_identifier(node.data.name);
+    {
+        let index: u64 = 0;
+
+        while index < (node.data.generics).len() {
+            rewrite_generic_param(&((node.data.generics)[index]), rewriter);
+            index += 1;
+        }
+    };
+    {
+        let index: u64 = 0;
+
+        while index < (node.data.params).len() {
+            rewrite_parameter(&((node.data.params)[index]), rewriter);
+            index += 1;
+        }
+    };
+    match &(node.data.ret_type) {
+        Some(value) => {
+            *value = rewriter.rewrite_type_syntax(*value);
+        },
+        None => {},
+    };
+}
+
+pub fn rewrite_method_def_children(node: MethodDef&, rewriter: AstRewriter&) {
+    node.data.decl = rewriter.rewrite_method_decl(node.data.decl);
+    node.data.body = rewriter.rewrite_block(node.data.body);
+}
+
+pub fn rewrite_extern_func_decl_children(node: ExternFuncDecl&, rewriter: AstRewriter&) {
+    node.data.name = rewriter.rewrite_identifier(node.data.name);
+    {
+        let index: u64 = 0;
+
+        while index < (node.data.params).len() {
+            (node.data.params)[index] = rewriter.rewrite_var_info((node.data.params)[index]);
+            index += 1;
+        }
+    };
+    match &(node.data.ret_type) {
+        Some(value) => {
+            *value = rewriter.rewrite_type_syntax(*value);
+        },
+        None => {},
+    };
+}
+
+pub fn rewrite_impl_condition_children(node: ImplCondition&, rewriter: AstRewriter&) {
+    node.data.name = rewriter.rewrite_identifier(node.data.name);
+    {
+        let index: u64 = 0;
+
+        while index < (node.data.traits).len() {
+            (node.data.traits)[index] = rewriter.rewrite_type_syntax((node.data.traits)[index]);
+            index += 1;
+        }
+    };
+}
+
+pub fn rewrite_capture_item_children(node: CaptureItem&, rewriter: AstRewriter&) {
+    node.data.name = rewriter.rewrite_identifier(node.data.name);
+    node.data.expr = rewriter.rewrite_expr(node.data.expr);
+}
+
+pub fn rewrite_field_pattern_children(node: FieldPattern&, rewriter: AstRewriter&) {
+    node.data.name = rewriter.rewrite_identifier(node.data.name);
+    node.data.pattern = rewriter.rewrite_pattern(node.data.pattern);
+}
+
+pub fn rewrite_expr_children(node: Expr&, rewriter: AstRewriter&) {
+    match &node.data {
+        Identifier(name) => {
+            *name = rewriter.rewrite_identifier(*name);
+        },
+        Literal(literal) => {
+            rewrite_literal(&(*literal), rewriter);
+        },
+        Binary(op, left, right) => {
+            *left = rewriter.rewrite_expr(*left);
+            *right = rewriter.rewrite_expr(*right);
+        },
+        Unary(op, operand) => {
+            *operand = rewriter.rewrite_expr(*operand);
+        },
+        TryExpr(operand) => {
+            *operand = rewriter.rewrite_expr(*operand);
+        },
+        TraitCall(trait, self_type, trait_args, method_name, args) => {
+            *trait = rewriter.rewrite_expr(*trait);
+            rewrite_type_source(self_type, rewriter);
+
+            let index: u64 = 0;
+
+            while index < trait_args.len() {
+                match &(*trait_args)[index] {
+                    Some(value) => rewrite_type_source(value, rewriter), None => {}
+                }
+                index += 1;
+            };
+            *method_name = rewriter.rewrite_identifier(*method_name);
+            index = 0;
+
+            while index < args.len() {
+                (*args)[index] = rewriter.rewrite_argument((*args)[index]);
+                index += 1;
+            }
+        },
+        Call(callee, args) => {
+            *callee = rewriter.rewrite_expr(*callee);
+            {
+                let index: u64 = 0;
+
+                while index < (*args).len() {
+                    (*args)[index] = rewriter.rewrite_argument((*args)[index]);
+                    index += 1;
+                }
+            };
+        },
+        MethodCall(receiver, method_name, generics, args) => {
+            *receiver = rewriter.rewrite_expr(*receiver);
+            *method_name = rewriter.rewrite_identifier(*method_name);
+            {
+                let index: u64 = 0;
+
+                while index < (*generics).len() {
+                    (*generics)[index] = rewriter.rewrite_type_syntax((*generics)[index]);
+                    index += 1;
+                }
+            };
+            {
+                let index: u64 = 0;
+
+                while index < (*args).len() {
+                    (*args)[index] = rewriter.rewrite_argument((*args)[index]);
+                    index += 1;
+                }
+            };
+        },
+        FieldAccess(receiver, field_name) => {
+            *receiver = rewriter.rewrite_expr(*receiver);
+            *field_name = rewriter.rewrite_identifier(*field_name);
+        },
+        Builtin(kind, type_args, args) => {
+            {
+                let index: u64 = 0;
+
+                while index < (*type_args).len() {
+                    (*type_args)[index] = rewriter.rewrite_type_syntax((*type_args)[index]);
+                    index += 1;
+                }
+            };
+            {
+                let index: u64 = 0;
+
+                while index < (*args).len() {
+                    (*args)[index] = rewriter.rewrite_argument((*args)[index]);
+                    index += 1;
+                }
+            };
+        },
+        TypeItem(name, generics) => {
+            *name = rewriter.rewrite_identifier(*name);
+            {
+                let index: u64 = 0;
+
+                while index < (*generics).len() {
+                    rewrite_generic_argument(&((*generics)[index]), rewriter);
+                    index += 1;
+                }
+            };
+        },
+        Block(block) => {
+            *block = rewriter.rewrite_block(*block);
+        },
+        Tuple(elements) => {
+            {
+                let index: u64 = 0;
+
+                while index < (*elements).len() {
+                    (*elements)[index] = rewriter.rewrite_expr((*elements)[index]);
+                    index += 1;
+                }
+            };
+        },
+        Array(elements) => {
+            {
+                let index: u64 = 0;
+
+                while index < (*elements).len() {
+                    (*elements)[index] = rewriter.rewrite_expr((*elements)[index]);
+                    index += 1;
+                }
+            };
+        },
+        ArrayRepeat(element, count) => {
+            *element = rewriter.rewrite_expr(*element);
+            *count = rewriter.rewrite_expr(*count);
+        },
+        DynValue(value) => {
+            *value = rewriter.rewrite_expr(*value);
+        },
+        DynBuffer(size, element) => {
+            *size = rewriter.rewrite_expr(*size);
+            *element = rewriter.rewrite_expr(*element);
+        },
+        VarDecl(name, var_type, init_expr) => {
+            *name = rewriter.rewrite_identifier(*name);
+            *var_type = rewriter.rewrite_type_syntax(*var_type);
+            match &(*init_expr) {
+                Some(value) => {
+                    *value = rewriter.rewrite_expr(*value);
+                },
+                None => {},
+            };
+        },
+        PatternLet(binding) => {
+            *binding = rewriter.rewrite_pattern_let(*binding);
+        },
+        If(condition, then_branch, elif_branches, else_branch) => {
+            rewrite_condition(&(*condition), rewriter);
+            *then_branch = rewriter.rewrite_block(*then_branch);
+            {
+                let index: u64 = 0;
+
+                while index < (*elif_branches).len() {
+                    (*elif_branches)[index] = rewriter.rewrite_elif_branch((*elif_branches)[index]);
+                    index += 1;
+                }
+            };
+            match &(*else_branch) {
+                Some(value) => {
+                    *value = rewriter.rewrite_block(*value);
+                },
+                None => {},
+            };
+        },
+        ComptimeIf(condition, then_branch, else_branch) => {
+            *condition = rewriter.rewrite_expr(*condition);
+            *then_branch = rewriter.rewrite_block(*then_branch);
+            *else_branch = rewriter.rewrite_block(*else_branch);
+        },
+        For(pattern, iterable, body) => {
+            *iterable = rewriter.rewrite_expr(*iterable);
+            *pattern = rewriter.rewrite_pattern(*pattern);
+            *body = rewriter.rewrite_block(*body);
+        },
+        While(condition, body) => {
+            rewrite_condition(&(*condition), rewriter);
+            *body = rewriter.rewrite_block(*body);
+        },
+        Loop(body) => {
+            *body = rewriter.rewrite_block(*body);
+        },
+        Match(expr, arms) => {
+            *expr = rewriter.rewrite_expr(*expr);
+            {
+                let index: u64 = 0;
+
+                while index < (*arms).len() {
+                    (*arms)[index] = rewriter.rewrite_match_arm((*arms)[index]);
+                    index += 1;
+                }
+            };
+        },
+        Return(expr) => {
+            match &(*expr) {
+                Some(value) => {
+                    *value = rewriter.rewrite_expr(*value);
+                },
+                None => {},
+            };
+        },
+        Break(expr) => {
+            match &(*expr) {
+                Some(value) => {
+                    *value = rewriter.rewrite_expr(*value);
+                },
+                None => {},
+            };
+        },
+        Continue => {
+        },
+        Defer(action) => {
+            *action = rewriter.rewrite_expr(*action);
+        },
+        Assert(condition, message) => {
+            *condition = rewriter.rewrite_expr(*condition);
+            match &(*message) {
+                Some(value) => {
+                    *value = rewriter.rewrite_expr(*value);
+                },
+                None => {},
+            };
+        },
+        Delete(target) => {
+            *target = rewriter.rewrite_expr(*target);
+        },
+        Semi(expr) => {
+            *expr = rewriter.rewrite_expr(*expr);
+        },
+        ClosureExpr(captures, params, return_type, body) => {
+            {
+                let index: u64 = 0;
+
+                while index < (*captures).len() {
+                    (*captures)[index] = rewriter.rewrite_capture_item((*captures)[index]);
+                    index += 1;
+                }
+            };
+            {
+                let index: u64 = 0;
+
+                while index < (*params).len() {
+                    rewrite_parameter(&((*params)[index]), rewriter);
+                    index += 1;
+                }
+            };
+            match &(*return_type) {
+                Some(value) => {
+                    *value = rewriter.rewrite_type_syntax(*value);
+                },
+                None => {},
+            };
+            *body = rewriter.rewrite_block(*body);
+        },
+        CompileConfig(name) => {
+        },
+        Recovery(children, bindings) => {
+            let index = 0u64;
+            while index < children.len() {
+                children[index] = rewriter.rewrite_expr(children[index]);
+                index += 1;
+            }
+            index = 0u64;
+            while index < bindings.len() {
+                bindings[index] = rewriter.rewrite_identifier(bindings[index]);
+                index += 1;
+            }
+        },
+    };
+}
+
+pub fn rewrite_type_syntax_children(node: TypeSyntax&, rewriter: AstRewriter&) {
+    match &node.data {
+        IntType(signed, width) => {
+        },
+        FloatType(width) => {
+        },
+        BoolType => {
+        },
+        StrType => {
+        },
+        CharType => {
+        },
+        VoidType => {
+        },
+        NeverType => {
+        },
+        DeducedType => {
+        },
+        CScalarType(name) => {
+        },
+        CPtrType(pointee_type) => {
+            *pointee_type = rewriter.rewrite_type_syntax(*pointee_type);
+        },
+        NamedType(name) => {
+            *name = rewriter.rewrite_identifier(*name);
+        },
+        ArrayType(element_type, size) => {
+            *element_type = rewriter.rewrite_type_syntax(*element_type);
+            *size = rewriter.rewrite_const_expr(*size);
+        },
+        TupleType(element_types) => {
+            {
+                let index: u64 = 0;
+
+                while index < (*element_types).len() {
+                    (*element_types)[index] = rewriter.rewrite_type_syntax((*element_types)[index]);
+                    index += 1;
+                }
+            };
+        },
+        PointerType(pointee_type) => {
+            *pointee_type = rewriter.rewrite_type_syntax(*pointee_type);
+        },
+        RefType(pointee_type) => {
+            *pointee_type = rewriter.rewrite_type_syntax(*pointee_type);
+        },
+        SliceType(element_type) => {
+            *element_type = rewriter.rewrite_type_syntax(*element_type);
+        },
+        InstanceType(base, generic_args) => {
+            *base = rewriter.rewrite_type_syntax(*base);
+            {
+                let index: u64 = 0;
+
+                while index < (*generic_args).len() {
+                    rewrite_generic_argument(&((*generic_args)[index]), rewriter);
+                    index += 1;
+                }
+            };
+        },
+        FunctionType(param_types, return_type) => {
+            {
+                let index: u64 = 0;
+
+                while index < (*param_types).len() {
+                    (*param_types)[index] = rewriter.rewrite_type_syntax((*param_types)[index]);
+                    index += 1;
+                }
+            };
+            *return_type = rewriter.rewrite_type_syntax(*return_type);
+        },
+    };
+}
+
+pub fn rewrite_const_expr_children(node: ConstExpr&, rewriter: AstRewriter&) {
+    match &node.data {
+        LiteralConstExpr(literal) => {
+            *literal = rewriter.rewrite_int_literal(*literal);
+        },
+        GenericConstExpr(name) => {
+            *name = rewriter.rewrite_identifier(*name);
+        },
+        UnaryConstExpr(op, operand) => {
+            *operand = rewriter.rewrite_const_expr(*operand);
+        },
+        BinaryConstExpr(op, left, right) => {
+            *left = rewriter.rewrite_const_expr(*left);
+            *right = rewriter.rewrite_const_expr(*right);
+        },
+    };
+}
+
+pub fn rewrite_pattern_children(node: Pattern&, rewriter: AstRewriter&) {
+    match &node.data {
+        WildcardPattern => {
+        },
+        LiteralPattern(literal) => {
+            rewrite_literal(&(*literal), rewriter);
+        },
+        RangePattern(bounds) => {
+            rewrite_range_bounds(&(*bounds), rewriter);
+        },
+        NamePattern(name) => {
+            *name = rewriter.rewrite_identifier(*name);
+        },
+        BindPattern(name, inner) => {
+            *name = rewriter.rewrite_identifier(*name);
+            *inner = rewriter.rewrite_pattern(*inner);
+        },
+        OrPattern(alternatives) => {
+            {
+                let index: u64 = 0;
+
+                while index < (*alternatives).len() {
+                    (*alternatives)[index] = rewriter.rewrite_pattern((*alternatives)[index]);
+                    index += 1;
+                }
+            };
+        },
+        ConstructPattern(name, qualifier, arguments, rest) => {
+            *name = rewriter.rewrite_identifier(*name);
+            match &(*qualifier) {
+                Some(value) => {
+                    *value = rewriter.rewrite_type_syntax(*value);
+                },
+                None => {},
+            };
+            rewrite_pattern_arguments(&(*arguments), rewriter);
+        },
+        TuplePattern(elements) => {
+            {
+                let index: u64 = 0;
+
+                while index < (*elements).len() {
+                    (*elements)[index] = rewriter.rewrite_pattern((*elements)[index]);
+                    index += 1;
+                }
+            };
+        },
+        SequencePattern(prefix, suffix, rest) => {
+            {
+                let index: u64 = 0;
+
+                while index < (*prefix).len() {
+                    (*prefix)[index] = rewriter.rewrite_pattern((*prefix)[index]);
+                    index += 1;
+                }
+            };
+            {
+                let index: u64 = 0;
+
+                while index < (*suffix).len() {
+                    (*suffix)[index] = rewriter.rewrite_pattern((*suffix)[index]);
+                    index += 1;
+                }
+            };
+        },
+    };
+}
+
+pub fn rewrite_item_children(node: Item&, rewriter: AstRewriter&) {
+    match &node.data {
+        Import(paths, target, alias, end) => {
+            {
+                let index: u64 = 0;
+
+                while index < (*paths).len() {
+                    (*paths)[index] = rewriter.rewrite_identifier((*paths)[index]);
+                    index += 1;
+                }
+            };
+            *target = rewriter.rewrite_identifier(*target);
+            match &(*alias) {
+                Some(value) => {
+                    *value = rewriter.rewrite_identifier(*value);
+                },
+                None => {},
+            };
+        },
+        Alias(attrs, name, generics, target) => {
+            {
+                let index: u64 = 0;
+
+                while index < (*attrs).len() {
+                    (*attrs)[index] = rewriter.rewrite_attr((*attrs)[index]);
+                    index += 1;
+                }
+            };
+            *name = rewriter.rewrite_identifier(*name);
+            {
+                let index: u64 = 0;
+
+                while index < (*generics).len() {
+                    rewrite_generic_param(&((*generics)[index]), rewriter);
+                    index += 1;
+                }
+            };
+            *target = rewriter.rewrite_type_syntax(*target);
+        },
+        FuncDef(attrs, name, generics, params, ret_type, body) => {
+            {
+                let index: u64 = 0;
+
+                while index < (*attrs).len() {
+                    (*attrs)[index] = rewriter.rewrite_attr((*attrs)[index]);
+                    index += 1;
+                }
+            };
+            *name = rewriter.rewrite_identifier(*name);
+            {
+                let index: u64 = 0;
+
+                while index < (*generics).len() {
+                    rewrite_generic_param(&((*generics)[index]), rewriter);
+                    index += 1;
+                }
+            };
+            {
+                let index: u64 = 0;
+
+                while index < (*params).len() {
+                    rewrite_parameter(&((*params)[index]), rewriter);
+                    index += 1;
+                }
+            };
+            match &(*ret_type) {
+                Some(value) => {
+                    *value = rewriter.rewrite_type_syntax(*value);
+                },
+                None => {},
+            };
+            *body = rewriter.rewrite_block(*body);
+        },
+        ConstDef(attrs, name, const_type, value) => {
+            {
+                let index: u64 = 0;
+
+                while index < (*attrs).len() {
+                    (*attrs)[index] = rewriter.rewrite_attr((*attrs)[index]);
+                    index += 1;
+                }
+            };
+            *name = rewriter.rewrite_identifier(*name);
+            *const_type = rewriter.rewrite_type_syntax(*const_type);
+            *value = rewriter.rewrite_expr(*value);
+        },
+        OpaqueTypeDef(attrs, name) => {
+            {
+                let index: u64 = 0;
+
+                while index < (*attrs).len() {
+                    (*attrs)[index] = rewriter.rewrite_attr((*attrs)[index]);
+                    index += 1;
+                }
+            };
+            *name = rewriter.rewrite_identifier(*name);
+        },
+        ExternBlock(attrs, abi, functions) => {
+            {
+                let index: u64 = 0;
+
+                while index < (*attrs).len() {
+                    (*attrs)[index] = rewriter.rewrite_attr((*attrs)[index]);
+                    index += 1;
+                }
+            };
+            {
+                let index: u64 = 0;
+
+                while index < (*functions).len() {
+                    (*functions)[index] = rewriter.rewrite_extern_func_decl((*functions)[index]);
+                    index += 1;
+                }
+            };
+        },
+        StructDef(attrs, name, generics, fields) => {
+            {
+                let index: u64 = 0;
+
+                while index < (*attrs).len() {
+                    (*attrs)[index] = rewriter.rewrite_attr((*attrs)[index]);
+                    index += 1;
+                }
+            };
+            *name = rewriter.rewrite_identifier(*name);
+            {
+                let index: u64 = 0;
+
+                while index < (*generics).len() {
+                    rewrite_generic_param(&((*generics)[index]), rewriter);
+                    index += 1;
+                }
+            };
+            {
+                let index: u64 = 0;
+
+                while index < (*fields).len() {
+                    (*fields)[index] = rewriter.rewrite_field_info((*fields)[index]);
+                    index += 1;
+                }
+            };
+        },
+        EnumDef(attrs, name, generics, variants) => {
+            {
+                let index: u64 = 0;
+
+                while index < (*attrs).len() {
+                    (*attrs)[index] = rewriter.rewrite_attr((*attrs)[index]);
+                    index += 1;
+                }
+            };
+            *name = rewriter.rewrite_identifier(*name);
+            {
+                let index: u64 = 0;
+
+                while index < (*generics).len() {
+                    rewrite_generic_param(&((*generics)[index]), rewriter);
+                    index += 1;
+                }
+            };
+            {
+                let index: u64 = 0;
+
+                while index < (*variants).len() {
+                    (*variants)[index] = rewriter.rewrite_variant_info((*variants)[index]);
+                    index += 1;
+                }
+            };
+        },
+        TraitDef(attrs, name, generics, items) => {
+            {
+                let index: u64 = 0;
+
+                while index < (*attrs).len() {
+                    (*attrs)[index] = rewriter.rewrite_attr((*attrs)[index]);
+                    index += 1;
+                }
+            };
+            *name = rewriter.rewrite_identifier(*name);
+            {
+                let index: u64 = 0;
+
+                while index < (*generics).len() {
+                    rewrite_generic_param(&((*generics)[index]), rewriter);
+                    index += 1;
+                }
+            };
+            {
+                let index: u64 = 0;
+
+                while index < (*items).len() {
+                    rewrite_trait_member(&((*items)[index]), rewriter);
+                    index += 1;
+                }
+            };
+        },
+        Impl(generics, target, trait_type, items, conditions) => {
+            {
+                let index: u64 = 0;
+
+                while index < (*generics).len() {
+                    rewrite_generic_param(&((*generics)[index]), rewriter);
+                    index += 1;
+                }
+            };
+            *target = rewriter.rewrite_type_syntax(*target);
+            match &(*trait_type) {
+                Some(value) => {
+                    *value = rewriter.rewrite_type_syntax(*value);
+                },
+                None => {},
+            };
+            {
+                let index: u64 = 0;
+
+                while index < (*items).len() {
+                    (*items)[index] = rewriter.rewrite_method_def((*items)[index]);
+                    index += 1;
+                }
+            };
+            {
+                let index: u64 = 0;
+
+                while index < (*conditions).len() {
+                    (*conditions)[index] = rewriter.rewrite_impl_condition((*conditions)[index]);
+                    index += 1;
+                }
+            };
+        },
+    };
+}
+
+pub fn rewrite_literal(node: Literal&, rewriter: AstRewriter&) {
+    match node {
+        Integer(value) => {
+            *value = rewriter.rewrite_int_literal(*value);
+        },
+        Float(value) => {
+            *value = rewriter.rewrite_float_literal(*value);
+        },
+        Character(value) => {
+            *value = rewriter.rewrite_char_literal(*value);
+        },
+        StringLiteral(value) => {
+            *value = rewriter.rewrite_str_literal(*value);
+        },
+        Boolean(value) => {
+            *value = rewriter.rewrite_bool_literal(*value);
+        },
+    };
+}
+
+pub fn rewrite_range_bounds(node: RangeBounds&, rewriter: AstRewriter&) {
+    match node {
+        Integer(lower, upper) => {
+            *lower = rewriter.rewrite_int_literal(*lower);
+            *upper = rewriter.rewrite_int_literal(*upper);
+        },
+        Character(lower, upper) => {
+            *lower = rewriter.rewrite_char_literal(*lower);
+            *upper = rewriter.rewrite_char_literal(*upper);
+        },
+    };
+}
+
+pub fn rewrite_condition(node: Condition&, rewriter: AstRewriter&) {
+    match node {
+        Expression(value) => {
+            *value = rewriter.rewrite_expr(*value);
+        },
+        Let(value) => {
+            *value = rewriter.rewrite_let_condition(*value);
+        },
+    };
+}
+
+pub fn rewrite_generic_argument(node: GenericArgument&, rewriter: AstRewriter&) {
+    match node {
+        Type(value) => {
+            *value = rewriter.rewrite_type_syntax(*value);
+        },
+        Constant(value) => {
+            *value = rewriter.rewrite_const_expr(*value);
+        },
+    };
+}
+
+pub fn rewrite_generic_param(node: GenericParam&, rewriter: AstRewriter&) {
+    match node {
+        Type(value) => {
+            *value = rewriter.rewrite_type_generic_param(*value);
+        },
+        Constant(value) => {
+            *value = rewriter.rewrite_const_generic_param(*value);
+        },
+    };
+}
+
+pub fn rewrite_parameter(node: Parameter&, rewriter: AstRewriter&) {
+    match node {
+        Named(value) => {
+            *value = rewriter.rewrite_var_info(*value);
+        },
+        Pattern(value) => {
+            *value = rewriter.rewrite_pattern_param(*value);
+        },
+    };
+}
+
+pub fn rewrite_trait_member(node: TraitMember&, rewriter: AstRewriter&) {
+    match node {
+        Declaration(value) => {
+            *value = rewriter.rewrite_method_decl(*value);
+        },
+        Definition(value) => {
+            *value = rewriter.rewrite_method_def(*value);
+        },
+    };
+}
+
+pub fn rewrite_pattern_arguments(node: PatternArguments&, rewriter: AstRewriter&) {
+    match node {
+        None => {
+        },
+        Positional(values) => {
+            {
+                let index: u64 = 0;
+
+                while index < (*values).len() {
+                    (*values)[index] = rewriter.rewrite_pattern((*values)[index]);
+                    index += 1;
+                }
+            };
+        },
+        Named(values) => {
+            {
+                let index: u64 = 0;
+
+                while index < (*values).len() {
+                    (*values)[index] = rewriter.rewrite_field_pattern((*values)[index]);
+                    index += 1;
+                }
+            };
+        },
+    };
+}
+
+// This adapter cannot fail; legacy visitors share the fallible traversal topology.
+struct VisitorAdapter { visitor: AstVisitor& }
+impl TryAstVisitor<()> for VisitorAdapter {
+    pub fn enter_identifier(node: Identifier&) -> Result<WalkControl, ()> {
+        let control = if self.visitor.enter_identifier(node) { WalkControl.Continue } else { WalkControl.Skip };
+        Result<WalkControl, ()>.Ok(control)
+    }
+
+    pub fn leave_identifier(node: Identifier&) -> Result<(), ()> {
+        self.visitor.leave_identifier(node);
+        Result<(), ()>.Ok(())
+    }
+
+    pub fn enter_int_literal(node: IntLiteral&) -> Result<WalkControl, ()> {
+        let control = if self.visitor.enter_int_literal(node) { WalkControl.Continue } else { WalkControl.Skip };
+        Result<WalkControl, ()>.Ok(control)
+    }
+
+    pub fn leave_int_literal(node: IntLiteral&) -> Result<(), ()> {
+        self.visitor.leave_int_literal(node);
+        Result<(), ()>.Ok(())
+    }
+
+    pub fn enter_float_literal(node: FloatLiteral&) -> Result<WalkControl, ()> {
+        let control = if self.visitor.enter_float_literal(node) { WalkControl.Continue } else { WalkControl.Skip };
+        Result<WalkControl, ()>.Ok(control)
+    }
+
+    pub fn leave_float_literal(node: FloatLiteral&) -> Result<(), ()> {
+        self.visitor.leave_float_literal(node);
+        Result<(), ()>.Ok(())
+    }
+
+    pub fn enter_char_literal(node: CharLiteral&) -> Result<WalkControl, ()> {
+        let control = if self.visitor.enter_char_literal(node) { WalkControl.Continue } else { WalkControl.Skip };
+        Result<WalkControl, ()>.Ok(control)
+    }
+
+    pub fn leave_char_literal(node: CharLiteral&) -> Result<(), ()> {
+        self.visitor.leave_char_literal(node);
+        Result<(), ()>.Ok(())
+    }
+
+    pub fn enter_str_literal(node: StrLiteral&) -> Result<WalkControl, ()> {
+        let control = if self.visitor.enter_str_literal(node) { WalkControl.Continue } else { WalkControl.Skip };
+        Result<WalkControl, ()>.Ok(control)
+    }
+
+    pub fn leave_str_literal(node: StrLiteral&) -> Result<(), ()> {
+        self.visitor.leave_str_literal(node);
+        Result<(), ()>.Ok(())
+    }
+
+    pub fn enter_bool_literal(node: BoolLiteral&) -> Result<WalkControl, ()> {
+        let control = if self.visitor.enter_bool_literal(node) { WalkControl.Continue } else { WalkControl.Skip };
+        Result<WalkControl, ()>.Ok(control)
+    }
+
+    pub fn leave_bool_literal(node: BoolLiteral&) -> Result<(), ()> {
+        self.visitor.leave_bool_literal(node);
+        Result<(), ()>.Ok(())
+    }
+
+    pub fn enter_program(node: Program&) -> Result<WalkControl, ()> {
+        let control = if self.visitor.enter_program(node) { WalkControl.Continue } else { WalkControl.Skip };
+        Result<WalkControl, ()>.Ok(control)
+    }
+
+    pub fn leave_program(node: Program&) -> Result<(), ()> {
+        self.visitor.leave_program(node);
+        Result<(), ()>.Ok(())
+    }
+
+    pub fn enter_block(node: Block&) -> Result<WalkControl, ()> {
+        let control = if self.visitor.enter_block(node) { WalkControl.Continue } else { WalkControl.Skip };
+        Result<WalkControl, ()>.Ok(control)
+    }
+
+    pub fn leave_block(node: Block&) -> Result<(), ()> {
+        self.visitor.leave_block(node);
+        Result<(), ()>.Ok(())
+    }
+
+    pub fn enter_argument(node: Argument&) -> Result<WalkControl, ()> {
+        let control = if self.visitor.enter_argument(node) { WalkControl.Continue } else { WalkControl.Skip };
+        Result<WalkControl, ()>.Ok(control)
+    }
+
+    pub fn leave_argument(node: Argument&) -> Result<(), ()> {
+        self.visitor.leave_argument(node);
+        Result<(), ()>.Ok(())
+    }
+
+    pub fn enter_var_info(node: VarInfo&) -> Result<WalkControl, ()> {
+        let control = if self.visitor.enter_var_info(node) { WalkControl.Continue } else { WalkControl.Skip };
+        Result<WalkControl, ()>.Ok(control)
+    }
+
+    pub fn leave_var_info(node: VarInfo&) -> Result<(), ()> {
+        self.visitor.leave_var_info(node);
+        Result<(), ()>.Ok(())
+    }
+
+    pub fn enter_pattern_param(node: PatternParam&) -> Result<WalkControl, ()> {
+        let control = if self.visitor.enter_pattern_param(node) { WalkControl.Continue } else { WalkControl.Skip };
+        Result<WalkControl, ()>.Ok(control)
+    }
+
+    pub fn leave_pattern_param(node: PatternParam&) -> Result<(), ()> {
+        self.visitor.leave_pattern_param(node);
+        Result<(), ()>.Ok(())
+    }
+
+    pub fn enter_pattern_let(node: PatternLet&) -> Result<WalkControl, ()> {
+        let control = if self.visitor.enter_pattern_let(node) { WalkControl.Continue } else { WalkControl.Skip };
+        Result<WalkControl, ()>.Ok(control)
+    }
+
+    pub fn leave_pattern_let(node: PatternLet&) -> Result<(), ()> {
+        self.visitor.leave_pattern_let(node);
+        Result<(), ()>.Ok(())
+    }
+
+    pub fn enter_let_condition(node: LetCondition&) -> Result<WalkControl, ()> {
+        let control = if self.visitor.enter_let_condition(node) { WalkControl.Continue } else { WalkControl.Skip };
+        Result<WalkControl, ()>.Ok(control)
+    }
+
+    pub fn leave_let_condition(node: LetCondition&) -> Result<(), ()> {
+        self.visitor.leave_let_condition(node);
+        Result<(), ()>.Ok(())
+    }
+
+    pub fn enter_elif_branch(node: ElifBranch&) -> Result<WalkControl, ()> {
+        let control = if self.visitor.enter_elif_branch(node) { WalkControl.Continue } else { WalkControl.Skip };
+        Result<WalkControl, ()>.Ok(control)
+    }
+
+    pub fn leave_elif_branch(node: ElifBranch&) -> Result<(), ()> {
+        self.visitor.leave_elif_branch(node);
+        Result<(), ()>.Ok(())
+    }
+
+    pub fn enter_match_arm(node: MatchArm&) -> Result<WalkControl, ()> {
+        let control = if self.visitor.enter_match_arm(node) { WalkControl.Continue } else { WalkControl.Skip };
+        Result<WalkControl, ()>.Ok(control)
+    }
+
+    pub fn leave_match_arm(node: MatchArm&) -> Result<(), ()> {
+        self.visitor.leave_match_arm(node);
+        Result<(), ()>.Ok(())
+    }
+
+    pub fn enter_attr(node: Attr&) -> Result<WalkControl, ()> {
+        let control = if self.visitor.enter_attr(node) { WalkControl.Continue } else { WalkControl.Skip };
+        Result<WalkControl, ()>.Ok(control)
+    }
+
+    pub fn leave_attr(node: Attr&) -> Result<(), ()> {
+        self.visitor.leave_attr(node);
+        Result<(), ()>.Ok(())
+    }
+
+    pub fn enter_type_generic_param(node: TypeGenericParam&) -> Result<WalkControl, ()> {
+        let control = if self.visitor.enter_type_generic_param(node) { WalkControl.Continue } else { WalkControl.Skip };
+        Result<WalkControl, ()>.Ok(control)
+    }
+
+    pub fn leave_type_generic_param(node: TypeGenericParam&) -> Result<(), ()> {
+        self.visitor.leave_type_generic_param(node);
+        Result<(), ()>.Ok(())
+    }
+
+    pub fn enter_const_generic_param(node: ConstGenericParam&) -> Result<WalkControl, ()> {
+        let control = if self.visitor.enter_const_generic_param(node) { WalkControl.Continue } else { WalkControl.Skip };
+        Result<WalkControl, ()>.Ok(control)
+    }
+
+    pub fn leave_const_generic_param(node: ConstGenericParam&) -> Result<(), ()> {
+        self.visitor.leave_const_generic_param(node);
+        Result<(), ()>.Ok(())
+    }
+
+    pub fn enter_field_info(node: FieldInfo&) -> Result<WalkControl, ()> {
+        let control = if self.visitor.enter_field_info(node) { WalkControl.Continue } else { WalkControl.Skip };
+        Result<WalkControl, ()>.Ok(control)
+    }
+
+    pub fn leave_field_info(node: FieldInfo&) -> Result<(), ()> {
+        self.visitor.leave_field_info(node);
+        Result<(), ()>.Ok(())
+    }
+
+    pub fn enter_variant_info(node: VariantInfo&) -> Result<WalkControl, ()> {
+        let control = if self.visitor.enter_variant_info(node) { WalkControl.Continue } else { WalkControl.Skip };
+        Result<WalkControl, ()>.Ok(control)
+    }
+
+    pub fn leave_variant_info(node: VariantInfo&) -> Result<(), ()> {
+        self.visitor.leave_variant_info(node);
+        Result<(), ()>.Ok(())
+    }
+
+    pub fn enter_method_decl(node: MethodDecl&) -> Result<WalkControl, ()> {
+        let control = if self.visitor.enter_method_decl(node) { WalkControl.Continue } else { WalkControl.Skip };
+        Result<WalkControl, ()>.Ok(control)
+    }
+
+    pub fn leave_method_decl(node: MethodDecl&) -> Result<(), ()> {
+        self.visitor.leave_method_decl(node);
+        Result<(), ()>.Ok(())
+    }
+
+    pub fn enter_method_def(node: MethodDef&) -> Result<WalkControl, ()> {
+        let control = if self.visitor.enter_method_def(node) { WalkControl.Continue } else { WalkControl.Skip };
+        Result<WalkControl, ()>.Ok(control)
+    }
+
+    pub fn leave_method_def(node: MethodDef&) -> Result<(), ()> {
+        self.visitor.leave_method_def(node);
+        Result<(), ()>.Ok(())
+    }
+
+    pub fn enter_extern_func_decl(node: ExternFuncDecl&) -> Result<WalkControl, ()> {
+        let control = if self.visitor.enter_extern_func_decl(node) { WalkControl.Continue } else { WalkControl.Skip };
+        Result<WalkControl, ()>.Ok(control)
+    }
+
+    pub fn leave_extern_func_decl(node: ExternFuncDecl&) -> Result<(), ()> {
+        self.visitor.leave_extern_func_decl(node);
+        Result<(), ()>.Ok(())
+    }
+
+    pub fn enter_impl_condition(node: ImplCondition&) -> Result<WalkControl, ()> {
+        let control = if self.visitor.enter_impl_condition(node) { WalkControl.Continue } else { WalkControl.Skip };
+        Result<WalkControl, ()>.Ok(control)
+    }
+
+    pub fn leave_impl_condition(node: ImplCondition&) -> Result<(), ()> {
+        self.visitor.leave_impl_condition(node);
+        Result<(), ()>.Ok(())
+    }
+
+    pub fn enter_capture_item(node: CaptureItem&) -> Result<WalkControl, ()> {
+        let control = if self.visitor.enter_capture_item(node) { WalkControl.Continue } else { WalkControl.Skip };
+        Result<WalkControl, ()>.Ok(control)
+    }
+
+    pub fn leave_capture_item(node: CaptureItem&) -> Result<(), ()> {
+        self.visitor.leave_capture_item(node);
+        Result<(), ()>.Ok(())
+    }
+
+    pub fn enter_field_pattern(node: FieldPattern&) -> Result<WalkControl, ()> {
+        let control = if self.visitor.enter_field_pattern(node) { WalkControl.Continue } else { WalkControl.Skip };
+        Result<WalkControl, ()>.Ok(control)
+    }
+
+    pub fn leave_field_pattern(node: FieldPattern&) -> Result<(), ()> {
+        self.visitor.leave_field_pattern(node);
+        Result<(), ()>.Ok(())
+    }
+
+    pub fn enter_expr(node: Expr&) -> Result<WalkControl, ()> {
+        let control = if self.visitor.enter_expr(node) { WalkControl.Continue } else { WalkControl.Skip };
+        Result<WalkControl, ()>.Ok(control)
+    }
+
+    pub fn leave_expr(node: Expr&) -> Result<(), ()> {
+        self.visitor.leave_expr(node);
+        Result<(), ()>.Ok(())
+    }
+
+    pub fn enter_type_syntax(node: TypeSyntax&) -> Result<WalkControl, ()> {
+        let control = if self.visitor.enter_type_syntax(node) { WalkControl.Continue } else { WalkControl.Skip };
+        Result<WalkControl, ()>.Ok(control)
+    }
+
+    pub fn leave_type_syntax(node: TypeSyntax&) -> Result<(), ()> {
+        self.visitor.leave_type_syntax(node);
+        Result<(), ()>.Ok(())
+    }
+
+    pub fn enter_const_expr(node: ConstExpr&) -> Result<WalkControl, ()> {
+        let control = if self.visitor.enter_const_expr(node) { WalkControl.Continue } else { WalkControl.Skip };
+        Result<WalkControl, ()>.Ok(control)
+    }
+
+    pub fn leave_const_expr(node: ConstExpr&) -> Result<(), ()> {
+        self.visitor.leave_const_expr(node);
+        Result<(), ()>.Ok(())
+    }
+
+    pub fn enter_pattern(node: Pattern&) -> Result<WalkControl, ()> {
+        let control = if self.visitor.enter_pattern(node) { WalkControl.Continue } else { WalkControl.Skip };
+        Result<WalkControl, ()>.Ok(control)
+    }
+
+    pub fn leave_pattern(node: Pattern&) -> Result<(), ()> {
+        self.visitor.leave_pattern(node);
+        Result<(), ()>.Ok(())
+    }
+
+    pub fn enter_item(node: Item&) -> Result<WalkControl, ()> {
+        let control = if self.visitor.enter_item(node) { WalkControl.Continue } else { WalkControl.Skip };
+        Result<WalkControl, ()>.Ok(control)
+    }
+
+    pub fn leave_item(node: Item&) -> Result<(), ()> {
+        self.visitor.leave_item(node);
+        Result<(), ()>.Ok(())
+    }
+
+}

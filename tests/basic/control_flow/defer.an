@@ -1,0 +1,121 @@
+from std.core.io import print;
+
+fn inner() {
+    defer print("inner defer\n");
+    print("inner body\n");
+}
+
+fn return_before_cleanup() -> i32 {
+    let value: i32 = 1;
+    defer value = 2;
+    return value;
+}
+
+fn case_function_scope_defer_order() {
+    let value: i32 = 1;
+    defer print("first\n");
+    defer print("second\n");
+    value = 2;
+    defer {
+        print("block\n");
+    };
+    print("body\n");
+    inner();
+
+    {
+        defer print("nested\n");
+        print("nested body\n");
+    }
+
+    defer {
+        if value == 2 {
+            print("latest\n");
+        } else {
+            print("stale\n");
+        }
+        comptime if IS_RAW_MODE {
+            print("mode\n");
+        } else {
+            print("mode\n");
+        }
+    };
+
+    defer if value == 2 {
+        print("conditional\n");
+    } else {
+        print("wrong\n");
+    };
+
+    let callback = || () {
+        print("closure\n");
+    };
+    defer callback();
+
+    assert return_before_cleanup() == 1: "return value must be evaluated before cleanup";
+}
+
+fn case_loop_scope_defer_order() {
+    let i: i32 = 0;
+    loop {
+        i += 1;
+        defer print("loop\n");
+        if i == 2 {
+            continue;
+        }
+        if i == 3 {
+            break;
+        }
+    }
+
+    let j: i32 = 0;
+    while j < 2 {
+        j += 1;
+        defer print("while\n");
+    }
+
+    let k: i32 = 0;
+    while k < 3 {
+        k += 1;
+        defer print("while-control\n");
+        if k == 2 {
+            continue;
+        }
+        if k == 3 {
+            break;
+        }
+    }
+
+    for item in 0..2 {
+        defer print("for\n");
+    }
+
+    for item in 0..3 {
+        defer print("for-control\n");
+        if item == 1 {
+            continue;
+        }
+        if item == 2 {
+            break;
+        }
+    }
+
+    {
+        defer print("outer-loop-scope\n");
+        loop {
+            defer print("inner-loop-scope\n");
+            break;
+        }
+        print("outer-after\n");
+    }
+
+    let break_value: i32 = loop {
+        defer print("break-value\n");
+        break 7;
+    };
+    assert break_value == 7: "break value must survive cleanup";
+}
+
+fn main() {
+    case_function_scope_defer_order();
+    case_loop_scope_defer_order();
+}

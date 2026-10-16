@@ -1,0 +1,99 @@
+from yianc.analysis.lowering.checker import ExprChecker;
+from yianc.analysis.resolution.definitions import parameters;
+from yianc.analysis.resolution.types import resolve_type;
+from yianc.analysis.ty.model import DefinitionHeader, NominalKind, DefinitionBody, CallableDefinition, AggregateDefinition, StructField, AccessMode, CapturedVar, Parameter;
+from yianc.analysis.ty.callable import schedule;
+from yianc.analysis.ty.relations import default_type;
+from yianc.analysis.definition.registry import Procedure, DefinitionKind;
+from yianc.analysis.symbol.model import Symbol, SymbolKind;
+from yianc.analysis.hir.node import HirKind, Closure;
+from yianc.common.ids import TypeId, HirId, SymbolId, DefId, ScopeId, NameId;
+from yianc.common.location import SourceSpan;
+from yianc.frontend.ast.node import CaptureItem, Parameter as SyntaxParameter, TypeSyntax, Block;
+from yianc.frontend.source import Span;
+from yianc.diagnostics.model import AnalysisError;
+from std.collections.hash_map import HashMap;
+from std.core.clone import Clone;
+from std.core.drop import Drop;
+from std.core.iter import Iterator, IntoIterator;
+from std.core.option import Option;
+from std.core.result import Result;
+from std.core.vec import Vec;
+
+impl ExprChecker {
+    pub fn closure(span: Span, captures: Vec<CaptureItem&>&, syntax_parameters: Vec<SyntaxParameter>&, return_type: Option<TypeSyntax&>&, body: Block&) -> Result<HirId, AnalysisError> {
+        let parameter_types = parameters(self.ctx, self.unit, self.scope, syntax_parameters)?;
+        let values = Vec<(NameId, HirId)>.new();
+        let descriptions = Vec<CapturedVar>.new();
+        let fields = Vec<StructField>.new();
+        let captured_symbols = Vec<SymbolId>.new();
+        let values_moved = false;
+        let types_moved = false;
+        let fields_moved = false;
+        let symbols_moved = false;
+        defer {
+            if !values_moved {
+                values.drop();
+            }
+
+            if !types_moved {
+                descriptions.drop();
+                parameter_types.drop();
+            }
+
+            if !fields_moved {
+                fields.drop();
+            }
+
+            if !symbols_moved {
+                captured_symbols.drop();
+            }
+        };
+        let result = match return_type {
+            Some(value) => self.local_type(*value)?, None => self.ctx.primitives.void
+        };
+        let scope = self.ctx.session.symbols.create_scope(Option<ScopeId>.Some(self.ctx.scopes[self.unit.index]))?;
+        self.ctx.session.editor_facts.record_scope(self.ctx.span(self.unit, span), scope);
+        self.ctx.session.symbols.inherit_types(scope, self.scope)?;
+
+        for capture in *captures {
+            let value = self.expression(capture.data.expr)?;
+            let name = self.ctx.session.names.intern(capture.data.name.data.name.as_str());
+            let type_id = default_type(self.ctx, self.type_of(value));
+            value = self.coerce(value, type_id)?;
+            let symbol = self.ctx.session.symbols.add(Symbol(name, SymbolKind.Parameter, type_id, self.unit,
+                Option<SourceSpan>.Some(self.ctx.span(self.unit, capture.span)), false, false, false, Option<SymbolId>.None, Option<DefId>.None));
+
+            if !self.ctx.session.symbols.bind(scope, name, symbol)? {
+                return Result<HirId, AnalysisError>.Err(self.error(capture.span, "duplicate closure capture"));
+            }
+
+            fields.push(StructField(name, type_id, AccessMode.Private, fields.len(), Option<SourceSpan>.Some(self.ctx.span(self.unit, capture.span))));
+            descriptions.push(CapturedVar(name, type_id));
+            captured_symbols.push(symbol);
+            values.push((name, value));
+        }
+
+        let empty = Vec<TypeId>.new();
+        defer empty.drop();
+        let environment_name = self.ctx.session.names.intern("%closure_environment");
+        let location = self.ctx.span(self.unit, span);
+        let environment_definition = self.ctx.session.types.register(DefinitionHeader(NominalKind.Struct, environment_name, location, self.unit), empty.clone());
+        fields_moved = true;
+        self.ctx.session.types.finish_definition(environment_definition, DefinitionBody.Struct(AggregateDefinition(fields, HashMap<NameId, TypeId>.new())))?;
+        let environment = self.ctx.session.types.instance(environment_definition, &empty)?;
+        let call_name = self.ctx.session.names.intern("%closure_call");
+        let definition = self.ctx.session.types.register(DefinitionHeader(NominalKind.Function, call_name, location, self.unit), empty.clone());
+        self.ctx.session.types.finish_definition(definition, DefinitionBody.Function(CallableDefinition(parameter_types.clone(), result, Option<TypeId>.None, false, false, false, false, false, false, 0)))?;
+        let call_type = self.ctx.session.types.instance(definition, &empty)?;
+        self.ctx.callable_scopes.insert(definition, scope);
+        symbols_moved = true;
+        self.ctx.closure_captures.insert(definition, captured_symbols);
+        self.ctx.session.definitions.register(Procedure(definition, call_type, self.unit, body, DefinitionKind.Closure))?;
+        schedule(self.ctx, call_type)?;
+        types_moved = true;
+        let type_id = self.ctx.session.types.closure(descriptions, parameter_types, result, location, Option<TypeId>.Some(environment), Option<TypeId>.Some(call_type));
+        values_moved = true;
+        Result<HirId, AnalysisError>.Ok(self.node(span, type_id, true, HirKind.Closure(Closure(values))))
+    }
+}

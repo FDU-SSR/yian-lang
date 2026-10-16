@@ -1,0 +1,76 @@
+from std.core.try import Try, TryBranch, FromResidual;
+
+struct Source {
+    pub value: i32,
+    pub failed: bool,
+}
+
+struct Failure {
+    pub code: i32,
+}
+
+struct Outcome {
+    pub value: i32,
+    pub failed: bool,
+}
+
+struct Wrapper<S> {
+    pub source: S,
+}
+
+impl<S, O, R> Try<O, R> for Wrapper<S> if S: Try<O, R> {
+    static fn branch(value: Self) -> TryBranch<O, R> {
+        Try<O, R>.branch<S>(value.source)
+    }
+}
+
+impl Try<i32, Failure> for Source {
+    static fn branch(value: Self) -> TryBranch<i32, Failure> {
+        if value.failed {
+            TryBranch<i32, Failure>.Break(Failure(value.value))
+        } else {
+            TryBranch<i32, Failure>.Continue(value.value)
+        }
+    }
+}
+
+impl Try<i32, Failure> for Source* {
+    static fn branch(value: Self) -> TryBranch<i32, Failure> {
+        if value.failed {
+            TryBranch<i32, Failure>.Break(Failure(value.value))
+        } else {
+            TryBranch<i32, Failure>.Continue(value.value + 1)
+        }
+    }
+}
+
+impl FromResidual<Failure> for Outcome {
+    static fn from_residual(residual: Failure) -> Self {
+        Outcome(residual.code, true)
+    }
+}
+
+fn convert(source: Source) -> Outcome {
+    Outcome(source? * 2, false)
+}
+
+fn pointer(source: Source*) -> Outcome {
+    Outcome(source?, false)
+}
+
+fn wrapped(source: Source) -> Outcome {
+    Outcome(Wrapper<Source>(source)?, false)
+}
+
+fn main() {
+    let good = Source(7, false);
+    let bad = Source(3, true);
+    assert convert(good).value == 14;
+    assert !convert(good).failed;
+    assert convert(bad).value == 3;
+    assert convert(bad).failed;
+    assert pointer(&good).value == 8;
+    assert pointer(&bad).failed;
+    assert wrapped(good).value == 7;
+    assert wrapped(bad).failed;
+}

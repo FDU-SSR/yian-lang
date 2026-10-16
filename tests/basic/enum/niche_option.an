@@ -1,0 +1,227 @@
+// Niche-compatible and tagged enum layout cases, organized by named behavior.
+
+from std.core.option import Option;
+from std.core.vec import Vec;
+
+fn add_one(value: i32) -> i32 {
+    value + 1
+}
+
+fn case_option_niche() {
+    let values = [42i32, 43];
+    let p = values.ptr();
+    let some: Option<i32*> = Option<i32*>.Some(p);
+    let none: Option<i32*> = Option<i32*>.None;
+
+    assert @sizeof<Option<i32*>> == @sizeof<i32*>: "pointer niche layout";
+    assert some.is_some(): "Some pointer";
+    assert none.is_none(): "None pointer";
+    assert (*some.unwrap())[0] == 42: "pointer payload";
+
+    let value_match: i32 = match some {
+        Some(value) => value[1],
+        None => -1,
+    };
+    assert value_match == 43: "value match";
+
+    let ref_match: i32 = match &some {
+        Some(value) => {
+            let pointer_reference: i32*& = value;
+            (*pointer_reference)[0]
+        },
+        None => -1,
+    };
+    assert ref_match == 42: "reference match";
+
+    let f: fn(i32) -> i32 = &add_one;
+    let function_some: Option<fn(i32) -> i32> = Option<fn(i32) -> i32>.Some(f);
+    let function_none: Option<fn(i32) -> i32> = Option<fn(i32) -> i32>.None;
+    assert @sizeof<Option<fn(i32) -> i32>> == @sizeof<fn(i32) -> i32>: "function pointer niche layout";
+    assert function_some.is_some(): "Some function pointer";
+    assert function_none.is_none(): "None function pointer";
+
+    assert !some.is_none(): "Some is not None";
+    let scalar_value: i32 = 42;
+    let scalar_fallback: i32 = 7;
+    let scalar_some: Option<i32> = Option<i32>.Some(scalar_value);
+    let scalar_none: Option<i32> = Option<i32>.None;
+    assert *scalar_some.unwrap_or(&scalar_fallback) == 42: "Some unwrap_or";
+    assert *scalar_none.unwrap_or(&scalar_fallback) == 7: "None unwrap_or";
+
+    let empty_dyn: i32* = dyn[0] 0i32;
+    let empty_dyn_some: Option<i32*> = Option<i32*>.Some(empty_dyn);
+    assert empty_dyn_some.is_some(): "zero-length allocation is Some";
+    del empty_dyn;
+}
+
+enum Link {
+    Nil,
+    Node { p: i32* },
+}
+
+enum Marker {
+    Mark { p: i32* },
+    Empty,
+}
+
+enum Bytes {
+    Missing,
+    Present { s: u8[] },
+}
+
+fn case_custom_payload_niches() {
+    assert @sizeof<Link> == @sizeof<i32*>: "pointer niche layout";
+    assert @sizeof<Marker> == @sizeof<i32*>: "reversed pointer niche layout";
+    assert @sizeof<Bytes> == @sizeof<u8[]>: "slice niche layout";
+
+    let values = [3i32, 4];
+    let p = values.ptr();
+    let node: Link = Link.Node(p);
+    let nil: Link = Link.Nil;
+    let node_value: i32 = match node {
+        Node(value) => value[0],
+        Nil => -1,
+    };
+    let nil_value: i32 = match nil {
+        Node(value) => value[0],
+        Nil => -2,
+    };
+    assert node_value == 3: "custom payload match";
+    assert nil_value == -2: "custom unit match";
+
+    let default_value: i32 = match nil {
+        Node(value) => value[0],
+        _ => -3,
+    };
+    assert default_value == -3: "custom default arm";
+
+    let marker: Marker = Marker.Mark(p);
+    let marker_value: i32 = match marker {
+        Mark(value) => value[1],
+        Empty => -1,
+    };
+    assert marker_value == 4: "reversed custom payload match";
+
+    let bytes = [1u8, 2, 3];
+    let present: Bytes = Bytes.Present(bytes[0u64..3]);
+    let missing: Bytes = Bytes.Missing;
+    let present_len: u64 = match present {
+        Present(value) => value.len(),
+        Missing => 99,
+    };
+    let missing_len: u64 = match missing {
+        Present(value) => value.len(),
+        Missing => 0,
+    };
+    assert present_len == 3: "custom slice payload match";
+    assert missing_len == 0: "custom slice unit match";
+}
+
+struct Wrapper {
+    ptr: i32*,
+}
+
+enum Three {
+    Empty,
+    First { ptr: i32* },
+    Other,
+}
+
+enum TwoPayloads {
+    First { ptr: i32* },
+    Second { ptr: i32* },
+}
+
+enum NamedWrapper {
+    Empty,
+    Value { wrapper: Wrapper },
+}
+
+enum ZstPointer {
+    Empty,
+    Value { ptr: void* },
+}
+
+enum ZstSlice {
+    Empty,
+    Value { slice: void[] },
+}
+
+fn case_tagged_layouts() {
+    let tagged_pointer_size: u64 = comptime if IS_RAW_MODE {
+        12u64
+    } else {
+        28u64
+    };
+    let tagged_view_size: u64 = comptime if IS_RAW_MODE {
+        20u64
+    } else {
+        28u64
+    };
+    let tagged_pointer_or_view_size: u64 = comptime if IS_RAW_MODE {
+        20u64
+    } else {
+        28u64
+    };
+
+    assert @sizeof<Three> == tagged_pointer_size: "three variants retain tag";
+    assert @sizeof<TwoPayloads> == tagged_pointer_size: "two payload variants retain tag";
+    assert @sizeof<NamedWrapper> == tagged_pointer_size: "named wrapper retains tag";
+    assert @sizeof<ZstPointer> == 4: "ZST pointer payload retains tag";
+    assert @sizeof<ZstSlice> == tagged_view_size: "ZST slice payload retains tag";
+    assert @sizeof<Option<void*>> == 4: "Option<void*> retains tag";
+    assert @sizeof<Option<Option<i32*>>> == tagged_pointer_size: "nested option retains outer tag";
+    assert @sizeof<Result<i32*, str>> == tagged_pointer_or_view_size: "result retains tag";
+}
+
+fn case_slice_and_string_niches() {
+    let empty_vec = Vec<i32>.new();
+    let empty_slice = empty_vec.as_slice();
+    let slice_some: Option<i32[]> = Option<i32[]>.Some(empty_slice);
+    let slice_none: Option<i32[]> = Option<i32[]>.None;
+
+    let empty_array: i32[0];
+    let empty_array_slice: i32[] = empty_array.as_slice();
+    let array_some: Option<i32[]> = Option<i32[]>.Some(empty_array_slice);
+    assert @sizeof<Option<i32[]>> == @sizeof<i32[]>: "slice niche layout";
+    assert slice_some.is_some(): "empty slice is Some";
+    assert slice_none.is_none(): "empty slice None";
+    assert array_some.is_some(): "zero-length array slice is Some";
+
+    let empty: str = "";
+    let str_some: Option<str> = Option<str>.Some(empty);
+    let str_none: Option<str> = Option<str>.None;
+    assert @sizeof<Option<str>> == @sizeof<str>: "str niche layout";
+    assert str_some.is_some(): "empty str is Some";
+    assert str_none.is_none(): "empty str None";
+
+    let slice_value: u64 = match slice_some {
+        Some(value) => value.len(),
+        None => 99,
+    };
+    assert slice_value == 0: "empty slice match";
+    let str_value: u64 = match str_some {
+        Some(value) => value.as_slice().len(),
+        None => 99,
+    };
+    assert str_value == 0: "empty str match";
+
+    let bytes = [65u8, 66, 67];
+    let valid: Option<str> = str.from_slice(bytes[0u64..3]);
+    let invalid_bytes = [0xF5u8, 0x80, 0x80];
+    let invalid: Option<str> = str.from_slice(invalid_bytes[0u64..3]);
+    assert valid.is_some(): "valid str is Some";
+    assert invalid.is_none(): "invalid str is None";
+    let valid_len: u64 = match valid {
+        Some(value) => value.as_slice().len(),
+        None => 99,
+    };
+    assert valid_len == 3: "str payload match";
+}
+
+fn main() {
+    case_custom_payload_niches();
+    case_tagged_layouts();
+    case_option_niche();
+    case_slice_and_string_niches();
+}

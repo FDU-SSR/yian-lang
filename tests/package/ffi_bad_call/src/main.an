@@ -1,0 +1,7 @@
+extern "C" {
+    fn abs(value: c_int) -> c_int;
+}
+
+fn main() {
+    abs(c_int(-7));
+}

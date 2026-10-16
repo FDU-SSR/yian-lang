@@ -1,0 +1,6 @@
+[package]
+name = "ffi_cross_module_test"
+kind = "bin"
+
+[dependencies]
+llvm = { path = "../../../bootstrap/llvm" }

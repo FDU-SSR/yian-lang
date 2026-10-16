@@ -1,0 +1,7 @@
+fn combine((left, right): (i32, i32), left: i32) -> i32 {
+    left + right
+}
+
+fn main() {
+    combine((1i32, 2i32), 3);
+}

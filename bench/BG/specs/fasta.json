@@ -1,0 +1,15 @@
+{
+  "name": "fasta",
+  "source": "BG",
+  "tags": [
+    "string"
+  ],
+  "argv": [],
+  "check": {
+    "rc": 0,
+    "stdout_contains": [
+      "-71"
+    ]
+  },
+  "note": "rc==0, stdout 含 \"-71\""
+}

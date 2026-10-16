@@ -1,0 +1,3 @@
+from libc.secret import secret;
+
+fn main() { return 0; }

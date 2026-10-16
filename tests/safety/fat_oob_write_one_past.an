@@ -1,0 +1,16 @@
+// Fat-pointer one-past-end write negative test.
+//
+// Same construction as fat_oob_read_one_past.an, but *end=99 writes, triggering
+// safe_access(p,1)=live(p) and in_bounds(p,1); one-past-end's
+// index+1>size fails with a safety error and exit code 1.
+
+fn main() {
+    let p: i32* = dyn[4] 0i32;
+    p[0] = 1;
+    p[1] = 2;
+    p[2] = 3;
+    p[3] = 4;
+
+    let end: i32* = p + 4; // one-past-end: index==size, valid arithmetic.
+    *end = 99; // one-past-end writes fail in_bounds with a safety error.
+}

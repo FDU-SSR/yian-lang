@@ -1,0 +1,71 @@
+// A simple calculator for testing stdin and string conversion.
+
+from std.core.string import String;
+from std.core.io import Stdin, BufReader, print;
+from std.core.drop import Drop;
+from std.core.option import Option;
+
+fn main() {
+    let input = Stdin.new();
+    let reader = BufReader<Stdin>.new(&input);
+    defer reader.drop();
+    loop {
+        let owned = match *reader.read_line().unwrap() {
+            Some(value) => value,
+            None => { break; },
+        };
+        defer owned.drop();
+        let line = String.from(&owned.as_str().trim());
+        defer line.drop();
+        if line == "exit" {
+            break
+        }
+        // Empty input lines terminate the calculator.
+        if line.is_empty() {
+            break
+        }
+
+        let op_idx: Option<u64> = Option<u64>.None
+        let op: Option<char> = Option<char>.None
+        let bytes: u8[] = line.as_slice()
+        for idx in 0u64..bytes.len() {
+            let ch: char = char(bytes[idx])
+            if "+-*/".contains_char(ch) {
+                op_idx = Option<u64>.Some(idx)
+                op = Option<char>.Some(ch)
+                break
+            }
+        }
+
+        if op_idx.is_none() {
+            print("Invalid expression: no operator found")
+            continue
+        }
+        let idx: u64 = *op_idx.unwrap()
+        let operator: char = *op.unwrap()
+        let left_str: str = line[0u64..idx].trim()
+        let right_str: str = line[(idx + 1u64)..line.len()].trim()
+
+        // Parse numeric text through the u64.from() conversion method.
+        let left_num: u64 = u64.from(&left_str);
+        let right_num: u64 = u64.from(&right_str);
+
+        let result: u64;
+        match operator {
+            '+' => { result = left_num + right_num }
+            '-' => { result = left_num - right_num }
+            '*' => { result = left_num * right_num }
+            '/' => { result = left_num / right_num }
+            _ => {
+                print("Invalid operator")
+                continue
+            }
+        }
+
+        print("Result: ")
+        let result_text: String = result.to_string()
+        print(result_text.as_str())
+        print("\n")
+    }
+
+}

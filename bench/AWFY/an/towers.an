@@ -1,0 +1,128 @@
+// bench/AWFY/an/towers.an: Tower of Hanoi pointer-stack simulation (shootout towers).
+//
+// Reference: AWFY benchmarks/Java/src/Towers.java; see AWFY LICENSE.md.
+// Each benchmark unit uses upstream disks=13 and asserts moves_done==8191.
+//       main repeats complete units for stable process-level timing.
+//
+// Algorithm: three TowersDisk linked-list piles, ordered with the smallest disk on top.
+//       push_disk pushes after checking size order; pop_disk_from removes the top;
+//       move_top_disk performs/counts one move; move_disks implements recursive Hanoi.
+//       build_tower_at creates the 0..disks tower; free_pile releases nodes afterward.
+//       Total moves = 2^disks-1.
+//
+// Option/T& representation: Option denotes empty piles and list tails; push_disk accepts nonnull T&.
+//       pop_disk_from returns T& for a nonempty pile and diagnoses/terminates on empty piles.
+//       dyn T allocates nodes bound as T&; free_pile recursively releases them.
+//
+// Fat and raw modes share this source.
+// Use inferred dyn types and x[0u64..n] range views for both modes, retaining fat-mode checks.
+from std.core.io import Stderr;
+from std.core.env import exit;
+
+struct TowersDisk {
+    size: i32,
+    next: Option<TowersDisk&>,
+}
+
+struct TowersState {
+    piles: Option<TowersDisk&>[3],
+    moves_done: i32,
+}
+
+fn push_disk(disk: TowersDisk&, pile: u64, state: TowersState&) {
+    disk.next = match state.piles[pile] {
+        Some(d) => {
+            if disk.size >= d.size {
+                Stderr.new().write_str("Cannot put a big disk on a smaller one").unwrap();
+                exit(1)
+            }
+            Option<TowersDisk&>.Some(d)
+        },
+        None => Option<TowersDisk&>.None,
+    }
+    state.piles[pile] = Option<TowersDisk&>.Some(disk);
+}
+
+fn pop_disk_from(pile: u64, state: TowersState&) -> TowersDisk& {
+    return match state.piles[pile] {
+        None => {
+            Stderr.new().write_str("Attempting to remove a disk from an empty pile").unwrap();
+            exit(1)
+        },
+        Some(tt) => {
+            state.piles[pile] = match tt.next {
+                Some(n) => Option<TowersDisk&>.Some(n),
+                None => Option<TowersDisk&>.None,
+            };
+            tt.next = Option<TowersDisk&>.None;
+            tt
+        }
+    };
+}
+
+fn move_top_disk(from_pile: u64, to_pile: u64, state: TowersState&) {
+    push_disk(pop_disk_from(from_pile, state), to_pile, state);
+    state.moves_done = state.moves_done + 1;
+}
+
+fn build_tower_at(pile: u64, disks: i32, state: TowersState&) {
+    let i: i32 = disks;
+    while i >= 0 {
+        let disk: TowersDisk& = dyn TowersDisk(i, Option<TowersDisk&>.None);
+        push_disk(disk, pile, state);
+        i -= 1;
+    };
+}
+
+fn move_disks(disks: i32, from_pile: u64, to_pile: u64, state: TowersState&) {
+    if disks == 1 {
+        move_top_disk(from_pile, to_pile, state);
+    } else {
+        let other_pile: u64 = 3u64 - from_pile - to_pile;
+        move_disks(disks - 1, from_pile, other_pile, state);
+        move_top_disk(from_pile, to_pile, state);
+        move_disks(disks - 1, other_pile, to_pile, state);
+    }
+}
+
+fn free_pile(maybe_disk: Option<TowersDisk&>) {
+    match maybe_disk {
+        None => {},
+        Some(disk) => {
+            free_pile(disk.next);
+            del disk;
+        },
+    };
+}
+
+fn benchmark(state: TowersState&) -> i32 {
+    state.piles = [
+        Option<TowersDisk&>.None,
+        Option<TowersDisk&>.None,
+        Option<TowersDisk&>.None,
+    ];
+    build_tower_at(0, 13, state);
+    state.moves_done = 0;
+    move_disks(13, 0, 1, state);
+
+    let i: u64 = 0;
+    while i < 3 {
+        free_pile(state.piles[i]);
+        i += 1;
+    };
+
+    return state.moves_done;
+}
+
+fn main() {
+    let ITER: i32 = 41065;  // bench-scale
+    let i: i32 = 0;
+    while i < ITER {
+        let state: TowersState& = dyn TowersState(
+            [Option<TowersDisk&>.None, Option<TowersDisk&>.None, Option<TowersDisk&>.None], 0);
+        let result: i32 = benchmark(state);
+        assert result == 8191: "towers: moves_done should be 8191";
+        del state;
+        i += 1;
+    };
+}

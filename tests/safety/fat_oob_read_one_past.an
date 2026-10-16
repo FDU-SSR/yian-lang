@@ -1,0 +1,18 @@
+// Fat-pointer one-past-end read negative test.
+//
+// p+4 is a valid one-past-end pointer, index==size,
+// but *end requires safe_access(p,1)=live(p) and in_bounds(p,1).
+// in_bounds requires index+1<=size; 4+1>4 fails with a safety error.
+// Expect exit code 1.
+
+fn main() {
+    let p: i32* = dyn[4] 0i32;
+    p[0] = 1;
+    p[1] = 2;
+    p[2] = 3;
+    p[3] = 4;
+
+    let end: i32* = p + 4; // one-past-end: index==size, valid arithmetic.
+    let v: i32 = *end; // one-past-end reads fail in_bounds with a safety error.
+    assert v == 5: "unreachable"
+}

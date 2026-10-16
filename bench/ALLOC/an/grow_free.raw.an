@@ -1,0 +1,38 @@
+// bench/ALLOC/an/grow_free.raw.an: raw-mode grow/release loop with grow_free.an's algorithm.
+// Elements use T* (raw mode has no slices).
+//
+// Scale: 40 rounds * 4096 blocks of 4 KiB (16 MiB per round).
+// Assert checksum == value 7 written per block * blocks * rounds.
+
+from std.core.io import print;
+
+fn main() {
+    let cycles: u64 = 40;  // bench-scale
+    let chunk_count: u64 = 4096;
+    let checksum: i64 = 0;
+
+    let seed = dyn[1] 0u8;
+    let cycle: u64 = 0;
+    while cycle < cycles {
+        let batch = dyn[chunk_count] seed;
+        let i: u64 = 0;
+        while i < chunk_count {
+            batch[i] = dyn[4096] 0u8;
+            batch[i][0] = 7;
+            checksum += i64(batch[i][0]);
+            i += 1;
+        }
+        let j: u64 = 0;
+        while j < chunk_count {
+            let chunk: u8* = batch[j];
+            del chunk;
+            j += 1;
+        }
+        del batch;
+        cycle += 1;
+    }
+
+    del seed;
+    assert checksum == i64(chunk_count) * i64(cycles) * 7: "grow/free checksum";
+    print("grow pass\n");
+}

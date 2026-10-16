@@ -1,0 +1,630 @@
+from std.cli.value import ValueType as CliValueType, Action as CliAction, Nargs as CliNargs;
+from std.cli.value import ArgValue as CliValue, ArgMatches as CliMatches, ParseOutcome as CliOutcome;
+from std.cli.value import CliError as Error, CliErrorKind as ErrorKind, QueryError as Query, MatchEntry;
+from std.cli.convert import convert, is_option;
+from std.core.string import String;
+from std.core.vec import Vec;
+from std.core.option import Option;
+from std.core.result import Result;
+from std.core.drop import Drop;
+from std.core.env import args;
+from std.core.fmt import ToString;
+from std.core.range import Range;
+
+pub typedef ValueType = CliValueType;
+pub typedef Action = CliAction;
+pub typedef Nargs = CliNargs;
+pub typedef ArgValue = CliValue;
+pub typedef ArgMatches = CliMatches;
+pub typedef ParseOutcome = CliOutcome;
+pub typedef CliError = Error;
+pub typedef CliErrorKind = ErrorKind;
+pub typedef QueryError = Query;
+
+fn release_strings(values: Vec<String>&) {
+    let i = 0u64;
+    while i < values.len() { values[i].drop(); i += 1u64; }
+    values.drop();
+}
+fn release_values(values: Vec<ArgValue>&) {
+    let i = 0u64;
+    while i < values.len() { values[i].drop(); i += 1u64; }
+    values.drop();
+}
+fn letter(value: char) -> bool { (u32(value) >= 97u32 && u32(value) <= 122u32) || (u32(value) >= 65u32 && u32(value) <= 90u32) }
+fn declaration(name: str, text: str) -> CliError { CliError.new(CliErrorKind.Declaration, name, text) }
+
+struct ArgumentSpec {
+    name: String, longs: Vec<String>, shorts: Vec<char>, action: Action, kind: ValueType,
+    arity: Nargs, explicit_arity: bool, explicit_type: bool, required: bool,
+    help: String, metavar: String, defaults: Vec<String>, has_default: bool,
+    constant: Option<String>, choices: Vec<String>, group: Option<u64>,
+}
+impl ArgumentSpec {
+    static fn new(name: str) -> Self {
+        Self(name=String.from(&name), longs=Vec<String>.new(), shorts=Vec<char>.new(),
+            action=Action.Store, kind=ValueType.Text, arity=Nargs.One, explicit_arity=false,
+            explicit_type=false, required=false, help=String.new(), metavar=String.new(),
+            defaults=Vec<String>.new(), has_default=false, constant=Option<String>.None,
+            choices=Vec<String>.new(), group=Option<u64>.None)
+    }
+    fn positional() -> bool { self.longs.len() == 0u64 && self.shorts.len() == 0u64 }
+    fn in_group(group: u64) -> bool { match self.group { Some(value) => value == group, None => false, } }
+    fn takes_value() -> bool { self.action == Action.Store || self.action == Action.Append }
+    fn meta() -> str { if self.metavar.is_empty() { self.name.as_str() } else { self.metavar.as_str() } }
+    fn checked(text: str) -> Result<ArgValue, CliError> {
+        let value = convert(text, self.kind, self.name.as_str())?;
+        let accepted = self.choices.len() == 0u64;
+        let i = 0u64;
+        while i < self.choices.len() {
+            let candidate = match convert(self.choices[i].as_str(), self.kind, self.name.as_str()) {
+                Ok(candidate) => candidate,
+                Err(error) => { value.drop(); return Result<ArgValue, CliError>.Err(error); },
+            };
+            accepted = accepted || value.equals(&candidate);
+            candidate.drop();
+            i += 1u64;
+        }
+        if !accepted {
+            value.drop();
+            let message = String.from(&"value is not among choices: ");
+            message.push_str(text);
+            defer message.drop();
+            return Result<ArgValue, CliError>.Err(CliError.new(CliErrorKind.InvalidValue, self.name.as_str(), message.as_str()));
+        }
+        Result<ArgValue, CliError>.Ok(value)
+    }
+    fn make_value(texts: str[]) -> Result<Option<ArgValue>, CliError> {
+        if texts.len() == 0u64 && !self.arity.is_list() {
+            return match self.constant {
+                Some(text) => Result<Option<ArgValue>, CliError>.Ok(Option<ArgValue>.Some(self.checked(text.as_str())?)),
+                None => Result<Option<ArgValue>, CliError>.Ok(Option<ArgValue>.None),
+            };
+        }
+        if !self.arity.is_list() { return Result<Option<ArgValue>, CliError>.Ok(Option<ArgValue>.Some(self.checked(texts[0u64])?)); }
+        let values = Vec<ArgValue>.new();
+        let transferred = false;
+        defer { if !transferred { release_values(&values); } };
+        let i = 0u64;
+        while i < texts.len() { values.push(self.checked(texts[i])?); i += 1u64; }
+        transferred = true;
+        Result<Option<ArgValue>, CliError>.Ok(Option<ArgValue>.Some(ArgValue.List(values)))
+    }
+}
+impl Drop for ArgumentSpec {
+    pub fn drop() {
+        self.name.drop();
+        release_strings(&self.longs);
+        self.shorts.drop();
+        self.help.drop();
+        self.metavar.drop();
+        release_strings(&self.defaults);
+        release_strings(&self.choices);
+        match self.constant.take() { Some(value) => value.drop(), None => {}, }
+    }
+}
+
+pub struct ArgumentParser { program: String, description: String, definitions: Vec<ArgumentSpec>, groups: Vec<bool> }
+// The builder retains the parser and index; growing the argument table does not leave it pointing to invalid elements.
+pub struct ArgumentBuilder { parser: ArgumentParser&, index: u64 }
+pub struct GroupBuilder { parser: ArgumentParser&, index: u64 }
+impl ArgumentBuilder {
+    pub fn long(name: str) -> Self { self.parser.definitions[self.index].longs.push(String.from(&name)); *self }
+    pub fn short(name: char) -> Self { self.parser.definitions[self.index].shorts.push(name); *self }
+    pub fn action(action: Action) -> Self {
+        let spec = &self.parser.definitions[self.index];
+        spec.action = action;
+        if !spec.explicit_type {
+            spec.kind = if action == Action.StoreTrue || action == Action.StoreFalse { ValueType.Bool } elif action == Action.Count { ValueType.U64 } else { ValueType.Text };
+        };
+        *self
+    }
+    pub fn value_type(kind: ValueType) -> Self {
+        self.parser.definitions[self.index].kind = kind;
+        self.parser.definitions[self.index].explicit_type = true;
+        *self
+    }
+    pub fn nargs(arity: Nargs) -> Self {
+        self.parser.definitions[self.index].arity = arity;
+        self.parser.definitions[self.index].explicit_arity = true;
+        *self
+    }
+    pub fn required(required: bool) -> Self { self.parser.definitions[self.index].required = required; *self }
+    pub fn help(text: str) -> Self {
+        let spec = &self.parser.definitions[self.index];
+        spec.help.drop();
+        spec.help = String.from(&text);
+        *self
+    }
+    pub fn metavar(text: str) -> Self {
+        let spec = &self.parser.definitions[self.index];
+        spec.metavar.drop();
+        spec.metavar = String.from(&text);
+        *self
+    }
+    // Single-value Append defaults form a list; multi-value defaults form one group. An empty list adds no group.
+    pub fn default_values(texts: str[]) -> Self {
+        let spec = &self.parser.definitions[self.index];
+        release_strings(&spec.defaults);
+        spec.defaults = Vec<String>.new();
+        let i = 0u64;
+        while i < texts.len() { spec.defaults.push(String.from(&texts[i])); i += 1u64; }
+        spec.has_default = true;
+        *self
+    }
+    pub fn default_value(text: str) -> Self { self.default_values([text].as_slice()) }
+    pub fn const_value(text: str) -> Self {
+        let spec = &self.parser.definitions[self.index];
+        match spec.constant.take() { Some(old) => old.drop(), None => {}, }
+        spec.constant = Option<String>.Some(String.from(&text));
+        *self
+    }
+    pub fn choices(texts: str[]) -> Self {
+        let spec = &self.parser.definitions[self.index];
+        release_strings(&spec.choices);
+        spec.choices = Vec<String>.new();
+        let i = 0u64;
+        while i < texts.len() { spec.choices.push(String.from(&texts[i])); i += 1u64; };
+        *self
+    }
+}
+impl GroupBuilder {
+    pub fn add_argument(name: str) -> ArgumentBuilder {
+        let builder = self.parser.add_argument(name);
+        self.parser.definitions[builder.index].group = Option<u64>.Some(self.index);
+        builder
+    }
+}
+impl ArgumentParser {
+    static pub fn new(program: str) -> Self {
+        Self(program=String.from(&program), description=String.new(), definitions=Vec<ArgumentSpec>.new(), groups=Vec<bool>.new())
+    }
+    pub fn description(text: str) { self.description.drop(); self.description = String.from(&text); }
+    pub fn add_argument(name: str) -> ArgumentBuilder {
+        let index = self.definitions.len();
+        self.definitions.push(ArgumentSpec.new(name));
+        ArgumentBuilder(parser=self, index=index)
+    }
+    pub fn add_mutually_exclusive_group(required: bool) -> GroupBuilder {
+        let index = self.groups.len();
+        self.groups.push(required);
+        GroupBuilder(parser=self, index=index)
+    }
+    fn find_long(name: str) -> Option<u64> {
+        let i = 0u64;
+        while i < self.definitions.len() {
+            let j = 0u64;
+            while j < self.definitions[i].longs.len() {
+                if self.definitions[i].longs[j].as_str() == name { return Option<u64>.Some(i); }
+                j += 1u64;
+            }
+            i += 1u64;
+        }
+        Option<u64>.None
+    }
+    fn find_short(name: char) -> Option<u64> {
+        let i = 0u64;
+        while i < self.definitions.len() {
+            let j = 0u64;
+            while j < self.definitions[i].shorts.len() {
+                if self.definitions[i].shorts[j] == name { return Option<u64>.Some(i); }
+                j += 1u64;
+            }
+            i += 1u64;
+        }
+        Option<u64>.None
+    }
+    fn validate() -> Result<(), CliError> {
+        let i = 0u64;
+        while i < self.definitions.len() {
+            let spec = &self.definitions[i];
+            let name = spec.name.as_str();
+            if name == "" || name == "help" { return Result<(), CliError>.Err(declaration(name, "empty or reserved argument name")); }
+            let j = 0u64;
+            while j < i {
+                if self.definitions[j].name.as_str() == name { return Result<(), CliError>.Err(declaration(name, "duplicate argument name")); }
+                j += 1u64;
+            }
+            j = 0u64;
+            while j < spec.longs.len() {
+                let alias = spec.longs[j].as_str();
+                let bytes = alias.as_slice();
+                if alias == "help" || bytes.len() == 0u64 { return Result<(), CliError>.Err(declaration(name, "empty or reserved long option")); }
+                let k = 0u64;
+                while k < bytes.len() {
+                    let ch = char(bytes[k]);
+                    if !letter(ch) && !(bytes[k] >= b'0' && bytes[k] <= b'9') && ch != '-' && ch != '_' { return Result<(), CliError>.Err(declaration(name, "invalid long option name")); }
+                    k += 1u64;
+                }
+                if alias.starts_with("-") || *self.find_long(alias).unwrap() != i { return Result<(), CliError>.Err(declaration(name, "duplicate or invalid long option")); }
+                k = 0u64;
+                while k < j {
+                    if spec.longs[k].as_str() == alias { return Result<(), CliError>.Err(declaration(name, "duplicate long option")); }
+                    k += 1u64;
+                }
+                j += 1u64;
+            }
+            j = 0u64;
+            while j < spec.shorts.len() {
+                let alias = spec.shorts[j];
+                if !letter(alias) || alias == 'h' || *self.find_short(alias).unwrap() != i { return Result<(), CliError>.Err(declaration(name, "duplicate, invalid or reserved short option")); }
+                let k = 0u64;
+                while k < j {
+                    if spec.shorts[k] == alias { return Result<(), CliError>.Err(declaration(name, "duplicate short option")); }
+                    k += 1u64;
+                }
+                j += 1u64;
+            }
+            match &spec.arity { Exact(count) => { if *count == 0u64 { return Result<(), CliError>.Err(declaration(name, "exact argument count must be positive")); } }, _ => {}, }
+            if spec.positional() {
+                if spec.action != Action.Store || spec.group.is_some() || spec.required || spec.constant.is_some() { return Result<(), CliError>.Err(declaration(name, "positional arguments use Store and nargs, without groups, required or const")); }
+                if spec.arity.is_variable() {
+                    j = i + 1u64;
+                    while j < self.definitions.len() {
+                        if self.definitions[j].positional() { return Result<(), CliError>.Err(declaration(name, "variable positional argument must be last")); }
+                        j += 1u64;
+                    }
+                }
+            }
+            if spec.group.is_some() && spec.required { return Result<(), CliError>.Err(declaration(name, "use the group's required setting")); }
+            if !spec.takes_value() {
+                let expected = if spec.action == Action.Count { ValueType.U64 } else { ValueType.Bool };
+                if spec.kind != expected || spec.explicit_arity || spec.constant.is_some() || spec.choices.len() != 0u64 { return Result<(), CliError>.Err(declaration(name, "flag action has incompatible type, nargs, const or choices")); }
+            } elif spec.constant.is_some() {
+                match &spec.arity { Optional => {}, _ => return Result<(), CliError>.Err(declaration(name, "const requires Optional nargs")), }
+            }
+            j = 0u64;
+            while j < spec.choices.len() {
+                match convert(spec.choices[j].as_str(), spec.kind, name) { Ok(value) => value.drop(), Err(error) => { error.drop(); return Result<(), CliError>.Err(declaration(name, "choice has invalid type")); } }
+                j += 1u64;
+            }
+            if spec.has_default {
+                let count = spec.defaults.len();
+                if !spec.takes_value() {
+                    if count != 1u64 { return Result<(), CliError>.Err(declaration(name, "flag default needs one value")); }
+                } elif spec.action != Action.Append || (spec.arity.is_list() && count > 0u64) {
+                    if count < spec.arity.minimum() || count > spec.arity.maximum() { return Result<(), CliError>.Err(declaration(name, "default has wrong number of values")); }
+                }
+                j = 0u64;
+                while j < count {
+                    match spec.checked(spec.defaults[j].as_str()) { Ok(value) => value.drop(), Err(error) => { error.drop(); return Result<(), CliError>.Err(declaration(name, "default has invalid type or choice")); } }
+                    j += 1u64;
+                }
+            }
+            match spec.constant { Some(text) => match spec.checked(text.as_str()) { Ok(value) => value.drop(), Err(error) => { error.drop(); return Result<(), CliError>.Err(declaration(name, "const has invalid type or choice")); } }, None => {}, }
+            i += 1u64;
+        }
+        i = 0u64;
+        while i < self.groups.len() {
+            let count = 0u64;
+            let j = 0u64;
+            while j < self.definitions.len() {
+                if self.definitions[j].in_group(i) { count += 1u64; }
+                j += 1u64;
+            }
+            if count == 0u64 { return Result<(), CliError>.Err(declaration("", "empty mutually exclusive group")); }
+            i += 1u64;
+        }
+        Result<(), CliError>.Ok(())
+    }
+    fn initial() -> Result<ArgMatches, CliError> {
+        let result = ArgMatches(entries=Vec<MatchEntry>.new());
+        let transferred = false;
+        defer { if !transferred { result.drop(); } };
+        let i = 0u64;
+        while i < self.definitions.len() {
+            let spec = &self.definitions[i];
+            let value = Option<ArgValue>.None;
+            if spec.action == Action.Append && !spec.arity.is_list() {
+                let values = Vec<ArgValue>.new();
+                let transferred_values = false;
+                defer { if !transferred_values { release_values(&values); } };
+                let j = 0u64;
+                while j < spec.defaults.len() {
+                    values.push(spec.checked(spec.defaults[j].as_str())?);
+                    j += 1u64;
+                }
+                value = Option<ArgValue>.Some(ArgValue.List(values));
+                transferred_values = true;
+                result.entries.push(MatchEntry(name=String.from(&spec.name.as_str()), value=value, supplied=false));
+                i += 1u64;
+                continue;
+            }
+            if spec.has_default {
+                let texts = Vec<str>.new();
+                defer texts.drop();
+                let j = 0u64;
+                while j < spec.defaults.len() { texts.push(spec.defaults[j].as_str()); j += 1u64; }
+                if spec.takes_value() {
+                    if texts.len() > 0u64 || (spec.arity.is_list() && spec.action != Action.Append) { value = spec.make_value(texts.as_slice())?; }
+                } else { value = Option<ArgValue>.Some(spec.checked(texts[0u64])?); }
+            } elif spec.action == Action.StoreTrue || spec.action == Action.StoreFalse { value = Option<ArgValue>.Some(ArgValue.Bool(spec.action == Action.StoreFalse)); } elif spec.action == Action.Count { value = Option<ArgValue>.Some(ArgValue.U64(0u64)); } elif spec.arity.is_list() && spec.action != Action.Append { value = Option<ArgValue>.Some(ArgValue.List(Vec<ArgValue>.new())); }
+            if spec.action == Action.Append {
+                let values = Vec<ArgValue>.new();
+                match value.take() { Some(item) => values.push(item), None => {}, }
+                value = Option<ArgValue>.Some(ArgValue.List(values));
+            }
+            result.entries.push(MatchEntry(name=String.from(&spec.name.as_str()), value=value, supplied=false));
+            i += 1u64;
+        }
+        transferred = true;
+        Result<ArgMatches, CliError>.Ok(result)
+    }
+    fn apply(matches: ArgMatches&, index: u64, value: Option<ArgValue>) -> Result<(), CliError> {
+        let spec = &self.definitions[index];
+        match &spec.group {
+            Some(group) => {
+                let i = 0u64;
+                while i < self.definitions.len() {
+                    if i != index && self.definitions[i].in_group(*group) && matches.entries[i].supplied {
+                        match value { Some(item) => item.drop(), None => {}, }
+                        return Result<(), CliError>.Err(CliError.new(CliErrorKind.Conflict, spec.name.as_str(), "mutually exclusive arguments were supplied together"));
+                    }
+                    i += 1u64;
+                }
+            }, None => {},
+        }
+        let entry = &matches.entries[index];
+        entry.supplied = true;
+        if spec.action == Action.Append {
+            match entry.value.unwrap() { List(values) => match value { Some(item) => values.push(item), None => values.push(ArgValue.Null), }, _ => {}, }
+        } else {
+            match entry.value.take() { Some(old) => old.drop(), None => {}, }
+            entry.value = value;
+        }
+        Result<(), CliError>.Ok(())
+    }
+    fn consume(matches: ArgMatches&, index: u64, argv: str[], cursor: u64&, attached: Option<str>, origin: u64) -> Result<(), CliError> {
+        let spec = &self.definitions[index];
+        if !spec.takes_value() {
+            if attached.is_some() { return Result<(), CliError>.Err(CliError.new(CliErrorKind.WrongCount, spec.name.as_str(), "flag does not accept a value").at(origin)); }
+            let value = if spec.action == Action.Count {
+                let old = match matches.entries[index].value.unwrap() { U64(value) => *value, _ => 0u64, };
+                if old == u64.max() { return Result<(), CliError>.Err(CliError.new(CliErrorKind.InvalidValue, spec.name.as_str(), "count overflow").at(origin)); }
+                ArgValue.U64(old + 1u64)
+            } else { ArgValue.Bool(spec.action == Action.StoreTrue) };
+            return match self.apply(matches, index, Option<ArgValue>.Some(value)) {
+                Ok(_) => Result<(), CliError>.Ok(()), Err(error) => Result<(), CliError>.Err(error.at(origin)),
+            };
+        }
+        let texts = Vec<str>.new();
+        defer texts.drop();
+        match attached { Some(text) => texts.push(text), None => {}, }
+        while texts.len() < spec.arity.maximum() && *cursor < argv.len() && !is_option(argv[*cursor]) {
+            texts.push(argv[*cursor]);
+            *cursor += 1u64;
+        }
+        if texts.len() < spec.arity.minimum() || texts.len() > spec.arity.maximum() {
+            return Result<(), CliError>.Err(CliError.new(CliErrorKind.MissingValue, spec.name.as_str(), "wrong number of option values").at(origin));
+        }
+        let value = match spec.make_value(texts.as_slice()) { Ok(value) => value, Err(error) => return Result<(), CliError>.Err(error.at(origin)), };
+        match self.apply(matches, index, value) { Ok(_) => Result<(), CliError>.Ok(()), Err(error) => Result<(), CliError>.Err(error.at(origin)), }
+    }
+    // argv excludes the program name; results own their storage, and parsing performs no output or process exit.
+    pub fn parse_args(argv: str[]) -> Result<ParseOutcome, CliError> {
+        self.validate()?;
+        let matches = self.initial()?;
+        let transferred = false;
+        defer { if !transferred { matches.drop(); } };
+        let positions = Vec<u64>.new();
+        defer positions.drop();
+        let i = 0u64;
+        let options = true;
+        while i < argv.len() {
+            let text = argv[i];
+            if options && text == "--" { options = false; i += 1u64; continue; }
+            if options && is_option(text) {
+                let cursor = i + 1u64;
+                if text.starts_with("--") {
+                    let end = text.as_slice().len();
+                    let split = text.find("=");
+                    let name_end = match split { Some(value) => value, None => end, };
+                    let name = text[2u64..name_end];
+                    let attached = match split { Some(value) => Option<str>.Some(text[(value + 1u64)..end]), None => Option<str>.None, };
+                    if name == "help" {
+                        if attached.is_some() { return Result<ParseOutcome, CliError>.Err(CliError.new(CliErrorKind.WrongCount, "help", "help does not accept a value").at(i)); }
+                        return Result<ParseOutcome, CliError>.Ok(ParseOutcome.Help(self.format_help()?));
+                    }
+                    let index = match self.find_long(name) { Some(value) => value, None => return Result<ParseOutcome, CliError>.Err(CliError.new(CliErrorKind.UnknownOption, text, "unknown option").at(i)), };
+                    self.consume(&matches, index, argv, &cursor, attached, i)?;
+                } else {
+                    let bytes = text.as_slice();
+                    let j = 1u64;
+                    while j < bytes.len() {
+                        let name = char(bytes[j]);
+                        if name == 'h' { return Result<ParseOutcome, CliError>.Ok(ParseOutcome.Help(self.format_help()?)); }
+                        let index = match self.find_short(name) { Some(value) => value, None => return Result<ParseOutcome, CliError>.Err(CliError.new(CliErrorKind.UnknownOption, text, "unknown short option").at(i)), };
+                        let takes_value = self.definitions[index].takes_value();
+                        let attached = if takes_value && j + 1u64 < bytes.len() {
+                            let start = j + 1u64;
+                            if bytes[start] == b'=' { start += 1u64; }
+                            Option<str>.Some(text[start..bytes.len()])
+                        } else { Option<str>.None };
+                        self.consume(&matches, index, argv, &cursor, attached, i)?;
+                        if takes_value { break; }
+                        j += 1u64;
+                    }
+                }
+                i = cursor;
+            } else { positions.push(i); i += 1u64; }
+        }
+        let offset = 0u64;
+        i = 0u64;
+        while i < self.definitions.len() {
+            let spec = &self.definitions[i];
+            if spec.positional() {
+                let remaining = positions.len() - offset;
+                let reserve = 0u64;
+                let j = i + 1u64;
+                while j < self.definitions.len() {
+                    if self.definitions[j].positional() {
+                        let need = self.definitions[j].arity.minimum();
+                        if need > remaining || reserve > remaining - need { reserve = remaining; } else { reserve += need; }
+                    }
+                    j += 1u64;
+                }
+                let count = remaining - reserve;
+                if count > spec.arity.maximum() { count = spec.arity.maximum(); }
+                if count < spec.arity.minimum() { return Result<ParseOutcome, CliError>.Err(CliError.new(CliErrorKind.WrongCount, spec.name.as_str(), "not enough positional values")); }
+                if count > 0u64 {
+                    let texts = Vec<str>.new();
+                    defer texts.drop();
+                    j = 0u64;
+                    while j < count { texts.push(argv[positions[offset + j]]); j += 1u64; }
+                    let value = match spec.make_value(texts.as_slice()) { Ok(value) => value, Err(error) => return Result<ParseOutcome, CliError>.Err(error.at(positions[offset])), };
+                    self.apply(&matches, i, value)?;
+                    offset += count;
+                }
+            } elif spec.required && !matches.entries[i].supplied { return Result<ParseOutcome, CliError>.Err(CliError.new(CliErrorKind.Required, spec.name.as_str(), "required option was not supplied")); }
+            i += 1u64;
+        }
+        if offset < positions.len() { return Result<ParseOutcome, CliError>.Err(CliError.new(CliErrorKind.WrongCount, argv[positions[offset]], "unexpected positional value").at(positions[offset])); }
+        i = 0u64;
+        while i < self.groups.len() {
+            if self.groups[i] {
+                let supplied = false;
+                let j = 0u64;
+                while j < self.definitions.len() {
+                    if self.definitions[j].in_group(i) && matches.entries[j].supplied { supplied = true; }
+                    j += 1u64;
+                }
+                if !supplied { return Result<ParseOutcome, CliError>.Err(CliError.new(CliErrorKind.Required, "", "one argument in the required mutually exclusive group must be supplied")); }
+            }
+            i += 1u64;
+        }
+        transferred = true;
+        Result<ParseOutcome, CliError>.Ok(ParseOutcome.Parsed(matches))
+    }
+    pub fn parse_env() -> Result<ParseOutcome, CliError> {
+        let owned = args();
+        defer release_strings(&owned);
+        let views = Vec<str>.new();
+        defer views.drop();
+        let i = 1u64;
+        while i < owned.len() { views.push(owned[i].as_str()); i += 1u64; }
+        self.parse_args(views.as_slice())
+    }
+    fn label(spec: ArgumentSpec&, output: String&, aliases: bool) {
+        if spec.positional() { output.push_str(spec.meta()); } else {
+            let written = false;
+            let i = 0u64;
+            while i < spec.shorts.len() {
+                if written { output.push_str(", "); }
+                output.push('-');
+                output.push(spec.shorts[i]);
+                written = true;
+                if !aliases { break; }
+                i += 1u64;
+            }
+            if aliases || !written {
+                i = 0u64;
+                while i < spec.longs.len() {
+                    if written { output.push_str(", "); }
+                    output.push_str("--");
+                    output.push_str(spec.longs[i].as_str());
+                    written = true;
+                    if !aliases { break; }
+                    i += 1u64;
+                }
+            }
+            if spec.takes_value() { output.push(' '); output.push_str(spec.meta()); }
+        }
+        if spec.takes_value() {
+            match &spec.arity {
+                Optional => output.push('?'), ZeroOrMore => output.push_str("..."), OneOrMore => output.push_str("..."),
+                Exact(count) => { let text = f" x{*count}"; defer text.drop(); output.push_str(text.as_str()); }, _ => {},
+            }
+        }
+    }
+    fn usage_text() -> String {
+        let output = String.from(&"usage: ");
+        output.push_str(self.program.as_str());
+        output.push_str(" [-h]");
+        let emitted = Vec<bool>.new();
+        defer emitted.drop();
+        let i = 0u64;
+        while i < self.groups.len() { emitted.push(false); i += 1u64; }
+        i = 0u64;
+        while i < self.definitions.len() {
+            let spec = &self.definitions[i];
+            match &spec.group {
+                Some(group) => {
+                    if !emitted[*group] {
+                        emitted[*group] = true;
+                        output.push(' ');
+                        output.push(if self.groups[*group] { '(' } else { '[' });
+                        let first = true;
+                        let j = 0u64;
+                        while j < self.definitions.len() {
+                            if self.definitions[j].in_group(*group) {
+                                if !first { output.push_str(" | "); }
+                                first = false;
+                                self.label(&self.definitions[j], &output, false);
+                            }
+                            j += 1u64;
+                        }
+                        output.push(if self.groups[*group] { ')' } else { ']' });
+                    }
+                },
+                None => {
+                    output.push(' ');
+                    let optional = if spec.positional() { spec.arity.minimum() == 0u64 } else { !spec.required };
+                    if optional { output.push('['); }
+                    self.label(spec, &output, false);
+                    if optional { output.push(']'); }
+                },
+            }
+            i += 1u64;
+        }
+        output.push('\n');
+        output
+    }
+    pub fn format_usage() -> Result<String, CliError> { self.validate()?; Result<String, CliError>.Ok(self.usage_text()) }
+    pub fn format_help() -> Result<String, CliError> {
+        self.validate()?;
+        let output = self.usage_text();
+        if !self.description.is_empty() { output.push('\n'); output.push_str(self.description.as_str()); output.push('\n'); }
+        output.push_str("\narguments:\n  -h, --help\n    show this help message\n");
+        let i = 0u64;
+        while i < self.definitions.len() {
+            let spec = &self.definitions[i];
+            output.push_str("  ");
+            self.label(spec, &output, true);
+            output.push_str("\n    ");
+            output.push_str(spec.help.as_str());
+            if spec.choices.len() > 0u64 {
+                output.push_str(" (choices: ");
+                let j = 0u64;
+                while j < spec.choices.len() {
+                    if j > 0u64 { output.push_str(", "); }
+                    output.push_str(spec.choices[j].as_str());
+                    j += 1u64;
+                }
+                output.push(')');
+            }
+            if spec.has_default {
+                output.push_str(" (default: ");
+                let j = 0u64;
+                while j < spec.defaults.len() {
+                    if j > 0u64 { output.push_str(", "); }
+                    output.push_str(spec.defaults[j].as_str());
+                    j += 1u64;
+                }
+                output.push(')');
+            }
+            output.push('\n');
+            i += 1u64;
+        }
+        Result<String, CliError>.Ok(output)
+    }
+}
+impl Drop for ArgumentParser {
+    pub fn drop() {
+        self.program.drop();
+        self.description.drop();
+        let i = 0u64;
+        while i < self.definitions.len() { self.definitions[i].drop(); i += 1u64; }
+        self.definitions.drop();
+        self.groups.drop();
+    }
+}

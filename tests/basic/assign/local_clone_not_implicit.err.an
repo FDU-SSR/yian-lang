@@ -1,0 +1,19 @@
+// A user-defined Clone trait is not implicitly satisfied for scalar values.
+trait Clone {
+    fn clone() -> Self;
+}
+
+struct Wrapper<T> {
+    value: T,
+}
+
+impl<T> Clone for Wrapper<T> if T: Clone {
+    fn clone() -> Self {
+        Wrapper(self.value)
+    }
+}
+
+fn main() {
+    let value: Wrapper<i32> = Wrapper(1);
+    value.clone();
+}

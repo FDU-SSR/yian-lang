@@ -1,0 +1,109 @@
+// Test default method implementation in traits
+//
+// Expected output: 0
+
+from std.core.io import print;
+from std.core.convert import From;
+
+struct Circle {
+    radius: i32,
+    x: i32,
+    y: i32,
+}
+
+struct Rectangle {
+    width: i32,
+    height: i32,
+    x: i32,
+    y: i32,
+}
+
+trait Shape {
+    fn area() -> i32;
+
+    // Has a default implementation.
+    fn move_by(dx: i32, dy: i32) {
+        print("Nothing to do\n");
+    }
+}
+
+impl Shape for Circle {
+    fn area() -> i32 {
+        return 3 * self.radius * self.radius;
+    }
+
+    fn move_by(dx: i32, dy: i32) {
+        self.x += dx
+        self.y += dy
+    }
+}
+
+impl Shape for Rectangle {
+    fn area() -> i32 {
+        return self.width * self.height;
+    }
+
+    fn move_by(dx: i32, dy: i32) {
+        self.x += dx
+        self.y += dy
+    }
+}
+
+fn case_default_trait_methods() {
+    // use Circle
+    let circle: Circle = Circle(radius=2, x=0, y=0);
+    let circle_area: i32 = circle.area();
+    assert circle_area == 12: "Circle area calculation";
+    circle.move_by(1, 1);
+    assert circle.x == 1: "Circle move_by x";
+    assert circle.y == 1: "Circle move_by y";
+
+    // use Rectangle
+    let rect: Rectangle = Rectangle(width=2, height=2, x=1, y=1);
+    let rect_area: i32 = rect.area();
+    assert rect_area == 4: "Rectangle area calculation";
+    rect.move_by(1, 1);
+    assert rect.x == 2: "Rectangle move_by x";
+    assert rect.y == 2: "Rectangle move_by y";
+
+}
+
+trait Factory<T> {
+    static fn create(value: T) -> Self;
+
+    static fn echo<U>(value: U) -> U {
+        value
+    }
+}
+
+struct QualifiedCallProduct {
+    pub value: i32,
+}
+
+impl Factory<i32> for QualifiedCallProduct {
+    static fn create(value: i32) -> Self {
+        QualifiedCallProduct(value)
+    }
+}
+
+impl QualifiedCallProduct {
+    static fn create(value: i32) -> Self {
+        QualifiedCallProduct(value + 100)
+    }
+}
+
+typedef QualifiedCallProductAlias = QualifiedCallProduct;
+
+fn case_qualified_trait_calls() {
+    let product = Factory<i32>.create<QualifiedCallProductAlias>(7);
+    assert product.value == 7;
+    assert Factory<i32>.echo<QualifiedCallProduct, u64>(12) == 12;
+    assert Factory<i32>.echo<QualifiedCallProduct>(true);
+    let value: i32 = 23;
+    assert From<i32>.from<i32>(&value) == 23;
+}
+
+fn main() {
+    case_default_trait_methods();
+    case_qualified_trait_calls();
+}

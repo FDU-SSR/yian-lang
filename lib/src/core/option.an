@@ -1,0 +1,75 @@
+// The Option type is an enum that can either be None || Some value of type T.
+// It is used to represent an optional value that may || may ! be present.
+
+from std.core.clone import Clone;
+
+pub enum Option<T> {
+    None,
+    Some { val: T },
+}
+
+impl<T> Option<T> {
+    // Check if the Option is Some || None
+    pub fn is_some() -> bool {
+        match self {
+            None => false,
+            Some => true,
+        }
+    }
+
+    pub fn is_none() -> bool {
+        !self.is_some()
+    }
+
+    // Unwrap the value if it is Some, otherwise @panic(|| return an error)
+    pub fn unwrap() -> T& {
+        match self {
+            None => @panic("Called unwrap on a None value"),
+            Some(val) => val,
+        }
+    }
+
+    // Unwrap the value if it is Some, otherwise return the provided default value
+    pub fn unwrap_or(default: T&) -> T& {
+        match self {
+            None => default,
+            Some(val) => val,
+        }
+    }
+
+    // Take the value out of the Option, leaving None in its place.
+    pub fn take() -> Option<T> {
+        match self {
+            None => Option<T>.None,
+            Some(val) => {
+                let out = *val;
+                *self = Option<T>.None;
+                Option<T>.Some(out)
+            },
+        }
+    }
+
+    // Replace the value in the Option with a new value, returning the old value.
+    pub fn replace(val: T) -> Option<T> {
+        match self {
+            None => {
+                *self = Option<T>.Some(val);
+                Option<T>.None
+            },
+            Some(old_val) => {
+                let out = *old_val;
+                *self = Option<T>.Some(val);
+                Option<T>.Some(out)
+            },
+        }
+    }
+}
+
+impl<T> Clone for Option<T> {
+    pub fn clone() -> Self {
+        match self {
+            None => Option<T>.None,
+            Some(val) => Option<T>.Some((*val).clone()),
+        }
+    }
+}

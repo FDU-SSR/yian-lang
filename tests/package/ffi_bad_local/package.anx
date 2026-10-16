@@ -1,0 +1,4 @@
+[package]
+name = "ffi_bad_local_test"
+kind = "bin"
+ffi = true

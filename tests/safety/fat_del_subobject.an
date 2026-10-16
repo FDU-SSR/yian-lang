@@ -1,0 +1,16 @@
+// Fat-pointer delete of a subobject pointer — negative test
+//
+// Delete's is_raw requires p.data=p.lock_ptr+H.
+// Taking &s.b re-anchors data at the field (lock_ptr+H+8) with index zero;
+// data differs from the allocation anchor, so is_raw rejects it and exits with code 1.
+
+struct S {
+    a: i32,
+    b: i32,
+}
+
+fn main() {
+    let s: S = S(1, 2);
+    let pf: i32* = &s.b;
+    del pf // is_raw rejects the non-first-field data offset with a safety error.
+}

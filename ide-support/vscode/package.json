@@ -1,0 +1,105 @@
+{
+    "name": "yian-language-support",
+    "displayName": "YIAN Language Support",
+    "description": "YIAN language support: syntax highlighting, comment/bracket behaviour, language configuration and the YIAN language server client",
+    "version": "0.7.0",
+    "publisher": "yian",
+    "license": "MIT OR Apache-2.0",
+    "engines": {
+        "vscode": "^1.90.0"
+    },
+    "categories": [
+        "Programming Languages"
+    ],
+    "activationEvents": [
+        "onLanguage:yian"
+    ],
+    "main": "./out/extension.js",
+    "contributes": {
+        "languages": [
+            {
+                "id": "yian",
+                "aliases": [
+                    "YIAN",
+                    "yian"
+                ],
+                "extensions": [
+                    ".an"
+                ],
+                "configuration": "./language-configuration.json"
+            }
+        ],
+        "grammars": [
+            {
+                "language": "yian",
+                "scopeName": "source.yian",
+                "path": "./syntaxes/yian.tmLanguage.json"
+            }
+        ],
+        "configurationDefaults": {
+            "[yian]": {
+                "editor.tabSize": 4,
+                "editor.insertSpaces": true,
+                "editor.detectIndentation": false
+            }
+        },
+        "snippets": [
+            {
+                "language": "yian",
+                "path": "./snippets/yian.json"
+            }
+        ],
+        "configuration": {
+            "title": "YIAN",
+            "properties": {
+                "yian.languageServer.command": {
+                    "type": "string",
+                    "default": "yian-lsp",
+                    "markdownDescription": "Native command that starts the YIAN language server. The default expects `yian-lsp` on `PATH`; set the installed binary's absolute path when it is elsewhere.",
+                    "scope": "machine-overridable"
+                },
+                "yian.languageServer.args": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    },
+                    "default": [],
+                    "markdownDescription": "Arguments passed to the language server command, for example `--compiler-root` or `--log-level DEBUG`.",
+                    "scope": "machine-overridable"
+                },
+                "yian.languageServer.logLevel": {
+                    "type": "string",
+                    "enum": [
+                        "",
+                        "DEBUG",
+                        "INFO",
+                        "WARNING",
+                        "ERROR"
+                    ],
+                    "default": "",
+                    "markdownDescription": "Logging threshold passed to the native server as `--log-level`. Empty keeps its default (`INFO`, or `$YIAN_LSP_LOG`).",
+                    "scope": "machine-overridable"
+                },
+                "yian.languageServer.logFile": {
+                    "type": "string",
+                    "default": "",
+                    "markdownDescription": "File the language server appends its log to, in addition to the output channel (passed as `--log-file`). `${workspaceFolder}` is expanded to the first workspace folder. Empty logs to the output channel only.",
+                    "scope": "machine-overridable"
+                }
+            }
+        }
+    },
+    "scripts": {
+        "compile": "tsc -p ./",
+        "watch": "tsc -watch -p ./",
+        "package": "vsce package"
+    },
+    "devDependencies": {
+        "@types/node": "^22.15.3",
+        "@types/vscode": "^1.90.0",
+        "typescript": "^5.8.3"
+    },
+    "dependencies": {
+        "vscode-languageclient": "^10.1.1"
+    }
+}

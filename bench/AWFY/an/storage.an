@@ -1,0 +1,101 @@
+// bench/AWFY/an/storage.an: recursive array-tree allocation/release (shootout storage).
+//
+// Reference: AWFY benchmarks/Java/src/Storage.java; see AWFY LICENSE.md.
+// Semantic reference: bench/AWFY/c/storage.c, the project's C implementation.
+// Scale: depth=7, internal branching factor=4; assert count_arrays==5461.
+//
+// Algorithm: build_tree_depth recursively builds the tree. At depth=1 use the LCG to allocate
+//       1..10 leaf entries with children=null; otherwise allocate four internal entries and attach
+//       child arrays. Count each invocation in count_arrays; free_tree recursively releases
+//       all child arrays. Randomness uses the official 16-bit LCG.
+//
+// children is optional: leaves use None; child elements have type
+//       Option<array_tree[]>. Infer dynamic array types per mode and return explicit full-range
+//       views. free_tree traverses view.len() and releases the whole array.
+//
+// Fat and raw modes share this source.
+struct array_tree {
+    children: Option<array_tree[]>,
+    child_count: i32,
+}
+
+struct Random {
+    stage: u64,
+}
+
+fn Random_init(r: Random&, seed: u64) {
+    r.stage = seed;
+}
+
+fn Random_next(r: Random&) -> u64 {
+    r.stage = (r.stage * 1309u64 + 13849u64) & 65535u64;
+    return r.stage;
+}
+
+fn build_tree_depth(depth: i32, random: Random&, count: i64&, out_count: i32&) -> Option<array_tree[]> {
+    *count += 1;
+
+    if depth == 1 {
+        let n: u64 = Random_next(random) % 10 + 1;
+        let arr = dyn[n] array_tree(Option<array_tree[]>.None, 0);
+        let i: u64 = 0;
+        while i < n {
+            arr[i].children = Option<array_tree[]>.None;
+            arr[i].child_count = 0;
+            i += 1;
+        };
+        *out_count = i32(n);
+        return Option<array_tree[]>.Some(arr[0u64..n]);
+    }
+
+    let n: u64 = 4;
+    let arr = dyn[n] array_tree(Option<array_tree[]>.None, 0);
+    let i: u64 = 0;
+    while i < n {
+        let child_count: i32 = 0;
+        arr[i].children = build_tree_depth(depth - 1, random, count, &child_count);
+        arr[i].child_count = child_count;
+        i += 1;
+    };
+    *out_count = i32(n);
+    return Option<array_tree[]>.Some(arr[0u64..n]);
+}
+
+fn free_tree(arr: Option<array_tree[]>) {
+    if arr.is_none() {
+        return;
+    }
+    let view: array_tree[] = *arr.unwrap();
+    let i: u64 = 0;
+    while i < view.len() {
+        if view[i].children.is_some() && view[i].child_count > 0 {
+            free_tree(view[i].children);
+        }
+        i += 1;
+    };
+    del view;
+}
+
+fn benchmark_storage(root_depth: i32) -> i64 {
+    let random: Random& = dyn Random(74755);
+    Random_init(random, 74755);
+
+    let count: i64 = 0;
+    let root_count: i32 = 0;
+    let result: Option<array_tree[]> = build_tree_depth(root_depth, random, &count, &root_count);
+
+    free_tree(result);
+    del random;
+
+    return count;
+}
+
+fn main() {
+    let ITER: u64 = 9885;  // bench-scale
+    let iter: u64 = 0;
+    while iter < ITER {
+        let result: i64 = benchmark_storage(7);
+        assert result == 5461: "storage count not expected";
+        iter += 1;
+    }
+}

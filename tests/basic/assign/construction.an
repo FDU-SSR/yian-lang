@@ -1,0 +1,90 @@
+// Test: aggregate construction accepts ordinary copied values
+//
+// Expected output: 0
+
+struct ConstructionBigInt {
+    value: i64,
+}
+
+impl Clone for ConstructionBigInt {
+    pub fn clone() -> Self { ConstructionBigInt(self.value) }
+}
+
+fn case_tuple_and_array_construction() {
+    let a: ConstructionBigInt = ConstructionBigInt(1);
+    let b: ConstructionBigInt = ConstructionBigInt(2);
+
+    let pair = (a, b);
+    assert pair[0].value == 1 && a.value == 1: "construction keeps source readable";
+
+    let c: ConstructionBigInt = ConstructionBigInt(3);
+    let d: ConstructionBigInt = ConstructionBigInt(4);
+    let pair2 = (c.clone(), d.clone());
+    assert c.value == 3: "c still valid after clone in tuple";
+
+    let arr: i32[3] = [1, 2, 3];
+    assert arr[0] == 1: "arr[0] should be 1";
+
+}
+
+struct CopiedConstructionBigInt {
+    value: i64,
+}
+
+impl Clone for CopiedConstructionBigInt {
+    pub fn clone() -> Self { CopiedConstructionBigInt(self.value) }
+}
+
+fn case_aggregate_copy_construction() {
+    let a: CopiedConstructionBigInt = CopiedConstructionBigInt(1);
+    let b: CopiedConstructionBigInt = CopiedConstructionBigInt(2);
+    let pair = (a, b);
+    assert pair[0].value == 1 && pair[1].value == 2;
+    assert a.value == 1 && b.value == 2;
+}
+
+struct ExpressionBox { value: i32 }
+
+fn tail_expression_box(value: ExpressionBox) -> ExpressionBox {
+    value
+}
+
+fn case_expression_copy() {
+    let source = ExpressionBox(7);
+
+    let from_if = if true { source } else { ExpressionBox(0) };
+    let from_block = {
+        let local = source;
+        local
+    };
+    let from_match = match Option<ExpressionBox>.Some(source) {
+        Some(value) => value,
+        None => ExpressionBox(0),
+    };
+    let from_loop = loop { break source; };
+    let repeated: ExpressionBox[3] = [source;
+        3];
+    let returned = tail_expression_box(source);
+
+    assert source.value == 7;
+    assert from_if.value == 7 && from_block.value == 7;
+    assert from_match.value == 7 && from_loop.value == 7;
+    assert repeated[2].value == 7 && returned.value == 7;
+
+    let target = ExpressionBox(1);
+    target = source;
+    target = target;
+    assert target.value == 7;
+
+    let array = [ExpressionBox(1), ExpressionBox(2)];
+    array[0] = source;
+    let ptr: ExpressionBox* = &array[1];
+    *ptr = source;
+    assert array[0].value == 7 && array[1].value == 7;
+}
+
+fn main() {
+    case_tuple_and_array_construction();
+    case_aggregate_copy_construction();
+    case_expression_copy();
+}

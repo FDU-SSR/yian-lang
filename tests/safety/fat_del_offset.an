@@ -1,0 +1,10 @@
+// Fat-pointer delete of an offset pointer — negative test
+//
+// Delete's is_raw(p) requires p.index=0.
+// q=p+1 carries index=1, so is_raw rejects it and terminates with exit code 1.
+
+fn main() {
+    let p: i32* = dyn[3] 0i32;
+    let q: i32* = p + 1;
+    del q // is_raw rejects index!=0 with a safety error.
+}

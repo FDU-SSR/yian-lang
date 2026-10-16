@@ -1,0 +1,64 @@
+from lsp_protocol.types import Range, decode_range, encode_range;
+from json.value import Value, Object;
+from std.core.string import String;
+from std.core.option import Option;
+from std.core.drop import Drop;
+from std.core.clone import Clone;
+
+// Known required fields are typed; optional and future LSP fields remain owned JSON data.
+pub struct Diagnostic {
+    pub range: Range,
+    pub message: String,
+    extra: Object,
+}
+
+impl Diagnostic {
+    pub fn to_json() -> Value {
+        let object = self.extra.clone();
+        let previous_range = object.insert("range", encode_range(&self.range));
+        if let Some(value) = previous_range { value.drop(); }
+        let previous_message = object.insert("message", Value.String(self.message.clone()));
+        if let Some(value) = previous_message { value.drop(); }
+        Value.Object(object)
+    }
+}
+
+pub fn decode_diagnostic(value: Value&) -> Option<Diagnostic> {
+    let source = match value.as_object() {
+        Some(value) => value,
+        None => return Option<Diagnostic>.None,
+    };
+    let extra = source.clone();
+    let transferred = false;
+    defer { if !transferred { extra.drop(); } };
+
+    let range_value = match extra.remove("range") {
+        Some(value) => value,
+        None => return Option<Diagnostic>.None,
+    };
+    defer range_value.drop();
+    let range = match decode_range(&range_value) {
+        Some(value) => value,
+        None => return Option<Diagnostic>.None,
+    };
+
+    let message_value = match extra.remove("message") {
+        Some(value) => value,
+        None => return Option<Diagnostic>.None,
+    };
+    defer message_value.drop();
+    let message = match message_value.as_string() {
+        Some(value) => String.from(&value),
+        None => return Option<Diagnostic>.None,
+    };
+
+    transferred = true;
+    Option<Diagnostic>.Some(Diagnostic(range=range, message=message, extra=extra))
+}
+
+impl Drop for Diagnostic {
+    pub fn drop() {
+        self.message.drop();
+        self.extra.drop();
+    }
+}

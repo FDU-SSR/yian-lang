@@ -1,0 +1,156 @@
+from std.core.string import String;
+from std.core.vec import Vec;
+from std.core.option import Option;
+from std.core.result import Result;
+from std.core.drop import Drop;
+
+pub enum ValueType { Text, Bool, I64, U64, F64 }
+pub enum Action { Store, StoreTrue, StoreFalse, Append, Count }
+pub enum Nargs { One, Optional, Exact { count: u64 }, ZeroOrMore, OneOrMore }
+impl Nargs {
+    pub fn minimum() -> u64 {
+        match self { One => 1u64, Exact(count) => *count, OneOrMore => 1u64, _ => 0u64 }
+    }
+    pub fn maximum() -> u64 {
+        match self { One => 1u64, Optional => 1u64, Exact(count) => *count, _ => u64.max() }
+    }
+    pub fn is_list() -> bool {
+        match self { Exact(_) => true, ZeroOrMore => true, OneOrMore => true, _ => false }
+    }
+    pub fn is_variable() -> bool {
+        match self { ZeroOrMore => true, OneOrMore => true, _ => false }
+    }
+}
+
+// Values own their strings and lists; shallow copies share that storage.
+pub enum ArgValue {
+    Null,
+    Text { value: String }, Bool { value: bool }, I64 { value: i64 },
+    U64 { value: u64 }, F64 { value: f64 }, List { values: Vec<ArgValue> },
+}
+impl ArgValue {
+    pub fn equals(other: ArgValue&) -> bool {
+        match self {
+            Null => match other { Null => true, _ => false },
+            Text(a) => match other { Text(b) => a.as_str() == b.as_str(), _ => false },
+            Bool(a) => match other { Bool(b) => *a == *b, _ => false },
+            I64(a) => match other { I64(b) => *a == *b, _ => false },
+            U64(a) => match other { U64(b) => *a == *b, _ => false },
+            F64(a) => match other { F64(b) => *a == *b, _ => false },
+            List(_) => false,
+        }
+    }
+}
+impl Drop for ArgValue {
+    pub fn drop() {
+        match self {
+            Text(value) => value.drop(),
+            List(values) => {
+                let i = 0u64;
+                while i < values.len() { values[i].drop(); i += 1u64; }
+                values.drop();
+            },
+            _ => {},
+        }
+    }
+}
+
+pub enum CliErrorKind { Declaration, UnknownOption, MissingValue, InvalidValue, WrongCount, Required, Conflict }
+pub struct CliError { kind: CliErrorKind, argument: String, message: String, index: Option<u64> }
+impl CliError {
+    static pub fn new(kind: CliErrorKind, argument: str, message: str) -> Self {
+        Self(kind=kind, argument=String.from(&argument), message=String.from(&message), index=Option<u64>.None)
+    }
+    pub fn kind() -> CliErrorKind { self.kind }
+    pub fn argument() -> str { self.argument.as_str() }
+    pub fn message() -> str { self.message.as_str() }
+    pub fn index() -> Option<u64> { self.index }
+    pub fn at(index: u64) -> Self { self.index = Option<u64>.Some(index); *self }
+    pub fn format() -> String {
+        let output = String.from(&"error: ");
+        if !self.argument.is_empty() { output.push_str(self.argument.as_str()); output.push_str(": "); }
+        output.push_str(self.message.as_str());
+        output.push('\n');
+        output
+    }
+}
+impl Drop for CliError { pub fn drop() { self.argument.drop(); self.message.drop(); } }
+pub enum QueryError { UnknownName, WrongType, WrongShape }
+
+pub struct MatchEntry { pub name: String, pub value: Option<ArgValue>, pub supplied: bool }
+impl Drop for MatchEntry {
+    pub fn drop() { self.name.drop(); match self.value.take() { Some(value) => value.drop(), None => {}, } }
+}
+// Returned references, string views, and slices borrow the matches and become invalid when the matches are dropped.
+pub struct ArgMatches { pub entries: Vec<MatchEntry> }
+impl ArgMatches {
+    fn entry(name: str) -> Option<MatchEntry&> {
+        let i = 0u64;
+        while i < self.entries.len() {
+            if self.entries[i].name.as_str() == name { return Option<MatchEntry&>.Some(&self.entries[i]); }
+            i += 1u64;
+        }
+        Option<MatchEntry&>.None
+    }
+    pub fn get(name: str) -> Option<ArgValue&> {
+        match self.entry(name) {
+            Some(entry) => match &entry.value { Some(value) => Option<ArgValue&>.Some(value), None => Option<ArgValue&>.None },
+            None => Option<ArgValue&>.None,
+        }
+    }
+    pub fn was_provided(name: str) -> Result<bool, QueryError> {
+        match self.entry(name) { Some(entry) => Result<bool, QueryError>.Ok(entry.supplied), None => Result<bool, QueryError>.Err(QueryError.UnknownName) }
+    }
+    pub fn get_string(name: str) -> Result<Option<str>, QueryError> {
+        if self.entry(name).is_none() { return Result<Option<str>, QueryError>.Err(QueryError.UnknownName); }
+        match self.get(name) {
+            None => Result<Option<str>, QueryError>.Ok(Option<str>.None),
+            Some(value) => match value { Text(text) => Result<Option<str>, QueryError>.Ok(Option<str>.Some(text.as_str())), List(_) => Result<Option<str>, QueryError>.Err(QueryError.WrongShape), _ => Result<Option<str>, QueryError>.Err(QueryError.WrongType) },
+        }
+    }
+    pub fn get_bool(name: str) -> Result<Option<bool>, QueryError> {
+        if self.entry(name).is_none() { return Result<Option<bool>, QueryError>.Err(QueryError.UnknownName); }
+        match self.get(name) {
+            None => Result<Option<bool>, QueryError>.Ok(Option<bool>.None),
+            Some(value) => match value { Bool(val) => Result<Option<bool>, QueryError>.Ok(Option<bool>.Some(*val)), List(_) => Result<Option<bool>, QueryError>.Err(QueryError.WrongShape), _ => Result<Option<bool>, QueryError>.Err(QueryError.WrongType) },
+        }
+    }
+    pub fn get_i64(name: str) -> Result<Option<i64>, QueryError> {
+        if self.entry(name).is_none() { return Result<Option<i64>, QueryError>.Err(QueryError.UnknownName); }
+        match self.get(name) {
+            None => Result<Option<i64>, QueryError>.Ok(Option<i64>.None),
+            Some(value) => match value { I64(val) => Result<Option<i64>, QueryError>.Ok(Option<i64>.Some(*val)), List(_) => Result<Option<i64>, QueryError>.Err(QueryError.WrongShape), _ => Result<Option<i64>, QueryError>.Err(QueryError.WrongType) },
+        }
+    }
+    pub fn get_u64(name: str) -> Result<Option<u64>, QueryError> {
+        if self.entry(name).is_none() { return Result<Option<u64>, QueryError>.Err(QueryError.UnknownName); }
+        match self.get(name) {
+            None => Result<Option<u64>, QueryError>.Ok(Option<u64>.None),
+            Some(value) => match value { U64(val) => Result<Option<u64>, QueryError>.Ok(Option<u64>.Some(*val)), List(_) => Result<Option<u64>, QueryError>.Err(QueryError.WrongShape), _ => Result<Option<u64>, QueryError>.Err(QueryError.WrongType) },
+        }
+    }
+    pub fn get_f64(name: str) -> Result<Option<f64>, QueryError> {
+        if self.entry(name).is_none() { return Result<Option<f64>, QueryError>.Err(QueryError.UnknownName); }
+        match self.get(name) {
+            None => Result<Option<f64>, QueryError>.Ok(Option<f64>.None),
+            Some(value) => match value { F64(val) => Result<Option<f64>, QueryError>.Ok(Option<f64>.Some(*val)), List(_) => Result<Option<f64>, QueryError>.Err(QueryError.WrongShape), _ => Result<Option<f64>, QueryError>.Err(QueryError.WrongType) },
+        }
+    }
+    pub fn get_many(name: str) -> Result<Option<ArgValue[]>, QueryError> {
+        if self.entry(name).is_none() { return Result<Option<ArgValue[]>, QueryError>.Err(QueryError.UnknownName); }
+        match self.get(name) {
+            None => Result<Option<ArgValue[]>, QueryError>.Ok(Option<ArgValue[]>.None),
+            Some(value) => match value { List(values) => Result<Option<ArgValue[]>, QueryError>.Ok(Option<ArgValue[]>.Some(values.as_slice())), _ => Result<Option<ArgValue[]>, QueryError>.Err(QueryError.WrongShape) },
+        }
+    }
+}
+impl Drop for ArgMatches {
+    pub fn drop() {
+        let i = 0u64;
+        while i < self.entries.len() { self.entries[i].drop(); i += 1u64; }
+        self.entries.drop();
+    }
+}
+// The result owns matched values or help text; callers explicitly call drop to release them.
+pub enum ParseOutcome { Parsed { matches: ArgMatches }, Help { text: String } }
+impl Drop for ParseOutcome { pub fn drop() { match self { Parsed(value) => value.drop(), Help(text) => text.drop(), } } }

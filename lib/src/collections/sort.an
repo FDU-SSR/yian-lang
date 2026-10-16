@@ -1,0 +1,35 @@
+from std.core.ops import Index;
+
+fn sift_down<T, F>(values: T[], start: u64, end: u64, less: F) {
+    let root = start;
+    while root < end / 2 {
+        let child = root * 2 + 1;
+        if child + 1 < end && less(&values[child], &values[child + 1]) { child += 1; }
+        if !less(&values[root], &values[child]) { return; }
+
+        let saved = values[root];
+        values[root] = values[child];
+        values[child] = saved;
+        root = child;
+    }
+}
+
+// Unstable in-place heapsort: O(n log n) time and O(1) extra storage.
+// less receives borrowed elements and must define a strict ordering.
+pub fn sort_by<T, F>(values: T[], less: F) {
+    let length = values.len();
+    let start = length / 2;
+    while start > 0 {
+        start -= 1;
+        sift_down(values, start, length, less);
+    }
+
+    let end = length;
+    while end > 1 {
+        end -= 1;
+        let saved = values[0];
+        values[0] = values[end];
+        values[end] = saved;
+        sift_down(values, 0, end, less);
+    }
+}

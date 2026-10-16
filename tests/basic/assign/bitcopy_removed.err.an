@@ -1,0 +1,4 @@
+// `bitcopy` is not a language builtin.
+fn main() {
+    let value = bitcopy(1);
+}

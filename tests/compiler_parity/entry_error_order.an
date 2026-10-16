@@ -1,0 +1,3 @@
+fn unused() { missing_unused; }
+fn called() { missing_called; }
+fn main() { called(); }

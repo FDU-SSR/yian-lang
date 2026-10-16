@@ -1,0 +1,16 @@
+trait Factory {
+    fn make() -> Self;
+}
+
+struct Product {}
+
+impl Factory for Product {
+    fn make() -> Product {
+        return Product();
+    }
+}
+
+fn main() {
+    let product: Product = Product();
+    let object: Factory& = &product;
+}

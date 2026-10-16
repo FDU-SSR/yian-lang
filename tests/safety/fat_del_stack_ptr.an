@@ -1,0 +1,10 @@
+// Fat-pointer delete of a stack pointer — negative test
+//
+// Delete's is_heap rejects stack pointers with key MSB zero,
+// terminating with exit code 1 on precondition failure.
+
+fn main() {
+    let x: i32 = 5;
+    let p: i32* = &x;
+    del p // is_heap rejects the stack key with MSB zero, causing a safety error.
+}

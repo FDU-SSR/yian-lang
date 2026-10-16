@@ -1,0 +1,54 @@
+// Test short circuit mechanism for logical operators
+//
+// Expected output:
+// Short circuit works correctly
+
+from std.core.io import print;
+
+fn false_func() -> bool {
+    print("false_func called\n");
+    return false;
+}
+
+fn true_func() -> bool {
+    @panic("true_func should ! be called\n");
+}
+
+fn case_logical_operator_truth_tables() {
+    let a: i32 = 1;
+    let b: i32 = 2;
+    let c: i32 = 3;
+    if a > 0 && b > 0 {
+        c = c + 1;
+    }
+    assert c == 4: "&& operator failed";
+
+    if a > 0 || b > 0 {
+        c = c + 1;
+    }
+    assert c == 5: "|| operator failed";
+
+    if !(a > 1) {
+        c = c + 1;
+    }
+    assert c == 6: "! operator failed";
+}
+
+fn case_short_circuit_evaluation() {
+    if false && false_func() {
+        @panic("This should ! be printed\n");
+    }
+
+    if true || true_func() {
+        print("Short circuit works correctly\n");
+    }
+
+    let a: bool;
+    a = true || true_func();
+
+}
+
+fn main() {
+    case_logical_operator_truth_tables();
+    case_short_circuit_evaluation();
+}

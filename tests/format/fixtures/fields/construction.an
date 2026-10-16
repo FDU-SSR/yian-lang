@@ -1,0 +1,6 @@
+fn f() {
+    let p: Point = Point(x=1.0,y=2.0);
+    let q: Point = Point(x = 1.0, y = 2.0);
+    let closure = |x_in = 1| (y: i32) -> i32 { x_in + y };
+    let or_pipe: i32 = 1 | 2;
+}

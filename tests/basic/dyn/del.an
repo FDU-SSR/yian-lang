@@ -1,0 +1,48 @@
+// Consolidated basic pointer and allocation scenarios.
+
+
+
+// Test for 'del' statement with dynamic memory allocation
+//
+
+struct Person {
+    pub age: i32,
+}
+
+fn case_direct_deletion() {
+    let p1: i32* = dyn i32(25);
+    del p1;
+
+    let p3: i32* = dyn[10] 0i32;
+    del p3;
+
+    let p4: Person* = dyn Person(5);
+    del p4;
+
+}
+
+// Deleting a T& that refers to the first element of a heap allocation releases
+// the complete allocation.
+
+fn case_reference_deletion() {
+    let p: i32* = dyn[1] 0i32;
+    p[0] = 7;
+    let r: i32& = &p[0];
+    assert *r == 7: "reads through heap reference";
+    del r;
+
+    let q: i32* = dyn[3] 0i32;
+    q[0] = 1;
+    q[2] = 3;
+    assert q[0] + q[2] == 4: "heap stable after del ref";
+    del q;
+}
+
+
+
+fn main() {
+
+    case_direct_deletion();
+    case_reference_deletion();
+
+}

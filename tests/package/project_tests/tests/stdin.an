@@ -1,0 +1,9 @@
+from std.core.io import Stdin;
+from std.core.drop import Drop;
+from std.core.string import String;
+
+fn main() {
+    let content: String = *Stdin.new().read_to_string().unwrap();
+    defer content.drop();
+    assert content.as_str() == "piped input\n": "CRLF test input is normalized like Python text reads";
+}

@@ -1,0 +1,216 @@
+from std.core.io import IoError, IoErrorKind, NonblockingGuard;
+from std.core.process import PipeReader, PipeWriter;
+from std.core.time import Instant, monotonic_now;
+from std.core.option import Option;
+from std.core.result import Result;
+from std.core.range import Range;
+from std.core.vec import Vec;
+from std.core.drop import Drop;
+
+extern "C" {
+    fn yian_poller_wait(descriptors: cptr<i32>, interests: cptr<u32>, count: u64,
+        timeout_milliseconds: i64, ready: cptr<u32>) -> i64;
+}
+
+pub struct PollSource { descriptor: i32 }
+
+impl PollSource {
+    static pub fn from_fd(descriptor: i32) -> Result<Self, IoError> {
+        if descriptor < 0 { return Result<Self, IoError>.Err(IoError.new(IoErrorKind.InvalidInput, "poll descriptor is closed")); }
+        Result<Self, IoError>.Ok(PollSource(descriptor=descriptor))
+    }
+
+    static pub fn from_reader(reader: PipeReader&) -> Result<Self, IoError> {
+        Self.from_fd(reader.fd())
+    }
+
+    static pub fn from_writer(writer: PipeWriter&) -> Result<Self, IoError> {
+        Self.from_fd(writer.fd())
+    }
+
+    static pub fn from_nonblocking(guard: NonblockingGuard&) -> Result<Self, IoError> {
+        Self.from_fd(guard.fd())
+    }
+}
+
+pub struct PollInterests { bits: u32 }
+
+impl PollInterests {
+    static pub fn readable() -> Self { PollInterests(bits=1u32) }
+    static pub fn writable() -> Self { PollInterests(bits=2u32) }
+    static pub fn read_write() -> Self { PollInterests(bits=3u32) }
+}
+
+pub struct PollToken { slot: u64, generation: u64 }
+
+impl PollToken {
+    // Tokens compare both slot and generation so a recycled slot cannot match stale events.
+    pub fn same(other: PollToken) -> bool {
+        self.slot == other.slot && self.generation == other.generation
+    }
+}
+
+pub struct PollEvent {
+    token: PollToken,
+    readable: bool,
+    writable: bool,
+    hangup: bool,
+    error: bool,
+}
+
+impl PollEvent {
+    pub fn token() -> PollToken { self.token }
+    pub fn readable() -> bool { self.readable }
+    pub fn writable() -> bool { self.writable }
+    pub fn hangup() -> bool { self.hangup }
+    pub fn error() -> bool { self.error }
+}
+
+struct Registration {
+    descriptor: i32,
+    interests: u32,
+    generation: u64,
+    active: bool,
+}
+
+pub struct Poller { registrations: Vec<Registration> }
+
+impl Poller {
+    static pub fn new() -> Self { Poller(registrations=Vec<Registration>.new()) }
+
+    static fn valid_interests(interests: PollInterests) -> bool {
+        interests.bits != 0u32 && interests.bits <= 3u32
+    }
+
+    pub fn register(source: PollSource, interests: PollInterests) -> Result<PollToken, IoError> {
+        if !Self.valid_interests(interests) {
+            return Result<PollToken, IoError>.Err(IoError.new(IoErrorKind.InvalidInput, "poll interests are empty"));
+        }
+
+        let index = 0u64;
+        while index < self.registrations.len() {
+            let registration = &self.registrations[index];
+            if !registration.active {
+                if registration.generation == 18446744073709551615u64 {
+                    return Result<PollToken, IoError>.Err(IoError.new(IoErrorKind.Other, "poll token generation exhausted"));
+                }
+                registration.descriptor = source.descriptor;
+                registration.interests = interests.bits;
+                registration.generation += 1u64;
+                registration.active = true;
+                return Result<PollToken, IoError>.Ok(PollToken(slot=index, generation=registration.generation));
+            }
+            index += 1u64;
+        }
+
+        self.registrations.push(Registration(
+            descriptor=source.descriptor,
+            interests=interests.bits,
+            generation=1u64,
+            active=true,
+            ));
+        Result<PollToken, IoError>.Ok(PollToken(slot=self.registrations.len() - 1u64, generation=1u64))
+    }
+
+    fn registration(token: PollToken) -> Option<Registration&> {
+        if token.slot >= self.registrations.len() { return Option<Registration&>.None; }
+        let entry = &self.registrations[token.slot];
+        if !entry.active || entry.generation != token.generation { return Option<Registration&>.None; }
+        Option<Registration&>.Some(entry)
+    }
+
+    fn registration_mut(token: PollToken) -> Option<Registration&> {
+        if token.slot >= self.registrations.len() { return Option<Registration&>.None; }
+        let entry = &self.registrations[token.slot];
+        if !entry.active || entry.generation != token.generation { return Option<Registration&>.None; }
+        Option<Registration&>.Some(entry)
+    }
+
+    pub fn modify(token: PollToken, interests: PollInterests) -> Result<(), IoError> {
+        if !Self.valid_interests(interests) {
+            return Result<(), IoError>.Err(IoError.new(IoErrorKind.InvalidInput, "poll interests are empty"));
+        }
+        match self.registration_mut(token) {
+            Some(entry) => { entry.interests = interests.bits; },
+            None => return Result<(), IoError>.Err(IoError.new(IoErrorKind.InvalidInput, "poll token is no longer registered")),
+        }
+        Result<(), IoError>.Ok(())
+    }
+
+    pub fn remove(token: PollToken) -> Result<(), IoError> {
+        match self.registration_mut(token) {
+            Some(entry) => { entry.active = false; },
+            None => return Result<(), IoError>.Err(IoError.new(IoErrorKind.InvalidInput, "poll token is no longer registered")),
+        }
+        Result<(), IoError>.Ok(())
+    }
+
+    static fn timeout(deadline: Option<Instant>) -> Result<i64, IoError> {
+        match deadline {
+            None => Result<i64, IoError>.Ok(-1i64),
+            Some(value) => {
+                let current = monotonic_now()?;
+                let remaining = value.nanoseconds() - current.nanoseconds();
+                if remaining <= 0i64 { return Result<i64, IoError>.Ok(0i64); }
+                let milliseconds = remaining / 1000000i64 + if remaining % 1000000i64 == 0i64 { 0i64 } else { 1i64 };
+                Result<i64, IoError>.Ok(if milliseconds > 2147483647i64 { 2147483647i64 } else { milliseconds })
+            },
+        }
+    }
+
+    pub ffi fn wait(deadline: Option<Instant>) -> Result<Vec<PollEvent>, IoError> {
+        let active = Vec<PollToken>.new();
+        defer active.drop();
+        let index = 0u64;
+        while index < self.registrations.len() {
+            let entry = &self.registrations[index];
+            if entry.active { active.push(PollToken(slot=index, generation=entry.generation)); }
+            index += 1u64;
+        }
+
+        let descriptors = Vec<i32>.with_capacity(active.len());
+        let interests = Vec<u32>.with_capacity(active.len());
+        let ready = Vec<u32>.with_capacity(active.len());
+        defer descriptors.drop();
+        defer interests.drop();
+        defer ready.drop();
+        for token in active.as_slice() {
+            let entry = match self.registration(*token) {
+                Some(value) => value,
+                None => return Result<Vec<PollEvent>, IoError>.Err(IoError.other("poll registration changed during wait")),
+            };
+            descriptors.push(entry.descriptor);
+            interests.push(entry.interests);
+            ready.push(0u32);
+        }
+
+        loop {
+            let timeout_ms = Self.timeout(deadline)?;
+            let descriptor_data = @ffi_parts(descriptors.as_slice())[0];
+            let interest_data = @ffi_parts(interests.as_slice())[0];
+            let ready_data = @ffi_parts(ready.as_slice())[0];
+            let count = yian_poller_wait(descriptor_data, interest_data, active.len(), timeout_ms, ready_data);
+            if count == -4i64 { continue; }
+            if count < 0i64 {
+                return Result<Vec<PollEvent>, IoError>.Err(IoError.from_os_error(i32(-count), "wait for descriptor events"));
+            }
+            break;
+        }
+
+        let events = Vec<PollEvent>.new();
+        for index in 0u64..active.len() {
+            let flags = ready[index];
+            if flags == 0u32 { continue; }
+            events.push(PollEvent(
+                token=active[index],
+                readable= (flags & 1u32) != 0u32,
+                writable= (flags & 2u32) != 0u32,
+                hangup= (flags & 4u32) != 0u32,
+                error= (flags & 8u32) != 0u32,
+                ));
+        }
+        Result<Vec<PollEvent>, IoError>.Ok(events)
+    }
+}
+
+impl Drop for Poller { pub fn drop() { self.registrations.drop(); } }

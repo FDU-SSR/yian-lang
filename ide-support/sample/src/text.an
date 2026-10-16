@@ -1,0 +1,51 @@
+// Standard-library containers, loops, closures, and f-strings for completion, semantic highlighting, and hover.
+from std.core.option import Option;
+from std.core.string import String;
+from std.core.vec import Vec;
+from sample.types import Meters;
+
+// Dynamic array, for loop, and indexing; del explicitly releases it.
+pub fn sum_block(size: u64) -> i64 {
+    let block: i32* = dyn[8] i32;
+    for i in 0..size {
+        block[i] = i32(i);
+    }
+    let total: i64 = 0;
+    for i in 0..size {
+        total += i64(block[i]);
+    }
+    del block;
+    return total;
+}
+
+// Closure capturing a local variable.
+pub fn offset_by(base: i32) -> i32 {
+    let shift = |captured = base| (value: i32) -> i32 {
+        captured + value
+    };
+    return shift(1);
+}
+
+// Vec<String>: container, method chains, and loop-local variables.
+pub fn labels(count: u64) -> Vec<String> {
+    let out: Vec<String> = Vec<String>.new();
+    for i in 0..count {
+        let text: String = String.new();
+        text.push_str("item");
+        out.push(text);
+    }
+    return out;
+}
+
+// Option: enum payloads, is_empty, and indexing.
+pub fn first_label(out: Vec<String>) -> Option<String> {
+    if out.is_empty() {
+        return Option<String>.None;
+    }
+    return Option<String>.Some(val=out[0]);
+}
+
+// f-string interpolation: a str and a rounded Meters value.
+pub fn describe(name: str, count: Meters) -> String {
+    return f"{name} count={i64(count)}";
+}

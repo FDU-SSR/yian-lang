@@ -1,0 +1,147 @@
+from std.core.range import Range;
+from std.core.drop import Drop;
+
+pub struct RawVec<T> {
+    data: T*,
+    cap: u64,
+}
+
+// Callers manage the lifetime: use after release and repeated release are invalid; fat-pointer checks reject these operations.
+// Raw mode provides no runtime lifetime checks.
+// ZSTs (`@sizeof<T> == 0`) have no data storage: guard allocation, copying, and release with if conditions.
+// Maintain only the capacity count.
+//
+// Empty state (`cap == 0`) has no heap block; its data pointer is `@dangling<T>()` (address = T's alignment).
+// Both modes use this representation; empty state permits only zero-length pointer arithmetic and passing, never dereference or release.
+// A nonzero address is required: single-field payloads such as `Option<str>`/`Option<Slice<T>>` encode None as an all-zero payload.
+// If an empty container or derived empty str/slice has an all-zero pointer, `Some(empty)`
+// is misread as `None`. `@dangling` returns a fixed alignment address (>= 1).
+// `@undef` may materialize different bit patterns at different optimization levels and cannot uphold this invariant.
+impl<T> RawVec<T> {
+    static pub fn new() -> Self {
+        Self.with_capacity(0)
+    }
+
+    // Empty-state data pointer: a dangling pointer to T, without allocation.
+    static fn empty_data() -> T* {
+        return @dangling<T>();
+    }
+
+    static pub fn with_capacity(capacity: u64) -> Self {
+        if @sizeof<T> == 0 {
+            return @undef<Self>();
+        }
+        if capacity == 0 {
+            return Self(
+                data=Self.empty_data(),
+                cap=0
+            );
+        }
+        let data: T* = @alloc<T>(capacity);
+        Self(
+            data=data,
+            cap=capacity
+        )
+    }
+
+    // Return a pointer covering the whole capacity. RawVec does not track initialized elements; callers must write before reading.
+    pub fn ptr() -> T* {
+        self.data
+    }
+
+    pub fn capacity() -> u64 {
+        if @sizeof<T> == 0 {
+            // ZST storage is unbounded: report maximum capacity so Vec::push never reaches len == capacity().
+            u64.max()
+        } else {
+            self.cap
+        }
+    }
+
+    // Release the buffer. Empty state is a dangling pointer, not a heap block; allocation exists only when cap > 0.
+    fn release_data() {
+        if self.cap > 0 {
+            del self.data;
+        }
+    }
+
+    pub fn grow() {
+        if @sizeof<T> == 0 {
+            return;
+        }
+        let old_cap: u64 = self.cap;
+        let new_cap: u64 = if old_cap == 0 { 4 } else { old_cap * 2 };
+
+        let new_data: T*;
+        if old_cap > 0 {
+            new_data = @realloc<T>(self.data, new_cap);
+        } else {
+            new_data = @alloc<T>(new_cap);
+        }
+
+        self.data = new_data;
+        self.cap = new_cap;
+    }
+
+    pub fn reserve(len: u64, additional: u64) {
+        if @sizeof<T> == 0 {
+            return;
+        }
+        let required_cap: u64 = len + additional;
+        if self.cap >= required_cap {
+            return;
+        }
+
+        let current_cap: u64 = self.cap;
+        let new_cap: u64 = if current_cap == 0 { 4 } else { current_cap * 2 };
+        if new_cap < required_cap {
+            new_cap = required_cap;
+        }
+        // Ensure minimum capacity
+        if new_cap < 4 {
+            new_cap = 4;
+        }
+
+        let new_data: T*;
+        if current_cap > 0 {
+            new_data = @realloc<T>(self.data, new_cap);
+        } else {
+            new_data = @alloc<T>(new_cap);
+        }
+
+        self.data = new_data;
+        self.cap = new_cap;
+    }
+
+    pub fn shrink_to_fit(len: u64) {
+        if @sizeof<T> == 0 {
+            return;
+        }
+        if self.cap <= len {
+            return;
+        }
+
+        if len == 0 {
+            // Here cap > len == 0, so the current buffer is allocated.
+            self.release_data();
+            self.data = Self.empty_data();
+            self.cap = 0;
+            return;
+        }
+
+        let new_data: T* = @realloc<T>(self.data, len);
+
+        self.data = new_data;
+        self.cap = len;
+    }
+}
+
+impl<T> Drop for RawVec<T> {
+    fn drop() {
+        if @sizeof<T> == 0 {
+            return;
+        }
+        self.release_data();
+        self.cap = 0;
+    }
+}

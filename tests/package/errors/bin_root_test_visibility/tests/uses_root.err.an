@@ -1,0 +1,6 @@
+// A bin root exposes no library interface, so its tests cannot import it.
+from demo.helper import double;
+
+fn main() {
+    assert double(21) == 42: "unreachable";
+}

@@ -1,0 +1,10 @@
+// Test case for struct with self-referential field causing an error
+//
+// Expected compilation error: yianc.utils.errors.yian_error.CompilerError: Self-referential type detected: LinkListNodeError
+
+struct LinkListNodeError {
+    error_field: LinkListNodeError,
+}
+
+fn main() {
+}

@@ -1,0 +1,65 @@
+from std.core.drop import Drop;
+from toml.parse import parse, table_child, string_value, integer_decimal,
+integer_u64, array_len, array_child;
+
+fn reject(source: str) {
+    match parse(source) {
+        Err(error) => error.drop(),
+        Ok(document) => {
+            document.drop();
+            @panic("invalid TOML was accepted");
+        },
+    };
+}
+
+fn main() {
+    let source = "title = \"TOML 1.0\"\nwide = 18446744073709551616\nminimum = -9223372036854775808\nhex = 0xDEAD_BEEF\nfloat = -0.0\nnot_a_number = nan\ndate = 1979-05-27\ntime = 07:32:00.1234567\noffset = 1979-05-27T07:32:00-07:00\ninline = { nested.value = [1, true, \"x\"] }\n[[products]]\nname = \"Hammer\"\n[[products]]\nname = \"Nail\"\n";
+    let document = parse(source).unwrap();
+    defer document.drop();
+
+    let root = document.root();
+    let wide_id = table_child(document, root, "wide").unwrap();
+    let wide = integer_decimal(document, *wide_id).unwrap();
+    assert wide.as_str() == "18446744073709551616": "wide integer remains exact";
+    wide.drop();
+    assert integer_u64(document, *wide_id).is_none(): "wide integer range check";
+
+    let inline_id = table_child(document, root, "inline").unwrap();
+    let nested_id = table_child(document, *inline_id, "nested").unwrap();
+    let values_id = table_child(document, *nested_id, "value").unwrap();
+    assert array_len(document, *values_id) == 3u64: "array values";
+    let product_id = table_child(document, root, "products").unwrap();
+    assert array_len(document, *product_id) == 2u64: "array of tables";
+    let second_product = array_child(document, *product_id, 1u64).unwrap();
+    let second_name = table_child(document, *second_product, "name").unwrap();
+    let name = string_value(document, *second_name).unwrap();
+    assert name.as_str() == "Nail": "array table order";
+    name.drop();
+
+    let commented = parse("value = 1# comment at eof").unwrap();
+    commented.drop();
+    let continued = parse("value = \"\"\"\nleft\\  \n\n    right\"\"\"").unwrap();
+    let continued_value = table_child(continued, continued.root(), "value").unwrap();
+    let continued_text = string_value(continued, *continued_value).unwrap();
+    assert continued_text.as_str() == "leftright": "multiline continuation trims following whitespace";
+    continued_text.drop();
+    continued.drop();
+    let empty_inline = parse("value = {}\n").unwrap();
+    empty_inline.drop();
+
+    reject("value = 01\n");
+    reject("value = 1__0\n");
+    reject("value = 1.\n");
+    reject("value = True\n");
+    reject("value = \"\\q\"\n");
+    reject("value = \"\\uD800\"\n");
+    reject("value = 1900-02-29\n");
+    reject("value = { item = 1, }\n");
+    reject("value = {\n item = 1\n}\n");
+    reject("key = 1\nkey = 2\n");
+    reject("[section]\nvalue = 1\n[section]\nother = 2\n");
+    reject("inline = { item = 1 }\n[inline]\nother = 2\n");
+    reject("[a.b.c]\nz = 9\n[a]\nb.c.t = 1\n");
+    reject("[[a.b]]\n[a]\nb.y = 2\n");
+    reject("[[tab.arr]]\n[tab]\narr.val1 = 1\n");
+}

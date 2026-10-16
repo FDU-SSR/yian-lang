@@ -1,0 +1,12 @@
+// Deletion-view negative (a): offset heap T& fails. let r:i32&=&p[1] gives
+// data=lock_ptr+8+4, differing from the allocation anchor. CheckDelete's is_raw data
+// term fails; RefType has no index, so data itself carries the offset.
+// → fail-stop → Exit code 1。
+//
+// Expected exit code: 1
+
+fn main() {
+    let p: i32* = dyn[3] 0i32;
+    let r: i32& = &p[1];
+    del r;
+}

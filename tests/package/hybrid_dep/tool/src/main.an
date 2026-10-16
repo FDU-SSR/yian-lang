@@ -1,0 +1,5 @@
+from tool.helper import double;
+
+fn main() {
+    assert double(2) == 4: "tool's own program";
+}

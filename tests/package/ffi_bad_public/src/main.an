@@ -1,0 +1,3 @@
+pub ffi fn exposed(value: cptr<c_int>) {}
+
+fn main() {}

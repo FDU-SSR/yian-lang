@@ -1,0 +1,9 @@
+[package]
+name = "ffi_bad_native_test"
+kind = "bin"
+ffi = true
+
+[native.llvm]
+major = 22
+components = ["core"]
+sources = ["../outside.c"]

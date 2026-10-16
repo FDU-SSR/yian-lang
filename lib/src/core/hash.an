@@ -1,0 +1,145 @@
+from std.core.ops import min;
+from std.core.range import Range;
+
+pub trait Hasher {
+    fn finish() -> u64;
+    fn write(bytes: u8[]);
+}
+
+pub trait BuildHasher<T> {
+    fn build_hasher() -> T;
+}
+
+// Hashing borrows the caller's accumulator so nested writes update the same state.
+pub trait Hash<T> {
+    fn hash(hasher: T&);
+}
+
+pub struct Murmur3Hasher {
+    state: u64,
+    len: u64,
+    tail: u8[8],
+    tail_len: u64,
+    seed: u64,
+}
+
+impl Murmur3Hasher {
+    static pub fn with_seed(seed: u64) -> Self {
+        let res: Self;
+        @assume_init(res);
+        res.state = seed;
+        res.len = 0;
+        res.tail_len = 0;
+        res.seed = seed;
+        // leave tail uninitialized
+        return res;
+    }
+    fn mix(k: u64) {
+        let C1: u64 = 0x87c37b91114253d5;
+        let C2: u64 = 0x4cf5ad432745937f;
+        let C3: u64 = 0x52dce729;
+
+        k *= C1
+        k.rotate_left(31);
+        k *= C2
+        self.state ^= k
+        self.state.rotate_left(27);
+        self.state = (self.state * 5) + C3;
+    }
+}
+
+impl Hasher for Murmur3Hasher {
+    fn finish() -> u64 {
+        let C1: u64 = 0x4cf5ad432745937f;
+        let C2: u64 = 0xff51afd7ed558ccd;
+        let C3: u64 = 0xc4ceb9fe1a85ec53;
+
+        let state: u64 = self.state;
+
+        if self.tail_len > 0 {
+            let k: u64 = 0;
+            @memcpy(&k, &self.tail[0], self.tail_len);
+            state ^= k * C1;
+        }
+
+        state ^= self.len
+        state ^= state >> 33
+        state = state * C2;
+        state ^= state >> 33
+        state = state * C3;
+        state ^= state >> 33
+
+        state
+    }
+
+    fn write(bytes: u8[]) {
+        let total_len: u64 = bytes.len();
+        if total_len == 0 {
+            return;
+        }
+        self.len += total_len
+
+        let offset: u64 = 0;
+        let bytes_ptr: u8* = bytes.ptr();
+
+        if self.tail_len > 0 {
+            let need: u64 = 8 - self.tail_len;
+            let take: u64 = min((total_len - offset), need);
+
+            @memcpy(&self.tail[self.tail_len], bytes_ptr + offset, take);
+
+            self.tail_len += take
+            offset += take
+
+            if self.tail_len == 8 {
+                let k: u64;
+                @assume_init(k);
+                @memcpy(&k, &self.tail[0], 8);
+                self.mix(k);
+                self.tail_len = 0;
+            }
+        }
+
+        let remaining_after_tail: u64 = total_len - offset;
+        let full_blocks: u64 = remaining_after_tail / 8;
+
+        if full_blocks > 0 {
+            let block_ptr: u8* = bytes_ptr + offset;
+            for i in 0..full_blocks {
+                let k: u64;
+                @assume_init(k);
+                @memcpy(&k, block_ptr, 8);
+                self.mix(k);
+                block_ptr += 8;
+            }
+            offset += full_blocks * 8;
+        }
+
+        let remaining: u64 = total_len - offset;
+        if remaining > 0 {
+            @memcpy(&self.tail[0], bytes_ptr + offset, remaining);
+            self.tail_len = remaining;
+        }
+    }
+}
+
+pub struct Murmur3BuildHasher {
+    seed: u64,
+}
+
+impl Murmur3BuildHasher {
+    static pub fn with_seed(seed: u64) -> Self {
+        Self(seed)
+    }
+}
+
+impl BuildHasher<Murmur3Hasher> for Murmur3BuildHasher {
+    fn build_hasher() -> Murmur3Hasher {
+        Murmur3Hasher.with_seed(self.seed)
+    }
+}
+
+// ZST types carry no bytes — hashing is a no-op.
+impl Hash<Murmur3Hasher> for void {
+    fn hash(hasher: Murmur3Hasher&) {}
+}

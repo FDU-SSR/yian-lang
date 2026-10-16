@@ -1,0 +1,86 @@
+from std.core.fs import read, read_to_string, write, write_string, append, metadata, symlink_metadata;
+from std.core.fs import create_dir, create_dir_all, remove_file, remove_dir, rename, try_exists, canonicalize, current_dir, Directory;
+from std.core.io import File, OpenMode, OpenOptions, SeekFrom, IoError, IoErrorKind;
+from std.core.result import Result;
+from std.core.drop import Drop;
+
+fn error_kind<T>(result: Result<T, IoError>, kind: IoErrorKind) {
+    match result {
+        Err(error) => { defer error.drop(); assert error.kind() == kind: "filesystem error kind"; },
+        Ok(_) => @panic("expected filesystem error"),
+    }
+}
+fn main() {
+    let root = "/tmp/yian-io-infrastructure";
+    create_dir_all(root).unwrap();
+    let path = "/tmp/yian-io-infrastructure/data";
+    write_string(path, "abcdef").unwrap();
+    let file = *File.open(path, OpenMode.ReadWrite).unwrap(); defer file.drop();
+    assert file.metadata().unwrap().len() == 6u64: "file metadata";
+    assert *file.seek(SeekFrom.Start(offset=2u64)).unwrap() == 2u64: "seek start";
+    assert *file.seek(SeekFrom.Current(offset=1i64)).unwrap() == 3u64: "seek current";
+    assert *file.seek(SeekFrom.End(offset=-1i64)).unwrap() == 5u64: "seek end";
+    let byte: u8[1] = [0u8]; file.read_exact(byte.as_slice()).unwrap();
+    assert byte[0] == b'f': "seek controls reads";
+    file.set_len(3u64).unwrap(); file.sync_all().unwrap();
+    file.close().unwrap(); file.close().unwrap();
+    error_kind(file.read(byte.as_slice()), IoErrorKind.InvalidInput);
+    error_kind(file.write(byte.as_slice()), IoErrorKind.InvalidInput);
+    error_kind(file.flush(), IoErrorKind.InvalidInput);
+    let options = OpenOptions.new();
+    options.write(true); options.create_new(true);
+    error_kind(options.open(path), IoErrorKind.AlreadyExists);
+    let invalid = OpenOptions.new(); error_kind(invalid.open(path), IoErrorKind.InvalidInput);
+    invalid.read(true); invalid.create(true);
+    error_kind(invalid.open(path), IoErrorKind.InvalidInput);
+    let contradictory = OpenOptions.new(); contradictory.append(true); contradictory.truncate(true);
+    error_kind(contradictory.open(path), IoErrorKind.InvalidInput);
+    append(path, "de".as_slice()).unwrap();
+    let text = *read_to_string(path).unwrap(); defer text.drop();
+    assert text.as_str() == "abcde": "truncate then append";
+    let binary: u8[4] = [0u8, 255u8, 128u8, 10u8];
+    write(path, binary.as_slice()).unwrap();
+    let bytes = *read(path).unwrap(); defer bytes.drop();
+    assert bytes.as_slice() == binary.as_slice(): "binary round trip";
+    error_kind(read_to_string(path), IoErrorKind.InvalidData);
+    error_kind(File.open("bad\0path", OpenMode.Read), IoErrorKind.InvalidInput);
+    error_kind(metadata("bad\0path"), IoErrorKind.InvalidInput);
+    error_kind(metadata("/tmp/yian-io-infrastructure/data/child"), IoErrorKind.NotADirectory);
+    error_kind(create_dir_all(path), IoErrorKind.AlreadyExists);
+    error_kind(remove_dir(root), IoErrorKind.DirectoryNotEmpty);
+    let missing = "/tmp/yian-io-infrastructure/missing";
+    assert !*try_exists(missing).unwrap(): "missing path";
+    error_kind(metadata(missing), IoErrorKind.NotFound);
+    let a = "/tmp/yian-io-infrastructure/a";
+    let b = "/tmp/yian-io-infrastructure/b";
+    write_string(a, "a").unwrap(); write_string(b, "b").unwrap();
+    rename(a, b).unwrap();
+    assert !*try_exists(a).unwrap(): "rename removes source";
+    let replacement = *read_to_string(b).unwrap(); defer replacement.drop();
+    assert replacement.as_str() == "a": "rename replaces destination";
+    create_dir_all("/tmp/yian-io-infrastructure/nested/deep").unwrap();
+    create_dir_all("/tmp/yian-io-infrastructure/nested/deep").unwrap();
+    assert metadata("/tmp/yian-io-infrastructure/nested/deep").unwrap().is_dir(): "recursive directories";
+    assert symlink_metadata(path).unwrap().is_file(): "ordinary file type";
+    let directory = *Directory.open(root).unwrap();
+    let entry = *directory.next().unwrap().unwrap();
+    let saved = entry.name();
+    loop {
+        match *directory.next().unwrap() {
+            Some(next) => { next.drop(); },
+            None => { break; },
+        }
+    }
+    directory.close().unwrap(); directory.close().unwrap(); directory.drop();
+    assert entry.name() == saved: "entry name survives directory close";
+    assert entry.path().as_str().starts_with(root): "entry owns path";
+    entry.drop();
+    let cwd = *current_dir().unwrap(); defer cwd.drop();
+    assert cwd.as_path().is_absolute(): "current directory";
+    let canonical = *canonicalize("/tmp/yian-io-infrastructure/nested/../data").unwrap(); defer canonical.drop();
+    assert canonical.as_str() == path: "canonical path";
+    remove_file(path).unwrap(); remove_file(b).unwrap();
+    remove_dir("/tmp/yian-io-infrastructure/nested/deep").unwrap();
+    remove_dir("/tmp/yian-io-infrastructure/nested").unwrap();
+    remove_dir(root).unwrap();
+}

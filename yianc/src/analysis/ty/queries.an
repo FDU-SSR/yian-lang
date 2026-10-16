@@ -1,0 +1,71 @@
+from yianc.analysis.ty.store import TypeStore;
+from yianc.analysis.ty.model import StructField, EnumVariant;
+from yianc.analysis.ty.callable import store_substitutions;
+from yianc.analysis.ty.substitution import substitute;
+from yianc.common.ids import TypeId;
+from yianc.diagnostics.model import AnalysisError;
+from std.core.drop import Drop;
+from std.core.iter import Iterator, IntoIterator;
+from std.core.option import Option;
+from std.core.result import Result;
+from std.core.vec import Vec;
+
+// Result buffers are caller-owned; fields contain borrowed session identities only.
+pub fn struct_fields(store: TypeStore&, type_id: TypeId) -> Result<Vec<StructField>, AnalysisError> {
+    let definition = match store.require(type_id)? {
+        Nominal(id, _) => *id,
+        _ => return Result<Vec<StructField>, AnalysisError>.Err(AnalysisError.internal("expected a nominal structure")),
+    };
+    let substitutions = store_substitutions(store, type_id)?;
+    defer substitutions.drop();
+    let body = match store.complete_definition(definition)? {
+        Struct(value) => value,
+        _ => return Result<Vec<StructField>, AnalysisError>.Err(AnalysisError.internal("expected a structure definition")),
+    };
+    let fields = Vec<StructField>.new();
+    let accepted = false;
+    defer {
+        if !accepted {
+            fields.drop();
+        }
+    };
+
+    for field in body.fields {
+        fields.push(StructField(field.name, substitute(store, field.type_id, &substitutions)?,
+            field.access, field.index, field.span));
+    }
+
+    accepted = true;
+    Result<Vec<StructField>, AnalysisError>.Ok(fields)
+}
+
+pub fn enum_variants(store: TypeStore&, type_id: TypeId) -> Result<Vec<EnumVariant>, AnalysisError> {
+    let definition = match store.require(type_id)? {
+        Nominal(id, _) => *id,
+        _ => return Result<Vec<EnumVariant>, AnalysisError>.Err(AnalysisError.internal("expected a nominal enumeration")),
+    };
+    let substitutions = store_substitutions(store, type_id)?;
+    defer substitutions.drop();
+    let body = match store.complete_definition(definition)? {
+        Enum(value) => value,
+        _ => return Result<Vec<EnumVariant>, AnalysisError>.Err(AnalysisError.internal("expected an enumeration definition")),
+    };
+    let variants = Vec<EnumVariant>.new();
+    let accepted = false;
+    defer {
+        if !accepted {
+            variants.drop();
+        }
+    };
+
+    for variant in body.variants {
+        let payload = match &variant.payload {
+            Some(value) => Option<TypeId>.Some(substitute(store, *value, &substitutions)?),
+            None => Option<TypeId>.None,
+        };
+        variants.push(EnumVariant(variant.name, payload, variant.discriminant, variant.span));
+    }
+
+    accepted = true;
+    Result<Vec<EnumVariant>, AnalysisError>.Ok(variants)
+}

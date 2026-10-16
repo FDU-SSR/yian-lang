@@ -1,0 +1,15 @@
+// Tiered pointers (T[] actual lock): a slice with released backing causes a safety error
+// on access. The slice carries the real heap lock of the `dyn` backing
+// (the representation carries its actual lock, not the literal lock); after del p the slot is
+// SENTINEL. `s[0]` derives a T* (lock-inherited) and the
+// deref live check fails → fail-stop → Exit code 1.
+//
+// Expected exit code: 1
+
+fn main() {
+    let p: i32* = dyn[3] 0i32;
+    p[0] = 1;
+    let s: i32[] = p[0u64..3]; // Slice view inherits the actual lock.
+    del p; // backing freed → lock slot SENTINEL
+    s[0] = 99 // Slice element access fails live with a safety error.
+}

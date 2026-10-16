@@ -1,0 +1,40 @@
+// Expression-oriented: match as expression
+
+fn case_match_expression_values() {
+    // Block-style match arms
+    let x: i32 = match 1 {
+        1 => { 100 },
+        2 => { 200 },
+        _ => { 300 },
+    };
+    assert x == 100: "match expression failed";
+
+    // Bare expression match arms (no braces)
+    let y: i32 = match 2 {
+        1 => 100,
+        2 => 200,
+        _ => 300,
+    };
+    assert y == 200: "bare expr match arm failed";
+
+    // Mixed: blocks and bare expressions
+    let z: i32 = match 3 {
+        1 => 100,
+        2 => { 200 },
+        _ => 300,
+    };
+    assert z == 300: "mixed match arm failed";
+
+}
+
+fn case_loop_break_value() {
+    let x: i32 = loop {
+        break 42;
+    };
+    assert x == 42: "loop break value failed";
+}
+
+fn main() {
+    case_match_expression_values();
+    case_loop_break_value();
+}

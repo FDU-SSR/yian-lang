@@ -1,0 +1,20 @@
+// The T& reference type and the T*→T[]→T& conversion chain are triggered by
+// explicit type annotations. `&x` produces T*; conversion shapes the value in
+// the pointer representation layer.
+//
+// Expected output: 0
+
+fn main() {
+    let x: i32 = 42;
+    let p: i32* = &x;
+
+    // T* → T[]: the index folds into the data address and the size becomes
+    // the number of elements remaining from that address.
+    let s: i32[] = p;
+    assert s.len() == 1: "T*→T[] preserves the element count"
+    assert s[0] == 42: "T*→T[] reads through the view"
+
+    // T* → T& and T[] → T&: single-element references.
+    let r: i32& = p;
+    let r2: i32& = s;
+}

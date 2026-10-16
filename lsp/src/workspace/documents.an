@@ -1,0 +1,84 @@
+from std.core.drop import Drop;
+from std.core.option import Option;
+from std.core.string import String;
+from std.core.vec import Vec;
+from json.value import Value, Number, Object;
+
+pub struct OpenDocument {
+    pub uri: String,
+    pub text: String,
+    pub version: Option<i64>,
+}
+
+impl Drop for OpenDocument {
+    pub fn drop() {
+        self.uri.drop();
+        self.text.drop();
+    }
+}
+
+pub struct Documents { entries: Vec<OpenDocument> }
+
+impl Documents {
+    static pub fn new() -> Self { Self(entries=Vec<OpenDocument>.new()) }
+
+    pub fn len() -> u64 { self.entries.len() }
+
+    pub fn at(index: u64) -> OpenDocument& { &self.entries[index] }
+
+    pub fn find(uri: str) -> Option<u64> {
+        let index = 0u64;
+        while index < self.entries.len() {
+            if self.entries[index].uri.as_str() == uri {
+                return Option<u64>.Some(index);
+            }
+            index += 1u64;
+        }
+        Option<u64>.None
+    }
+
+    pub fn set(uri: str, text: str, version: Option<i64>) {
+        match self.find(uri) {
+            Some(index) => {
+                self.entries[index].text.drop();
+                self.entries[index].text = String.from(&text);
+                self.entries[index].version = version;
+            },
+            None => self.entries.push(OpenDocument(
+                uri=String.from(&uri), text=String.from(&text), version=version)),
+        }
+    }
+
+    pub fn remove(uri: str) -> bool {
+        match self.find(uri) {
+            Some(index) => {
+                let removed = self.entries.remove(index);
+                removed.drop();
+                true
+            },
+            None => false,
+        }
+    }
+
+    pub fn to_json() -> Value {
+        let result = Vec<Value>.with_capacity(self.entries.len());
+        for entry in self.entries {
+            let item = Object.new();
+            let _ = item.insert("uri", Value.String(entry.uri.clone()));
+            let _ = item.insert("text", Value.String(entry.text.clone()));
+            match entry.version {
+                Some(version) => { let _ = item.insert("version", Value.Number(Number.Signed(version))); },
+                None => { let _ = item.insert("version", Value.Null); },
+            }
+            result.push(Value.Object(item));
+        }
+        Value.Array(result)
+    }
+}
+
+impl Drop for Documents {
+    pub fn drop() {
+        for entry in self.entries { entry.drop(); }
+        self.entries.drop();
+    }
+}

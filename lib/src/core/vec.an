@@ -1,0 +1,288 @@
+from std.core.hash import Hash, Murmur3Hasher;
+from std.core.raw_vec import RawVec;
+
+from std.core.ops import Index, PartialEq, Deref, Add;
+from std.core.clone import Clone;
+from std.core.option import Option;
+from std.core.convert import From, Into;
+from std.core.drop import Drop;
+from std.core.range import Range;
+
+pub struct Vec<T> {
+    raw_vec: RawVec<T>,
+    len: u64,
+}
+
+impl<T> Vec<T> {
+    // Create a new, empty Vec
+    static pub fn new() -> Self {
+        Self.with_capacity(0)
+    }
+
+    // Return the current vector and leave an empty vector in its place.
+    // The backing buffer is not copied or freed; existing aliases remain unchanged.
+    pub fn take() -> Self {
+        let result = *self;
+        *self = Self.new();
+        result
+    }
+
+    // Create a Vec with specified capacity
+    static pub fn with_capacity(capacity: u64) -> Self {
+        Self(
+            raw_vec=RawVec<T>.with_capacity(capacity),
+            len=0
+        )
+    }
+
+    // Get a slice reference to the elements
+    pub fn as_slice() -> T[] {
+        @slice_from_parts(self.raw_vec.ptr(), self.len)
+    }
+
+    // Push an element to the end. The argument is copied by value.
+    pub fn push(value: T) {
+        let len = self.len;
+
+        if len == self.raw_vec.capacity() {
+            self.raw_vec.grow();
+        }
+
+        let end = self.raw_vec.ptr() + len;
+        *end = value;
+        self.len += 1;
+    }
+
+    // Append another Vec's elements to the end; the source remains unchanged.
+    // `other` may be this same Vec, so its data pointer is read only after
+    // `reserve`: growing moves the buffer that `other` pointed at before.
+    pub fn extend(other: Vec<T>&) {
+        let count = other.len;
+        self.reserve(count);
+
+        let src = other.raw_vec.ptr();
+        let dst = self.raw_vec.ptr() + self.len;
+
+        @memcpy(dst, src, count * @sizeof<T>);
+
+        self.len += count;
+    }
+
+    // Pop an element from the end, returning None if empty
+    pub fn pop() -> Option<T> {
+        if self.len == 0 {
+            Option<T>.None
+        } else {
+            self.len -= 1
+            let end = self.raw_vec.ptr() + self.len;
+            Option<T>.Some(*end)
+        }
+    }
+
+    // Insert an element at index, shifting elements to the right
+    // Panics if index > len
+    pub fn insert(index: u64, value: T) {
+        let len = self.len;
+        if index > len {
+            @runtime_fail("S001");
+        }
+
+        if len == self.raw_vec.capacity() {
+            self.raw_vec.grow();
+        }
+
+        let buf = self.raw_vec.ptr();
+
+        // Shift elements to the right
+        let i = len;
+        while i > index {
+            buf[i] = buf[i - 1];
+            i -= 1;
+        }
+
+        buf[index] = value;
+        self.len += 1;
+    }
+
+    // Remove an element at index, shifting elements to the left, returning the removed element
+    // Panics if index >= len
+    pub fn remove(index: u64) -> T {
+        let len = self.len;
+        if index >= len {
+            @runtime_fail("S001");
+        }
+
+        let buf = self.raw_vec.ptr();
+
+        let ret = buf[index]; // The element to remove;
+
+        // Shift elements to the left
+        let i = index;
+        while i < len - 1 {
+            buf[i] = buf[i + 1];
+            i += 1;
+        }
+
+        self.len -= 1;
+        ret
+    }
+
+    // Remove the element at index, replacing it with the element at end, returning the removed element
+    // Panics if index >= len
+    pub fn swap_remove(index: u64) -> T {
+        let len = self.len;
+        if index >= len {
+            @runtime_fail("S001");
+        }
+
+        let buf = self.raw_vec.ptr();
+        let ret = buf[index]; // The element to remove;
+        self.len -= 1;
+
+        if index != self.len {
+            // Copy the last element to the removed spot
+            buf[index] = buf[self.len];
+        }
+
+        ret
+    }
+
+    // Extend the Vec with a slice
+    // Elements are copied bitwise, so a `T` that owns heap data ends up sharing
+    // it with the source; the container neither clones nor owns the elements.
+    // `slice` must not point into this Vec: `reserve` may move the buffer while
+    // the slice keeps the address it was built with.
+    pub fn extend_from_slice(slice: T[]) {
+        let count = slice.len();
+        self.reserve(count);
+
+        let src = slice.ptr();
+        let dst = self.raw_vec.ptr() + self.len;
+
+        @memcpy(dst, src, count * @sizeof<T>);
+
+        self.len += count;
+    }
+
+    // Shorten the Vec, keeping the first `len` elements
+    pub fn truncate(len: u64) {
+        if len > self.len {
+            return;
+        }
+
+        // Element cleanup is the caller's responsibility. The container only
+        // forgets the truncated range and retains the backing allocation.
+        self.len = len;
+    }
+
+    // Remove all elements
+    pub fn clear() {
+        self.truncate(0);
+    }
+
+    // Reserve capacity for at least `additional` more elements
+    pub fn reserve(additional: u64) {
+        self.raw_vec.reserve(self.len, additional);
+    }
+
+    // Reserve `additional` elements and return a writable pointer at `len`.
+    // Callers write at most `additional` elements, then update the length with advance_len.
+    // Out-of-bounds writes and advancing before initialization are the caller's responsibility, as with RawVec lifetimes.
+    pub fn spare(additional: u64) -> T* {
+        self.reserve(additional);
+        return self.raw_vec.ptr() + self.len;
+    }
+
+    // Advance the length after writing `count` elements.
+    pub fn advance_len(count: u64) {
+        self.len += count;
+    }
+
+    // Shrinks the capacity as much as possible
+    pub fn shrink_to_fit() {
+        if self.len < self.raw_vec.capacity() {
+            self.raw_vec.shrink_to_fit(self.len);
+        }
+    }
+
+    // Check if the Vec is empty
+    pub fn is_empty() -> bool {
+        self.len == 0
+    }
+
+    // Get the capacity
+    pub fn capacity() -> u64 {
+        self.raw_vec.capacity()
+    }
+}
+
+// Clone copies the element buffer the Vec itself manages; resources owned by the
+// elements are not cloned recursively (call clone() on them explicitly if needed).
+impl<T> Clone for Vec<T> {
+    pub fn clone() -> Self {
+        self.as_slice().to_vec()
+    }
+}
+
+impl<T> Index<u64, T&> for Vec<T> {
+    pub fn index(index: u64&) -> T& {
+        if *index >= self.len {
+            @runtime_fail("S001");
+        }
+        // The return type implicitly converts `T*` to `T&`; avoid `&<place>`, which invokes an extra
+        // T* Index implementation (13-15% slower for deltablue/havlak in fat mode).
+        return self.raw_vec.ptr() + *index;
+    }
+}
+
+impl<T> PartialEq<Vec<T>> for Vec<T> {
+    pub fn eq(rhs: Vec<T>&) -> bool {
+        self.as_slice() == rhs.as_slice()
+    }
+}
+
+// Implement From for Vec<T> to create a Vec from a slice
+// This will clone the elements from the slice into the Vec
+impl<T> From<T[]> for Vec<T> {
+    pub static fn from(value: T[]&) -> Self {
+        value.to_vec()
+    }
+}
+
+// Implement Into for Vec<T> to convert a Vec into a slice
+// This will return a slice reference to the elements in the Vec
+impl<T> Into<Vec<T>> for T[] {
+    pub fn into() -> Vec<T> {
+        Vec<T>.from(self)
+    }
+}
+
+// Implement Deref for Vec<T> to allow dereferencing to a slice
+impl<T> Deref<T[]> for Vec<T> {
+    pub fn deref() -> T[] {
+        self.as_slice()
+    }
+}
+
+// Concatenation builds a new Vec from bitwise copies of both inputs' elements.
+impl<T> Add<Vec<T>, Vec<T>> for Vec<T> {
+    pub fn add(rhs: Vec<T>) -> Vec<T> {
+        let res = Vec<T>.with_capacity(self.len() + rhs.len());
+        res.extend(self);
+        res.extend(&rhs);
+        res
+    }
+}
+
+// Implement Drop for Vec<T> to release the backing allocation. Elements are
+// not dropped by the container.
+impl<T> Drop for Vec<T> {
+    pub fn drop() {
+        self.raw_vec.drop();
+        self.len = 0;
+    }
+}
+
+impl<T> Hash<Murmur3Hasher> for Vec<T> {
+    fn hash(hasher: Murmur3Hasher&) { self.as_slice().hash(hasher); }
+}

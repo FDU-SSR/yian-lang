@@ -1,0 +1,2 @@
+// Valid module: type aliases.
+pub typedef Meters = f64;

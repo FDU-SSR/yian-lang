@@ -1,0 +1,7 @@
+// Deleting a T& that refers to a stack value ends with a runtime safety error.
+
+fn main() {
+    let x: i32 = 1;
+    let r: i32& = &x;
+    del r;
+}

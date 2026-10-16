@@ -1,0 +1,17 @@
+{
+  "name": "sieve",
+  "source": "AWFY",
+  "tags": [
+    "numeric"
+  ],
+  "argv": [],
+  "check": {
+    "rc": 0
+  },
+  "note": "官方工作单元: flags 大小 5000, 结果 669; 外层默认 268657 次",
+  "scale": {
+    "default": 268657,
+    "fast": 59000,
+    "c": "argv"
+  }
+}

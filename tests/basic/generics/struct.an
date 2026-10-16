@@ -1,0 +1,45 @@
+// Test generic structs
+//
+// Expected output: 0
+
+struct Value<T> {
+    pub data: T,
+}
+
+struct Pair<T, U> {
+    pub first: Value<T>,
+    pub second: Value<U>,
+}
+
+fn case_explicit_nested_generic_struct() {
+    let p: Pair<i32, f64> = Pair<i32, f64>(
+        first=Value<i32>(data=10),
+        second=Value<f64>(data=20.5)
+    )
+    assert p.first.data == 10: "Expected first.data 10";
+    assert p.second.data > 20.4 && p.second.data < 20.6: "Expected second.data ~20.5";
+
+}
+
+struct InferredGenericPair<A, B> {
+    pub first: A,
+    pub second: B,
+}
+
+fn case_generic_constructor_inference() {
+    let a: i32 = 1;
+    let b: i64 = 2;
+    let pair1: InferredGenericPair<i32, i64> = InferredGenericPair<i32, i64>(first=a, second=b)
+    assert pair1.first == 1 && pair1.second == 2: "Expected Pair(1, 2)";
+
+    let pair2: InferredGenericPair<i32, i64> = InferredGenericPair<i32, i64>(a, b)
+    assert pair2.first == 1 && pair2.second == 2: "Expected Pair(1, 2)";
+
+    let pair3: InferredGenericPair<i32, i64> = InferredGenericPair(a, b)
+    assert pair3.first == 1 && pair3.second == 2: "Expected Pair(1, 2)";
+}
+
+fn main() {
+    case_explicit_nested_generic_struct();
+    case_generic_constructor_inference();
+}

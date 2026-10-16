@@ -1,0 +1,15 @@
+// Valid module providing misused functions/types to errors.an, so diagnostics concern misuse rather than missing names.
+from sample_errors.types import Meters;
+
+pub struct Origin {
+    pub x: Meters,
+    pub y: Meters,
+}
+
+pub fn double(value: i32) -> i32 {
+    return value * 2;
+}
+
+pub fn add(a: i32, b: i32) -> i32 {
+    return a + b;
+}

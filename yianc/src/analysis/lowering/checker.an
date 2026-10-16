@@ -1,0 +1,347 @@
+from yianc.analysis.resolution.context import ResolutionContext;
+from yianc.analysis.ty.relations import compatible;
+from yianc.analysis.resolution.types import resolve_type;
+from yianc.analysis.ty.model import TypeData, NominalKind;
+from yianc.analysis.ty.display import type_text;
+from yianc.analysis.symbol.model import Symbol, SymbolKind;
+from yianc.analysis.symbol.scope import Scope;
+from yianc.analysis.hir.node import HirNode, HirKind, Block as HirBlock, Cast;
+from yianc.analysis.constant.evaluate import TypeSizeProvider;
+from yianc.common.ids import UnitId, ScopeId, HirId, SymbolId, TypeId, DefId;
+from yianc.common.location import SourceSpan;
+from yianc.frontend.ast.node import Block, Literal, Pattern, Identifier, TypeSyntax;
+from yianc.frontend.ast.traversal import AstVisitor, walk_pattern;
+from yianc.frontend.source import Span;
+from yianc.diagnostics.model import DiagnosticCode, AnalysisError, AnalysisErrorKind, AnalysisStage;
+from std.core.drop import Drop;
+from std.core.clone import Clone;
+from std.core.iter import Iterator, IntoIterator;
+from std.core.option import Option;
+from std.core.result import Result;
+from std.core.vec import Vec;
+from std.core.string import String;
+from std.core.convert import From;
+
+// This visitor records only binding syntax; it never allocates a placeholder symbol or type.
+struct UnavailableBindings { checker: ExprChecker& }
+
+impl AstVisitor for UnavailableBindings {
+    pub fn enter_pattern(pattern: Pattern&) -> bool {
+        match &pattern.data {
+            NamePattern(name) | BindPattern(name, _) => {
+                let checker = self.checker;
+                let interned = checker.ctx.session.names.intern(name.data.name.as_str());
+                checker.ctx.session.symbols.block_unavailable(checker.scope, interned,
+                    checker.ctx.span(checker.unit, name.span));
+            },
+            _ => {},
+        }
+        true
+    }
+}
+
+// The checker owns no session data. Lexical state is restored by defer on every error path.
+pub struct ExprChecker {
+    pub ctx: ResolutionContext&,
+    pub unit: UnitId,
+    pub scope: ScopeId,
+    pub return_type: TypeId,
+    pub sizes: Option<TypeSizeProvider&>,
+    pub ffi_allowed: bool,
+    loops: Vec<LoopContext>,
+    deferred: u64,
+    pub parameter_binding: bool,
+}
+
+pub struct LoopContext {
+    breaks: Vec<HirId>,
+    accepts_value: bool,
+}
+
+impl LoopContext {
+    static pub fn new(accepts_value: bool) -> Self {
+        Self(Vec<HirId>.new(), accepts_value)
+    }
+
+    pub fn exits() -> Vec<HirId>& {
+        &self.breaks
+    }
+
+    pub fn accepts_value() -> bool {
+        self.accepts_value
+    }
+
+    pub fn add_break(id: HirId) {
+        self.breaks.push(id);
+    }
+}
+
+impl Drop for LoopContext {
+    pub fn drop() {
+        self.breaks.drop();
+    }
+}
+
+impl Drop for ExprChecker {
+    pub fn drop() {
+        for loop_context in self.loops {
+            loop_context.drop();
+        }
+
+        self.loops.drop();
+    }
+}
+
+impl ExprChecker {
+    static pub fn new(ctx: ResolutionContext&, unit: UnitId, scope: ScopeId, result: TypeId, sizes: Option<TypeSizeProvider&>) -> Self {
+        Self(ctx, unit, scope, result, sizes, false, Vec<LoopContext>.new(), 0, false)
+    }
+
+    pub fn node(span: Span, type_id: TypeId, place: bool, kind: HirKind) -> HirId {
+        self.ctx.session.hir.add(HirNode(self.ctx.span(self.unit, span), type_id, place, kind))
+    }
+
+    pub fn type_of(id: HirId) -> TypeId {
+        self.ctx.session.hir.get(id).unwrap().type_id
+    }
+
+    fn error(span: Span, message: str) -> AnalysisError {
+        self.ctx.error(self.unit, span, DiagnosticCode.Type, message)
+    }
+
+    // Failed constraints and unresolved parameters use distinct diagnostic categories.
+    fn inference_error(span: Span, expected: TypeId, actual: TypeId) -> AnalysisError {
+        let wanted = type_text(self.ctx, expected);
+        defer wanted.drop();
+        let observed = type_text(self.ctx, actual);
+        defer observed.drop();
+        let relation = match self.ctx.session.types.get(expected).unwrap() {
+            Nominal(expected_definition, _) => {
+                match self.ctx.session.types.get(actual).unwrap() {
+                    Nominal(actual_definition, _) => {
+                        if *expected_definition != *actual_definition {
+                            "to"
+                        } else {
+                            "for"
+                        }
+                    },
+                    _ => "for",
+                }
+            },
+            _ => "for",
+        };
+        let message = String.from(&"cannot infer generic arguments from '");
+        defer message.drop();
+        message.push_str(observed.as_str());
+        message.push_str("' ");
+        message.push_str(relation);
+        message.push_str(" '");
+        message.push_str(wanted.as_str());
+        message.push_str("'");
+
+        self.ctx.error(self.unit, span, DiagnosticCode.Inference, message.as_str())
+    }
+
+    fn unbound_arguments(span: Span, type_id: TypeId) -> AnalysisError {
+        let name = type_text(self.ctx, type_id);
+        defer name.drop();
+        let message = String.from(&"cannot infer generic type '");
+        defer message.drop();
+        message.push_str(name.as_str());
+        message.push_str("' from the call arguments");
+
+        self.error(span, message.as_str())
+    }
+
+    pub fn coerce(id: HirId, expected: TypeId) -> Result<HirId, AnalysisError> {
+        let node = *self.ctx.session.hir.get(id).unwrap();
+
+        if node.type_id == expected || node.type_id == self.ctx.primitives.never {
+            return Result<HirId, AnalysisError>.Ok(id);
+        }
+
+        match self.convert(id, expected)? {
+            Some(value) => return Result<HirId, AnalysisError>.Ok(value), None => {}
+        }
+
+        if !compatible(self.ctx, node.type_id, expected) {
+            let wanted = type_text(self.ctx, expected);
+            defer wanted.drop();
+            let actual = type_text(self.ctx, node.type_id);
+            defer actual.drop();
+            let message = String.from(&"Expected type '");
+            defer message.drop();
+            message.push_str(wanted.as_str());
+            message.push_str("' but got '");
+            message.push_str(actual.as_str());
+            message.push_str("'");
+            return Result<HirId, AnalysisError>.Err(self.ctx.error(self.unit, node.span.span, DiagnosticCode.TypeMismatch, message.as_str()));
+        }
+
+        // Literal conversion is represented explicitly so constants and code generation agree.
+        Result<HirId, AnalysisError>.Ok(self.node(node.span.span, expected, false, HirKind.Cast(Cast(id, expected))))
+    }
+
+    pub fn bind(name: str, type_id: TypeId, span: Span, kind: SymbolKind) -> Result<SymbolId, AnalysisError> {
+        let interned = self.ctx.session.names.intern(name);
+
+        if name == "IS_RAW_MODE" {
+            return Result<SymbolId, AnalysisError>.Err(self.ctx.error(self.unit, span, DiagnosticCode.Duplicate, "binding uses a reserved compiler name"));
+        }
+
+        if self.parameter_binding {
+            match self.ctx.session.symbols.lookup(self.scope, interned) {
+                Some(existing) => {
+                    if self.ctx.session.symbols.get(existing).unwrap().kind == SymbolKind.Parameter {
+                        return Result<SymbolId, AnalysisError>.Err(AnalysisError.named(DiagnosticCode.Type,
+                            Option<SourceSpan>.Some(self.ctx.span(self.unit, span)), "Variable '", name, "' is already defined in the current scope"));
+                    }
+                },
+                None => {},
+            }
+        }
+
+        let symbol = self.ctx.session.symbols.add(Symbol(interned, kind, type_id, self.unit,
+            Option<SourceSpan>.Some(self.ctx.span(self.unit, span)), false, false, false,
+            Option<SymbolId>.None, Option<DefId>.None));
+
+        if !self.ctx.session.symbols.bind(self.scope, interned, symbol)? {
+            return Result<SymbolId, AnalysisError>.Err(self.ctx.error(self.unit, span, DiagnosticCode.Duplicate, "duplicate local binding"));
+        }
+
+        Result<SymbolId, AnalysisError>.Ok(symbol)
+    }
+
+    // An explicit, resolved annotation survives initializer failure; it creates no assignment or exportable body.
+    fn recover_binding(name: Identifier&, syntax: TypeSyntax&) -> Result<bool, AnalysisError> {
+        match &syntax.data { DeducedType => return Result<bool, AnalysisError>.Ok(false), _ => {}, }
+        let type_id = match resolve_type(self.ctx, self.unit, self.scope, syntax) {
+            Ok(value) => value,
+            Err(error) => {
+                if error.kind == AnalysisErrorKind.Internal { return Result<bool, AnalysisError>.Err(error); }
+                error.drop();
+                return Result<bool, AnalysisError>.Ok(false);
+            },
+        };
+        match self.ctx.session.types.require(type_id)? {
+            TypeData.Error => return Result<bool, AnalysisError>.Ok(false),
+            Nominal(id, _) => {
+                let definition = self.ctx.session.types.definition(*id).unwrap();
+                if !definition.is_complete() || definition.header().kind == NominalKind.Trait {
+                    return Result<bool, AnalysisError>.Ok(false);
+                }
+            },
+            _ => {},
+        }
+        match self.bind(name.data.name.as_str(), type_id, name.span, SymbolKind.Variable) {
+            Ok(_) => Result<bool, AnalysisError>.Ok(true),
+            Err(error) => {
+                if error.kind == AnalysisErrorKind.Internal { return Result<bool, AnalysisError>.Err(error); }
+                error.drop();
+                Result<bool, AnalysisError>.Ok(false)
+            },
+        }
+    }
+
+    pub fn block(block: Block&) -> Result<HirId, AnalysisError> {
+        let previous = self.scope;
+        self.scope = self.ctx.session.symbols.create_scope(Option<ScopeId>.Some(previous))?;
+        let scope_span = block.span;
+        match block.data.end {
+            Some(end) => { scope_span.end = end; },
+            None => {},
+        }
+        self.ctx.session.editor_facts.record_scope(self.ctx.span(self.unit, scope_span), self.scope);
+        defer self.scope = previous;
+        let statements = Vec<HirId>.new();
+        let accepted = false;
+        defer {
+            if !accepted {
+                statements.drop();
+            }
+        };
+
+        for binding in block.data.parameter_bindings {
+            statements.push(self.pattern_binding(*binding)?);
+        }
+
+        let result = self.ctx.primitives.void;
+        let terminated = false;
+        let first_error = Option<AnalysisError>.None;
+        defer { match &first_error { Some(error) => error.drop(), None => {}, } };
+
+        for statement in block.data.stmts {
+            let loop_counts = Vec<u64>.new();
+            defer loop_counts.drop();
+            if self.ctx.session.editor_recovery {
+                for context in self.loops { loop_counts.push(context.breaks.len()); }
+            }
+            let checkpoint = if self.ctx.session.editor_recovery {
+                Option<Scope>.Some(self.ctx.session.symbols.checkpoint(self.scope)?)
+            } else { Option<Scope>.None };
+            let lowered = match self.expression(*statement) {
+                Ok(value) => {
+                    if let Some(saved) = checkpoint.take() { saved.drop(); }
+                    value
+                },
+                Err(error) => {
+                    if let Some(saved) = checkpoint.take() {
+                        self.ctx.session.symbols.restore(self.scope, saved);
+                    }
+                    let loop_index = 0u64;
+                    while loop_index < loop_counts.len() && loop_index < self.loops.len() {
+                        self.loops[loop_index].breaks.truncate(loop_counts[loop_index]);
+                        loop_index += 1;
+                    }
+                    if !self.ctx.session.editor_recovery || error.kind == AnalysisErrorKind.Internal {
+                        return Result<HirId, AnalysisError>.Err(error);
+                    }
+                    let failed_statement = match &statement.data { Semi(inner) => *inner, _ => *statement };
+                    match &failed_statement.data {
+                        VarDecl(name, syntax, _) => {
+                            let available = match self.recover_binding(*name, *syntax) {
+                                Ok(value) => value,
+                                Err(recovery_error) => {
+                                    error.drop();
+                                    return Result<HirId, AnalysisError>.Err(recovery_error);
+                                },
+                            };
+                            if !available {
+                                let interned = self.ctx.session.names.intern(name.data.name.as_str());
+                                self.ctx.session.symbols.block_unavailable(self.scope, interned, self.ctx.span(self.unit, name.span));
+                            }
+                        },
+                        PatternLet(binding) => {
+                            let visitor = UnavailableBindings(self);
+                            walk_pattern(binding.data.pattern, &visitor);
+                        },
+                        Recovery(_, bindings) => {
+                            for name in *bindings {
+                                let interned = self.ctx.session.names.intern(name.data.name.as_str());
+                                self.ctx.session.symbols.block_unavailable(self.scope, interned, self.ctx.span(self.unit, name.span));
+                            }
+                        },
+                        _ => {},
+                    }
+                    if error.kind != AnalysisErrorKind.EditorIncomplete {
+                        let diagnostic = error.diagnostic.copy();
+                        diagnostic.stage = Option<AnalysisStage>.Some(AnalysisStage.TypeCheck);
+                        self.ctx.session.diagnostics.push_unique(diagnostic);
+                    }
+                    if first_error.is_none() { first_error = Option<AnalysisError>.Some(error); } else { error.drop(); }
+                    continue;
+                },
+            };
+            statements.push(lowered);
+
+            if !terminated {
+                result = self.type_of(lowered);
+                terminated = result == self.ctx.primitives.never;
+            }
+        }
+
+        if let Some(error) = first_error.take() { return Result<HirId, AnalysisError>.Err(error); }
+        accepted = true;
+        Result<HirId, AnalysisError>.Ok(self.node(block.span, result, false, HirKind.Block(HirBlock(statements))))
+    }
+}

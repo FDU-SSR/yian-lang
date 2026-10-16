@@ -1,0 +1,12 @@
+// File header comment.
+// Second line.
+
+fn main() { // Trailing comment.
+    /* Block comment before a statement */
+    let a: i32 = 1;
+    let b: i32 = 2; // Another trailing comment.
+
+    // Standalone comment after a blank line.
+    let c: i32 = a + b;
+}
+// Final comment.

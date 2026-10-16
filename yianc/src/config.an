@@ -1,0 +1,237 @@
+from std.cli import ArgumentParser, Nargs, ArgMatches, Action;
+from std.core.drop import Drop;
+from std.core.result import Result;
+from std.core.string import String;
+from std.core.vec import Vec;
+
+pub enum FrontendPhase {
+    Tokens, Ast, Desugared
+}
+
+impl FrontendPhase {
+    pub fn name() -> str {
+        match self {
+            Tokens => "tokens",
+            Ast => "ast",
+            Desugared => "desugared",
+        }
+    }
+}
+
+pub enum CompilerAction {
+    Compile,
+    FrontendJson {
+        phase: FrontendPhase
+    },
+    Analyze {
+        json: bool
+    },
+    Format { write: bool, check: bool },
+    Invalid { message: String },
+    Help {
+        text: String
+    },
+}
+
+pub enum OutputKind {
+    None, Exe, Ll, Bc, Obj, Asm,
+}
+
+impl OutputKind {
+    pub fn extension() -> str {
+        match self { None => "", Exe => "", Ll => "ll", Bc => "bc", Obj => "o", Asm => "s", }
+    }
+}
+
+pub struct CompilerConfig {
+    pub action: CompilerAction,
+    pub inputs: Vec<String>,
+    pub compiler_root: String,
+    pub root_explicit: bool,
+    pub packages: Option<String>,
+    pub raw_pointers: bool,
+    pub allow_ffi: bool,
+    pub target: OutputKind,
+    pub output: Option<String>,
+    pub optimization: u8,
+    pub dump: bool,
+    pub profile: bool,
+    pub log_spec: Option<String>,
+    pub log_file: Option<String>,
+    pub link_libraries: Vec<String>,
+    pub link_searches: Vec<String>,
+}
+
+fn string_values(matches: ArgMatches&, name: str) -> Vec<String> {
+    let result = Vec<String>.new();
+    match matches.get_many(name) {
+        Ok(Some(values)) => {
+            for value in values {
+                match value { Text(text) => result.push(String.from(&text.as_str())), _ => {}, }
+            }
+        },
+        _ => {},
+    }
+    result
+}
+
+impl CompilerConfig {
+    static fn from_matches(matches: ArgMatches&) -> Result<Self, String> {
+        let analyze = *matches.get_bool("analyze").unwrap().unwrap();
+        let json = *matches.get_bool("json").unwrap().unwrap();
+
+        let phase = match matches.get_string("phase") {
+            Ok(Some(text)) => if text == "tokens" {
+                FrontendPhase.Tokens
+            } elif text == "ast" {
+                FrontendPhase.Ast
+            } else {
+                FrontendPhase.Desugared
+            },
+            _ => FrontendPhase.Desugared,
+        };
+
+        let inputs = string_values(matches, "inputs");
+        if inputs.is_empty() {
+            inputs.drop();
+            return Result<Self, String>.Err(String.from(&"error: the following arguments are required: PATH\n"));
+        }
+
+        let root = match matches.get_string("compiler-root") {
+            Ok(Some(value)) => String.from(&value),
+            _ => String.from(&"."),
+        };
+        let packages = match matches.get_string("packages") {
+            Ok(Some(value)) => Option<String>.Some(String.from(&value)),
+            _ => Option<String>.None,
+        };
+        let raw = *matches.get_bool("raw-pointers").unwrap().unwrap();
+        let ffi = *matches.get_bool("allow-ffi").unwrap().unwrap();
+        let target = match matches.get_string("target") {
+            Ok(Some(text)) => match text {
+                "none" => OutputKind.None, "ll" => OutputKind.Ll, "bc" => OutputKind.Bc,
+                "obj" => OutputKind.Obj, "asm" => OutputKind.Asm, _ => OutputKind.Exe,
+            },
+            _ => OutputKind.Exe,
+        };
+        let output = match matches.get_string("output") {
+            Ok(Some(text)) => Option<String>.Some(String.from(&text)),
+            _ => Option<String>.None,
+        };
+        let optimization = match matches.get_string("optimization") {
+            Ok(Some(text)) => match text { "1" => 1u8, "2" => 2u8, "3" => 3u8, _ => 0u8, },
+            _ => 0u8,
+        };
+        let observation = match matches.get_string("phase") { Ok(Some(_)) => true, _ => false, };
+        Result<Self, String>.Ok(Self(if observation {
+                CompilerAction.FrontendJson(phase)
+            } elif json && !analyze {
+                CompilerAction.Invalid(String.from(&"error: --json requires --analyze\n"))
+            } elif *matches.get_bool("format").unwrap().unwrap() {
+                CompilerAction.Format(*matches.get_bool("write").unwrap().unwrap(), *matches.get_bool("check").unwrap().unwrap())
+            } elif analyze {
+                CompilerAction.Analyze(json)
+            } else {
+                CompilerAction.Compile
+            }, inputs, root, match matches.get_string("compiler-root") { Ok(Some(_)) => true, _ => false, }, packages, raw, ffi, target, output, optimization,
+            *matches.get_bool("dump").unwrap().unwrap(), *matches.get_bool("profile").unwrap().unwrap(),
+            match matches.get_string("log-spec") { Ok(Some(value)) => Option<String>.Some(String.from(&value)), _ => Option<String>.None, },
+            match matches.get_string("log-file") { Ok(Some(value)) => Option<String>.Some(String.from(&value)), _ => Option<String>.None, },
+            string_values(matches, "link-lib"), string_values(matches, "link-search")))
+    }
+}
+
+impl Drop for CompilerConfig {
+    pub fn drop() {
+        match &self.action {
+            Help(text) | Invalid(text) => text.drop(),
+            Format(_, _) => {},
+            FrontendJson(_) => {},
+            Analyze(_) => {},
+            Compile => {},
+        }
+
+        let index = 0u64;
+
+        while index < self.inputs.len() {
+            self.inputs[index].drop();
+            index += 1u64;
+        }
+
+        self.inputs.drop();
+        self.compiler_root.drop();
+
+        match &self.packages {
+            Some(value) => value.drop(),
+            None => {},
+        }
+        match &self.output { Some(value) => value.drop(), None => {}, }
+        match &self.log_spec { Some(value) => value.drop(), None => {}, }
+        match &self.log_file { Some(value) => value.drop(), None => {}, }
+        for value in self.link_libraries { value.drop(); }
+        for value in self.link_searches { value.drop(); }
+        self.link_libraries.drop();
+        self.link_searches.drop();
+    }
+}
+
+// Configuration and error text own their storage independently of the parser and command-line strings.
+pub fn parse_args() -> Result<CompilerConfig, String> {
+    let parser = ArgumentParser.new("compiler");
+    defer parser.drop();
+    parser.description("YIAN compiler");
+    parser.add_argument("phase").long("frontend-json")
+    .choices(["tokens", "ast", "desugared"].as_slice()).metavar("PHASE")
+    .help("output the selected frontend stage as JSON");
+    parser.add_argument("analyze").long("analyze").action(Action.StoreTrue)
+    .help("analyze sources without generating native code");
+    parser.add_argument("json").long("json").action(Action.StoreTrue).help("output analysis diagnostics as JSON");
+    parser.add_argument("format").long("format").action(Action.StoreTrue).help("format validated sources");
+    parser.add_argument("write").long("write").short('w').action(Action.StoreTrue).help("rewrite formatted sources in place");
+    parser.add_argument("check").long("check").action(Action.StoreTrue).help("list sources requiring formatting");
+    parser.add_argument("compiler-root").long("compiler-root").metavar("PATH").help("checkout root used for standard-library trust");
+    parser.add_argument("packages").long("packages").metavar("PATH").help("v2 package map");
+    parser.add_argument("raw-pointers").long("raw-pointers").action(Action.StoreTrue).help("analyze sources for raw-pointer mode");
+    parser.add_argument("allow-ffi").long("allow-ffi").action(Action.StoreTrue).help("allow FFI in standalone sources");
+    parser.add_argument("target").long("target").short('t').choices(["none", "exe", "ll", "bc", "obj", "asm"].as_slice())
+    .default_value("exe").metavar("TARGET").help("output kind");
+    parser.add_argument("output").long("output").short('o').metavar("PATH").help("output path");
+    parser.add_argument("optimization").short('O').choices(["0", "1", "2", "3"].as_slice()).default_value("0").help("optimization level");
+    parser.add_argument("dump").long("dump").action(Action.StoreTrue).help("write completed stage observations");
+    parser.add_argument("profile").long("profile").action(Action.StoreTrue).help("report actual stage timings");
+    parser.add_argument("log-spec").long("log-spec").help("channel=level logging configuration");
+    parser.add_argument("log-file").long("log-file").help("additional logging output file");
+    parser.add_argument("link-lib").long("link-lib").action(Action.Append).help("native library name");
+    parser.add_argument("link-search").long("link-search").action(Action.Append).help("native library directory");
+    parser.add_argument("inputs").nargs(Nargs.ZeroOrMore).metavar("INPUT")
+    .help("input files or directories");
+
+    match parser.parse_env() {
+        Ok(outcome) => match outcome {
+            Help(text) => Result<CompilerConfig, String>.Ok(
+                CompilerConfig(CompilerAction.Help(text), Vec<String>.new(), String.new(), false, Option<String>.None, false, false,
+                OutputKind.Exe, Option<String>.None, 0u8, false, false, Option<String>.None, Option<String>.None, Vec<String>.new(), Vec<String>.new())),
+            Parsed(matches) => {
+                defer matches.drop();
+                CompilerConfig.from_matches(&matches)
+            },
+        },
+        Err(error) => {
+            defer error.drop();
+            let diagnostic = String.new();
+
+            match parser.format_usage() {
+                Ok(text) => {
+                    defer text.drop();
+                    diagnostic.push_str(text.as_str());
+                },
+                Err(problem) => problem.drop(),
+            }
+
+            let message = error.format();
+            defer message.drop();
+            diagnostic.push_str(message.as_str());
+            Result<CompilerConfig, String>.Err(diagnostic)
+        },
+    }
+}

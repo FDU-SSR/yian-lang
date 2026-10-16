@@ -1,0 +1,7 @@
+// Test that inline array indexing preserves the existing bounds failure.
+
+fn main() {
+    let arr: i32[3] = [1, 2, 3];
+    let idx: u64 = 5;
+    arr[idx] = 99;
+}

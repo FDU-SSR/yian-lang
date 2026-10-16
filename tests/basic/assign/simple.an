@@ -1,0 +1,91 @@
+// Assignment cases for scalar, aggregate, generic, enum, and zero-field values.
+//
+// Expected output: 0
+
+fn case_scalar_assignment() {
+    let a: i32 = 1;
+    let b: i32 = a;
+    let c = a + b;
+    assert c == 2: "1 + 1 should be 2";
+
+    let d: bool = true;
+    let e: bool = d;
+    assert e: "true should be true";
+
+    let p: i32* = &a;
+    let q: i32* = p;
+    assert *p == 1: "pointer deref should give 1";
+
+}
+
+struct CopyPoint {
+    x: i32,
+    y: i32,
+}
+
+fn case_struct_assignment() {
+    let p1 = CopyPoint(1, 2);
+    let p2 = p1;
+    assert p2.x == 1: "x should be 1";
+    assert p2.y == 2: "y should be 2";
+    assert p1.x == 1: "source remains readable";
+}
+
+struct NestedCopyInner {
+    a: i32,
+    b: bool,
+}
+
+struct NestedCopyOuter {
+    inner: NestedCopyInner,
+    extra: f64,
+}
+
+fn case_nested_struct_assignment() {
+    let o1 = NestedCopyOuter(NestedCopyInner(1, true), 3.14);
+    let o2 = o1;
+    assert o2.inner.a == 1: "inner.a should be 1";
+    assert o2.inner.b: "inner.b should be true";
+    assert o1.inner.a == 1: "source remains readable";
+}
+
+struct GenericCopyPair<A, B> {
+    first: A,
+    second: B,
+}
+
+fn case_generic_struct_assignment() {
+    let p1: GenericCopyPair<i32, bool> = GenericCopyPair<i32, bool>(first=1, second=true);
+    let p2 = p1;
+    assert p2.first == 1: "first should be 1";
+    assert p2.second: "second should be true";
+}
+
+enum CopyColor {
+    Red,
+    Green,
+    Blue,
+}
+
+fn case_enum_assignment() {
+    let c1 = CopyColor.Red;
+    let c2 = c1;
+    match c1 { Red => {}, _ => @panic("source changed") }
+    match c2 { Red => {}, _ => @panic("copy changed") }
+}
+
+struct ZeroFieldUnit {}
+
+fn case_zero_field_assignment() {
+    let u1 = ZeroFieldUnit();
+    let u2 = u1;
+}
+
+fn main() {
+    case_scalar_assignment();
+    case_struct_assignment();
+    case_nested_struct_assignment();
+    case_generic_struct_assignment();
+    case_enum_assignment();
+    case_zero_field_assignment();
+}

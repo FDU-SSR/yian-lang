@@ -1,0 +1,10 @@
+{
+  "name": "string",
+  "scale": "full",
+  "runs": 5,
+  "include": [
+    "tag:string"
+  ],
+  "exclude": [],
+  "note": "字符串/IO 密集"
+}

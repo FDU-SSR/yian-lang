@@ -1,0 +1,12 @@
+pub enum ParseErrorKind {
+    UnexpectedEnd, UnexpectedToken, InvalidEscape, InvalidUnicode,
+    InvalidNumber, NumberOutOfRange, DepthLimit, TrailingInput,
+}
+
+pub struct ParseError {
+    pub kind: ParseErrorKind,
+    pub row: u64,
+    pub column: u64,
+}
+
+pub enum WriteError { InvalidState, Incomplete, NonFiniteNumber, DepthLimit, InvalidUnicode }

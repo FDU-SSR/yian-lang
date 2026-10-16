@@ -1,0 +1,83 @@
+// HashMap storage operations never drop keys or values.  Resource cleanup is
+// explicit and must happen while an element is still reachable.
+from std.collections.hash_map import HashMap;
+from std.core.drop import Drop;
+from std.core.hash import Hash, Murmur3Hasher;
+from std.core.ops import PartialEq;
+
+struct Guard {
+    value: i32,
+    drops: i32*,
+}
+
+impl Drop for Guard {
+    fn drop() { *self.drops += 1; }
+}
+
+struct KGuard {
+    id: i32,
+    drops: i32*,
+}
+
+impl Drop for KGuard {
+    fn drop() { *self.drops += 1; }
+}
+
+impl Hash<Murmur3Hasher> for KGuard {
+    fn hash(hasher: Murmur3Hasher&) { self.id.hash(hasher); }
+}
+
+impl PartialEq<KGuard> for KGuard {
+    fn eq(other: KGuard&) -> bool { self.id == other.id }
+}
+
+fn main() {
+    let drops: i32 = 0;
+    let map = HashMap<i32, Guard>.with_capacity(4);
+
+    map.insert(1, Guard(10, &drops));
+    map.insert(1, Guard(11, &drops));
+    assert drops == 0: "replacement must not drop the old value";
+    assert (**map.get(&1).unwrap()).value == 11;
+
+    for i in 2i32..20 {
+        map.insert(i, Guard(i, &drops));
+    }
+    assert drops == 0: "resize must not drop transferred entries";
+    assert map.len() == 19;
+
+    assert map.remove(&5);
+    assert drops == 0: "remove must not drop the removed value";
+    map.clear();
+    assert drops == 0: "clear must not drop remaining values";
+
+    map.insert(100, Guard(100, &drops));
+    map.drop();
+    assert drops == 0: "map drop releases storage without dropping entries";
+    map.drop();
+    assert drops == 0;
+    assert map.len() == 0: "released map has empty logical state";
+    assert map.is_empty();
+    assert map.get(&100).is_none();
+    assert !map.contains(&100);
+    assert !map.remove(&100);
+    map.clear();
+    assert map.len() == 0;
+
+    // Duplicate incoming keys are discarded without drop (the same variable may
+    // be re-inserted safely); remove and final drop leave stored keys untouched.
+    let key_drops: i32 = 0;
+    let kmap = HashMap<KGuard, i32>.with_capacity(4);
+    let k = KGuard(1, &key_drops);
+    kmap.insert(k, 100);
+    kmap.insert(k, 200);
+    kmap.insert(k, 300);
+    assert key_drops == 0: "duplicate incoming key is discarded, never dropped";
+    assert kmap.len() == 1;
+    assert **kmap.get(&k).unwrap() == 300;
+
+    assert kmap.remove(&k);
+    assert key_drops == 0: "remove must not drop the stored key";
+    kmap.drop();
+    assert key_drops == 0;
+}

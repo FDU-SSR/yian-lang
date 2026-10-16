@@ -1,0 +1,106 @@
+// bench/AWFY/an/queen.an: N-queens backtracking (shootout queens).
+//
+// Reference: AWFY benchmarks/Java/src/Queens.java; see AWFY LICENSE.md.
+// Semantic reference: bench/AWFY/c/queen.c, the project's C implementation.
+// Scale: ten consecutive eight-queens solves per work unit; outer repetitions repeat that unit.
+//
+// Algorithm: classic N-queens backtracking. free_rows[r] records row availability;
+//       free_maxs[r+c] and free_mins[c-r+7] record the two diagonals,
+//       with offset 7 keeping indices nonnegative. place_queen places columns and restores
+//       board state on backtracking. solve_queens_once recreates four arrays and solves once.
+//
+// Array parameters in is_safe/update_board_state/place_queen use
+//   bool[]/i32[] block-access semantics, 32 B representations without index fields.
+//   solve_queens_once binds bool[]/i32[] directly (let x:T[]=dyn[n] T);
+//   del T[] releases the whole block without an explicit view of the original pointer.
+//
+// Fat and raw modes share this source.
+// Use inferred dyn types and x[0u64..n] range views for both modes, retaining fat-mode checks.
+fn is_safe(r: u64, c: u64, free_rows: bool[], free_maxs: bool[], free_mins: bool[]) -> bool {
+    if !free_rows[r] {
+        return false;
+    }
+    if !free_maxs[r + c] {
+        return false;
+    }
+    if !free_mins[c - r + 7] {
+        return false;
+    }
+    return true;
+}
+
+fn update_board_state(r: u64, c: u64, value: bool, free_rows: bool[], free_maxs: bool[], free_mins: bool[]) {
+    free_rows[r] = value;
+    free_maxs[c + r] = value;
+    free_mins[c - r + 7] = value;
+}
+
+fn place_queen(c: u64, free_rows: bool[], free_maxs: bool[], free_mins: bool[], queen_rows: i32[]) -> bool {
+    let r: u64 = 0;
+    while r < 8 {
+        if is_safe(r, c, free_rows, free_maxs, free_mins) {
+            queen_rows[r] = i32(c);
+            update_board_state(r, c, false, free_rows, free_maxs, free_mins);
+            if c == 7 {
+                return true;
+            }
+            if place_queen(c + 1, free_rows, free_maxs, free_mins, queen_rows) {
+                return true;
+            }
+            update_board_state(r, c, true, free_rows, free_maxs, free_mins);
+        }
+        r += 1;
+    }
+    return false;
+}
+
+fn solve_queens_once() -> bool {
+    let free_rows = dyn[8] false;
+    let free_maxs = dyn[16] false;
+    let free_mins = dyn[16] false;
+    let queen_rows = dyn[8] 0i32;
+
+    let i: u64 = 0;
+    while i < 8 {
+        free_rows[i] = true;
+        queen_rows[i] = -1;
+        i += 1;
+    }
+    let j: u64 = 0;
+    while j < 16 {
+        free_maxs[j] = true;
+        free_mins[j] = true;
+        j += 1;
+    }
+
+    let fr: bool[] = free_rows[0u64..8u64];
+    let fm: bool[] = free_maxs[0u64..16u64];
+    let fmi: bool[] = free_mins[0u64..16u64];
+    let qr: i32[] = queen_rows[0u64..8u64];
+    let ok: bool = place_queen(0, fr, fm, fmi, qr);
+
+    del free_rows;
+    del free_maxs;
+    del free_mins;
+    del queen_rows;
+    return ok;
+}
+
+fn benchmark_queens() -> bool {
+    let result: bool = true;
+    let i: u64 = 0;
+    while i < 10 {
+        result = result && solve_queens_once();
+        i += 1;
+    }
+    return result;
+}
+
+fn main() {
+    let ITER: u64 = 276923;  // bench-scale
+    let iter: u64 = 0;
+    while iter < ITER {
+        assert benchmark_queens(): "queens Error";
+        iter += 1;
+    }
+}

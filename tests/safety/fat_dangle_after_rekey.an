@@ -1,0 +1,13 @@
+// Fat-pointer dangling-stack negative test: access an old pointer after frame re-keying.
+//
+// make() returns &x with frame lock <e_f,k1>; the first call exits with SENTINEL,
+// then the second call re-keys the slot with k2. Old p still carries k1,
+// so p[0] fails live key comparison and terminates with exit code 1.
+
+fn make() -> i32* { let x: i32 = 42; &x }
+
+fn main() {
+    let p: i32* = make();
+    make() // The second call re-keys the frame slot.
+    p[0] = 99 // Old-key mismatch fails live with a safety error.
+}

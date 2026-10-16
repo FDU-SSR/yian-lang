@@ -1,0 +1,10 @@
+trait Measure {
+    fn value() -> i32;
+}
+
+struct NotMeasured {}
+
+fn main() {
+    let value: NotMeasured = NotMeasured();
+    let object: Measure& = &value;
+}

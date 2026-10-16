@@ -1,0 +1,4 @@
+from std.core.io import print;
+fn main() {
+    print("hello\n");
+}

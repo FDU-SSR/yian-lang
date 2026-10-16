@@ -1,0 +1,17 @@
+{
+  "name": "cd",
+  "source": "AWFY",
+  "tags": [
+    "control",
+    "numeric"
+  ],
+  "argv": [],
+  "check": {
+    "rc": 0
+  },
+  "note": "官方工作单元: 250 架飞机、200 帧, 结果 10830; 外层默认 49 次",
+  "scale": {
+    "default": 49,
+    "c": "argv"
+  }
+}

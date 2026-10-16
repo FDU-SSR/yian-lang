@@ -1,0 +1,9 @@
+enum Choice<T> {
+    Empty,
+    Other { value: T },
+}
+
+fn main() {
+    // Calling an empty variant does not supply a binding for T.
+    Choice.Empty();
+}

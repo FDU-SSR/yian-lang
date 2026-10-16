@@ -1,0 +1,16 @@
+{
+  "name": "havlak",
+  "source": "AWFY",
+  "tags": [
+    "ptr"
+  ],
+  "argv": [],
+  "check": {
+    "rc": 0
+  },
+  "note": "官方工作单元: input=1500, loops=6102, nodes=5213; 外层默认 47 次",
+  "scale": {
+    "default": 47,
+    "c": "argv"
+  }
+}

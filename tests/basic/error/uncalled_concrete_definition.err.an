@@ -1,0 +1,2 @@
+fn unused() { let value: i32; value; }
+fn main() {}

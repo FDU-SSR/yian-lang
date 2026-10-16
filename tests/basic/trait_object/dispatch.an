@@ -1,0 +1,161 @@
+struct MeasureToken {}
+
+trait Measure {
+    fn value() -> i32;
+
+    fn offset(token: MeasureToken, amount: i32) -> i32 {
+        return self.value() + amount;
+    }
+
+    fn object() -> Measure& {
+        return self;
+    }
+}
+
+struct Circle {
+    value: i32,
+}
+
+struct BoxShape {
+    value: i32,
+}
+
+impl Measure for Circle {
+    fn value() -> i32 {
+        return self.value;
+    }
+}
+
+impl Measure for BoxShape {
+    fn value() -> i32 {
+        return self.value;
+    }
+}
+
+typedef MeasureRef = Measure&;
+
+struct Holder {
+    item: Measure&,
+}
+
+fn identity(item: Measure&) -> Measure& {
+    return item;
+}
+
+fn read(item: Measure&) -> i32 {
+    return item.value();
+}
+
+fn generic_view<T>(item: T*) -> Measure& {
+    return item;
+}
+
+fn case_measure_trait_object_dispatch() {
+    let circle: Circle = Circle(value=11);
+    let box: BoxShape = BoxShape(value=29);
+
+    let first: MeasureRef = &circle;
+    let copied: Measure& = first;
+    let second: Measure& = &box;
+    let second_pointer: Measure&* = &second;
+    assert copied.value() == 11;
+    assert second.value() == 29;
+    assert second_pointer.value() == 29;
+    assert second.offset(MeasureToken(), 3) == 32;
+    assert second.object().value() == 29;
+
+    let holder: Holder = Holder(item=&box);
+    assert holder.item.value() == 29;
+
+    let objects: Measure&[2] = [first, second];
+    assert objects[0].value() == 11;
+    assert objects[1].value() == 29;
+
+    let reassigned: Measure& = first;
+    reassigned = &box;
+    assert reassigned.value() == 29;
+
+    assert identity(&circle).value() == 11;
+    assert read(&box) == 29;
+    assert generic_view(&circle).value() == 11;
+}
+
+trait Number {
+    fn number() -> i32;
+}
+
+impl Number for i32 {
+    fn number() -> i32 {
+        return *self;
+    }
+}
+
+struct ConditionalNumberWrapper<T> {
+    value: T,
+}
+
+impl<T> Number for ConditionalNumberWrapper<T> if T: Number {
+    fn number() -> i32 {
+        return self.value.number();
+    }
+}
+
+fn generic_number_object<T>(value: T*) -> Number& {
+    return value;
+}
+
+fn case_conditional_trait_object_dispatch() {
+    let value: ConditionalNumberWrapper<i32> = ConditionalNumberWrapper(value=42);
+    let object: Number& = generic_number_object(&value);
+    assert object.number() == 42;
+}
+
+trait Compare<T> {
+    fn greater(other: T) -> bool;
+}
+
+struct GenericTraitLimit {
+    value: i32,
+}
+
+impl Compare<i32> for GenericTraitLimit {
+    fn greater(other: i32) -> bool {
+        return self.value > other;
+    }
+}
+
+fn identity_generic_compare<T>(compare: Compare<T>&) -> Compare<T>& {
+    return compare;
+}
+
+fn case_generic_trait_object_dispatch() {
+    let limit: GenericTraitLimit = GenericTraitLimit(value=17);
+    let compare: Compare<i32>& = &limit;
+    let copied: Compare<i32>& = identity_generic_compare(compare);
+    assert copied.greater(12);
+}
+
+trait Marker {
+    fn value() -> i32;
+}
+
+struct ZeroSizedMarker {}
+
+impl Marker for ZeroSizedMarker {
+    fn value() -> i32 {
+        return 73;
+    }
+}
+
+fn case_zero_sized_trait_object_dispatch() {
+    let unit: ZeroSizedMarker = ZeroSizedMarker();
+    let marker: Marker& = &unit;
+    assert marker.value() == 73;
+}
+
+fn main() {
+    case_measure_trait_object_dispatch();
+    case_conditional_trait_object_dispatch();
+    case_generic_trait_object_dispatch();
+    case_zero_sized_trait_object_dispatch();
+}

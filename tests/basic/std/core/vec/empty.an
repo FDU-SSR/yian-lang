@@ -1,0 +1,115 @@
+// Empty Vec/String behavior: as_slice/len/cap/ptr and del must not trap.
+//
+// Empty containers own no heap block; data=@dangling<T>(), the nonzero type alignment, in both modes.
+// Nonzero data preserves zero-payload None niches in Option<str>/Option<Slice<T>>:
+// Some(empty) remains Some. Deleting an empty container skips the dangling pointer without trapping.
+//
+// Expected output: (empty, exit 0)
+
+from std.core.vec import Vec;
+from std.core.string import String;
+from std.core.option import Option;
+
+fn case_empty_container_behaviors() {
+    // ---- Empty Vec<u8>: construction and as_slice ----
+    let v: Vec<u8> = Vec<u8>.new();
+    assert v.len() == 0: "empty vec len should be 0";
+    assert v.is_empty(): "empty vec should be empty";
+    assert v.capacity() == 0: "empty vec capacity should be 0";
+
+    let s = v.as_slice();
+    assert s.len() == 0: "empty vec slice len should be 0";
+    let p: u8* = @slice_get_ptr(s);
+
+    // Empty containers share the type's dangling alignment address in both modes.
+    let v2: Vec<u8> = Vec<u8>.new();
+    let p2: u8* = @slice_get_ptr(v2.as_slice());
+    assert p == p2: "empty vecs share the dangling pointer for u8";
+
+    // ---- Drop after shrink_to_fit(0) must not trap ----
+    // Shrinking an empty Vec to zero capacity leaves no allocation to release.
+    let v3: Vec<u8> = Vec<u8>.new();
+    v3.push(1);
+    v3.push(2);
+    v3.push(3);
+    v3.clear();
+    v3.shrink_to_fit();
+    assert v3.capacity() == 0: "shrink_to_fit on empty vec should set capacity 0";
+    assert v3.as_slice().len() == 0: "shrunk vec slice should be empty";
+    v3.drop(); // Empty data is dangling; skip release without trapping.
+
+    // ---- Empty-to-nonempty: grow/reserve obtains a fresh block without leaks or traps ----
+    let v4: Vec<u8> = Vec<u8>.new();
+    v4.push(42);
+    assert v4.len() == 1: "push on empty vec should work";
+    assert v4[0] == 42: "pushed value should be readable";
+    v4.clear();
+    v4.reserve(100);
+    assert v4.capacity() >= 100: "reserve from empty should grow capacity";
+    assert v4.len() == 0: "reserve should not change len";
+
+    // ---- Empty Vec<String> (generic elements) ----
+    let vs: Vec<String> = Vec<String>.new();
+    assert vs.len() == 0: "empty Vec<String> len should be 0";
+    let ss = vs.as_slice();
+    assert ss.len() == 0: "empty Vec<String> slice len should be 0";
+
+    // ---- Empty String ----
+    let st: String = String.new();
+    assert st.is_empty(): "empty string should be empty";
+    assert st.len() == 0: "empty string len should be 0";
+    assert st.capacity() == 0: "empty string capacity should be 0";
+    let sp: u8* = @slice_get_ptr(st.as_slice());
+    assert sp == p: "empty String shares the dangling pointer for u8";
+
+    // An empty str in a niche Option must not have all-zero payload, which would read Some as None.
+    // Empty containers own no block; this assertion also enforces the nonzero dangling address.
+    let es: Option<str> = Option<str>.Some(st.as_str());
+    assert es.is_some(): "empty str payload must not collide with the all-zero None encoding";
+
+    // Explicitly drop an empty container: skip its dangling data pointer without trapping.
+    vs.drop();
+    st.drop();
+}
+
+fn case_vec_edge_states() {
+    // Edge case 1: pop from empty vector
+    let v1: Vec<i32> = Vec<i32>.with_capacity(4);
+    let popped: Option<i32> = v1.pop();
+    assert popped.is_none(): "pop on empty should return None";
+
+    // Edge case 2: push, clear, then reuse
+    let v2: Vec<i32> = Vec<i32>.with_capacity(4);
+    v2.push(1);
+    v2.push(2);
+    v2.push(3);
+    assert v2.len() == 3: "len should be 3";
+    v2.clear();
+    assert v2.len() == 0: "len should be 0 after clear";
+    v2.push(42);
+    assert v2.len() == 1: "len should be 1 after reuse";
+    let val: Option<i32> = v2.pop();
+    assert val.is_some(): "should have value";
+    assert *val.unwrap() == 42: "should be 42";
+
+    // Edge case 3: large number of elements
+    let v3 = Vec<i32>.with_capacity(1000);
+    let i: i32 = 0;
+    while i < 1000 {
+        v3.push(i);
+        i += 1;
+    }
+    assert v3.len() == 1000: "should have 1000 elements";
+    let first = v3.get(0);
+    assert first.is_some(): "first should exist";
+    assert **first.unwrap() == 0: "first should be 0";
+    let last = v3.get(999);
+    assert last.is_some(): "last should exist";
+    assert **last.unwrap() == 999: "last should be 999";
+
+}
+
+fn main() {
+    case_empty_container_behaviors();
+    case_vec_edge_states();
+}

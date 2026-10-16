@@ -1,0 +1,146 @@
+// bench/AWFY/an/bounce.an: ball-bounce simulation (shootout bounce).
+//
+// Reference: AWFY benchmarks/Java/src/Bounce.java; upstream license: AWFY LICENSE.md.
+// Semantic reference: bench/AWFY/c/bounce.c, the project's C implementation.
+// Scale: each work unit creates 100 balls, simulates 50 rounds, and asserts bounces == 1331.
+//
+// Algorithm: initialize 100 balls with LCG seed=(seed*1309+13849)&65535,
+//       with x/y in [0,500) and velocities in [-150,150). Each round updates each ball:
+//       position += velocity, reflect at 500x500 boundaries using abs and clamping,
+//       then count bounces. Outer repetitions repeat complete work units.
+//
+// Fat and raw modes share this source. dyn uses inference; range views such as
+//         x[0u64..n] work in both modes and retain checks in fat mode.
+fn abs_int(x: i32) -> i32 {
+    if x < 0 {
+        return -x;
+    }
+    return x;
+}
+
+struct Random {
+    seed: i32,
+}
+
+struct Ball {
+    x: i32,
+    y: i32,
+    x_vel: i32,
+    y_vel: i32,
+}
+
+struct RandomResult {
+    random_state: Random,
+    value: i32,
+}
+
+struct BallInitResult {
+    ball: Ball,
+    random_state: Random,
+}
+
+struct BounceResult {
+    ball: Ball,
+    bounced: bool,
+}
+
+fn Random_next(r: Random) -> RandomResult {
+    let new_seed: i32 = ((r.seed * 1309) + 13849) & 65535;
+    return RandomResult(Random(new_seed), new_seed);
+}
+
+fn BallInitResult_new(r: Random) -> BallInitResult {
+    let res1: RandomResult = Random_next(r);
+    let res2: RandomResult = Random_next(res1.random_state);
+    let res3: RandomResult = Random_next(res2.random_state);
+    let res4: RandomResult = Random_next(res3.random_state);
+
+    let new_ball: Ball = Ball(
+        res1.value % 500,
+        res2.value % 500,
+        (res3.value % 300) - 150,
+        (res4.value % 300) - 150
+    );
+    return BallInitResult(new_ball, res4.random_state);
+}
+
+fn Ball_bounce(b: Ball) -> BounceResult {
+    let x_limit: i32 = 500;
+    let y_limit: i32 = 500;
+    let bounced: bool = false;
+
+    let next_x: i32 = b.x + b.x_vel;
+    let next_y: i32 = b.y + b.y_vel;
+    let next_x_vel: i32 = b.x_vel;
+    let next_y_vel: i32 = b.y_vel;
+
+    let bounced_flag: bool = bounced;
+    if next_x > x_limit {
+        next_x = x_limit;
+        next_x_vel = -abs_int(b.x_vel);
+        bounced_flag = true;
+    }
+    if next_x < 0 {
+        next_x = 0;
+        next_x_vel = abs_int(b.x_vel);
+        bounced_flag = true;
+    }
+    if next_y > y_limit {
+        next_y = y_limit;
+        next_y_vel = -abs_int(b.y_vel);
+        bounced_flag = true;
+    }
+    if next_y < 0 {
+        next_y = 0;
+        next_y_vel = abs_int(b.y_vel);
+        bounced_flag = true;
+    }
+
+    let new_ball: Ball = Ball(next_x, next_y, next_x_vel, next_y_vel);
+    return BounceResult(new_ball, bounced_flag);
+}
+
+fn benchmark() -> i64 {
+    let random: Random = Random(74755);
+
+    let ball_count: u64 = 100;
+    let rounds: u64 = 50;
+    let bounces: i64 = 0;
+    let balls = dyn[ball_count] Ball(0, 0, 0, 0);
+    let balls_slice: Ball[] = balls[0u64..ball_count];
+
+    let i: u64 = 0;
+    while i < ball_count {
+        let init_res: BallInitResult = BallInitResult_new(random);
+        balls_slice[i] = init_res.ball;
+        random = init_res.random_state;
+        i += 1;
+    }
+
+    let j: u64 = 0;
+    while j < rounds {
+        let k: u64 = 0;
+        while k < ball_count {
+            let bounce_res: BounceResult = Ball_bounce(balls_slice[k]);
+            balls_slice[k] = bounce_res.ball;
+            if bounce_res.bounced {
+                bounces += 1;
+            }
+            k += 1;
+        }
+        j += 1;
+    }
+
+    del balls;
+    return bounces;
+}
+
+fn main() {
+    let ITER: u64 = 300000;  // bench-scale
+    let iter: u64 = 0;
+    while iter < ITER {
+        let result: i64 = benchmark();
+        assert result == 1331: "bounce count not expected";
+        iter += 1;
+    }
+}

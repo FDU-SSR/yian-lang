@@ -1,0 +1,7 @@
+// Test failing assertions
+//
+// Expected runtime error: This should fail
+
+fn main() {
+    assert false: "This should fail\n";
+}

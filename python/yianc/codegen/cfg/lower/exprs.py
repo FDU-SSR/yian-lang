@@ -1,0 +1,486 @@
+"""Expression lowering and composition of per-function CFG operations."""
+from __future__ import annotations
+
+from collections.abc import Callable
+
+from yianc.frontend.parse.operator import BinaryOperator, UnaryOperator
+from yianc.analysis.ty import ty as Type
+from yianc.analysis.ty.type_ops import default_literals
+from yianc.analysis.ty.context import TypeCtx
+from yianc.analysis.unit import hir as HIR
+from yianc.builtins import BuiltinKind
+from yianc.codegen.cfg import ir as IR
+from yianc.codegen.cfg.lower.calls import CallsLowerer
+from yianc.codegen.cfg.lower.memory import MemoryOps
+from yianc.codegen.cfg.lower.scalar import ScalarOps
+from yianc.codegen.cfg.lower.state import FunctionState
+from yianc.codegen.cfg.lower.stmts import StmtLowerer
+from yianc.codegen.cfg.lower.sys import SysLowerer
+from yianc.codegen.cfg.lower.values import ValueLowerer
+from yianc.codegen.error import CodegenError
+from yianc.utils.log import CompilerLog
+
+
+def ch_cfg():
+    """cfg.logical logging channel for dispatcher branch diagnostics."""
+    return CompilerLog.get("cfg.logical")
+
+
+class ExprLowerer:
+    """Expression lowering, including HIR dispatch."""
+
+    def __init__(self, state: FunctionState) -> None:
+        self.__state = state
+        self.__memory = MemoryOps(state)
+        self.__values = ValueLowerer(state, self.__memory, self)
+        self.__scalar = ScalarOps(state, self.__memory, self.__values)
+        self.__calls = CallsLowerer(state, self.__values, self)
+        self.__sys = SysLowerer(state, self)
+        self.__stmts = StmtLowerer(state, self, self.__values, self.__memory)
+        self.__builtin_handlers: dict[BuiltinKind, Callable[[HIR.Builtin], IR.Value]] = {
+            BuiltinKind.SizeOf: self.__resolve_size_of,
+            BuiltinKind.Undef: self.__resolve_undef,
+            BuiltinKind.Dangling: self.__resolve_dangling,
+            BuiltinKind.BitCast: self.__resolve_bit_cast,
+            BuiltinKind.Alloc: self.__resolve_alloc,
+            BuiltinKind.Realloc: self.__resolve_realloc,
+            BuiltinKind.Panic: self.__resolve_panic,
+            BuiltinKind.RuntimeFail: self.__resolve_runtime_fail,
+            BuiltinKind.AssumeInit: self.__resolve_assume_init,
+            BuiltinKind.MemCopy: self.__resolve_mem_copy,
+            BuiltinKind.SliceFromParts: self.__resolve_slice_from_parts,
+            BuiltinKind.SliceGetPtr: self.__resolve_slice_get_ptr,
+            BuiltinKind.SliceGetLen: self.__resolve_slice_get_len,
+            BuiltinKind.StrFromParts: self.__resolve_str_from_parts,
+            BuiltinKind.StrGetPtr: self.__resolve_str_get_ptr,
+            BuiltinKind.StrGetLen: self.__resolve_str_get_len,
+            BuiltinKind.SysRead: self.__resolve_sys_read,
+            BuiltinKind.SysReadBytes: self.__resolve_sys_read_bytes,
+            BuiltinKind.SysWrite: self.__resolve_sys_write,
+            BuiltinKind.SysWriteBytes: self.__resolve_sys_write_bytes,
+            BuiltinKind.Open: self.__resolve_open,
+            BuiltinKind.Close: self.__resolve_close,
+            BuiltinKind.Sqrt: self.__resolve_sqrt,
+            BuiltinKind.Sin: self.__resolve_sin,
+            BuiltinKind.Cos: self.__resolve_cos,
+            BuiltinKind.Argc: self.__resolve_argc,
+            BuiltinKind.ArgBytes: self.__resolve_arg_bytes,
+            BuiltinKind.Exit: self.__resolve_exit,
+            BuiltinKind.FfiAddr: self.__resolve_ffi_addr,
+            BuiltinKind.FfiParts: self.__resolve_ffi_parts,
+            BuiltinKind.FfiNull: self.__resolve_ffi_null,
+            BuiltinKind.FfiPtrCast: self.__resolve_ffi_ptr_cast,
+            BuiltinKind.FfiCopyFrom: self.__resolve_ffi_copy_from,
+            BuiltinKind.FfiCopyTo: self.__resolve_ffi_copy_to,
+        }
+
+    @property
+    def stmts(self) -> StmtLowerer:
+        return self.__stmts
+
+    @property
+    def values(self) -> ValueLowerer:
+        return self.__values
+
+    def resolve_val(self, expr: HIR.Expr) -> IR.Value:
+        """Lower *expr* to a value."""
+        match expr:
+            # --- expression-oriented control flow ---
+            case HIR.Block():
+                return self.__stmts.translate_block(expr)
+            case HIR.If():
+                return self.__stmts.translate_if(expr)
+            case HIR.Loop():
+                return self.__stmts.translate_loop(expr)
+            case HIR.Match():
+                return self.__stmts.translate_match(expr)
+            case HIR.Return():
+                return self.__stmts.translate_return(expr)
+            case HIR.Break():
+                return self.__stmts.translate_break(expr)
+            case HIR.Continue():
+                return self.__stmts.translate_continue(expr)
+            case HIR.Defer():
+                return self.__stmts.translate_defer(expr)
+            case HIR.Delete():
+                return self.__stmts.translate_delete(expr)
+            case HIR.Semi():
+                return self.__stmts.translate_semi(expr)
+            case HIR.Let():
+                return self.__stmts.translate_let(expr)
+            case HIR.PatternLet():
+                return self.__stmts.translate_pattern_let(expr)
+            # --- original expressions ---
+            case HIR.Binary():
+                return self.resolve_binary(expr)
+            case HIR.Unary():
+                return self.resolve_unary(expr)
+            case HIR.Call():
+                return self.__calls.resolve_call(expr)
+            case HIR.StructConstruct():
+                return self.__values.resolve_struct_construct(expr)
+            case HIR.Invoke():
+                return self.__calls.resolve_invoke(expr)
+            case HIR.Cast():
+                return self.__values.resolve_cast(expr)
+            case HIR.MethodCall():
+                return self.__calls.resolve_method_call(expr)
+            case HIR.TraitObjectMethodCall():
+                return self.__calls.resolve_trait_object_method_call(expr)
+            case HIR.VariantConstruct():
+                return self.__values.resolve_variant_construct(expr)
+            case HIR.FieldAccess():
+                return self.resolve_field_access(expr)
+            case HIR.TupleAccess():
+                return self.resolve_tuple_access(expr)
+            case HIR.ArrayAccess():
+                return self.resolve_array_access(expr)
+            case HIR.SliceAccess():
+                return self.resolve_slice_access(expr)
+            case HIR.DynValue():
+                return self.resolve_dyn_value(expr)
+            case HIR.DynBuffer():
+                return self.resolve_dyn_buffer(expr)
+            case HIR.BitCast():
+                return self.__values.resolve_bit_cast(expr)
+            case HIR.TraitObjectCoerce():
+                return self.__values.resolve_trait_object_coerce(expr)
+            case HIR.Builtin():
+                return self.resolve_builtin(expr)
+            case HIR.Closure():
+                return self.__values.resolve_closure(expr)
+            case HIR.Tuple():
+                return self.__values.resolve_tuple(expr)
+            case HIR.Array():
+                return self.__values.resolve_array(expr)
+            case HIR.ArrayRepeat():
+                return self.__values.resolve_array_repeat(expr)
+            case HIR.Var():
+                return self.resolve_var(expr)
+            case HIR.IntLiteral() | HIR.FloatLiteral() | HIR.CharLiteral() | HIR.BoolLiteral() | HIR.StrLiteral():
+                return self.resolve_literal(expr)
+            case HIR.Ty():
+                if self.__state.session.type_ctx.is_zst(expr.type_id):
+                    return IR.Reg(name=self.__state.emitter.new_name(), type_id=expr.type_id)
+                raise CodegenError(f"Cannot resolve type expression: {expr}", expr.span)
+    def resolve_binary(self, expr: HIR.Binary) -> IR.Value:
+        """
+        Special cases:
+
+        - logical operators should implement short-circuit evaluation
+        - assignment => load address of lhs, load value from rhs, store value to lhs
+        - compound assignments should be implemented as binary operation + store
+        - `in` and `..` should not be handled here
+        """
+        if expr.op.is_logical():
+            return self.resolve_logical(expr)
+        if expr.op == BinaryOperator.Assign:
+            return self.resolve_assign(expr)
+        if expr.op.is_compound_assign():
+            return self.resolve_compound_assign(expr)
+        if expr.op in (BinaryOperator.In, BinaryOperator.Range):
+            raise CodegenError(f"Cannot resolve expression: {expr}", expr.span)
+
+        # common case
+        lhs = self.resolve_val(expr.left)
+        rhs = self.resolve_val(expr.right)
+        return self.__scalar.build_binary(expr.op, lhs, rhs, expr.type_id)
+    def resolve_compound_assign(self, expr: HIR.Binary) -> IR.Value:
+        op = expr.op.compound_assign_to_binary()
+
+        lhs_addr = self.__values.resolve_addr(expr.left)
+        lhs_val = self.__memory.build_load(lhs_addr)
+        rhs_val = self.resolve_val(expr.right)
+
+        result = self.__scalar.build_binary(op, lhs_val, rhs_val, expr.type_id)
+        self.__memory.build_store(result, lhs_addr)
+        return result
+    def resolve_assign(self, expr: HIR.Binary) -> IR.Value:
+        lhs_addr = self.__values.resolve_addr(expr.left)
+        rhs_val = self.resolve_val(expr.right)
+        if rhs_val.type_id != self.__state.session.type_ctx.never_id:
+            self.__memory.build_store(rhs_val, lhs_addr)
+        return rhs_val
+    def resolve_logical(self, expr: HIR.Binary) -> IR.Value:
+        """Lower short-circuit logical operators (&&, ||).
+
+        For ``a && b``::
+
+            br %a, rhs, merge      ; if false → short-circuit to false
+          rhs:
+            %b = resolve(b)
+            br merge
+          merge:
+            %r = phi [(entry, false), (rhs, %b)]
+
+        For ``a || b``::
+
+            br %a, merge, rhs      ; if true → short-circuit to true
+          rhs:
+            %b = resolve(b)
+            br merge
+          merge:
+            %r = phi [(entry, true), (rhs, %b)]
+        """
+        ch_cfg().trace(lambda: f"logical {expr.op} at {expr.span}")
+        cond_val = self.resolve_val(expr.left)
+
+        rhs_block = self.__state.emitter.new_block("logical.rhs")
+        merge_block = self.__state.emitter.new_block("logical.merge")
+        entry_block = self.__state.emitter.current_block
+
+        if expr.op == BinaryOperator.LogicalAnd:
+            # a && b: evaluate b only when a is true
+            self.__state.emitter.terminate(IR.CondBr(cond_val, rhs_block, merge_block))
+            short_circuit_value: IR.Value = IR.BoolLiteral(value=False, type_id=TypeCtx.bool_id)
+        else:
+            # a || b: evaluate b only when a is false
+            self.__state.emitter.terminate(IR.CondBr(cond_val, merge_block, rhs_block))
+            short_circuit_value = IR.BoolLiteral(value=True, type_id=TypeCtx.bool_id)
+
+        # ── rhs block ──
+        self.__state.emitter.position(rhs_block)
+        rhs_val = self.resolve_val(expr.right)
+        # __resolve_val may have switched current_block (nested logical).
+        # The block that actually produced rhs_val is where we ended up.
+        rhs_end_block = self.__state.emitter.current_block
+
+        # Bridge rhs_end_block to merge if it doesn't already have a terminator.
+        if rhs_end_block.terminator is None:
+            self.__state.emitter.terminate(IR.Br(merge_block))
+
+        # ── merge block ──
+        self.__state.emitter.position(merge_block)
+        result = self.__state.emitter.emit_phi([
+            (entry_block, short_circuit_value),
+            (rhs_end_block, rhs_val),
+        ])
+        # The merge block needs a terminator so it is not left dangling.
+        # Create a continuation block that callers can append to.
+        cont_block = self.__state.emitter.new_block("logical.cont")
+        self.__state.emitter.terminate(IR.Br(cont_block))
+        self.__state.emitter.position(cont_block)
+        return result
+    def resolve_unary(self, expr: HIR.Unary) -> IR.Value:
+        """
+        Special cases:
+
+        - dereference => resolve pointer value then load through it
+        - addr of lvalue => get address
+        """
+        if expr.op == UnaryOperator.Deref:
+            ptr_val = self.resolve_val(expr.operand)
+            return self.__memory.build_load(ptr_val)
+        if expr.op == UnaryOperator.AddrOf:
+            return self.__values.resolve_addr_fat(expr.operand)
+
+        # common case
+        val = self.resolve_val(expr.operand)
+        return self.__scalar.build_unary(expr.op, val, expr.type_id)
+    def resolve_field_access(self, expr: HIR.FieldAccess) -> IR.Value:
+        if expr.receiver.is_place:
+            addr = self.__values.resolve_field_access_addr(expr)
+            return self.__memory.build_load(addr)
+
+        value = self.resolve_val(expr.receiver)
+        return self.__memory.build_extract_value(value, expr.field.index, expr.type_id)
+    def resolve_tuple_access(self, expr: HIR.TupleAccess) -> IR.Value:
+        if expr.receiver.is_place:
+            receiver_ty = self.__state.session.type_ctx[expr.receiver.type_id]
+            if isinstance(receiver_ty, (Type.SliceType, Type.StrType)):
+                # Tiered pointer representation: extract slice/str fields from the value; fieldptr only produces raw addresses
+                # and cannot carry lock metadata. Load the whole value, then extract_value.
+                value = self.resolve_val(expr.receiver)
+                return self.__memory.build_extract_value(value, expr.index, expr.type_id)
+            addr = self.__values.resolve_tuple_access_addr(expr)
+            return self.__memory.build_load(addr)
+
+        value = self.resolve_val(expr.receiver)
+        return self.__memory.build_extract_value(value, expr.index, expr.type_id)
+    def resolve_dyn_value(self, expr: HIR.DynValue) -> IR.Value:
+        """
+        1. malloc a buffer on the heap
+        2. write the value to the buffer
+        """
+        size = IR.IntLiteral(1, type_id=TypeCtx.u64_id)
+        value = self.resolve_val(expr.value)
+        buffer = self.__memory.build_malloc(value.type_id, size)
+        self.__memory.build_store(value, buffer)
+        return buffer
+    def resolve_dyn_buffer(self, expr: HIR.DynBuffer) -> IR.Value:
+        """``dyn[n] value``: allocate ``n`` elements and bit-copy ``value`` into each.
+
+        The initializer is evaluated exactly once before the fill operation;
+        ``element is None`` is the ZST-only bare form, which has nothing to
+        initialize. The typed pattern intrinsic accepts a runtime ``n``.
+        """
+        count = self.resolve_val(expr.length)
+        buffer = self.__memory.build_malloc(expr.element_type, count)
+        if expr.element is None:
+            return buffer
+        value = self.resolve_val(expr.element)
+        if self.__state.session.type_ctx.is_zst(expr.element_type):
+            return buffer
+
+        # Malloc lowering can split its CFG block for allocation checks, so isolate the
+        # fill in a fresh block; subsequent branches then use the actual LLVM predecessor.
+        pattern_block = self.__state.emitter.new_block("dyn.fill.pattern")
+        self.__state.emitter.terminate(IR.Br(pattern_block))
+        self.__state.emitter.position(pattern_block)
+        self.__state.emitter.emit(IR.MemSetPattern(dest=buffer, value=value, count=count))
+        return buffer
+
+    def resolve_builtin(self, expr: HIR.Builtin) -> IR.Value:
+        handler = self.__builtin_handlers.get(expr.kind)
+        if handler is None:
+            raise CodegenError(f"unregistered builtin instruction '{expr.kind.spelling}'", expr.span)
+        return handler(expr)
+
+    def __resolve_size_of(self, expr: HIR.Builtin) -> IR.Value:
+        return self.__values.resolve_size_of(expr)
+
+    def __resolve_undef(self, expr: HIR.Builtin) -> IR.Value:
+        return self.__values.resolve_undef(expr)
+
+    def __resolve_dangling(self, expr: HIR.Builtin) -> IR.Value:
+        return self.__values.resolve_dangling(expr)
+
+    def __resolve_bit_cast(self, expr: HIR.Builtin) -> IR.Value:
+        return self.__values.resolve_bit_cast(expr)
+
+    def __resolve_alloc(self, expr: HIR.Builtin) -> IR.Value:
+        return self.__memory.build_malloc(expr.type_args[0], self.resolve_val(expr.args[0]))
+
+    def __resolve_realloc(self, expr: HIR.Builtin) -> IR.Value:
+        return self.__memory.build_realloc(
+            expr.type_args[0], self.resolve_val(expr.args[0]), self.resolve_val(expr.args[1]),
+        )
+
+    def __resolve_panic(self, expr: HIR.Builtin) -> IR.Value:
+        return self.__stmts.translate_panic(expr)
+
+    def __resolve_runtime_fail(self, expr: HIR.Builtin) -> IR.Value:
+        return self.__stmts.translate_runtime_fail(expr)
+
+    def __resolve_assume_init(self, expr: HIR.Builtin) -> IR.Value:
+        return self.resolve_val(expr.args[0])
+
+    def __resolve_mem_copy(self, expr: HIR.Builtin) -> IR.Value:
+        return self.__sys.resolve_mem_copy(expr)
+
+    def __ffi_result(self, type_id: int) -> IR.Reg:
+        return IR.Reg(name=self.__state.emitter.new_name(), type_id=type_id)
+
+    def __resolve_ffi_addr(self, expr: HIR.Builtin) -> IR.Value:
+        result = self.__ffi_result(expr.type_id)
+        return self.__state.emitter.emit(IR.FfiAddr(result, self.resolve_val(expr.args[0]))).result
+
+    def __resolve_ffi_parts(self, expr: HIR.Builtin) -> IR.Value:
+        result = self.__ffi_result(expr.type_id)
+        return self.__state.emitter.emit(IR.FfiParts(result, self.resolve_val(expr.args[0]))).result
+
+    def __resolve_ffi_null(self, expr: HIR.Builtin) -> IR.Value:
+        result = self.__ffi_result(expr.type_id)
+        return self.__state.emitter.emit(IR.FfiNull(result)).result
+
+    def __resolve_ffi_ptr_cast(self, expr: HIR.Builtin) -> IR.Value:
+        result = self.__ffi_result(expr.type_id)
+        return self.__state.emitter.emit(IR.FfiPtrCast(result, self.resolve_val(expr.args[0]))).result
+
+    def __resolve_ffi_copy_from(self, expr: HIR.Builtin) -> IR.Value:
+        args = [self.resolve_val(arg) for arg in expr.args]
+        self.__state.emitter.emit(IR.FfiCopy(args[0], args[1], args[2], True))
+        return self.__state.emitter.void_reg()
+
+    def __resolve_ffi_copy_to(self, expr: HIR.Builtin) -> IR.Value:
+        args = [self.resolve_val(arg) for arg in expr.args]
+        self.__state.emitter.emit(IR.FfiCopy(args[0], args[1], args[2], False))
+        return self.__state.emitter.void_reg()
+
+    def __resolve_slice_from_parts(self, expr: HIR.Builtin) -> IR.Value:
+        aggregate = HIR.Tuple(span=expr.span, field_values=expr.args, type_id=expr.type_id, is_place=False)
+        return self.__values.resolve_tuple(aggregate)
+
+    def __resolve_slice_get_ptr(self, expr: HIR.Builtin) -> IR.Value:
+        value = self.resolve_val(expr.args[0])
+        return self.__memory.build_extract_value(value, 0, expr.type_id)
+
+    def __resolve_slice_get_len(self, expr: HIR.Builtin) -> IR.Value:
+        value = self.resolve_val(expr.args[0])
+        return self.__memory.build_extract_value(value, 3, expr.type_id)
+
+    def __resolve_str_from_parts(self, expr: HIR.Builtin) -> IR.Value:
+        aggregate = HIR.Tuple(span=expr.span, field_values=expr.args, type_id=expr.type_id, is_place=False)
+        return self.__values.resolve_tuple(aggregate)
+
+    def __resolve_str_get_ptr(self, expr: HIR.Builtin) -> IR.Value:
+        value = self.resolve_val(expr.args[0])
+        return self.__memory.build_extract_value(value, 0, expr.type_id)
+
+    def __resolve_str_get_len(self, expr: HIR.Builtin) -> IR.Value:
+        value = self.resolve_val(expr.args[0])
+        return self.__memory.build_extract_value(value, 3, expr.type_id)
+
+    def __resolve_sys_read(self, expr: HIR.Builtin) -> IR.Value:
+        return self.__sys.resolve_sys_read(expr)
+
+    def __resolve_sys_read_bytes(self, expr: HIR.Builtin) -> IR.Value:
+        return self.__sys.resolve_sys_read_bytes(expr)
+
+    def __resolve_sys_write(self, expr: HIR.Builtin) -> IR.Value:
+        return self.__sys.resolve_sys_write(expr)
+
+    def __resolve_sys_write_bytes(self, expr: HIR.Builtin) -> IR.Value:
+        return self.__sys.resolve_sys_write_bytes(expr)
+
+    def __resolve_open(self, expr: HIR.Builtin) -> IR.Value:
+        return self.__sys.resolve_open(expr)
+
+    def __resolve_close(self, expr: HIR.Builtin) -> IR.Value:
+        return self.__sys.resolve_close(expr)
+
+    def __resolve_sqrt(self, expr: HIR.Builtin) -> IR.Value:
+        return self.__sys.resolve_sqrt(expr)
+
+    def __resolve_sin(self, expr: HIR.Builtin) -> IR.Value:
+        return self.__sys.resolve_sin(expr)
+
+    def __resolve_cos(self, expr: HIR.Builtin) -> IR.Value:
+        return self.__sys.resolve_cos(expr)
+
+    def __resolve_argc(self, expr: HIR.Builtin) -> IR.Value:
+        return self.__sys.resolve_arg_count(expr)
+
+    def __resolve_arg_bytes(self, expr: HIR.Builtin) -> IR.Value:
+        return self.__sys.resolve_arg_bytes(expr)
+
+    def __resolve_exit(self, expr: HIR.Builtin) -> IR.Value:
+        return self.__stmts.translate_process_exit(expr)
+
+    def resolve_var(self, expr: HIR.Var) -> IR.Value:
+        addr = self.__values.resolve_var_addr(expr)
+        return self.__memory.build_load(addr)
+    def resolve_literal(self, expr: HIR.Literal) -> IR.Value:
+        match expr:
+            case HIR.IntLiteral():
+                type_id = default_literals(self.__state.session.type_ctx, expr.type_id)
+                return IR.IntLiteral(value=expr.value, type_id=type_id)
+            case HIR.FloatLiteral():
+                type_id = default_literals(self.__state.session.type_ctx, expr.type_id)
+                return IR.FloatLiteral(value=expr.value, type_id=type_id)
+            case HIR.CharLiteral():
+                return IR.CharLiteral(value=expr.value, type_id=TypeCtx.char_id)
+            case HIR.BoolLiteral():
+                return IR.BoolLiteral(value=expr.value, type_id=TypeCtx.bool_id)
+            case HIR.StrLiteral():
+                return IR.StringLiteral(value=expr.value, type_id=TypeCtx.str_id)
+
+    # ------------------------------------------------------------------
+    # addr resolvors
+    # ------------------------------------------------------------------
+    def resolve_array_access(self, expr: HIR.ArrayAccess) -> IR.Value:
+        addr = self.__values.resolve_array_access_addr(expr)
+        return self.__memory.build_load(addr)
+    def resolve_slice_access(self, expr: HIR.SliceAccess) -> IR.Value:
+        addr = self.__values.resolve_slice_access_addr(expr)
+        return self.__memory.build_load(addr)

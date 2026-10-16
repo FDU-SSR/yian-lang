@@ -1,0 +1,395 @@
+from std.core.drop import Drop;
+from std.core.env import args, exit;
+from std.core.fs import resolve;
+from std.core.io import Stderr, Stdout;
+from std.core.option import Option;
+from std.core.path import PathBuf;
+from std.core.string import String;
+from std.core.vec import Vec;
+from std.cli import ArgumentParser, Action, ArgMatches, Nargs, ParseOutcome, ValueType, CliError;
+from anx.diagnostics.model import AX_NO_PROJECT_ROOT, Diagnostic, release_diagnostics;
+from anx.driver.build import compile_project, run_executable;
+from anx.driver.fmt import format_project;
+from anx.driver.new import scaffold;
+from anx.driver.support import load_project;
+from anx.driver.test import PointerMode, run as run_tests;
+from anx.project.graph import graph_json, graph_text;
+from anx.project.load import discover, load;
+from anx.project.model import LoadReport, Project;
+from anx.project.paths import standard_library_root;
+
+fn write_stdout(text: str) -> bool {
+    match Stdout.new().write_str(text) {
+        Ok(_) => true,
+        Err(problem) => { problem.drop(); false },
+    }
+}
+
+fn write_stderr(text: str) {
+    match Stderr.new().write_str(text) {
+        Ok(_) => {},
+        Err(problem) => problem.drop(),
+    }
+}
+
+fn release_args(values: Vec<String>&) {
+    let index = 0u64;
+    while index < values.len() { values[index].drop(); index += 1u64; }
+    values.drop();
+}
+
+fn help_text() -> str {
+    "Usage: anx <command> [options]\n\nCommands:\n  new <name>       Create a package\n  build [project]  Build an executable package\n  run [project]    Build and run a package\n  check [project]  Check a package\n  test [project]   Run package tests\n  fmt [project]    Format package sources\n  graph [project]  Show the dependency graph\n"
+}
+
+fn release_strings(values: Vec<String>&) {
+    let index = 0u64;
+    while index < values.len() { values[index].drop(); index += 1u64; }
+    values.drop();
+}
+
+fn argument_views(argv: Vec<String>&, start: u64, end: u64) -> Vec<str> {
+    let views = Vec<str>.new();
+    let index = start;
+    while index < end {
+        views.push(argv[index].as_str());
+        index += 1u64;
+    }
+    views
+}
+
+fn report_argument_error(command: str, parser: ArgumentParser&, problem: CliError) -> i32 {
+    match parser.format_usage() {
+        Ok(usage) => { write_stderr(usage.as_str()); usage.drop(); },
+        Err(error) => error.drop(),
+    }
+    let message = problem.format();
+    write_stderr("anx ");
+    write_stderr(command);
+    write_stderr(": ");
+    write_stderr(message.as_str());
+    message.drop();
+    problem.drop();
+    2i32
+}
+
+fn argument_string(matches: ArgMatches&, name: str, fallback: str) -> String {
+    match matches.get_string(name) {
+        Ok(Some(value)) => String.from(&value),
+        _ => String.from(&fallback),
+    }
+}
+
+fn argument_bool(matches: ArgMatches&, name: str) -> bool {
+    match matches.get_bool(name) {
+        Ok(Some(value)) => value,
+        _ => false,
+    }
+}
+
+fn argument_level(matches: ArgMatches&, name: str) -> Option<u8> {
+    match matches.get_u64(name) {
+        Ok(Some(value)) => Option<u8>.Some(u8(value)),
+        _ => Option<u8>.None,
+    }
+}
+
+fn build_parser(command: str) -> ArgumentParser {
+    let name = String.from(&"anx ");
+    name.push_str(command);
+    let parser = ArgumentParser.new(name.as_str());
+    name.drop();
+    parser.description("Build an executable and pass compiler options through to yianc.");
+    parser.add_argument("project").nargs(Nargs.Optional).default_value(".")
+    .help("Project root directory (default: cwd)");
+    parser.add_argument("optimization").short('O').value_type(ValueType.U64)
+    .choices(["0", "1", "2", "3"].as_slice()).metavar("{0,1,2,3}")
+    .help("Optimization level forwarded to the compiler");
+    parser.add_argument("release").long("release").action(Action.StoreTrue)
+    .help("Shorthand for -O3");
+    parser.add_argument("raw-pointers").long("raw-pointers").action(Action.StoreTrue)
+    .help("Build with bare pointers; for anx test, this selects raw mode");
+    parser
+}
+
+fn build_command(argv: Vec<String>&, command: str, end: u64, program_arguments: Vec<String>&) -> i32 {
+    let parser = build_parser(command);
+    defer parser.drop();
+    let views = argument_views(argv, 2u64, end);
+    defer views.drop();
+    let outcome = match parser.parse_args(views.as_slice()) {
+        Ok(value) => value,
+        Err(problem) => return report_argument_error(command, &parser, problem),
+    };
+
+    match outcome {
+        Help(text) => {
+            let written = write_stdout(text.as_str());
+            text.drop();
+            if written { 0i32 } else { 1i32 }
+        },
+        Parsed(matches) => {
+            defer matches.drop();
+            let project = argument_string(&matches, "project", ".");
+            defer project.drop();
+            let optimization = argument_level(&matches, "optimization");
+            let release = argument_bool(&matches, "release");
+            let raw = argument_bool(&matches, "raw-pointers");
+            let target = if command == "check" { "none" } else { "exe" };
+            let executable = Option<PathBuf>.None;
+            let succeeded = compile_project(project.as_str(), target, optimization, release, raw, &executable);
+            if !succeeded { return 1i32; }
+            if command == "run" {
+                let path = match executable.take() {
+                    Some(value) => value,
+                    None => { write_stderr("error: no executable was produced\n"); return 1i32; },
+                };
+                return run_executable(path, program_arguments);
+            }
+            match executable.take() { Some(path) => path.drop(), None => {}, }
+            0i32
+        },
+    }
+}
+
+fn format_command(argv: Vec<String>&) -> i32 {
+    let parser = ArgumentParser.new("anx fmt");
+    defer parser.drop();
+    parser.description("Format the root package's own sources.");
+    parser.add_argument("project").nargs(Nargs.Optional).default_value(".")
+    .help("Project root directory (default: cwd)");
+    parser.add_argument("check").long("check").action(Action.StoreTrue)
+    .help("Report files that need formatting without rewriting them");
+    let views = argument_views(argv, 2u64, argv.len());
+    defer views.drop();
+    let outcome = match parser.parse_args(views.as_slice()) {
+        Ok(value) => value,
+        Err(problem) => return report_argument_error("fmt", &parser, problem),
+    };
+    match outcome {
+        Help(text) => {
+            let written = write_stdout(text.as_str());
+            text.drop();
+            if written { 0i32 } else { 1i32 }
+        },
+        Parsed(matches) => {
+            defer matches.drop();
+            let project = argument_string(&matches, "project", ".");
+            defer project.drop();
+            format_project(project.as_str(), argument_bool(&matches, "check"))
+        },
+    }
+}
+
+fn test_command(argv: Vec<String>&) -> i32 {
+    let parser = build_parser("test");
+    defer parser.drop();
+    parser.description("Run the root package's tests.");
+    parser.add_argument("pointer-mode").long("pointer-mode")
+    .choices(["both", "fat", "raw"].as_slice()).metavar("{both,fat,raw}")
+    .help("Pointer mode for package tests (default: both)");
+    let views = argument_views(argv, 2u64, argv.len());
+    defer views.drop();
+    let outcome = match parser.parse_args(views.as_slice()) {
+        Ok(value) => value,
+        Err(problem) => return report_argument_error("test", &parser, problem),
+    };
+    match outcome {
+        Help(text) => {
+            let written = write_stdout(text.as_str());
+            text.drop();
+            if written { 0i32 } else { 1i32 }
+        },
+        Parsed(matches) => {
+            defer matches.drop();
+            let selected_mode = match matches.get_string("pointer-mode") {
+                Ok(Some("fat")) => Option<PointerMode>.Some(PointerMode.Fat),
+                Ok(Some("raw")) => Option<PointerMode>.Some(PointerMode.Raw),
+                Ok(Some(_)) => Option<PointerMode>.Some(PointerMode.Both),
+                _ => Option<PointerMode>.None,
+            };
+            let legacy_raw = argument_bool(&matches, "raw-pointers");
+            if legacy_raw && selected_mode.is_some() {
+                write_stderr("anx test: --raw-pointers cannot be combined with --pointer-mode\n");
+                return 2i32;
+            }
+            let pointer_mode = if legacy_raw {
+                PointerMode.Raw
+            } else {
+                match selected_mode {
+                    Some(value) => value,
+                    None => PointerMode.Both,
+                }
+            };
+            let project_path = argument_string(&matches, "project", ".");
+            defer project_path.drop();
+            let project = match load_project(project_path.as_str()) {
+                Some(value) => value,
+                None => return 1i32,
+            };
+            defer project.drop();
+            run_tests(&project, pointer_mode,
+                argument_level(&matches, "optimization"), argument_bool(&matches, "release"))
+        },
+    }
+}
+
+fn new_command(argv: Vec<String>&) -> i32 {
+    let parser = ArgumentParser.new("anx new");
+    defer parser.drop();
+    parser.description("Create a package skeleton.");
+    parser.add_argument("name").help("Package directory and name");
+    parser.add_argument("kind").long("kind").choices(["bin", "lib", "hybrid"].as_slice())
+    .default_value("bin").help("Package kind (default: bin)");
+    parser.add_argument("lib").long("lib").action(Action.StoreTrue)
+    .help("Shorthand for --kind lib");
+    let views = argument_views(argv, 2u64, argv.len());
+    defer views.drop();
+    let outcome = match parser.parse_args(views.as_slice()) {
+        Ok(value) => value,
+        Err(problem) => return report_argument_error("new", &parser, problem),
+    };
+    match outcome {
+        Help(text) => {
+            let written = write_stdout(text.as_str());
+            text.drop();
+            if written { 0i32 } else { 1i32 }
+        },
+        Parsed(matches) => {
+            defer matches.drop();
+            let name = argument_string(&matches, "name", "");
+            defer name.drop();
+            let kind = if argument_bool(&matches, "lib") {
+                String.from(&"lib")
+            } else {
+                argument_string(&matches, "kind", "bin")
+            };
+            defer kind.drop();
+            scaffold(name.as_str(), kind.as_str())
+        },
+    }
+}
+
+fn empty_report(start: str) -> LoadReport {
+    let resolved = match resolve(start) {
+        Ok(value) => value,
+        Err(problem) => { problem.drop(); PathBuf.from(start) },
+    };
+    let message = String.from(&"no package.anx found in ");
+    message.push_str(resolved.as_str());
+    message.push_str(" or any parent directory");
+    defer message.drop();
+    let diagnostics = Vec<Diagnostic>.new();
+    diagnostics.push(Diagnostic.new(AX_NO_PROJECT_ROOT, message.as_str(),
+        Option<str>.Some(resolved.as_str()), Option<str>.None));
+    resolved.drop();
+    LoadReport.new(Option<Project>.None, diagnostics)
+}
+
+fn render_graph(project_arg: String, json: bool) -> i32 {
+    defer project_arg.drop();
+    let std_root = match standard_library_root() {
+        Ok(value) => value,
+        Err(message) => {
+            write_stderr("error: ");
+            write_stderr(message.as_str());
+            write_stderr("\n");
+            message.drop();
+            return 1i32;
+        },
+    };
+    let root = discover(project_arg.as_str());
+    let report = match root {
+        Some(path) => {
+            let loaded = load(path.as_str(), std_root.as_str());
+            path.drop();
+            loaded
+        },
+        None => empty_report(project_arg.as_str()),
+    };
+    std_root.drop();
+
+    let status = if report.clean() && report.project().is_some() { 0i32 } else { 1i32 };
+    let output = if json { graph_json(&report) } else { graph_text(&report) };
+    let written = write_stdout(output.as_str()) && write_stdout("\n");
+    output.drop();
+    report.drop();
+    if !written { return 1i32; }
+    status
+}
+
+fn graph_command(argv: Vec<String>&) -> i32 {
+    let parser = ArgumentParser.new("anx graph");
+    defer parser.drop();
+    parser.description("Show the package graph and indexed source files.");
+    parser.add_argument("project").nargs(Nargs.Optional).default_value(".")
+    .help("Project root directory (default: cwd)");
+    parser.add_argument("json").long("json").action(Action.StoreTrue)
+    .help("Emit machine-readable JSON");
+    let views = argument_views(argv, 2u64, argv.len());
+    defer views.drop();
+    let outcome = match parser.parse_args(views.as_slice()) {
+        Ok(value) => value,
+        Err(problem) => return report_argument_error("graph", &parser, problem),
+    };
+    match outcome {
+        Help(text) => {
+            let written = write_stdout(text.as_str());
+            text.drop();
+            if written { 0i32 } else { 1i32 }
+        },
+        Parsed(matches) => {
+            defer matches.drop();
+            render_graph(argument_string(&matches, "project", "."), argument_bool(&matches, "json"))
+        },
+    }
+}
+
+fn build_dispatch(argv: Vec<String>&, command: str) -> i32 {
+    let program_arguments = Vec<String>.new();
+    defer release_strings(&program_arguments);
+    let end = argv.len();
+    if command == "run" {
+        let index = 2u64;
+        while index < argv.len() {
+            if argv[index].as_str() == "--" {
+                end = index;
+                index += 1u64;
+                while index < argv.len() {
+                    program_arguments.push(String.from(&argv[index].as_str()));
+                    index += 1u64;
+                }
+                break;
+            }
+            index += 1u64;
+        }
+    }
+    build_command(argv, command, end, &program_arguments)
+}
+
+fn run(argv: Vec<String>&) -> i32 {
+    if argv.len() < 2u64 {
+        write_stdout(help_text());
+        return 1i32;
+    }
+    let command = argv[1].as_str();
+    if command == "-h" || command == "--help" || command == "help" {
+        return if write_stdout(help_text()) { 0i32 } else { 1i32 };
+    }
+    if command == "graph" { return graph_command(argv); }
+    if command == "build" || command == "run" || command == "check" {
+        return build_dispatch(argv, command);
+    }
+    if command == "fmt" { return format_command(argv); }
+    if command == "new" { return new_command(argv); }
+    if command == "test" { return test_command(argv); }
+    write_stderr("anx: unknown command\n");
+    2i32
+}
+
+fn main() {
+    let arguments = args();
+    let status = run(&arguments);
+    release_args(&arguments);
+    if status != 0i32 { exit(status); }
+}

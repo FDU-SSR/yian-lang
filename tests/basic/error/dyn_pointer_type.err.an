@@ -1,0 +1,7 @@
+// `dyn[n]` takes an initializer value; a type expression such as `i32*` is not
+// a valid initializer.
+
+fn main() {
+    let p: i32** = dyn[2] i32*;
+    del p;
+}

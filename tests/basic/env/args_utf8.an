@@ -1,0 +1,11 @@
+// Multi-byte UTF-8 arguments are validated and copied intact.
+from std.core.env import args;
+
+fn main() {
+    let argv = args();
+    assert argv.len() == 4: "expected program name + 3 args";
+    assert argv[2] == "世界": "UTF-8 argument was not copied intact";
+    assert argv[3] == "🙂": "four-byte UTF-8 argument was not copied intact";
+    assert argv[2].len() == 6: "argument length excludes the trailing NUL";
+    assert argv[3].len() == 4: "four-byte argument length excludes the trailing NUL";
+}

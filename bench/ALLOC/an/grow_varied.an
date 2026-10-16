@@ -1,0 +1,33 @@
+// bench/ALLOC/an/grow_varied.an: varying-size grow/release, writing and releasing a larger block each round.
+//
+// Scale: 32 rounds; round c allocates (c+1) MiB as one u8 array.
+// Assert checksum == rounds * 7.
+//
+// Measures reuse/return after release: sizes differ and increase each round. Without either mechanism,
+// peak RSS grows to the sum of all sizes (about 528 MiB).
+
+from std.core.io import print;
+
+fn main() {
+    let cycles: u64 = 32;  // bench-scale
+    let mib: u64 = 1024 * 1024;
+    let checksum: i64 = 0;
+
+    let cycle: u64 = 0;
+    while cycle < cycles {
+        let length: u64 = (cycle + 1) * mib;
+        let chunk = dyn[length] 0u8;
+        // Write every 4 KiB to touch all pages, so peak RSS reflects actual residency.
+        let k: u64 = 0;
+        while k < length {
+            chunk[k] = 7;
+            k += 4096;
+        }
+        checksum += i64(chunk[0]);
+        del chunk;
+        cycle += 1;
+    }
+
+    assert checksum == i64(cycles) * 7: "varied-size checksum";
+    print("varied pass\n");
+}

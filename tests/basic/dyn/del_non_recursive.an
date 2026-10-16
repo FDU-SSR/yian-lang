@@ -1,0 +1,13 @@
+// del releases only the outer allocation; pointed-to member storage survives.
+struct Outer { member: i32* }
+
+fn main() {
+    let member: i32* = dyn i32(41);
+    let outer: Outer* = dyn Outer(member);
+    let saved: i32* = outer.member;
+
+    del outer;
+    *saved += 1;
+    assert *saved == 42;
+    del saved;
+}

@@ -1,0 +1,4 @@
+fn main() {
+    let value = 1i32 else { return; };
+    if let number = value {}
+}

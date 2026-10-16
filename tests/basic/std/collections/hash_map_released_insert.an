@@ -1,0 +1,8 @@
+// A released HashMap cannot be revived by insert().
+from std.collections.hash_map import HashMap;
+
+fn main() {
+    let map = HashMap<i32, i32>.new();
+    map.drop();
+    map.insert(1, 2);
+}

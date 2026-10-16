@@ -1,0 +1,91 @@
+// Test for inherent methods with generics
+//
+// Expected output: 0
+
+struct Pair<T> {
+    first: T,
+    second: T,
+}
+
+impl<T> Pair<T> {
+    static pub fn new(first: T, second: T) -> Self {
+        return Self(first, second);
+    }
+
+    pub fn sum() -> T {
+        return self.first + self.second;
+    }
+
+    pub fn max() -> T {
+        if (self.first > self.second) {
+            return self.first;
+        }
+        return self.second;
+    }
+
+    pub fn min() -> T {
+        if (self.first < self.second) {
+            return self.first;
+        }
+        return self.second;
+    }
+
+    pub fn swap() {
+        let temp: T = self.first;
+        self.first = self.second;
+        self.second = temp;
+    }
+}
+
+fn case_generic_struct_methods() {
+    // 1) explicit type arguments
+    let p1: Pair<i32> = Pair<i32>.new(10, 20);
+    assert p1.sum() == 30: "Expected sum 30";
+    assert p1.max() == 20: "Expected max 20";
+    assert p1.min() == 10: "Expected min 10";
+    p1.swap();
+    assert p1.first == 20 && p1.second == 10: "Expected swapped values";
+
+    // 2) type inference
+    let p2: Pair<f64> = Pair<f64>.new(5.5, 2.2);
+    assert p2.sum() > 7.6 && p2.sum() < 7.8: "Expected sum ~7.7";
+    assert p2.max() > 5.4 && p2.max() < 5.6: "Expected max ~5.5";
+    assert p2.min() > 2.1 && p2.min() < 2.3: "Expected min ~2.2";
+    p2.swap();
+    assert p2.first > 2.1 && p2.first < 2.3 && p2.second > 5.4 && p2.second < 5.6: "Expected swapped values";
+
+}
+
+impl i32 {
+    pub fn casted_add<U>(other: U) -> i32 {
+        return *self + i32(other);
+    }
+}
+
+trait CastedSubtract<T> {
+    fn casted_subtract<U>(other: U) -> T;
+}
+
+impl CastedSubtract<i32> for i32 {
+    fn casted_subtract<U>(other: U) -> i32 {
+        return *self - i32(other);
+    }
+}
+
+fn case_generic_method_parameters() {
+    let value: i32 = 50;
+    let add_explicit: i32 = value.casted_add<f64>(25.5);
+    assert add_explicit == 75: "Expected casted_add result 75";
+    let add_inferred: i32 = value.casted_add(20.5);
+    assert add_inferred == 70: "Expected casted_add result 70";
+
+    let subtract_explicit: i32 = value.casted_subtract<f64>(15.5);
+    assert subtract_explicit == 35: "Expected casted_subtract result 35";
+    let subtract_inferred: i32 = value.casted_subtract(10.5);
+    assert subtract_inferred == 40: "Expected casted_subtract result 40";
+}
+
+fn main() {
+    case_generic_struct_methods();
+    case_generic_method_parameters();
+}

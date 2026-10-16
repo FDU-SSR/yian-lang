@@ -1,0 +1,3 @@
+typedef Scalar<T> = T;
+
+fn main() { let value: Scalar<i32, u64>; }

@@ -1,0 +1,7 @@
+// Test type mismatch error — assigning wrong type to variable
+//
+// Expected compilation error: Expected type
+
+fn main() {
+    let x: bool = 42;
+}

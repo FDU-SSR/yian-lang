@@ -1,0 +1,13 @@
+from ffi_anx_test.api import value;
+
+extern "C" {
+    fn abs(value: c_int) -> c_int;
+}
+
+ffi fn native_value() -> i32 {
+    i32(abs(c_int(-7)))
+}
+
+fn main() {
+    assert native_value() == value(): "anx test FFI permission failed";
+}

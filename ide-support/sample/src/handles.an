@@ -1,0 +1,42 @@
+// References, pointers, Drop, defer, and comptime examples for navigation, hover, and completion.
+from sample.types import Meters as Scalars;
+from std.core.drop import Drop;
+
+// Reference parameter: dereference in arithmetic.
+pub fn scaled(value: Scalars&, factor: Scalars) -> Scalars {
+    return *value * factor;
+}
+
+// Pointer parameter: write to the caller's local variable.
+pub fn accumulate(target: i32*, amount: i32) -> i32 {
+    *target += amount;
+    return *target;
+}
+
+// defer: execute on scope exit.
+pub fn tally(counter: i32*, amount: i32) -> i32 {
+    defer *counter += 1;
+    *counter += amount;
+    return *counter;
+}
+
+// Explicit drop: the type implements Drop, and the caller invokes it.
+pub struct Marks {
+    pub value: i32,
+    pub count: i32*,
+}
+
+impl Drop for Marks {
+    fn drop() {
+        *self.count += 1;
+    }
+}
+
+// comptime if: constants for both pointer modes.
+pub fn pointer_bytes() -> u64 {
+    return comptime if IS_RAW_MODE {
+        8u64
+    } else {
+        16u64
+    };
+}

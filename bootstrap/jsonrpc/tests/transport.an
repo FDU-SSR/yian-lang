@@ -1,0 +1,147 @@
+from jsonrpc.frame import FrameDecoder, FrameLimits, WriteQueue;
+from jsonrpc.message import Message, parse, encode;
+from std.core.drop import Drop;
+from std.core.option import Option;
+from std.core.ops import Index;
+from std.core.vec import Vec;
+
+fn main() {
+    let outgoing = WriteQueue.new();
+    let request_body = "{\"jsonrpc\":\"2.0\",\"id\":\"open\",\"method\":\"textDocument/didOpen\",\"params\":{\"textDocument\":{\"text\":\"😀\"}}}".as_slice();
+    let notification_body = "{\"jsonrpc\":\"2.0\",\"method\":\"exit\"}".as_slice();
+    outgoing.enqueue(request_body).unwrap();
+    outgoing.enqueue(notification_body).unwrap();
+
+    let wire = outgoing.pending();
+    let decoder = FrameDecoder.new();
+    let prefix = Vec<u8>.new();
+    for index in 0u64..9u64 { prefix.push(wire[index]); }
+    decoder.feed(prefix.as_slice()).unwrap();
+    assert decoder.next_body().unwrap().is_none(): "partial header waits for more input";
+    let suffix = Vec<u8>.new();
+    for index in 9u64..wire.len() { suffix.push(wire[index]); }
+    decoder.feed(suffix.as_slice()).unwrap();
+
+    let first_body = decoder.next_body().unwrap().unwrap();
+    let first_text_value: Option<str> = str.from_slice(first_body.as_slice());
+    let first_text = first_text_value.unwrap();
+    let request = parse(*first_text).unwrap();
+    match request {
+        Request(id, method, params) => {
+            match id { String(value) => assert value.as_str() == "open": "string request id", _ => @panic("request id kind") };
+            assert method.as_str() == "textDocument/didOpen": "request method";
+            assert params.is_some(): "request params retained";
+        },
+        _ => @panic("request message kind"),
+    };
+    let encoded_request = encode(request).unwrap();
+    assert encoded_request.as_str() == "{\"jsonrpc\":\"2.0\",\"id\":\"open\",\"method\":\"textDocument/didOpen\",\"params\":{\"textDocument\":{\"text\":\"😀\"}}}": "request round trip preserves Unicode params";
+    encoded_request.drop();
+    request.drop();
+    first_body.drop();
+
+    let second_body = decoder.next_body().unwrap().unwrap();
+    let second_text_value: Option<str> = str.from_slice(second_body.as_slice());
+    let second_text = second_text_value.unwrap();
+    let notification = parse(*second_text).unwrap();
+    match notification {
+        Notification(method, params) => {
+            assert method.as_str() == "exit": "notification method";
+            assert params.is_none(): "missing params remain absent";
+        }, _ => @panic("notification message kind")
+    };
+    notification.drop();
+    second_body.drop();
+    assert decoder.finish().is_ok(): "complete frames pass EOF validation";
+
+    let null_params = parse("{\"jsonrpc\":\"2.0\",\"id\":4,\"method\":\"shutdown\",\"params\":null}").unwrap();
+    match null_params {
+        Request(id, method, params) => {
+            match id { Unsigned(value) => assert *value == 4u64: "null-params request id", _ => @panic("null-params request id kind") };
+            assert method.as_str() == "shutdown": "null-params request method";
+            assert params.is_none(): "explicit null params are treated as omitted";
+        }, _ => @panic("null-params request message kind")
+    };
+    null_params.drop();
+
+    let response = parse("{\"jsonrpc\":\"2.0\",\"id\":0,\"result\":null}").unwrap();
+    match response {
+        SuccessResponse(id, result) => {
+            match id { Unsigned(value) => assert *value == 0u64: "integer response id", _ => @panic("response id kind") };
+            match result { Null => {}, _ => @panic("explicit null result was lost") };
+        }, _ => @panic("success response kind")
+    };
+    response.drop();
+
+    let error_response = parse("{\"jsonrpc\":\"2.0\",\"id\":null,\"error\":{\"code\":-32601,\"message\":\"missing\",\"data\":{\"method\":\"unknown\"}}}").unwrap();
+    match error_response {
+        ErrorResponse(id, error) => {
+            match id { Null => {}, _ => @panic("null error-response id") };
+            assert error.code == -32601i64 && error.message.as_str() == "missing": "error payload is decoded";
+            assert error.data.is_some(): "optional error data is retained";
+        }, _ => @panic("error response kind")
+    };
+    error_response.drop();
+
+    assert parse("{\"jsonrpc\":\"2.0\",\"id\":1.5,\"method\":\"x\"}").is_err(): "fractional request ids are rejected";
+    assert parse("{\"jsonrpc\":\"2.0\",\"method\":\"x\",\"params\":true}").is_err(): "scalar params are rejected";
+
+    let bad_frame = FrameDecoder.new();
+    bad_frame.feed("Content-Length: invalid\r\n\r\n".as_slice()).unwrap();
+    assert bad_frame.next_body().is_err(): "invalid frame length is rejected";
+    bad_frame.drop();
+
+    let duplicate_length = FrameDecoder.new();
+    duplicate_length.feed("Content-Length: 1\r\ncontent-length: 1\r\n\r\n{}".as_slice()).unwrap();
+    assert duplicate_length.next_body().is_err(): "duplicate content lengths are rejected";
+    duplicate_length.drop();
+
+    let small_body_limits = FrameLimits(
+        max_header_bytes=128u64,
+        max_body_bytes=1u64,
+        max_buffered_bytes=64u64);
+    let oversized_body = FrameDecoder.with_limits(small_body_limits);
+    oversized_body.feed("Content-Length: 2\r\n\r\n{}".as_slice()).unwrap();
+    assert oversized_body.next_body().is_err(): "body size limits are enforced before copying";
+    oversized_body.drop();
+
+    let small_header_limits = FrameLimits(
+        max_header_bytes=12u64,
+        max_body_bytes=64u64,
+        max_buffered_bytes=64u64);
+    let oversized_header = FrameDecoder.with_limits(small_header_limits);
+    oversized_header.feed("Content-Length: 1\r\n\r\nx".as_slice()).unwrap();
+    assert oversized_header.next_body().is_err(): "header size limits are enforced";
+    oversized_header.drop();
+
+    let malformed_json_frame = FrameDecoder.new();
+    malformed_json_frame.feed(
+        "Content-Length: 1\r\n\r\n{Content-Length: 2\r\n\r\n[]".as_slice()).unwrap();
+    let malformed_body = malformed_json_frame.next_body().unwrap().unwrap();
+    let malformed_text = str.from_slice(malformed_body.as_slice()).unwrap();
+    assert parse(*malformed_text).is_err(): "invalid JSON is isolated to its complete frame";
+    malformed_body.drop();
+    let recovered_body = malformed_json_frame.next_body().unwrap().unwrap();
+    let recovered_text = str.from_slice(recovered_body.as_slice()).unwrap();
+    assert *recovered_text == "[]": "frame after invalid JSON remains intact";
+    recovered_body.drop();
+    malformed_json_frame.drop();
+
+    let incomplete_header = FrameDecoder.new();
+    incomplete_header.feed("Content-Length: 4\r\n".as_slice()).unwrap();
+    assert incomplete_header.finish().is_err(): "EOF rejects an incomplete header";
+    incomplete_header.drop();
+
+    let incomplete = FrameDecoder.new();
+    incomplete.feed("Content-Length: 2\r\n\r\n{".as_slice()).unwrap();
+    assert incomplete.finish().is_err(): "EOF rejects a partial body";
+    incomplete.drop();
+
+    let written = outgoing.pending_bytes();
+    outgoing.advance(3u64).unwrap();
+    assert outgoing.pending_bytes() == written - 3u64: "partial writes preserve the remaining suffix";
+    outgoing.advance(outgoing.pending_bytes()).unwrap();
+    assert outgoing.pending_bytes() == 0u64: "fully written frames leave an empty queue";
+    outgoing.drop();
+    decoder.drop();
+}

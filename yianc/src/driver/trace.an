@@ -1,0 +1,157 @@
+from yianc.config import CompilerConfig;
+from yianc.driver.host import monotonic_ns;
+from std.core.convert import From;
+from std.core.drop import Drop;
+from std.core.fmt import ToString;
+from std.core.fs import create_dir_all;
+from std.core.io import File, OpenMode, Stderr, Write;
+from std.core.iter import Iterator, IntoIterator;
+from std.core.ops import Index;
+from std.core.option import Option;
+from std.core.path import Path;
+from std.core.process import env_var;
+from std.core.result import Result;
+from std.core.string import String;
+from std.core.vec import Vec;
+
+struct LogRule { channel: String, level: u8, filter: String }
+impl Drop for LogRule { pub fn drop() { self.channel.drop(); self.filter.drop(); } }
+struct Timing { name: str, elapsed: u64 }
+
+// One invocation owns rules and file handles. Semantic passes borrow this observer synchronously.
+pub struct CompilerTrace {
+    rules: Vec<LogRule>,
+    files: Vec<File>,
+    timings: Vec<Timing>,
+    profile: bool,
+}
+
+fn level(text: str) -> Option<u8> {
+    let upper = String.new();
+    defer upper.drop();
+    for current in text.chars() {
+        upper.push(if u32(current) >= u32('a') && u32(current) <= u32('z') { char(u32(current) - 32) } else { current });
+    }
+    match upper.as_str() {
+        "OFF" => Option<u8>.Some(0), "ERROR" => Option<u8>.Some(1), "WARN" => Option<u8>.Some(2),
+        "INFO" => Option<u8>.Some(3), "DEBUG" => Option<u8>.Some(4), "TRACE" => Option<u8>.Some(5), _ => Option<u8>.None,
+    }
+}
+
+fn part(text: str, begin: u64, end: u64) -> str { str.from_slice_unchecked(text.as_slice()[begin..end]) }
+
+fn environment(name: str) -> Result<Option<String>, String> {
+    match env_var(name) { Ok(value) => Result<Option<String>, String>.Ok(value), Err(problem) => { defer problem.drop(); Result<Option<String>, String>.Err(String.from(&problem.msg())) }, }
+}
+
+impl CompilerTrace {
+    static pub fn new(config: CompilerConfig&, analysis: bool) -> Result<Self, String> {
+        let trace = Self(Vec<LogRule>.new(), Vec<File>.new(), Vec<Timing>.new(), config.profile && !analysis);
+        let transferred = false;
+        defer { if !transferred { trace.drop(); } };
+        let spec = match &config.log_spec {
+            Some(value) => if !value.is_empty() { Option<String>.Some(String.from(&value.as_str())) } else {
+                if analysis { Option<String>.None } else { environment("YIAN_LOG")? }
+            },
+            None => if analysis { Option<String>.None } else { environment("YIAN_LOG")? },
+        };
+        match &spec {
+            Some(value) => {
+                defer value.drop();
+                for entry in value.as_str().split(",") {
+                    let entry = entry.trim();
+                    if entry == "" { continue; }
+                    let split = match entry.find("@") { Some(offset) => offset, None => entry.as_slice().len(), };
+                    let declaration = part(entry, 0, split);
+                    let equal = match declaration.find("=") { Some(offset) => offset, None => return Result<Self, String>.Err(String.from(&"invalid log spec: expected name=level")), };
+                    let channel = part(declaration, 0, equal).trim();
+                    let threshold = match level(part(declaration, equal + 1, declaration.as_slice().len()).trim()) {
+                        Some(value) => value, None => return Result<Self, String>.Err(String.from(&"unknown log level")),
+                    };
+                    let filter = if split < entry.as_slice().len() { part(entry, split + 1, entry.as_slice().len()).trim() } else { "" };
+                    trace.rules.push(LogRule(String.from(&if channel == "" { "all" } else { channel }), threshold, String.from(&filter)));
+                }
+            },
+            None => {},
+        }
+        if !analysis {
+            // An explicit empty path denotes the current directory, which cannot be a log file.
+            match &config.log_file { Some(value) => { trace.open(if value.is_empty() { "." } else { value.as_str() })?; }, None => { trace.open("build/compile.log")?; }, }
+        }
+        let file = environment("YIAN_LOG_FILE")?;
+        match &file { Some(value) => { defer value.drop(); if !value.is_empty() { trace.open(value.as_str())?; } }, None => {}, }
+        transferred = true;
+        Result<Self, String>.Ok(trace)
+    }
+
+    fn open(path: str) -> Result<(), String> {
+        match Path.new(path).parent() {
+            Some(parent) => if parent.as_str() != "" {
+                match create_dir_all(parent.as_str()) { Ok(_) => {}, Err(problem) => { defer problem.drop(); return Result<(), String>.Err(String.from(&problem.msg())); }, }
+            },
+            None => {},
+        }
+        let file = match File.open(path, OpenMode.Write) {
+            Ok(value) => value, Err(problem) => { defer problem.drop(); return Result<(), String>.Err(String.from(&problem.msg())); },
+        };
+        self.files.push(file);
+        Result<(), String>.Ok(())
+    }
+
+    pub fn event(channel: str, severity: u8, message: str, path: Option<str>) {
+        let threshold = 2u8;
+        for rule in self.rules {
+            let prefix = String.from(&rule.channel.as_str());
+            defer prefix.drop();
+            prefix.push('.');
+            if rule.channel.as_str() == "all" || rule.channel.as_str() == channel || channel.starts_with(prefix.as_str()) {
+                threshold = rule.level;
+                match path { Some(value) => if !value.contains(rule.filter.as_str()) { return; }, None => {}, }
+                break;
+            }
+        }
+        if severity == 0 || severity > threshold { return; }
+        let text = String.from(&"[");
+        defer text.drop();
+        text.push_str(match severity { 1 => "ERROR", 2 => "WARN", 3 => "INFO", 4 => "DEBUG", _ => "TRACE", });
+        text.push_str("][");
+        text.push_str(channel);
+        text.push_str("] ");
+        text.push_str(message);
+        text.push('\n');
+        match Stderr.new().write_str(text.as_str()) { Ok(_) => {}, Err(problem) => problem.drop(), }
+        for file in self.files { match file.write_all(text.as_slice()) { Ok(_) => {}, Err(problem) => problem.drop(), } }
+    }
+
+    pub fn start(channel: str, name: str) -> u64 {
+        self.event(channel, 4, name, Option<str>.None);
+        monotonic_ns()
+    }
+
+    pub fn finish(name: str, started: u64) {
+        if self.profile { self.timings.push(Timing(name, monotonic_ns() - started)); }
+    }
+
+    pub fn report() {
+        if !self.profile { return; }
+        for timing in self.timings {
+            let elapsed = (f64(timing.elapsed) / 1000000.0f64).to_string();
+            defer elapsed.drop();
+            match Stderr.new().write_str("[profile] ") { Ok(_) => {}, Err(problem) => problem.drop(), }
+            match Stderr.new().write_str(timing.name) { Ok(_) => {}, Err(problem) => problem.drop(), }
+            match Stderr.new().write_str(": ") { Ok(_) => {}, Err(problem) => problem.drop(), }
+            match Stderr.new().write_str(elapsed.as_str()) { Ok(_) => {}, Err(problem) => problem.drop(), }
+            match Stderr.new().write_str(" ms\n") { Ok(_) => {}, Err(problem) => problem.drop(), }
+        }
+    }
+}
+
+impl Drop for CompilerTrace {
+    pub fn drop() {
+        for rule in self.rules { rule.drop(); }
+        for file in self.files { file.drop(); }
+        self.rules.drop();
+        self.files.drop();
+        self.timings.drop();
+    }
+}

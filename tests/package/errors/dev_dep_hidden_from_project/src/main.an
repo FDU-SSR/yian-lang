@@ -1,0 +1,5 @@
+from testkit.helpers import triple;
+
+fn main() {
+    assert triple(1) == 3: "x";
+}

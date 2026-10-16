@@ -1,0 +1,12 @@
+fn f(a: i32, arr: i32[4], holder: Holder) {
+    let h = Holder([10, 20, 30]);
+    let w = wrap( [1, 2]);
+    let nested = [[1], [2]];
+    let typed: i32[4] = [10, 20, 30, 40];
+    let first = arr[0];
+    let call = make()[1];
+    let dynamic: i32* = dyn[8] i32;
+    let mixed = wrap(a, [1, 2]);
+    let tuple_type = Fn<(i32,), bool>;
+    return [a, a];
+}

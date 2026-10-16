@@ -1,0 +1,166 @@
+from std.core.convert import From;
+from std.core.drop import Drop;
+from yianc.analysis.editor import EditorSnapshot;
+from yianc.analysis.session.session import CompilationUnit;
+from yianc.analysis.ty.model import AccessMode, NominalKind;
+from yianc.analysis.ty.queries import struct_fields, enum_variants;
+from yianc.analysis.ty.display import stored_type_text;
+from yianc.analysis.ty.members import member_methods, receiver_types;
+from yianc.diagnostics.model import AnalysisError;
+from yianc.common.ids import TypeId, NameId;
+from std.core.option import Option;
+from std.core.result import Result;
+from std.core.string import String;
+from std.core.vec import Vec;
+
+from yianc.analysis.editor.query_model import CompletionPosition, EditorCompletionKind, EditorCompletionItem;
+from yianc.analysis.editor.candidates import append_completion;
+from yianc.analysis.editor.signatures import signature_for_type;
+
+fn method_is_static(snapshot: EditorSnapshot&, method: TypeId) -> bool {
+    match snapshot.session().types.get(method) {
+        Some(Nominal(definition, _)) => match snapshot.session().types.complete_definition(*definition) {
+            Ok(Method(callable)) => callable.is_static,
+            Err(error) => { error.drop(); false },
+            _ => false,
+        },
+        _ => false,
+    }
+}
+
+fn append_method(
+    snapshot: EditorSnapshot&,
+    items: Vec<EditorCompletionItem>&,
+    name_id: NameId,
+    method: TypeId,
+    static_receiver: bool,
+    prefix: str,
+) {
+    let name = snapshot.session().names.text(name_id);
+    if !name.starts_with(prefix) || method_is_static(snapshot, method) != static_receiver {
+        return;
+    }
+
+    let parameter_labels = Vec<String>.new();
+    let detail = match signature_for_type(snapshot, method, name, 0u64) {
+        Some(signature) => {
+            let text = String.from(&signature.label.as_str());
+            for parameter in signature.parameter_labels {
+                parameter_labels.push(String.from(&parameter.as_str()));
+            }
+            signature.drop();
+            Option<String>.Some(text)
+        },
+        None => Option<String>.Some(stored_type_text(&snapshot.session().types,
+            &snapshot.session().names, method)),
+    };
+    append_completion(items, name, EditorCompletionKind.Method, detail, parameter_labels);
+}
+
+pub fn append_member_completions(
+    snapshot: EditorSnapshot&,
+    unit: CompilationUnit&,
+    items: Vec<EditorCompletionItem>&,
+    position: CompletionPosition&,
+) -> Result<(), AnalysisError> {
+    let receiver_end = match position.receiver_end {
+        Some(value) => value,
+        None => return Result<(), AnalysisError>.Ok(()),
+    };
+    let fact = match snapshot.session().editor_facts.expression_ending_at(unit.source,
+        receiver_end.row, receiver_end.column) {
+        Some(value) => value,
+        None => return Result<(), AnalysisError>.Ok(()),
+    };
+    let static_receiver = fact.is_static;
+    let target = fact.type_id;
+
+    if !static_receiver {
+        loop {
+            match snapshot.session().types.require(target)? {
+                Pointer(inner) | Reference(inner) => { target = *inner; },
+                _ => { break; },
+            }
+        }
+    }
+
+    if !static_receiver {
+        match snapshot.session().types.get(target) {
+            Some(Nominal(definition, _)) => match snapshot.session().types.definition(*definition) {
+                Some(record) if record.is_complete() && record.header().kind == NominalKind.Struct => {
+                    let fields = struct_fields(&snapshot.session().types, target)?;
+                    defer fields.drop();
+                    for field in fields {
+                        if field.access == AccessMode.Private && match &field.span {
+                            Some(location) => location.source != unit.source,
+                            None => true,
+                        }
+                        {
+                            continue;
+                        }
+                        let name = snapshot.session().names.text(field.name);
+                        if !name.starts_with(position.prefix.as_str()) { continue; }
+                        let detail = stored_type_text(&snapshot.session().types,
+                            &snapshot.session().names, field.type_id);
+                        append_completion(items, name, EditorCompletionKind.Field,
+                            Option<String>.Some(detail), Vec<String>.new());
+                    }
+                },
+                _ => {},
+            },
+            _ => {},
+        }
+    }
+
+    let receivers = Vec<TypeId>.new();
+    if static_receiver { receivers.push(fact.type_id); } else {
+        receivers.drop();
+        receivers = receiver_types(snapshot.session(), fact.type_id)?;
+    }
+    defer receivers.drop();
+    for receiver in receivers {
+        let methods = member_methods(snapshot.session(), *receiver, static_receiver)?;
+        defer methods.drop();
+        for method in methods {
+            let dominated = false;
+            for other in methods {
+                if other.name == method.name && other.rank > method.rank { dominated = true; break; }
+            }
+            if dominated { continue; }
+            let ambiguous = false;
+            for other in methods {
+                if other.name == method.name && other.rank == method.rank && other.type_id != method.type_id { ambiguous = true; }
+            }
+            if ambiguous {
+                let name = snapshot.session().names.text(method.name);
+                if name.starts_with(position.prefix.as_str()) {
+                    append_completion(items, name, EditorCompletionKind.Method, Option<String>.None, Vec<String>.new());
+                }
+            } else { append_method(snapshot, items, method.name, method.type_id, static_receiver, position.prefix.as_str()); }
+        }
+    }
+
+    if static_receiver && match snapshot.session().types.get(target) {
+        Some(Nominal(definition, _)) => match snapshot.session().types.definition(*definition) {
+            Some(record) => record.header().kind == NominalKind.Enum,
+            None => false,
+        },
+        _ => false,
+    }
+    {
+        let variants = enum_variants(&snapshot.session().types, target)?;
+        defer variants.drop();
+        for variant in variants {
+            let name = snapshot.session().names.text(variant.name);
+            if !name.starts_with(position.prefix.as_str()) { continue; }
+            let detail = match variant.payload {
+                Some(type_id) => Option<String>.Some(stored_type_text(&snapshot.session().types,
+                    &snapshot.session().names, type_id)),
+                None => Option<String>.None,
+            };
+            append_completion(items, name, EditorCompletionKind.Variant, detail, Vec<String>.new());
+        }
+    }
+
+    Result<(), AnalysisError>.Ok(())
+}

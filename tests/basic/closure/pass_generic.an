@@ -1,0 +1,60 @@
+fn apply_closure_argument<F>(f: F, n: i32) -> i32 {
+    return f(n);
+}
+
+fn case_closure_generic_argument() {
+    let x: i32 = 5;
+    let closure = |x_in = x| (y: i32) -> i32 {
+        x_in + y
+    };
+    let result = apply_closure_argument(closure, 10);
+    assert result == 15: "closure through generic";
+}
+
+fn identity_closure<F>(f: F) -> F {
+    return f;
+}
+
+fn case_closure_identity_return() {
+    let x: i32 = 10;
+    let closure = |x_in = x| (y: i32) -> i32 {
+        x_in + y
+    };
+    let same = identity_closure(closure);
+    let result = same(5);
+    assert result == 15: "identity pass-through";
+}
+
+struct ClosureHolder<F> { f: F }
+
+fn case_closure_generic_struct_field() {
+    let x: i32 = 10;
+    let closure = |x_in = x| (y: i32) -> i32 {
+        x_in + y
+    };
+    let holder = ClosureHolder(f=closure);
+    let result = (holder.f)(5);
+    assert result == 15: "closure in generic struct field";
+}
+
+fn case_closure_reference_parameter_return() {
+    let bias: i32 = 1;
+    let value: i32 = 23;
+    let reference: i32& = &value;
+    let identity = |bias_in = bias| (input: i32&) -> i32& {
+        if bias_in == 1 {
+            input
+        } else {
+            input
+        }
+    };
+    let returned: i32& = identity(reference);
+    assert *returned == 23: "closure T& parameter/return";
+}
+
+fn main() {
+    case_closure_generic_argument();
+    case_closure_identity_return();
+    case_closure_generic_struct_field();
+    case_closure_reference_parameter_return();
+}

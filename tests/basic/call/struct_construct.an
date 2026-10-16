@@ -1,0 +1,75 @@
+// Struct, named-argument, and enum-variant constructor cases.
+//
+// Expected output:
+// Alice
+// Bob
+
+from std.core.io import print;
+
+struct PositionalPerson {
+    pub age: i32,
+    pub weight: float,
+}
+
+fn case_positional_struct_constructor() {
+    let p: PositionalPerson = PositionalPerson(20, 60.5);
+    let age: i32 = p.age;
+    assert age == 20: "Person struct construction failed";
+    if p.weight > 61.0 {
+        @panic("Person weight field access failed");
+    }
+}
+
+struct NamedArgumentPerson {
+    name: str,
+    age: i32,
+}
+
+struct NamedArgumentPoint {
+    x: i32,
+    y: i32,
+    label: str,
+}
+
+fn case_named_struct_constructor() {
+    let p1: NamedArgumentPerson = NamedArgumentPerson(name="Alice", age=25);
+    assert p1.name == "Alice": "named arg name failed";
+    assert p1.age == 25: "named arg age failed";
+
+    let p2: NamedArgumentPerson = NamedArgumentPerson(age=30, name="Bob");
+    assert p2.name == "Bob": "named arg order failed";
+    assert p2.age == 30: "named arg order failed";
+
+    let point: NamedArgumentPoint = NamedArgumentPoint(x=10, y=20, label="origin");
+    assert point.x == 10: "named arg x failed";
+    assert point.y == 20: "named arg y failed";
+    assert point.label == "origin": "named arg label failed";
+
+    print(p1.name);
+    print("\n");
+    print(p2.name);
+    print("\n");
+}
+
+enum ConstructorCommand {
+    Start, Stop,
+    Move {
+        is_forward: bool,
+        distance: i32,
+    },
+    Speak {
+        message: str,
+    },
+}
+
+fn case_enum_variant_constructor() {
+    let first: ConstructorCommand = ConstructorCommand.Start;
+    let move: ConstructorCommand = ConstructorCommand.Move(is_forward=true, distance=5);
+    let speak: ConstructorCommand = ConstructorCommand.Speak(message="hello");
+}
+
+fn main() {
+    case_named_struct_constructor();
+    case_positional_struct_constructor();
+    case_enum_variant_constructor();
+}

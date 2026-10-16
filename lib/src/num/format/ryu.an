@@ -1,0 +1,186 @@
+// Copyright 2018 Ulf Adams. Adapted under the Boost Software License 1.0;
+// see licenses/ryu-boost.txt. Both IEEE formats use their own rounding interval.
+from std.num.format.powers import pow5, inv_pow5;
+from std.core.string import String;
+from std.core.convert import From;
+from std.core.drop import Drop;
+from std.core.ops import Index;
+from std.core.range import Range;
+from std.num.f64 import to_bits;
+
+struct Decimal { coefficient: u64, exponent: i32 }
+
+// High half of a 64-by-64 product, using four 32-bit products.
+fn mul_high(a: u64, b: u64) -> u64 {
+    let mask = 0xffffffffu64;
+    let a0 = a & mask;
+    let a1 = a >> 32u64;
+    let b0 = b & mask;
+    let b1 = b >> 32u64;
+    let middle = (a0 * b0 >> 32u64) + a1 * b0;
+    let carry = middle >> 32u64;
+    middle = (middle & mask) + a0 * b1;
+    a1 * b1 + carry + (middle >> 32u64)
+}
+
+fn mul_shift(value: u64, factor: (u64, u64), shift: i32) -> u64 {
+    let high0 = mul_high(value, factor[0]);
+    let low1 = value * factor[1];
+    let sum = high0 + low1;
+    let high1 = mul_high(value, factor[1]);
+    if sum < high0 { high1 += 1u64; }
+    let distance = u64(shift - 64i32);
+    if distance >= 64u64 { return high1 >> (distance - 64u64); }
+    if distance == 0u64 { return sum; }
+    return (sum >> distance) | (high1 << (64u64 - distance));
+}
+
+fn pow5_bits(exponent: i32) -> i32 { ((exponent * 1217359i32) >> 19i32) + 1i32 }
+fn multiple5(value: u64, exponent: u64) -> bool {
+    let count: u64 = 0;
+    while count < exponent {
+        if value % 5u64 != 0u64 { return false; }
+        value /= 5u64;
+        count += 1u64;
+    }
+    true
+}
+
+fn shortest(mantissa: u64, exponent: u64, width: u64, bias: i32) -> Decimal {
+    let e2 = i32(exponent) - bias - i32(width) - 2i32;
+    let m2 = (1u64 << width) | mantissa;
+    if exponent == 0u64 {
+        e2 = 1i32 - bias - i32(width) - 2i32;
+        m2 = mantissa;
+    }
+    let accept = m2 % 2u64 == 0u64;
+    let lower_shift: u64 = if mantissa != 0u64 || exponent <= 1u64 { 1u64 } else { 0u64 };
+    let middle = 4u64 * m2;
+    let upper = middle + 2u64;
+    let lower = middle - 1u64 - lower_shift;
+    let vr: u64 = 0;
+    let vp: u64 = 0;
+    let vm: u64 = 0;
+    let e10: i32 = 0;
+    let lower_zero = false;
+    let middle_zero = false;
+    if e2 >= 0i32 {
+        let q = (e2 * 78913i32) >> 18i32;
+        if e2 > 3i32 { q -= 1i32; }
+        e10 = q;
+        let k = 125i32 + pow5_bits(q) - 1i32;
+        let shift = -e2 + q + k;
+        let factor = inv_pow5(u64(q));
+        vr = mul_shift(middle, factor, shift);
+        vp = mul_shift(upper, factor, shift);
+        vm = mul_shift(lower, factor, shift);
+        if q <= 21i32 {
+            if middle % 5u64 == 0u64 { middle_zero = multiple5(middle, u64(q)); }
+            elif accept { lower_zero = multiple5(lower, u64(q)); }
+            elif multiple5(upper, u64(q)) { vp -= 1u64; }
+        }
+    } else {
+        let q = (-e2 * 732923i32) >> 20i32;
+        if -e2 > 1i32 { q -= 1i32; }
+        e10 = q + e2;
+        let index = -e2 - q;
+        let shift = q - (pow5_bits(index) - 125i32);
+        let factor = pow5(u64(index));
+        vr = mul_shift(middle, factor, shift);
+        vp = mul_shift(upper, factor, shift);
+        vm = mul_shift(lower, factor, shift);
+        if q <= 1i32 {
+            middle_zero = true;
+            if accept { lower_zero = lower_shift == 1u64; } else { vp -= 1u64; }
+        } elif q < 63i32 {
+            middle_zero = (middle & ((1u64 << u64(q)) - 1u64)) == 0u64;
+        }
+    }
+    let removed: i32 = 0;
+    let last: u64 = 0;
+    if lower_zero || middle_zero {
+        while vp / 10u64 > vm / 10u64 {
+            lower_zero = lower_zero && vm % 10u64 == 0u64;
+            middle_zero = middle_zero && last == 0u64;
+            last = vr % 10u64;
+            vr /= 10u64; vp /= 10u64; vm /= 10u64;
+            removed += 1i32;
+        }
+        if lower_zero {
+            while vm % 10u64 == 0u64 {
+                middle_zero = middle_zero && last == 0u64;
+                last = vr % 10u64;
+                vr /= 10u64; vp /= 10u64; vm /= 10u64;
+                removed += 1i32;
+            }
+        }
+        if middle_zero && last == 5u64 && vr % 2u64 == 0u64 { last = 4u64; }
+        if (vr == vm && (!accept || !lower_zero)) || last >= 5u64 { vr += 1u64; }
+    } else {
+        while vp / 10u64 > vm / 10u64 {
+            last = vr % 10u64;
+            vr /= 10u64; vp /= 10u64; vm /= 10u64;
+            removed += 1i32;
+        }
+        if vr == vm || last >= 5u64 { vr += 1u64; }
+    }
+    Decimal(vr, e10 + removed)
+}
+
+fn render(decimal: Decimal, negative: bool) -> String {
+    let digits = decimal.coefficient.to_string_radix(10);
+    defer digits.drop();
+    let bytes = digits.as_slice();
+    let point = i32(bytes.len()) + decimal.exponent;
+    let scientific = point - 1i32;
+    let out = String.new();
+    if negative { out.push('-'); }
+    if scientific < -6i32 || scientific >= 21i32 {
+        out.push(char(bytes[0]));
+        if bytes.len() > 1u64 {
+            out.push('.');
+            out.push_str(str.from_slice_unchecked(bytes[1u64..bytes.len()]));
+        }
+        out.push('e');
+        let magnitude = scientific;
+        if magnitude < 0i32 { out.push('-'); magnitude = -magnitude; }
+        let text = u64(magnitude).to_string_radix(10);
+        out.push_str(text.as_str()); text.drop();
+    } elif point <= 0i32 {
+        out.push_str("0.");
+        let zeros: i32 = -point;
+        while zeros > 0i32 { out.push('0'); zeros -= 1i32; }
+        out.push_str(digits.as_str());
+    } elif point >= i32(bytes.len()) {
+        out.push_str(digits.as_str());
+        let zeros = point - i32(bytes.len());
+        while zeros > 0i32 { out.push('0'); zeros -= 1i32; }
+    } else {
+        out.push_str(str.from_slice_unchecked(bytes[0u64..u64(point)]));
+        out.push('.');
+        out.push_str(str.from_slice_unchecked(bytes[u64(point)..bytes.len()]));
+    }
+    out
+}
+
+fn format_bits(bits: u64, width: u64, exponent_bits: u64, bias: i32) -> String {
+    let negative = bits >> (width + exponent_bits) != 0u64;
+    let mantissa = bits & ((1u64 << width) - 1u64);
+    let maximum = (1u64 << exponent_bits) - 1u64;
+    let exponent = (bits >> width) & maximum;
+    if exponent == maximum {
+        if mantissa != 0u64 { return String.from(&"NaN"); }
+        return String.from(if negative { &"-inf" } else { &"inf" });
+    }
+    if exponent == 0u64 && mantissa == 0u64 {
+        return String.from(if negative { &"-0" } else { &"0" });
+    }
+    render(shortest(mantissa, exponent, width, bias), negative)
+}
+
+pub fn format_f64(value: f64) -> String { format_bits(to_bits(value), 52u64, 11u64, 1023i32) }
+pub fn format_f32(value: f32) -> String {
+    let bits: u32 = 0;
+    @memcpy(&bits, &value, 4u64);
+    format_bits(u64(bits), 23u64, 8u64, 127i32)
+}

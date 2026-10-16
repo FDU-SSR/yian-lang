@@ -1,0 +1,87 @@
+// Test: aggregate bitwise copy and explicit Clone are independent mechanisms
+//
+// Expected output: 0
+
+struct ExplicitCloneBigInt {
+    value: i64,
+}
+
+impl Clone for ExplicitCloneBigInt {
+    pub fn clone() -> Self { ExplicitCloneBigInt(self.value) }
+}
+
+fn case_clone_and_shallow_assignment() {
+    let a: ExplicitCloneBigInt = ExplicitCloneBigInt(42);
+    assert a.value == 42: "a.value should be 42";
+
+    let b = a.clone();
+    assert b.value == 42: "b.value should be 42";
+    assert a.value == 42: "a should still be valid after clone";
+
+    let c = a;
+    assert c.value == 42: "c.value should be 42";
+    assert a.value == 42: "ordinary copy does not invalidate source";
+
+    let d: ExplicitCloneBigInt = ExplicitCloneBigInt(10);
+    assert d.value == 10: "d.value should be 10";
+
+}
+
+struct DirectAssignBigInt {
+    value: i64,
+}
+
+impl Clone for DirectAssignBigInt {
+    pub fn clone() -> Self { DirectAssignBigInt(self.value) }
+}
+
+fn case_direct_assignment() {
+    let a: DirectAssignBigInt = DirectAssignBigInt(1);
+    let c = a;
+    assert a.value == 1 && c.value == 1;
+}
+
+fn case_repeated_generic_clone_bounds() {
+    let pair: (String, String) = (
+        String.from(&"left"),
+        String.from(&"right"),
+    );
+    let pair_copy: (String, String) = pair.clone();
+
+    pair_copy[0].push('!');
+    pair_copy[1].push('!');
+
+    assert pair[0] == "left": "source first element changed";
+    assert pair[1] == "right": "source second element changed";
+    assert pair_copy[0] == "left!": "first element was not cloned";
+    assert pair_copy[1] == "right!": "second element was not cloned";
+}
+
+struct CustomCloneNameValue { number: i32 }
+
+impl CustomCloneNameValue {
+    fn clone() -> i32 { self.number + 1 }
+}
+
+fn case_custom_clone_named_method() {
+    let value = CustomCloneNameValue(41);
+    let ptr: CustomCloneNameValue* = &value;
+    assert ptr.clone() == 42;
+}
+
+fn case_pointer_clone_autoderef() {
+    let value: i32 = 42;
+    let ptr: i32* = &value;
+    let copied: i32 = ptr.clone();
+
+    assert copied == 42;
+    assert ptr == &value;
+}
+
+fn main() {
+    case_clone_and_shallow_assignment();
+    case_direct_assignment();
+    case_repeated_generic_clone_bounds();
+    case_custom_clone_named_method();
+    case_pointer_clone_autoderef();
+}

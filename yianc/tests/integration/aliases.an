@@ -1,0 +1,239 @@
+from yianc.analysis.editor import EditorEngine, EditorMode, EditorSnapshot, FrozenInputs, editor_options;
+from yianc.analysis.editor.completion import completion_at;
+from yianc.analysis.editor.query_model import EditorCompletionKind;
+from yianc.analysis.ty.store import TypeStore;
+from yianc.analysis.ty.queries import struct_fields;
+from yianc.analysis.symbol.model import SymbolKind;
+from yianc.common.ids import SourceId, TypeId;
+from yianc.package.model import PackageMap;
+from yianc.package.provenance import SourceTrust;
+from std.core.drop import Drop;
+from std.core.option import Option;
+
+fn analyze_in_mode(source: str, path: str, raw: bool) -> EditorSnapshot {
+    let identity = if raw { "raw:alias-migration" } else { "fat:alias-migration" };
+    let inputs = FrozenInputs.new(1u64, 1u64, identity);
+    inputs.add(path, source, Option<i64>.Some(1i64));
+    let trust = SourceTrust.new("../../../lib/src").unwrap();
+    let options = editor_options(*trust, Option<PackageMap>.None, EditorMode.Full);
+    options.raw_pointers = raw;
+    let snapshot = *EditorEngine.analyze(&inputs, options).unwrap();
+    inputs.drop();
+    snapshot
+}
+
+fn analyze(source: str, path: str) -> EditorSnapshot {
+    analyze_in_mode(source, path, IS_RAW_MODE)
+}
+
+fn resolved_type(snapshot: EditorSnapshot&, row: u64, column: u64) -> TypeId {
+    snapshot.resolved_name_at(SourceId(0u64), row, column).unwrap().type_id
+}
+
+fn nested_aliases_share_structural_identity() {
+    let source = "typedef Int = i32;\nstruct Box<T> { value: T }\ntrait View<T> { fn get() -> T; }\ntypedef Left = (Box<Int>, Int*, Int&, Int[], Int[4], Fn<(Int,), Int>, View<Int>&);\ntypedef Right = (Box<i32>, i32*, i32&, i32[], i32[4], Fn<(i32,), i32>, View<i32>&);\nstruct Vec<T> { value: T }\ntypedef AliasVec = Vec<Int>;\ntypedef DirectVec = Vec<i32>;\nfn main() { let left: Left; let right: Right; let alias: AliasVec; let direct: DirectVec; }\n";
+    let snapshot = analyze(source, "/tmp/yian-native-alias-identities.an");
+    assert snapshot.semantic_complete(): "alias identity fixture has complete semantic analysis";
+    assert resolved_type(&snapshot, 8u64, 22u64) == resolved_type(&snapshot, 8u64, 39u64):
+    "transparent aliases preserve nested tuple, pointer, reference, slice, array, function and trait-object TypeIds";
+    assert resolved_type(&snapshot, 8u64, 57u64) == resolved_type(&snapshot, 8u64, 79u64):
+    "nominal generic instances through aliases share the same TypeId";
+    snapshot.drop();
+}
+
+fn alias_binders_and_editor_queries_preserve_identity() {
+    let source = "struct Pair<A, B> { left: A, right: B }\ntypedef Reverse<A, B> = Pair<B, A>;\ntypedef Duplicate<T> = Pair<T, T>;\ntypedef First<A, B> = A;\ntypedef Chain<X, Y> = Reverse<Y, X>;\ntypedef Count = u64;\ntypedef Arr<T, const N: Count> = T[N];\ntypedef Reordered = Chain<i32, u64>;\ntypedef Expected = Pair<i32, u64>;\ntypedef Repeated = Duplicate<i32>;\ntypedef ExpectedRepeated = Pair<i32, i32>;\ntypedef Unused = First<i32, u64>;\ntypedef Array = Arr<i32, 4>;\ntypedef DirectArray = i32[4];\ntypedef Typed<T, const N: T> = T[N];\ntypedef Dependent = Typed<u64, 4>;\ntypedef DirectDependent = u64[4];\ntypedef DirectInt = i32;\nfn check_reordered(value: Reordered) -> Expected { value }\nfn check_repeated(value: Repeated) -> ExpectedRepeated { value }\nfn check_array(value: Array) -> DirectArray { value }\nfn check_dependent(value: Dependent) -> DirectDependent { value }\nfn check_unused(value: Unused) -> DirectInt { value }\nfn main() {}\n";
+    let snapshot = analyze(source, "/tmp/yian-native-alias-binders.an");
+    assert snapshot.semantic_complete(): "generic alias binders resolve in the declaration's order";
+    snapshot.drop();
+
+    let alias_source = "typedef A = i32;\ntypedef B = i32;\nfn main() { let a: A = 1; let b: B = 2; }\n";
+    let alias_snapshot = analyze(alias_source, "/tmp/yian-native-alias-queries.an");
+    assert alias_snapshot.semantic_complete(): "alias editor queries use a complete snapshot";
+    let before = alias_snapshot.session().types.len();
+    let iteration = 0u64;
+    while iteration < 3u64 {
+        let a_use = alias_snapshot.resolved_name_at(SourceId(0u64), 2u64, 19u64).unwrap();
+        let b_use = alias_snapshot.resolved_name_at(SourceId(0u64), 2u64, 33u64).unwrap();
+        assert a_use.type_id == b_use.type_id: "equivalent alias uses share their underlying TypeId";
+        assert a_use.symbol.index == alias_snapshot.declaration_at(SourceId(0u64), 0u64, 8u64).unwrap().index:
+            "navigation facts retain alias A's declaration identity";
+        assert b_use.symbol.index == alias_snapshot.declaration_at(SourceId(0u64), 1u64, 8u64).unwrap().index:
+            "navigation facts retain alias B's distinct declaration identity";
+
+        let hover = alias_snapshot.hover_at(SourceId(0u64), 2u64, 19u64).unwrap();
+        let hover_type = match &hover.expression_type { Some(value) => value.as_str(), None => "" };
+        let hover_name = match &hover.symbol { Some(value) => value.name.as_str(), None => "" };
+        assert hover_type == "i32" && hover_name == "A":
+        "hover preserves the alias declaration name and reports its expanded expression type";
+        hover.drop();
+
+        let items = completion_at(&alias_snapshot, SourceId(0u64), 2u64, 20u64).unwrap();
+        let found = false;
+        for item in items.items {
+            if item.label.as_str() == "A" && item.kind == EditorCompletionKind.Alias {
+                found = match &item.detail {
+                    Some(detail) => detail.as_str() == "typedef A = i32;",
+                    None => false,
+                };
+            }
+        }
+        assert found: "completion preserves alias kind and declared spelling";
+        items.drop();
+        iteration += 1u64;
+    }
+    assert alias_snapshot.session().types.len() == before:
+    "repeated navigation, completion and display queries do not allocate semantic types";
+
+    let renamed = alias_snapshot.rename_at(SourceId(0u64), 0u64, 8u64, "Renamed");
+    assert renamed.ok() && renamed.edits.len() == 2u64:
+    "rename follows both the alias declaration and its type use";
+    let declaration_edit = false;
+    let use_edit = false;
+    for edit in renamed.edits {
+        assert edit.new_text.as_str() == "Renamed": "each rename edit carries the requested replacement";
+        if edit.location.span.start.row == 0u64 && edit.location.span.start.column == 8u64 &&
+        edit.location.span.end.column == 9u64 {
+            declaration_edit = true;
+        }
+        if edit.location.span.start.row == 2u64 && edit.location.span.start.column == 19u64 &&
+        edit.location.span.end.column == 20u64 {
+            use_edit = true;
+        }
+    }
+    assert declaration_edit && use_edit: "rename edits target the alias declaration and its use only";
+    renamed.drop();
+    alias_snapshot.drop();
+}
+
+fn alias_import_navigation_and_completion_retain_provider_identity() {
+    let main_path = "/tmp/yian-native-alias-import/main.an";
+    let provider_path = "/tmp/yian-native-alias-import/provider.an";
+    let identity = if IS_RAW_MODE { "raw:alias-import" } else { "fat:alias-import" };
+    let inputs = FrozenInputs.new(2u64, 1u64, identity);
+    inputs.add(main_path,
+        "from provider import Public as Imported;\ntypedef Scalar = i64;\ntypedef Local = Imported;\nfn main() { let local: Local; let direct: i32; }\n",
+        Option<i64>.Some(1i64));
+    inputs.add(provider_path, "typedef Scalar = i32;\npub typedef Public = Scalar;\n", Option<i64>.Some(1i64));
+    let trust = SourceTrust.new("../../../lib/src").unwrap();
+    let options = editor_options(*trust, Option<PackageMap>.None, EditorMode.Full);
+    options.raw_pointers = IS_RAW_MODE;
+    let snapshot = *EditorEngine.analyze(&inputs, options).unwrap();
+    inputs.drop();
+    assert snapshot.semantic_complete(): "imported transparent aliases resolve in a full editor snapshot";
+    assert resolved_type(&snapshot, 3u64, 23u64) == resolved_type(&snapshot, 3u64, 42u64):
+        "an imported alias resolves through the provider's private alias to i32";
+
+    let imported = snapshot.resolved_name_at(SourceId(0u64), 2u64, 16u64).unwrap();
+    let provider_declaration = snapshot.declaration_at(SourceId(1u64), 1u64, 12u64).unwrap();
+    assert imported.symbol.index == provider_declaration.index:
+        "navigation preserves the provider alias declaration identity";
+    let definition = snapshot.definition_at(SourceId(0u64), 2u64, 16u64).unwrap();
+    assert definition.path.as_str() == provider_path:
+        "navigation points to the provider declaration file";
+    definition.drop();
+
+    let items = completion_at(&snapshot, SourceId(0u64), 0u64, 21u64).unwrap();
+    let found_public = false;
+    for item in items.items {
+        if item.label.as_str() == "Public" && item.kind == EditorCompletionKind.Alias {
+            found_public = match &item.detail {
+                Some(detail) => detail.as_str() == "typedef Public = Scalar;",
+                None => false,
+            };
+        }
+    }
+    assert found_public: "import completion retains the provider alias kind and declaration detail";
+    items.drop();
+    snapshot.drop();
+}
+
+fn explicit_and_inferred_alias_calls_share_one_function_type_identity() {
+    let source = "typedef Int = i32;\nstruct Box<T> { value: T }\ntypedef AliasBox<T> = Box<T>;\nfn identity<T>(value: T) -> T { value }\nfn main() {\n    identity<AliasBox<Int>>(AliasBox<Int>(1));\n    identity<Box<i32>>(Box<i32>(2));\n    identity(AliasBox<i32>(3));\n}\n";
+    let snapshot = analyze(source, "/tmp/yian-native-alias-instances.an");
+    assert snapshot.semantic_complete(): "explicit and inferred alias calls pass semantic analysis";
+    let alias_call = snapshot.resolved_name_at(SourceId(0u64), 5u64, 4u64).unwrap();
+    let direct_call = snapshot.resolved_name_at(SourceId(0u64), 6u64, 4u64).unwrap();
+    let inferred_call = snapshot.resolved_name_at(SourceId(0u64), 7u64, 4u64).unwrap();
+    assert alias_call.type_id == direct_call.type_id && direct_call.type_id == inferred_call.type_id:
+        "explicit alias, explicit direct type and inferred calls share one function type identity";
+    assert snapshot.session().definitions.len() == 3u64:
+        "two source procedures and one interned identity<i32> instance are registered";
+    snapshot.drop();
+}
+
+fn alias_cycles_and_recursive_nominal_fields_keep_their_boundaries() {
+    for (source, message, code) in [
+        ("typedef A = A;\nfn main() {}\n", "A -> A", "E407"),
+        ("typedef A = B*; typedef B = A[];\nfn main() {}\n", "A -> B -> A", "E407"),
+        ("typedef A<T> = A<T*>;\nfn main() {}\n", "A -> A", "E407"),
+        ("typedef A = Missing;\nfn main() {}\n", "Undefined type: Missing", "E302"),
+    ] {
+        let snapshot = analyze(source, "/tmp/yian-native-alias-cycle.an");
+        assert !snapshot.semantic_complete(): "invalid alias declarations keep the editor snapshot incomplete";
+        let hover = snapshot.hover_at(SourceId(0u64), 0u64, 8u64).unwrap();
+        assert match &hover.symbol { Some(value) => value.kind == SymbolKind.Alias, None => false }:
+            "an invalid alias remains registered as a declaration in the editor snapshot";
+        hover.drop();
+        let found = false;
+        let diagnostic_index = 0u64;
+        while diagnostic_index < snapshot.diagnostic_count() {
+            let diagnostic = snapshot.diagnostic(diagnostic_index).unwrap();
+            if diagnostic.message.as_str().contains(message) && diagnostic.code.text() == code {
+                found = true;
+            }
+            diagnostic_index += 1u64;
+        }
+        assert found: "unused alias cycles and undefined alias bodies retain their diagnostic";
+        snapshot.drop();
+    }
+
+    let recursive = analyze("typedef Node = Link;\nstruct Link { next: Node* }\nfn main() { let node: Node; }\n",
+        "/tmp/yian-native-alias-recursive-field.an");
+    assert recursive.semantic_complete(): "a nominal boundary permits recursive pointer fields";
+    let node = resolved_type(&recursive, 2u64, 23u64);
+    let fields = struct_fields(&recursive.session().types, node).unwrap(); defer fields.drop();
+    assert fields.len() == 1u64 && fields[0u64].type_id == recursive.session().types.pointer(node):
+        "the recursive field has the exact Node pointer identity";
+    recursive.drop();
+}
+
+fn alias_argument_diagnostics_point_to_the_use() {
+    for (declaration, use, message) in [
+        ("typedef A<T> = T;", "A<i32, u64>", "expects 1 generic arguments"),
+        ("typedef A<T> = T;", "A<4>", "requires a type argument"),
+        ("typedef A<const N: u64> = i32[N];", "A<i32>", "incompatible type"),
+        ("typedef A<const N: u64> = i32[N];", "A<4i32>", "incompatible type"),
+    ] {
+        let source = String.from(&declaration);
+        source.push_str("\nfn main() { let value: ");
+        source.push_str(use);
+        source.push_str("; }\n");
+        let snapshot = analyze(source.as_str(), "/tmp/yian-native-alias-argument.an");
+        assert !snapshot.semantic_complete(): "an invalid generic alias argument keeps the snapshot incomplete";
+        let found_at_use = false;
+        let diagnostic_index = 0u64;
+        while diagnostic_index < snapshot.diagnostic_count() {
+            let diagnostic = snapshot.diagnostic(diagnostic_index).unwrap();
+            if diagnostic.message.as_str().contains(message) && diagnostic.code.text() == "E405" {
+                found_at_use = match &diagnostic.location {
+                    Some(location) => location.span().start.row == 1u64 && location.span().start.column == 23u64,
+                    None => false,
+                };
+            }
+            diagnostic_index += 1u64;
+        }
+        assert found_at_use: "alias arity and kind diagnostics retain E405 at the use row";
+        snapshot.drop();
+        source.drop();
+    }
+}
+
+fn main() {
+    nested_aliases_share_structural_identity();
+    alias_binders_and_editor_queries_preserve_identity();
+    alias_import_navigation_and_completion_retain_provider_identity();
+    explicit_and_inferred_alias_calls_share_one_function_type_identity();
+    alias_cycles_and_recursive_nominal_fields_keep_their_boundaries();
+    alias_argument_diagnostics_point_to_the_use();
+}

@@ -1,0 +1,3 @@
+fn main() {
+    let count = __yian_argc();
+}

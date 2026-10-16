@@ -1,0 +1,12 @@
+[package]
+name = "lsp"
+kind = "hybrid"
+version = "0.1.0"
+entry = "src/main.an"
+
+[dependencies]
+anx = { path = "../anx" }
+yianc = { path = "../yianc" }
+json = { path = "../bootstrap/json" }
+jsonrpc = { path = "../bootstrap/jsonrpc" }
+lsp_protocol = { path = "../bootstrap/lsp_protocol" }

@@ -1,0 +1,106 @@
+// bench/BG/an/binarytree.an: recursive binary-tree construction/check/release (shootout binary-trees).
+//
+// Adapted from Benchmarks Game (shootout); upstream: Revised BSD, Copyright 2008-2012 Isaac Gouy.
+// Semantic reference: bench/BG/c/binarytree.c, the project's C implementation.
+// Scale: N=20, minDepth=4; assert check%256==176.
+//
+// Algorithm: BottomUpTree recursively constructs full binary trees with two child pointers per node;
+//       ItemCheck recursively sums children, counting empty subtrees as one; DeleteTree releases
+//       in postorder. main constructs/releases a stretch tree of maxDepth+1,
+//       retains a maxDepth longLived tree until the end, and, for depths stepping by two, constructs/releases
+//       1<<(maxDepth-depth+minDepth) temporary trees, accumulating check.
+//
+// Layout: left/right are Option<treeNode&>, using None for empty subtrees. Nodes are allocated by
+//       dyn treeNode(...); ItemCheck reads through treeNode&, and DeleteTree
+//       releases directly with del T&.
+//
+// Both modes share this source. dyn uses inference; ranges such as
+//         x[0u64..n] work in both modes and retain checks in fat mode.
+from std.core.io import print;
+
+struct treeNode {
+    left: Option<treeNode&>,
+    right: Option<treeNode&>,
+}
+
+fn NewTreeNode(left: Option<treeNode&>, right: Option<treeNode&>) -> Option<treeNode&> {
+    return Option<treeNode&>.Some(dyn treeNode(left, right));
+}
+
+fn BottomUpTree(depth: u64) -> Option<treeNode&> {
+    if depth > 0 {
+        let left_child: Option<treeNode&> = BottomUpTree(depth - 1);
+        let right_child: Option<treeNode&> = BottomUpTree(depth - 1);
+        return NewTreeNode(left_child, right_child);
+    }
+    return NewTreeNode(Option<treeNode&>.None, Option<treeNode&>.None);
+}
+
+fn ItemCheck(tree: treeNode&) -> i64 {
+    let res: i64 = 1;
+    match tree.left {
+        Some(lc) => { res = res + ItemCheck(lc); },
+        None => { },
+    }
+    match tree.right {
+        Some(rc) => { res = res + ItemCheck(rc); },
+        None => { },
+    }
+    return res;
+}
+
+fn DeleteTree(tree: Option<treeNode&>) {
+    match tree {
+        None => { return; },
+        Some(tt) => {
+            match tt.left {
+                Some(l) => { DeleteTree(Option<treeNode&>.Some(l)); },
+                None => { },
+            }
+            match tt.right {
+                Some(r) => { DeleteTree(Option<treeNode&>.Some(r)); },
+                None => { },
+            }
+            // Postorder: children are already deleted; release this node without reading tt afterward.
+            del tt;
+        }
+    }
+}
+
+fn main() {
+    let N: u64 = 20;
+    let minDepth: u64 = 4;
+    let maxDepth: u64 = N;
+    let check: i64 = 0;
+
+    if (minDepth + 2) > N {
+        maxDepth = minDepth + 2;
+    }
+
+    let stretchDepth: u64 = maxDepth + 1;
+    let stretchTree: Option<treeNode&> = BottomUpTree(stretchDepth);
+    DeleteTree(stretchTree);
+
+    let longLivedTree: Option<treeNode&> = BottomUpTree(maxDepth);
+
+    let depth: u64 = minDepth;
+    while depth <= maxDepth {
+        let iterations: i64 = 1 << (maxDepth - depth + minDepth);
+        let i: i64 = 0;
+        while i < iterations {
+            let tempTree: Option<treeNode&> = BottomUpTree(depth);
+            match tempTree {
+                Some(tt) => { check = check + ItemCheck(tt); },
+                None => { },
+            }
+            DeleteTree(tempTree);
+            i += 1;
+        };
+        depth += 2;
+    };
+
+    DeleteTree(longLivedTree);
+
+    assert check % 256 == 176: "binarytree: check % 256 mismatch";
+    print("binarytree pass\n");
+}

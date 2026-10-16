@@ -1,0 +1,6 @@
+fn main() {
+    let word = "hello";
+    let result: i32 = match word {
+        "hello" => 1,
+    };
+}

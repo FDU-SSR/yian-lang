@@ -1,0 +1,93 @@
+// Test complex return value types: tuples, arrays, structs, enums, and early return
+//
+// Expected output: 0
+
+from std.core.io import print;
+
+struct Point {
+    pub x: i32,
+    pub y: i32,
+}
+
+enum Shape {
+    Circle {
+        radius: i32,
+    },
+    Rectangle {
+        width: i32,
+        height: i32,
+    },
+}
+
+fn get_point() -> Point {
+    return Point(10, 20);
+}
+
+fn get_shape() -> Shape {
+    return Shape.Rectangle(30, 40);
+}
+
+fn get_tuple() -> (i32, i32) {
+    return (1, 2);
+}
+
+fn get_array() -> i32[3] {
+    return [3, 4, 5];
+}
+
+fn early_return(x: i32) -> i32 {
+    if x > 10 {
+        return 100;
+    }
+    return 0;
+}
+
+fn case_aggregate_and_early_returns() {
+    let p: Point = get_point();
+    let s: Shape = get_shape();
+    let t: (i32, i32) = get_tuple();
+    let arr: i32[3] = get_array();
+
+    assert p.x == 10: "Point x mismatch";
+    assert p.y == 20: "Point y mismatch";
+    match s {
+        Rectangle(width, height) => {
+            assert width == 30: "Rectangle width mismatch";
+            assert height == 40: "Rectangle height mismatch";
+        },
+        _ => {
+            assert false: "Shape type mismatch";
+        },
+    }
+    assert t[0] == 1: "Tuple first element mismatch";
+    assert t[1] == 2: "Tuple second element mismatch";
+    assert arr[0] == 3: "Array first element mismatch";
+    assert arr[1] == 4: "Array second element mismatch";
+    assert arr[2] == 5: "Array third element mismatch";
+
+    // Test early return from nested control flow
+    assert early_return(5) == 0: "early return 0 failed";
+    assert early_return(20) == 100: "early return 100 failed";
+
+}
+
+fn do_work(flag: bool) {
+    if flag {
+        print("done");
+        return;
+    }
+    @panic("should not reach here");
+}
+
+fn call_void() {
+    do_work(true);
+}
+
+fn case_void_return() {
+    call_void();
+}
+
+fn main() {
+    case_aggregate_and_early_returns();
+    case_void_return();
+}

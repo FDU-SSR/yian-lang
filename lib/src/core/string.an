@@ -1,0 +1,310 @@
+from std.core.hash import Hash, Murmur3Hasher;
+from std.core.vec import Vec;
+from std.core.clone import Clone;
+from std.core.ops import PartialEq, Add, AddAssign, Deref, Index;
+from std.core.convert import From;
+from std.core.option import Option;
+from std.core.range import Range;
+from std.core.fmt import ToString;
+from std.core.drop import Drop;
+
+// A growable UTF-8 string stored as a Vec<u8>.
+// Supports mutation, concatenation, and deref to str.
+pub struct String {
+    data: Vec<u8>,
+}
+
+// =============================================================================
+// Construction
+// =============================================================================
+
+impl String {
+    // Create a new empty String.
+    static pub fn new() -> Self {
+        Self(data=Vec<u8>.new())
+    }
+
+    // Create a new String with pre-allocated byte capacity.
+    static pub fn with_capacity(capacity: u64) -> Self {
+        Self(data=Vec<u8>.with_capacity(capacity))
+    }
+}
+
+// =============================================================================
+// Query — read-only access to length, capacity, content
+// =============================================================================
+
+impl String {
+    // Return the string contents as a str slice.
+    // Every String mutation writes valid UTF-8, so its bytes already satisfy the `str` invariant.
+    // Return a zero-cost view without revalidation (Rust's `String::as_str` likewise uses
+    // `from_utf8_unchecked`)。
+    pub fn as_str() -> str {
+        str.from_slice_unchecked(self.data.as_slice())
+    }
+
+    // Return the underlying byte slice.
+    pub fn as_slice() -> u8[] {
+        self.data.as_slice()
+    }
+
+    // Return the allocated byte capacity.
+    pub fn capacity() -> u64 {
+        self.data.capacity()
+    }
+
+    // Return the byte length.
+    pub fn len() -> u64 {
+        self.data.len()
+    }
+
+    // Return true if the string is empty.
+    pub fn is_empty() -> bool {
+        self.len() == 0
+    }
+}
+
+// =============================================================================
+// Mutation — push, pop, clear, capacity management
+// =============================================================================
+
+impl String {
+    // Append a str slice (copied).
+    pub fn push_str(s: str) {
+        self.data.extend_from_slice(s.as_slice());
+    }
+
+    // Append a single char, encoding it as UTF-8.
+    pub fn push(c: char) {
+        let code: u32 = u32(c);
+        let n: u64 = 4;
+        if code <= 0x7F {
+            n = 1;
+        } elif code <= 0x7FF {
+            n = 2;
+        } elif code <= 0xFFFF {
+            n = 3;
+        }
+
+        // Reserve once, write bytes directly, and advance the length once for a 2-4-byte character, avoiding per-byte
+        // `Vec::push` capacity checks, pointer retrieval, and length updates.
+        // (Rust `String::push` = `reserve` + `encode_utf8_raw_unchecked` + `set_len`)
+        let p: u8* = self.data.spare(n);
+        if n == 1 {
+            p[0] = u8(code);
+        } elif n == 2 {
+            p[0] = u8(0xC0 | (code >> 6));
+            p[1] = u8(0x80 | (code & 0x3F));
+        } elif n == 3 {
+            p[0] = u8(0xE0 | (code >> 12));
+            p[1] = u8(0x80 | ((code >> 6) & 0x3F));
+            p[2] = u8(0x80 | (code & 0x3F));
+        } else {
+            p[0] = u8(0xF0 | (code >> 18));
+            p[1] = u8(0x80 | ((code >> 12) & 0x3F));
+            p[2] = u8(0x80 | ((code >> 6) & 0x3F));
+            p[3] = u8(0x80 | (code & 0x3F));
+        }
+        self.data.advance_len(n);
+    }
+
+    // Pop the last char from the string, returning None if empty.
+    pub fn pop() -> Option<char> {
+        if self.is_empty() {
+            return Option<char>.None;
+        }
+
+        let len = self.len();
+        let bytes = self.as_slice();
+
+        // Walk backward through continuation bytes (10xxxxxx) to find the
+        // start of the last UTF-8 character.
+        let i: u64 = 1;
+        while i <= 4 && i <= len {
+            let byte = bytes[len - i];
+            if (byte & 0xC0) != 0x80 {
+                let code: u32 = 0;
+
+                if i == 1 {
+                    code = u32(byte);
+                } elif i == 2 {
+                    code = u32(((bytes[len - 2] & 0x1F) << 6) | (byte & 0x3F));
+                } elif i == 3 {
+                    code = u32(((bytes[len - 3] & 0x0F) << 12) | ((bytes[len - 2] & 0x3F) << 6) | (byte & 0x3F));
+                } elif i == 4 {
+                    code = u32(((bytes[len - 4] & 0x07) << 18) | ((bytes[len - 3] & 0x3F) << 12) | ((bytes[len - 2] & 0x3F) << 6) | (byte & 0x3F));
+                }
+
+                self.data.truncate(len - i);
+                return Option<char>.Some(char(code));
+            }
+            i += 1
+        }
+        return Option<char>.None;
+    }
+
+    // Return a whitespace-trimmed copy of the string.
+    pub fn trimmed() -> String {
+        String.from(&self.trim())
+    }
+
+    // Clear the contents, leaving an empty string.
+    pub fn clear() {
+        self.data.clear();
+    }
+
+    // Reserve at least `additional` bytes of capacity.
+    pub fn reserve(additional: u64) {
+        self.data.reserve(additional);
+    }
+
+    // Shrink capacity to fit the current length.
+    pub fn shrink_to_fit() {
+        self.data.shrink_to_fit();
+    }
+}
+
+// =============================================================================
+// Clone
+// =============================================================================
+
+impl Clone for String {
+    pub fn clone() -> Self {
+        // One allocation and one @memcpy copy only the owned byte buffer.
+        let bytes = self.as_slice();
+        let out = Self.with_capacity(bytes.len());
+        out.data.extend_from_slice(bytes);
+        out
+    }
+}
+
+// =============================================================================
+// PartialEq — compare String with String / str
+// =============================================================================
+
+impl PartialEq<String> for String {
+    pub fn eq(other: String&) -> bool {
+        self.as_str() == other.as_str()
+    }
+}
+
+impl PartialEq<str> for String {
+    pub fn eq(other: str&) -> bool {
+        self.as_str() == *other
+    }
+}
+
+// =============================================================================
+// Add — concatenate into a newly allocated, independent String.
+// =============================================================================
+
+impl Add<String, String> for String {
+    pub fn add(other: String) -> String {
+        let result = String.with_capacity(self.len() + other.len());
+        result.push_str(self.as_str());
+        result.push_str(other.as_str());
+        result
+    }
+}
+
+impl Add<str, String> for String {
+    pub fn add(other: str) -> String {
+        let result = String.with_capacity(self.len() + other.as_slice().len());
+        result.push_str(self.as_str());
+        result.push_str(other);
+        result
+    }
+}
+
+impl Add<char, String> for String {
+    pub fn add(other: char) -> String {
+        let result = String.with_capacity(self.len() + 4);
+        result.push_str(self.as_str());
+        result.push(other);
+        result
+    }
+}
+
+// =============================================================================
+// AddAssign — append String / str / char in-place
+// =============================================================================
+
+impl AddAssign<String, String> for String {
+    fn add_assign(other: String) -> String {
+        self.push_str(other.as_str());
+        *self
+    }
+}
+
+impl AddAssign<str, String> for String {
+    fn add_assign(other: str) -> String {
+        self.push_str(other);
+        *self
+    }
+}
+
+impl AddAssign<char, String> for String {
+    fn add_assign(other: char) -> String {
+        self.push(other);
+        *self
+    }
+}
+
+// =============================================================================
+// Deref — String → str
+// =============================================================================
+
+impl Deref<str> for String {
+    pub fn deref() -> str {
+        self.as_str()
+    }
+}
+
+// =============================================================================
+// From / Into — create String from str
+// =============================================================================
+
+impl From<str> for String {
+    static pub fn from(value: str&) -> Self {
+        // Use one allocation and one @memcpy rather than the per-element clone+push of `Vec::from(slice)`;
+        // the semantics still copy only the buffer itself.
+        let bytes = value.as_slice();
+        let out = Self.with_capacity(bytes.len());
+        out.data.extend_from_slice(bytes);
+        out
+    }
+}
+
+// =============================================================================
+// Index — substring via Range<u64>
+// =============================================================================
+
+impl Index<Range<u64>, str> for String {
+    pub fn index(range: Range<u64>&) -> str {
+        self.as_str()[*range]
+    }
+}
+
+// =============================================================================
+// ToString
+// =============================================================================
+
+impl ToString for String {
+    pub fn to_string() -> String {
+        (*self).clone()
+    }
+}
+
+// =============================================================================
+// Drop — free backing buffer
+// =============================================================================
+
+impl Drop for String {
+    pub fn drop() {
+        self.data.drop();
+    }
+}
+
+impl Hash<Murmur3Hasher> for String {
+    fn hash(hasher: Murmur3Hasher&) { self.as_str().hash(hasher); }
+}

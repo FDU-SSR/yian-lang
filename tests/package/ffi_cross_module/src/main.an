@@ -1,0 +1,8 @@
+from llvm.object import Module;
+
+fn main() {
+    let first = Module.new("first", 0u8);
+    let second = Module.new("second", 0u8);
+    let foreign_type = second.int_type(32u32);
+    first.abi_size(foreign_type);
+}

@@ -1,0 +1,151 @@
+// Test single- and multi-value patterns across Int, Char, and Enum.
+// Int/Char patterns use comma separators; Enum patterns use | separator.
+//
+// Expected output:
+// b matched
+// vowel
+// digit
+// small
+// option_a
+
+from std.core.io import print;
+
+enum Color {
+    Red,
+    Blue,
+    Green,
+    Yellow,
+}
+
+enum EnumSceneColor {
+    BLUE, RED, YELLOW, GREEN, BLACK,
+    LOOK {
+        who: i32,
+        direction: i32,
+    },
+    MOVE {
+        who: i32,
+        direction: i32,
+    },
+}
+
+fn match_enum_scene(c: EnumSceneColor) -> i32 {
+    match c {
+        YELLOW => { return 3; },
+        GREEN => { return 4; },
+        BLACK => { return 5; },
+        LOOK(who, direction) => { return who + direction; },
+        MOVE(who, direction) => { return who + direction; },
+        _ => { return 0; },
+    }
+}
+
+fn match_scene_multi(c: EnumSceneColor) -> str {
+    match c {
+        BLUE | RED => { return "BLUE\n"; },
+        GREEN | BLACK => { return "GREEN\n"; },
+        _ => { return "OTHER\n"; },
+    }
+}
+
+fn test_int(x: i32) -> str {
+    match x {
+        1, 2, 3 => { return "small\n"; },
+        10, 20, 30 => { return "medium\n"; },
+        _ => { return "other\n"; },
+    }
+}
+
+fn test_char(c: char) -> str {
+    match c {
+        'a', 'e', 'i', 'o', 'u' => { return "vowel\n"; },
+        'A', 'E', 'I', 'O', 'U' => { return "VOWEL\n"; },
+        '0', '1', '2', '3', '4', '5', '6', '7', '8', '9' => { return "digit\n"; },
+        _ => { return "consonant\n"; },
+    }
+}
+
+fn test_enum(c: Color) -> str {
+    match c {
+        Red | Blue => { return "option_a\n"; },
+        Green | Yellow => { return "option_b\n"; },
+    }
+}
+
+fn case_multi_value_patterns() {
+    let b: char = 'b';
+    match b {
+        'a' => { @panic("Matched a"); },
+        'b' => { print("b matched\n"); },
+        'c', 'd' => { @panic("Matched c || d"); },
+        _ => { @panic("Matched default case"); },
+    }
+
+    assert test_int(2) == "small\n": "multi int pattern failed";
+    assert test_int(20) == "medium\n": "multi int pattern failed";
+    assert test_int(99) == "other\n": "multi int default failed";
+
+    assert test_char('a') == "vowel\n": "multi char pattern failed";
+    assert test_char('E') == "VOWEL\n": "uppercase vowel classification failed";
+    assert test_char('z') == "consonant\n": "consonant failed";
+    assert test_char('5') == "digit\n": "digit failed";
+
+    assert test_enum(Color.Red) == "option_a\n": "multi enum pattern failed";
+    assert test_enum(Color.Green) == "option_b\n": "multi enum pattern failed";
+
+    print(test_char('a'));
+    print(test_char('7'));
+    print(test_int(2));
+    print(test_enum(Color.Red));
+}
+
+fn case_enum_value_patterns() {
+    let c3: EnumSceneColor = EnumSceneColor.LOOK(who=1, direction=2);
+    let c4: EnumSceneColor = EnumSceneColor.MOVE(who=1, direction=2);
+
+    assert match_scene_multi(EnumSceneColor.BLUE) == "BLUE\n": "multi-variant BLUE failed";
+    assert match_scene_multi(EnumSceneColor.RED) == "BLUE\n": "multi-variant RED failed";
+    assert match_scene_multi(EnumSceneColor.GREEN) == "GREEN\n": "multi-variant GREEN failed";
+    assert match_scene_multi(EnumSceneColor.BLACK) == "GREEN\n": "multi-variant BLACK failed";
+    assert match_scene_multi(EnumSceneColor.YELLOW) == "OTHER\n": "multi-variant fallback failed";
+
+    assert match_enum_scene(EnumSceneColor.BLUE) == 0: "Match enum failed on BLUE";
+    assert match_enum_scene(c3) == 3: "Match enum failed on LOOK";
+    assert match_enum_scene(c4) == 3: "Match enum failed on MOVE";
+
+    print(match_scene_multi(EnumSceneColor.BLUE));
+    print(match_scene_multi(EnumSceneColor.GREEN));
+    print(match_scene_multi(EnumSceneColor.BLACK));
+    print("payload\n");
+}
+
+fn case_integer_patterns() {
+    let a: i32 = 42;
+    match a {
+        1 => { @panic("Matched 1"); },
+        42 => { return; },
+        -1, 0 => { @panic("Matched -1 || 0"); },
+        _ => { @panic("Matched default case"); },
+    }
+}
+
+fn test_string_match(s: str) -> str {
+    match s {
+        "hello" => { return "matched hello\n"; },
+        "world", "yian" => { return "matched multi\n"; },
+        _ => { return "matched default\n"; },
+    }
+}
+
+fn case_string_patterns() {
+    print(test_string_match("hello"));
+    print(test_string_match("world"));
+    print(test_string_match("unknown"));
+}
+
+fn main() {
+    case_enum_value_patterns();
+    case_multi_value_patterns();
+    case_integer_patterns();
+    case_string_patterns();
+}

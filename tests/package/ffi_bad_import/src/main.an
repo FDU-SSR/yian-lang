@@ -1,0 +1,3 @@
+from ffi.bytes import copy_c_bytes;
+
+fn main() {}

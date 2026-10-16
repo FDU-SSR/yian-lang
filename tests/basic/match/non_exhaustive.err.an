@@ -1,0 +1,11 @@
+enum Color {
+    Red,
+    Blue,
+}
+
+fn main() {
+    let color = Color.Red;
+    let value: i32 = match color {
+        Red => 1,
+    };
+}

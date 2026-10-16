@@ -1,0 +1,203 @@
+from std.core.drop import Drop;
+from std.core.fs import canonicalize, metadata;
+from std.core.io import File, IoError, IoErrorKind, OpenMode, Read;
+from std.core.option import Option;
+from std.core.path import Path, PathBuf;
+from std.core.process import Command, env_var;
+from std.core.result import Result;
+from std.core.string import String;
+
+fn invalid_compiler(path: str, reason: str) -> String {
+    let message = String.from(&"native YIAN compiler '");
+    message.push_str(path);
+    message.push_str("' ");
+    message.push_str(reason);
+    message
+}
+
+fn validate_compiler(path: PathBuf) -> Result<String, String> {
+    defer path.drop();
+    let canonical = String.from(&path.as_str());
+    defer canonical.drop();
+
+    let info = match metadata(canonical.as_str()) {
+        Ok(value) => value,
+        Err(problem) => {
+            let message = invalid_compiler(canonical.as_str(), "cannot be inspected");
+            let detail = String.from(&": ");
+            let combined = String.from(&message.as_str());
+            combined.push_str(detail.as_str());
+            combined.push_str(problem.msg());
+            message.drop();
+            detail.drop();
+            problem.drop();
+            return Result<String, String>.Err(msg=combined);
+        },
+    };
+    if !info.is_file() {
+        return Result<String, String>.Err(msg=invalid_compiler(canonical.as_str(), "is not a regular file"));
+    }
+
+    let permission = Command.new("/usr/bin/test");
+    defer permission.drop();
+    permission.arg("-x");
+    permission.arg(canonical.as_str());
+    let executable = match permission.status() {
+        Ok(status) => status.success(),
+        Err(problem) => {
+            let message = invalid_compiler(canonical.as_str(), "could not be checked for execute permission");
+            let combined = String.from(&message.as_str());
+            combined.push_str(": ");
+            combined.push_str(problem.msg());
+            message.drop();
+            problem.drop();
+            return Result<String, String>.Err(msg=combined);
+        },
+    };
+    if !executable {
+        return Result<String, String>.Err(msg=invalid_compiler(canonical.as_str(), "is not executable"));
+    }
+
+    let file = match File.open(canonical.as_str(), OpenMode.Read) {
+        Ok(value) => value,
+        Err(problem) => {
+            let message = invalid_compiler(canonical.as_str(), "cannot be read");
+            let combined = String.from(&message.as_str());
+            combined.push_str(": ");
+            combined.push_str(problem.msg());
+            message.drop();
+            problem.drop();
+            return Result<String, String>.Err(msg=combined);
+        },
+    };
+    defer file.drop();
+    let header: u8[4] = [0u8, 0u8, 0u8, 0u8];
+    match file.read_exact(header.as_slice()) {
+        Ok(_) => {},
+        Err(problem) => {
+            let message = invalid_compiler(canonical.as_str(), "does not contain a complete ELF header");
+            let combined = String.from(&message.as_str());
+            combined.push_str(": ");
+            combined.push_str(problem.msg());
+            message.drop();
+            problem.drop();
+            return Result<String, String>.Err(msg=combined);
+        },
+    }
+    if header[0u64] != 127u8 || header[1u64] != 69u8 || header[2u64] != 76u8 || header[3u64] != 70u8 {
+        return Result<String, String>.Err(msg=invalid_compiler(canonical.as_str(), "is not an ELF executable"));
+    }
+    Result<String, String>.Ok(val=String.from(&canonical.as_str()))
+}
+
+fn inspect_candidate(candidate: str) -> Result<Option<String>, String> {
+    match canonicalize(candidate) {
+        Ok(path) => {
+            match validate_compiler(path) {
+                Ok(program) => Result<Option<String>, String>.Ok(val=Option<String>.Some(program)),
+                Err(message) => Result<Option<String>, String>.Err(msg=message),
+            }
+        },
+        Err(problem) => {
+            if problem.kind() == IoErrorKind.NotFound {
+                problem.drop();
+                return Result<Option<String>, String>.Ok(val=Option<String>.None);
+            }
+            let message = invalid_compiler(candidate, "could not be resolved");
+            let combined = String.from(&message.as_str());
+            combined.push_str(": ");
+            combined.push_str(problem.msg());
+            message.drop();
+            problem.drop();
+            Result<Option<String>, String>.Err(msg=combined)
+        },
+    }
+}
+
+fn has_path_separator(value: str) -> bool {
+    let bytes = value.as_slice();
+    let index = 0u64;
+    while index < bytes.len() {
+        if bytes[index] == b'/' { return true; }
+        index += 1u64;
+    }
+    false
+}
+
+fn resolve_name(requested: str) -> Result<String, String> {
+    if requested.as_slice().len() == 0u64 {
+        return Result<String, String>.Err(msg=String.from(&"native YIAN compiler name is empty"));
+    }
+    if has_path_separator(requested) {
+        match inspect_candidate(requested)? {
+            Some(program) => return Result<String, String>.Ok(val=program),
+            None => return Result<String, String>.Err(msg=invalid_compiler(requested, "was not found or has a dangling link")),
+        }
+    }
+
+    let path_value = match env_var("PATH") {
+        Ok(value) => value,
+        Err(problem) => {
+            let message = String.from(&"could not read PATH: ");
+            let combined = String.from(&message.as_str());
+            combined.push_str(problem.msg());
+            message.drop();
+            problem.drop();
+            return Result<String, String>.Err(msg=combined);
+        },
+    };
+    let search_path = match path_value {
+        Some(value) => value,
+        None => return Result<String, String>.Err(msg=String.from(&"PATH is unset; cannot locate yianc")),
+    };
+    defer search_path.drop();
+
+    let bytes = search_path.as_slice();
+    let start = 0u64;
+    let index = 0u64;
+    while index <= bytes.len() {
+        if index == bytes.len() || bytes[index] == b':' {
+            let directory = str.from_slice_unchecked(bytes[start..index]);
+            let candidate = Path.new(directory).join(requested);
+            match inspect_candidate(candidate.as_str()) {
+                Ok(Some(program)) => {
+                    candidate.drop();
+                    return Result<String, String>.Ok(val=program);
+                },
+                Ok(None) => {},
+                Err(message) => {
+                    candidate.drop();
+                    return Result<String, String>.Err(msg=message);
+                },
+            }
+            candidate.drop();
+            start = index + 1u64;
+        }
+        index += 1u64;
+    }
+    let message = String.from(&"native YIAN compiler was not found on PATH: ");
+    message.push_str(requested);
+    Result<String, String>.Err(msg=message)
+}
+
+pub fn compiler_program() -> Result<String, String> {
+    let configured = match env_var("YIANC") {
+        Ok(value) => value,
+        Err(problem) => {
+            let message = String.from(&"could not read YIANC: ");
+            let combined = String.from(&message.as_str());
+            combined.push_str(problem.msg());
+            message.drop();
+            problem.drop();
+            return Result<String, String>.Err(msg=combined);
+        },
+    };
+    let requested = match configured {
+        Some(value) => {
+            if !value.is_empty() { value } else { value.drop(); String.from(&"yianc") }
+        },
+        None => String.from(&"yianc"),
+    };
+    defer requested.drop();
+    resolve_name(requested.as_str())
+}

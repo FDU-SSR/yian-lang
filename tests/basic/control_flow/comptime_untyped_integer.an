@@ -1,0 +1,76 @@
+// Untyped intermediate values retain their mathematical precision until conversion.
+fn case_untyped_integer_precision() {
+    let equal = comptime if 1 == 1 && 1 != 2 { 1 } else { 0 };
+    assert equal == 1;
+
+    let wide_equal = comptime if (1 << 80) == (1 << 80) &&
+    (1 << 80) != (1 << 81) && (-1 << 80) == -(1 << 80) { 1 } else { 0 };
+    assert wide_equal == 1;
+
+    let distinct = comptime if 1 == 2 || (1 << 80) != (1 << 80) { 0 } else { 1 };
+    assert distinct == 1;
+
+    let selected = comptime if (2147483647 + 1) > 0 { 1 } else { 0 };
+    assert selected == 1;
+
+    let shifted = comptime if (1 << 64) > 0 { 1 } else { 0 };
+    assert shifted == 1;
+
+    let recovered = comptime if ((18446744073709551615 + 1) - 18446744073709551615) > 0 &&
+    ((18446744073709551615 + 1) - 18446744073709551615) < 2 { 1 } else { 0 };
+    assert recovered == 1;
+
+    let negative = comptime if ((-1 << 80) >> 80) < 0 && ((-1 << 80) >> 80) > -2 { 1 } else { 0 };
+    assert negative == 1;
+
+    let bitwise = comptime if ((~(1 << 80)) & (1 << 80)) >= 0 && ((~(1 << 80)) & (1 << 80)) < 1 { 1 } else { 0 };
+    assert bitwise == 1;
+
+    let divided = comptime if ((1 << 80) / 3) * 3 + ((1 << 80) % 3) - (1 << 80) >= 0 &&
+    ((1 << 80) / 3) * 3 + ((1 << 80) % 3) - (1 << 80) < 1 { 1 } else { 0 };
+    assert divided == 1;
+
+    let wrapped = comptime if (2147483647i32 + 1i32) < 0i32 { 1 } else { 0 };
+    assert wrapped == 1;
+
+    let casted = comptime if u8(1 << 80) == 0u8 { 1 } else { 0 };
+    assert casted == 1;
+}
+
+fn case_integer_conversion_boundaries() {
+    let narrowed: u8 = 256;
+    assert narrowed == 0u8;
+
+    let fixed = comptime if ((1 << 64) >> 64) == 0u64 { 1 } else { 0 };
+    assert fixed == 1;
+    let explicit = comptime if u64((1 << 64) >> 64) == 1u64 { 1 } else { 0 };
+    assert explicit == 1;
+
+    let huge_shift = comptime if (1 << 4294967296) == 0u64 { 1 } else { 0 };
+    assert huge_shift == 1;
+}
+
+fn case_float_conversion_boundaries() {
+    let finite = comptime if u8(258.75f64) == 2u8 { 1 } else { 0 };
+    assert finite == 1;
+    let negative = comptime if u64(-1.75f64) == 18446744073709551615u64 { 1 } else { 0 };
+    assert negative == 1;
+    let wide = comptime if u64(18446744073709551616.0f64) == 0u64 { 1 } else { 0 };
+    assert wide == 1;
+    let huge = comptime if u8(1.0e300f64) == 0u8 { 1 } else { 0 };
+    assert huge == 1;
+
+    // Half precision rounds discarded bits upward and resolves halfway values to even.
+    let half_up = comptime if f32(1.0006f16) == 1.0009765625f32 { 1 } else { 0 };
+    assert half_up == 1;
+    let half_even = comptime if f32(1.00048828125f16) == 1.0f32 { 1 } else { 0 };
+    assert half_even == 1;
+    let half_odd = comptime if f32(1.00146484375f16) == 1.001953125f32 { 1 } else { 0 };
+    assert half_odd == 1;
+}
+
+fn main() {
+    case_untyped_integer_precision();
+    case_integer_conversion_boundaries();
+    case_float_conversion_boundaries();
+}

@@ -1,0 +1,36 @@
+struct Try {}
+struct FromResidual {}
+
+impl<T, E> Result<T, E> {
+    static fn branch(value: Self) -> i32 {
+        999
+    }
+
+    static fn from_residual(value: i32) -> Self {
+        @panic("ordinary method cannot handle propagation")
+    }
+}
+
+fn wrap(value: i32) -> Result<i32, i32> {
+    Result<i32, i32>.Ok(value)
+}
+
+fn run() -> Result<i32, i32> {
+    let source = Result<i32, i32>.Err(3);
+    let Result: i32 = 10;
+    let Try: i32 = 20;
+    let FromResidual: i32 = 30;
+    let Continue: i32 = 40;
+    let Break: i32 = 50;
+    let failure = Option<i32>.None;
+    assert Result + Try + FromResidual + Continue + Break == 150;
+    comptime if false {
+        failure?
+    } else {
+        wrap(source?)
+    }
+}
+
+fn main() {
+    assert *run().unwrap_err() == 3;
+}

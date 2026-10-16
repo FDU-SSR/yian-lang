@@ -1,0 +1,7 @@
+fn run() -> Result<i32, i32> {
+    Result<i32, i32>.Ok(Option<i32>.None?)
+}
+
+fn main() {
+    run();
+}

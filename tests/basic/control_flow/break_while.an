@@ -1,0 +1,61 @@
+// Test break statement in a while loop
+//
+// Expected output: 0
+
+fn case_while_break() {
+    let sum: i32 = 0;
+    let n: i32 = 10;
+    let i: i32 = 1;
+    while true {
+        if i < n {
+            sum += i
+        } else {
+            break;
+        }
+        i += 1
+    }
+    assert sum == 45: "Break in while loop failed";
+}
+
+fn case_while_continue() {
+    let i: i32 = 0;
+    while true {
+        if i != 5 {
+            i += 1
+            continue;
+        } else {
+            break;
+        }
+    }
+    assert i == 5: "Continue while loop failed";
+}
+
+fn case_loop_continue_break() {
+    let i: i32 = 0;
+    loop {
+        if i != 5 {
+            i += 1
+            continue;
+        } else {
+            break;
+        }
+    }
+    assert i == 5: "Continue loop failed";
+}
+
+fn case_while_sum() {
+    let sum: i32 = 0;
+    let i: i32 = 1;
+    while i <= 10 {
+        sum = sum + i;
+        i = i + 1;
+    }
+    assert sum == 55: "while loop sum failed";
+}
+
+fn main() {
+    case_while_break();
+    case_while_continue();
+    case_loop_continue_break();
+    case_while_sum();
+}

@@ -1,0 +1,8 @@
+// Process arguments include argv[0] and preserve their order.
+from std.core.env import args;
+
+fn main() {
+    let argv = args();
+    assert argv.len() == 4: "expected program name + 3 CLI args";
+    assert argv[0].len() > 0: "argv[0] must contain the program name";
+}

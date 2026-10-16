@@ -1,0 +1,5 @@
+opaque type CThing;
+
+ffi fn invalid(value: CThing) {}
+
+fn main() {}

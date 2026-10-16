@@ -1,0 +1,33 @@
+from std.core.hash import Murmur3Hasher, Hash;
+
+impl u8 {
+    pub fn is_ascii_whitespace() -> bool {
+        *self == 0x20 || (*self >= 0x09 && *self <= 0x0D)
+    }
+
+    pub fn is_ascii_alpha() -> bool {
+        (*self >= 0x41 && *self <= 0x5A) || (*self >= 0x61 && *self <= 0x7A)
+    }
+
+    pub fn is_ascii_digit() -> bool {
+        *self >= 0x30 && *self <= 0x39
+    }
+
+    pub fn is_ascii_alphanumeric() -> bool {
+        self.is_ascii_alpha() || self.is_ascii_digit()
+    }
+
+    pub fn is_ascii_hex_digit() -> bool {
+        self.is_ascii_digit() || (*self >= 0x41 && *self <= 0x46) || (*self >= 0x61 && *self <= 0x66)
+    }
+}
+
+impl Hash<Murmur3Hasher> for u8 {
+    fn hash(hasher: Murmur3Hasher&) {
+        let val: u8 = *self;
+        let ptr: u8* = &val;
+        let buf: u8[1] = [0];
+        @memcpy(&buf, ptr, 1);
+        hasher.write(buf.as_slice());
+    }
+}

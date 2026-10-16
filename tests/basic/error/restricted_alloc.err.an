@@ -1,0 +1,6 @@
+// `@alloc` is a trusted primitive: only standard-library sources may spell it.
+
+fn main() {
+    let p: u8* = @alloc<u8>(4);
+    del p;
+}

@@ -1,0 +1,11 @@
+// Library module in a circular import cycle: a -> b -> a
+
+from cyctest.b import unwrap_value;
+
+pub struct Value<T> {
+    pub value: T,
+}
+
+pub fn lib_unwrap_value<T>(v: Value<T>) -> T {
+    return unwrap_value(v);
+}

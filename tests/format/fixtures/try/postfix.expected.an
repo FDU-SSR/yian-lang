@@ -1,0 +1,10 @@
+fn propagate(value: Result<i32, i32>) -> Result<i32, i32> {
+    let a = value??;
+    let b = (&value)?;
+    let c = value?.field;
+    let d = value?[0];
+    let e = value?(3);
+    let f = -value? + value? * 2;
+    let g = From<i32>.from<i32>(&f);
+    return Result<i32, i32>.Ok(a);
+}

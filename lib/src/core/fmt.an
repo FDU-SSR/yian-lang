@@ -1,0 +1,125 @@
+from std.core.range import Range;
+from std.core.string import String;
+from std.num.format.ryu import format_f32, format_f64;
+
+pub trait ToString {
+    fn to_string() -> String;
+}
+
+fn append_unsigned_digits(out: String&, value: u64) {
+    // Write decimal digits into a stack buffer from least to most significant, then append them with one push_str.
+    let buf: u8[20] = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+    let pos: u64 = 20;
+    let v: u64 = value;
+    if v == 0 {
+        pos = 19;
+        buf[19] = b'0';
+    } else {
+        while v > 0 {
+            pos -= 1;
+            buf[pos] = b'0' + u8(v % 10u64);
+            v /= 10u64;
+        }
+    }
+    out.push_str(str.from_slice_unchecked(buf[pos..20]));
+}
+
+fn unsigned_to_string(value: u64) -> String {
+    let out = String.new();
+    append_unsigned_digits(&out, value);
+    out
+}
+
+fn signed_to_string(value: i64) -> String {
+    if value >= 0 {
+        return unsigned_to_string(u64(value));
+    }
+
+    let out = String.new();
+    out.push('-');
+
+    let mag: u64 = u64(value);
+    mag = 0u64 - mag;
+    append_unsigned_digits(&out, mag);
+    out
+}
+
+impl ToString for u8 {
+    fn to_string() -> String {
+        unsigned_to_string(u64(*self))
+    }
+}
+
+impl ToString for u16 {
+    fn to_string() -> String {
+        unsigned_to_string(u64(*self))
+    }
+}
+
+impl ToString for u32 {
+    fn to_string() -> String {
+        unsigned_to_string(u64(*self))
+    }
+}
+
+impl ToString for u64 {
+    fn to_string() -> String {
+        unsigned_to_string(*self)
+    }
+}
+
+impl ToString for i8 {
+    fn to_string() -> String {
+        signed_to_string(i64(*self))
+    }
+}
+
+impl ToString for i16 {
+    fn to_string() -> String {
+        signed_to_string(i64(*self))
+    }
+}
+
+impl ToString for i32 {
+    fn to_string() -> String {
+        signed_to_string(i64(*self))
+    }
+}
+
+impl ToString for i64 {
+    fn to_string() -> String {
+        signed_to_string(*self)
+    }
+}
+
+impl ToString for f32 {
+    fn to_string() -> String {
+        format_f32(*self)
+    }
+}
+
+impl ToString for f64 {
+    fn to_string() -> String {
+        format_f64(*self)
+    }
+}
+
+impl ToString for bool {
+    fn to_string() -> String {
+        if *self { String.from(&"true") } else { String.from(&"false") }
+    }
+}
+
+impl ToString for char {
+    fn to_string() -> String {
+        let out = String.new();
+        out.push(*self);
+        out
+    }
+}
+
+impl ToString for void {
+    fn to_string() -> String {
+        String.from(&"void")
+    }
+}

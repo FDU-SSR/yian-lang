@@ -1,0 +1,124 @@
+from std.core.io import print;
+
+const CAPACITY: u64 = BASE + 2u64;
+const ENABLED: bool = CAPACITY == 42u64;
+const SCALE: f32 = 1.5f32 + 0.25f32;
+const ROUNDED: f32 = 0.1 + 0.2;
+const LETTER: char = 'A';
+const MESSAGE: str = "constant\n";
+const WORD_SIZE: u64 = @sizeof<u64>;
+const RAW_BUILD: bool = IS_RAW_MODE;
+const BASE: u64 = 40u64;
+
+fn value<const N: u64>() -> u64 {
+    N
+}
+
+fn flag<const ENABLED: bool>() -> bool {
+    ENABLED
+}
+
+fn case_constant_items_and_arguments() {
+    assert ENABLED: "forward constant reference";
+    assert SCALE == 1.75f32: "float constant arithmetic";
+    assert ROUNDED == 0.3f32: "float arithmetic rounds to source width";
+    assert LETTER == 'A': "char constant";
+    assert WORD_SIZE == 8u64: "sizeof in constant initializer";
+    assert RAW_BUILD == IS_RAW_MODE: "configuration in constant initializer";
+    assert @sizeof<u8[CAPACITY + 1]> == 43u64: "constant array length expression";
+    assert value<CAPACITY + 1>() == 43u64: "constant generic argument expression";
+    assert flag<ENABLED>(): "boolean constant generic argument";
+    let selected: i32 = comptime if ENABLED {
+        7
+    } else {
+        0
+    };
+    assert selected == 7: "constant reference in comptime if";
+    print(MESSAGE);
+}
+
+fn choose<const N: u64>() -> i32 {
+    comptime if N == 4u64 {
+        40
+    } else {
+        -1
+    }
+}
+
+fn case_comptime_constant_operations() {
+    let arithmetic: i32 = comptime if (2i32 + 3i32 * 4i32) == 14i32 {
+        14
+    } else {
+        0
+    };
+    let bits: i32 = comptime if (((1i32 << 4i32) | 3i32) ^ 1i32) == 18i32 {
+        18
+    } else {
+        0
+    };
+    let unary: i32 = comptime if (~0i32 == -1i32) && (8i32 >> 2i32 == 2i32) {
+        1
+    } else {
+        0
+    };
+    let casted: u8 = comptime if u8(257u64) == 1u8 {
+        1u8
+    } else {
+        0u8
+    };
+    let sized: u64 = comptime if @sizeof<i32[2]> == 8u64 {
+        8u64
+    } else {
+        0u64
+    };
+    let short_circuit: i32 = comptime if (false && ((1i32 / 0i32) == 0i32)) || true {
+        7
+    } else {
+        0
+    };
+
+    assert arithmetic == 14: "constant arithmetic";
+    assert bits == 18: "constant bit operations";
+    assert unary == 1: "constant unary and shift operations";
+    assert casted == 1u8: "constant integer cast";
+    assert sized == 8u64: "constant sizeof";
+    assert short_circuit == 7: "constant short-circuit";
+    assert choose<4>() == 40: "constant generic value";
+}
+
+fn fat_branch() -> i32 {
+    return 11;
+}
+
+fn raw_branch() -> i32 {
+    return 22;
+}
+
+fn never_branch() -> i32 {
+    return 99;
+}
+
+fn case_nested_pointer_mode_selection() {
+    let selected: i32 = comptime if IS_RAW_MODE {
+        comptime if @sizeof<i32*> == 8u64 {
+            raw_branch()
+        } else {
+            never_branch()
+        }
+    } else {
+        comptime if @sizeof<i32*> == 24u64 {
+            fat_branch()
+        } else {
+            never_branch()
+        }
+    };
+
+    let expected: i32 = comptime if IS_RAW_MODE { 22 } else { 11 };
+    assert selected == expected: "nested comptime branch selection";
+}
+
+fn main() {
+    case_constant_items_and_arguments();
+    case_comptime_constant_operations();
+    case_nested_pointer_mode_selection();
+}

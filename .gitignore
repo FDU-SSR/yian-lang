@@ -121,7 +121,6 @@ celerybeat.pid
 # Environments
 .env
 .venv
-env/
 venv/
 ENV/
 env.bak/
@@ -264,11 +263,9 @@ fabric.properties
 
 ###########
 # output
-output
 target
 out
 log
-env
 
 
 # OS generated files #
@@ -354,6 +351,25 @@ target
 #  option (not recommended) you can uncomment the following to ignore the entire idea folder.
 #.idea/
 
-CLAUDE.md
 .claude/*
+.omo/*
+/.agent/plans/
 a.out
+opencode.json
+
+# VS Code extension (ide-support/vscode)
+ide-support/vscode/node_modules/
+*.vsix
+
+# The VS Code extension ships its own launch/task config for F5.
+!ide-support/vscode/.vscode/
+
+# Benchmark results: track only full-scale and allocator records (full.*, alloc.*).
+# Other sets and temporary subsets are development artifacts. The general results/ rule above
+# ignores the directory; restore it here, then allow only these two result sets.
+!bench/results/
+bench/results/*
+!bench/results/full.md
+!bench/results/full.csv
+!bench/results/alloc.md
+!bench/results/alloc.csv

@@ -1,0 +1,9 @@
+// User code cannot import an unrestricted raw-parts constructor from std.core.slice.
+
+from std.core.slice import from_raw_parts as forge;
+
+fn main() {
+    let x: i32 = 1;
+    let p: i32* = &x;
+    let s: i32[] = forge(p, 1);
+}

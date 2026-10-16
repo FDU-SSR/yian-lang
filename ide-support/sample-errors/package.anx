@@ -1,0 +1,6 @@
+[package]
+name = "sample_errors"
+kind = "bin"
+version = "0.1.0"
+
+[dependencies]

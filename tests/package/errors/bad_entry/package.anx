@@ -1,0 +1,4 @@
+[package]
+name = "app"
+entry = "src/nope.an"
+version = "0.1.0"

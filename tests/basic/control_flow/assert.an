@@ -1,0 +1,17 @@
+// Test successful assertions
+//
+// Expected output: 0
+
+fn main() {
+    assert true: "This should ! fail";
+    assert 1 + 1 == 2: "Math is broken";
+    assert 6.9 < 7.0: "Float comparison failed";
+
+    let v: i32 = 10;
+    let p: i32* = &v;
+    let q: i32* = &v;
+    assert p == q: "Pointer comparison failed";
+    assert *p == 10: "Dereferencing pointer failed";
+    assert *p == *q: "Pointer dereference comparison failed";
+
+}

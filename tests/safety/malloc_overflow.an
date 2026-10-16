@@ -1,0 +1,7 @@
+// Allocation count times element size exceeds the u64 byte range. Before attempting allocation,
+// the runtime detects overflow and terminates with a safety error.
+
+fn main() {
+    let p: u64* = dyn[4611686018427387905] 0u64;
+    p[0] = 1; // The allocation fails before this write.
+}

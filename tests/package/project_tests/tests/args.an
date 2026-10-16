@@ -1,0 +1,6 @@
+from std.core.env import args;
+
+fn main() {
+    let argv = args();
+    assert argv.len() == 3: "program name + 2 CLI arguments";
+}

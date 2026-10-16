@@ -1,0 +1,609 @@
+from yianc.analysis.lowering.checker import ExprChecker;
+from yianc.analysis.resolution.types import resolve_type;
+from yianc.analysis.ty.substitution import substitute;
+from yianc.analysis.ty.callable import instance_substitutions;
+from yianc.analysis.ty.aggregate import payload_fields;
+from yianc.analysis.symbol.model import SymbolKind, Symbol;
+from yianc.analysis.hir.pattern import PatternNode, PatternKind, BindPattern, EnumPattern, TuplePattern, StructPattern, LiteralPattern, OrPattern, RangePattern, SequencePattern;
+from yianc.analysis.hir.node import HirKind, Match as HirMatch, MatchArm, PatternLet;
+from yianc.analysis.constant.evaluate import ConstantEvaluator;
+from yianc.analysis.constant.interval import Boundary, scalar_key;
+from yianc.common.ids import PatternId, TypeId, HirId, ScopeId, SymbolId, NameId, DefId;
+from yianc.analysis.editor_facts import EditorMemberKind;
+from yianc.common.location import SourceSpan;
+from yianc.frontend.ast.node import Pattern, PatternArguments, PatternLet as SyntaxPatternLet, Literal;
+from yianc.frontend.source import Span;
+from yianc.frontend.ast.operator import UnaryOperator, BinaryOperator;
+from yianc.diagnostics.model import AnalysisError, DiagnosticCode;
+from std.core.drop import Drop;
+from std.core.iter import Iterator, IntoIterator;
+from std.core.option import Option;
+from std.core.result import Result;
+from std.core.vec import Vec;
+from std.collections.hash_map import HashMap;
+
+impl ExprChecker {
+    fn bindings(id: PatternId, names: HashMap<NameId, SymbolId>&, replacements: Option<HashMap<SymbolId, SymbolId>&>) -> Result<(), AnalysisError> {
+        let node = self.ctx.session.hir.require_pattern(id)?;
+
+        match &node.kind {
+            BindPattern(value) => {
+                let symbol = *self.ctx.session.symbols.get(value.symbol_id).unwrap();
+                names.insert(symbol.name, value.symbol_id);
+
+                match replacements {
+                    Some(map) => match map.get(&value.symbol_id) {
+                        Some(replacement) => {
+                            value.symbol_id = *replacement;
+                        },
+                        None => {},
+                    },
+                    None => {},
+                };
+                self.bindings(value.inner, names, replacements)?;
+            },
+            RefPattern(value) => {
+                self.bindings(*value, names, replacements)?;
+            },
+            EnumPattern(value) => match &value.fields {
+                Some(fields) => {
+                    for field in *fields {
+                        self.bindings(field[1], names, replacements)?;
+                    }
+                },
+                None => {},
+            },
+            StructPattern(value) => {
+                for field in value.fields {
+                    self.bindings(field[1], names, replacements)?;
+                }
+            },
+            TuplePattern(value) => {
+                for element in value.elements {
+                    self.bindings(*element, names, replacements)?;
+                }
+            },
+            OrPattern(value) => {
+                for alternative in value.alternatives {
+                    self.bindings(*alternative, names, replacements)?;
+                }
+            },
+            SequencePattern(value) => {
+                for element in value.prefix {
+                    self.bindings(*element, names, replacements)?;
+                }
+
+                for element in value.suffix {
+                    self.bindings(*element, names, replacements)?;
+                }
+            },
+            _ => {},
+        }
+
+        Result<(), AnalysisError>.Ok(())
+    }
+
+    fn range_endpoint(span: Span, literal: Literal, type_id: TypeId) -> Result<u64, AnalysisError> {
+        let value = self.literal(span, &literal)?;
+        let converted = self.coerce(value, type_id)?;
+        let evaluator = ConstantEvaluator.new(&self.ctx.session.types, &self.ctx.session.hir, self.sizes);
+        let constant = evaluator.evaluate(converted)?;
+        defer constant.drop();
+
+        match &constant.value {
+            Integer(value) => match self.ctx.session.types.require(type_id)? {
+                Integer(bits, signed) => Result<u64, AnalysisError>.Ok(scalar_key(value.raw_bits(), *bits, *signed)),
+                CScalar(bits, signed, _) => Result<u64, AnalysisError>.Ok(scalar_key(value.raw_bits(), *bits, *signed)),
+                _ => Result<u64, AnalysisError>.Err(self.error(span, "range requires an integer or character type")),
+            },
+            Char(value) => Result<u64, AnalysisError>.Ok(u64(*value)),
+            _ => Result<u64, AnalysisError>.Err(self.error(span, "range endpoint must be an integer or character")),
+        }
+    }
+
+    pub fn pattern_binding(binding: SyntaxPatternLet&) -> Result<HirId, AnalysisError> {
+        let value = self.expression(binding.data.init_expr)?;
+        let annotation = self.local_type(binding.data.var_type)?;
+        let expected = if annotation == self.ctx.primitives.error {
+            self.type_of(value)
+        } else {
+            annotation
+        };
+
+        if annotation == self.ctx.primitives.error && self.pattern_tests_value(binding.data.pattern) {
+            match self.ctx.session.types.require(expected)? {
+                Pointer(inner) => {
+                    let direct_address = match &self.ctx.session.hir.require(value)?.kind {
+                        Unary(value) => value.op == UnaryOperator.AddrOf, _ => false
+                    };
+
+                    if !direct_address {
+                        return Result<HirId, AnalysisError>.Err(self.error(binding.data.pattern.span, "Pointer values cannot be destructured; use '&place'"));
+                    }
+
+                    expected = self.ctx.session.types.reference(*inner);
+                },
+                _ => {},
+            }
+        }
+
+        value = self.coerce(value, expected)?;
+        let otherwise = match &binding.data.else_branch {
+            Some(branch) => {
+                let body = self.block(*branch)?;
+
+                if self.type_of(body) != self.ctx.primitives.never {
+                    return Result<HirId, AnalysisError>.Err(self.error(branch.span, "The else block of a pattern declaration must diverge"));
+                }
+
+                Option<HirId>.Some(body)
+            },
+            None => Option<HirId>.None,
+        };
+        let previous_binding = self.parameter_binding;
+        self.parameter_binding = binding.data.is_parameter;
+        defer self.parameter_binding = previous_binding;
+        let pattern = self.pattern(binding.data.pattern, expected, false)?;
+        Result<HirId, AnalysisError>.Ok(self.node(binding.span, self.ctx.primitives.void, false,
+            HirKind.PatternLet(PatternLet(value, pattern, otherwise, binding.data.is_parameter))))
+    }
+
+    fn pattern_node(span: Span, type_id: TypeId, kind: PatternKind) -> PatternId {
+        self.ctx.session.hir.add_pattern(PatternNode(self.ctx.span(self.unit, span), type_id, kind))
+    }
+
+    pub fn pattern_tests_value(syntax: Pattern&) -> bool {
+        match &syntax.data {
+            BindPattern(_, inner) => self.pattern_tests_value(*inner),
+            OrPattern(alternatives) => {
+                for alternative in *alternatives {
+                    if self.pattern_tests_value(*alternative) {
+                        return true;
+                    }
+                }
+
+                false
+            },
+            LiteralPattern(_) => true, RangePattern(_) => true, ConstructPattern(_, _, _, _) => true, TuplePattern(_) => true, SequencePattern(_, _, _) => true,
+            _ => false,
+        }
+    }
+
+    pub fn pattern(syntax: Pattern&, expected: TypeId, borrowed: bool) -> Result<PatternId, AnalysisError> {
+        self.pattern_inner(syntax, expected, borrowed, false)
+    }
+
+    pub fn test_pattern(syntax: Pattern&, expected: TypeId) -> Result<PatternId, AnalysisError> {
+        let borrowed = false;
+
+        match self.ctx.session.types.require(expected)? {
+            Reference(inner) => {
+                expected = *inner;
+                borrowed = true;
+            },
+            _ => {},
+        }
+
+        let root_enum = match self.ctx.session.types.require(expected)? {
+            Nominal(definition, _) => match self.ctx.session.types.complete_definition(*definition)? {
+                Enum(_) => true, _ => false
+            },
+            _ => false,
+        };
+        self.pattern_inner(syntax, expected, borrowed, root_enum)
+    }
+
+    fn pattern_inner(syntax: Pattern&, expected: TypeId, borrowed: bool, root_enum: bool) -> Result<PatternId, AnalysisError> {
+        let structural = match &syntax.data {
+            LiteralPattern(_) => true, RangePattern(_) => true, ConstructPattern(_, _, _, _) => true, TuplePattern(_) => true, SequencePattern(_, _, _) => true, _ => false
+        };
+
+        match self.ctx.session.types.require(expected)? {
+            Reference(inner) => {
+                if structural {
+                    let pattern = self.pattern(syntax, *inner, true)?;
+                    return Result<PatternId, AnalysisError>.Ok(self.pattern_node(syntax.span, expected, PatternKind.RefPattern(pattern)));
+                }
+            },
+            _ => {},
+        }
+
+        let span = syntax.span;
+        let kind = match &syntax.data {
+            WildcardPattern => PatternKind.WildcardPattern,
+            NamePattern(name) => {
+                let interned = self.ctx.session.names.intern(name.data.name.as_str());
+
+                if root_enum {
+                    match self.ctx.session.types.require(expected)? {
+                        Nominal(definition, _) => match self.ctx.session.types.complete_definition(*definition)? {
+                            Enum(body) => {
+                                for variant in body.variants {
+                                    if variant.name == interned {
+                                        match &variant.span {
+                                            Some(target) => self.ctx.session.editor_facts.record_member_reference(
+                                                EditorMemberKind.Variant, interned, self.ctx.span(self.unit, name.span),
+                                                *target, expected),
+                                            None => {},
+                                        };
+                                        return Result<PatternId, AnalysisError>.Ok(self.pattern_node(span, expected, PatternKind.EnumPattern(EnumPattern(*variant, Option<Vec<(u64, PatternId)>>.None))));
+                                    }
+                                }
+                            },
+                            _ => {},
+                        },
+                        _ => {},
+                    }
+
+                    return Result<PatternId, AnalysisError>.Err(self.error(span, "unknown enum variant in match pattern"));
+                }
+
+                let type_id = if borrowed {
+                    self.ctx.session.types.reference(expected)
+                } else {
+                    expected
+                };
+                let symbol = self.bind(name.data.name.as_str(), type_id, name.span, SymbolKind.Variable)?;
+                let inner = self.pattern_node(span, expected, PatternKind.WildcardPattern);
+                PatternKind.BindPattern(BindPattern(symbol, inner))
+            },
+            BindPattern(name, inner) => {
+                let inner = self.pattern_inner(*inner, expected, borrowed, root_enum)?;
+                let type_id = if borrowed {
+                    self.ctx.session.types.reference(expected)
+                } else {
+                    expected
+                };
+                let symbol = self.bind(name.data.name.as_str(), type_id, name.span, SymbolKind.Variable)?;
+                PatternKind.BindPattern(BindPattern(symbol, inner))
+            },
+            LiteralPattern(literal) => {
+                match literal {
+                    Float(_) => return Result<PatternId, AnalysisError>.Err(self.error(span, "floating-point literals are not pattern tests")), _ => {}
+                }
+
+                let value = self.literal(span, literal)?;
+                let converted = self.coerce(value, expected)?;
+                let evaluator = ConstantEvaluator.new(&self.ctx.session.types, &self.ctx.session.hir, self.sizes);
+                let constant = evaluator.evaluate(converted)?;
+
+                if expected == self.ctx.primitives.string {
+                    let name = self.ctx.session.names.intern("%literal_pattern");
+                    let symbol = self.ctx.session.symbols.add(Symbol(name, SymbolKind.Variable, expected, self.unit, Option<SourceSpan>.Some(self.ctx.span(self.unit, span)), false, false, false, Option<SymbolId>.None, Option<DefId>.None));
+                    let actual = self.node(span, expected, true, HirKind.Var(symbol));
+                    let condition = self.overloaded_binary(span, BinaryOperator.Eq, actual, converted)?;
+                    PatternKind.LiteralPattern(LiteralPattern(constant.value, Option<HirId>.Some(condition), Option<SymbolId>.Some(symbol)))
+                } else {
+                    PatternKind.LiteralPattern(LiteralPattern(constant.value, Option<HirId>.None, Option<SymbolId>.None))
+                }
+            },
+            TuplePattern(elements) => {
+                let types = match self.ctx.session.types.require(expected)? {
+                    Tuple(values) => values,
+                    _ => return Result<PatternId, AnalysisError>.Err(self.error(span, "tuple pattern requires a tuple")),
+                };
+
+                if elements.len() != types.len() {
+                    return Result<PatternId, AnalysisError>.Err(self.error(span, "tuple pattern length mismatch"));
+                }
+
+                let patterns = Vec<PatternId>.new();
+                let accepted = false;
+                defer {
+                    if !accepted {
+                        patterns.drop();
+                    }
+                };
+                let index = 0u64;
+
+                while index < elements.len() {
+                    patterns.push(self.pattern(elements[index], types[index], borrowed)?);
+                    index += 1;
+                }
+
+                accepted = true;
+                PatternKind.TuplePattern(TuplePattern(patterns))
+            },
+            ConstructPattern(name, qualifier, arguments, rest) => {
+                match qualifier {
+                    Some(value) => {
+                        let qualified = self.local_type(*value)?;
+
+                        if qualified != expected {
+                            return Result<PatternId, AnalysisError>.Err(self.error(span, "pattern qualifier has the wrong type"));
+                        }
+                    },
+                    None => {},
+                }
+
+                let definition = match self.ctx.session.types.require(expected)? {
+                    Nominal(value, _) => *value,
+                    _ => return Result<PatternId, AnalysisError>.Err(self.error(span, "constructor pattern requires a nominal type")),
+                };
+                let substitutions = instance_substitutions(self.ctx, expected)?;
+                defer substitutions.drop();
+                let interned = self.ctx.session.names.intern(name.data.name.as_str());
+
+                match self.ctx.session.types.complete_definition(definition)? {
+                    Enum(body) => {
+                        let selected = Option<PatternId>.None;
+
+                        for variant in body.variants {
+                            if variant.name != interned {
+                                continue;
+                            }
+
+                            match &variant.span {
+                                Some(target) => self.ctx.session.editor_facts.record_member_reference(
+                                    EditorMemberKind.Variant, interned, self.ctx.span(self.unit, name.span),
+                                    *target, expected),
+                                None => {},
+                            };
+
+                            let types = Vec<TypeId>.new();
+                            defer types.drop();
+                            let descriptors = payload_fields(self.ctx, variant.payload)?;
+                            defer descriptors.drop();
+
+                            for field in descriptors {
+                                types.push(substitute(&self.ctx.session.types, field.type_id, &substitutions)?);
+                            }
+
+                            let fields = Vec<(u64, PatternId)>.new();
+                            let accepted = false;
+                            defer {
+                                if !accepted {
+                                    fields.drop();
+                                }
+                            };
+
+                            match arguments {
+                                Positional(values) => {
+                                    if values.len() > types.len() || (!*rest && values.len() != types.len()) {
+                                        return Result<PatternId, AnalysisError>.Err(self.error(span, "enum pattern field count mismatch"));
+                                    }
+
+                                    let index = 0u64;
+
+                                    while index < values.len() {
+                                        fields.push((index, self.pattern(values[index], types[index], borrowed)?));
+                                        index += 1;
+                                    }
+                                },
+                                None => {
+                                    if types.len() != 0 && !*rest {
+                                        return Result<PatternId, AnalysisError>.Err(self.error(span, "enum pattern payload is required"));
+                                    }
+                                },
+                                Named(values) => {
+                                    for value in *values {
+                                        let requested = self.ctx.session.names.intern(value.data.name.data.name.as_str());
+                                        let found = false;
+
+                                        for field in descriptors {
+                                            if field.name == requested {
+                                                for previous in fields {
+                                                    if previous[0] == field.index {
+                                                        return Result<PatternId, AnalysisError>.Err(self.error(value.span, "duplicate enum pattern field"));
+                                                    }
+                                                }
+
+                                                match &field.span {
+                                                    Some(target) => self.ctx.session.editor_facts.record_member_reference(
+                                                        EditorMemberKind.Field, field.name,
+                                                        self.ctx.span(self.unit, value.data.name.span), *target, field.type_id),
+                                                    None => {},
+                                                };
+
+                                                fields.push((field.index, self.pattern(value.data.pattern, types[field.index], borrowed)?));
+                                                found = true;
+                                            }
+                                        }
+
+                                        if !found {
+                                            return Result<PatternId, AnalysisError>.Err(self.error(value.span, "enum pattern field does not exist"));
+                                        }
+                                    }
+
+                                    if !*rest && fields.len() != descriptors.len() {
+                                        return Result<PatternId, AnalysisError>.Err(self.error(span, "enum pattern omits fields without rest"));
+                                    }
+                                },
+                            }
+
+                            accepted = true;
+                            selected = Option<PatternId>.Some(self.pattern_node(span, expected, PatternKind.EnumPattern(EnumPattern(*variant, Option<Vec<(u64, PatternId)>>.Some(fields)))));
+                        }
+
+                        match selected {
+                            Some(value) => return Result<PatternId, AnalysisError>.Ok(value), None => return Result<PatternId, AnalysisError>.Err(self.error(span, "enum variant does not exist"))
+                        }
+                    },
+                    Struct(body) => {
+                        let header = self.ctx.session.types.definition(definition).unwrap().header().name;
+
+                        if header != interned {
+                            return Result<PatternId, AnalysisError>.Err(self.error(span, "structure pattern has the wrong name"));
+                        }
+
+                        let fields = Vec<(u64, PatternId)>.new();
+                        let accepted = false;
+                        defer {
+                            if !accepted {
+                                fields.drop();
+                            }
+                        };
+
+                        match arguments {
+                            Named(values) => {
+                                for value in *values {
+                                    let name = self.ctx.session.names.intern(value.data.name.data.name.as_str());
+                                    let found = false;
+
+                                    for field in body.fields {
+                                        if field.name == name {
+                                            for previous in fields {
+                                                if previous[0] == field.index {
+                                                    return Result<PatternId, AnalysisError>.Err(self.error(value.span, "duplicate structure pattern field"));
+                                                }
+                                            }
+
+                                            self.check_field_access(expected, *field, value.data.name.span)?;
+                                            let type_id = substitute(&self.ctx.session.types, field.type_id, &substitutions)?;
+                                            match &field.span {
+                                                Some(target) => self.ctx.session.editor_facts.record_member_reference(
+                                                    EditorMemberKind.Field, field.name,
+                                                    self.ctx.span(self.unit, value.data.name.span), *target, type_id),
+                                                None => {},
+                                            };
+                                            fields.push((field.index, self.pattern(value.data.pattern, type_id, borrowed)?));
+                                            found = true;
+                                        }
+                                    }
+
+                                    if !found {
+                                        return Result<PatternId, AnalysisError>.Err(self.error(span, "pattern field does not exist"));
+                                    }
+                                }
+                            },
+                            Positional(values) => {
+                                if values.len() != 0 {
+                                    return Result<PatternId, AnalysisError>.Err(self.error(span, "structure patterns require named fields"));
+                                }
+
+                                if values.len() != body.fields.len() {
+                                    return Result<PatternId, AnalysisError>.Err(self.error(span, "structure pattern field count mismatch"));
+                                }
+
+                                let index = 0u64;
+
+                                while index < values.len() {
+                                    let type_id = substitute(&self.ctx.session.types, body.fields[index].type_id, &substitutions)?;
+                                    fields.push((index, self.pattern(values[index], type_id, borrowed)?));
+                                    index += 1;
+                                }
+                            },
+                            None => {},
+                        }
+
+                        if !*rest && fields.len() != body.fields.len() {
+                            return Result<PatternId, AnalysisError>.Err(self.error(span, "structure pattern omits fields without rest"));
+                        }
+
+                        accepted = true;
+                        PatternKind.StructPattern(StructPattern(fields))
+                    },
+                    _ => return Result<PatternId, AnalysisError>.Err(self.error(span, "pattern type is not an aggregate")),
+                }
+            },
+            OrPattern(alternatives) => {
+                let previous = self.scope;
+                defer self.scope = previous;
+                let first = HashMap<NameId, SymbolId>.new();
+                defer first.drop();
+                let patterns = Vec<PatternId>.new();
+                let accepted = false;
+                defer {
+                    if !accepted {
+                        patterns.drop();
+                    }
+                };
+
+                for alternative in *alternatives {
+                    self.scope = self.ctx.session.symbols.create_scope(Option<ScopeId>.Some(previous))?;
+                    let pattern = self.pattern_inner(*alternative, expected, borrowed, root_enum)?;
+                    let names = HashMap<NameId, SymbolId>.new();
+                    defer names.drop();
+                    self.bindings(pattern, &names, Option<HashMap<SymbolId, SymbolId>&>.None)?;
+
+                    if patterns.len() == 0 {
+                        for entry in names.entries() {
+                            first.insert(*entry[0], *entry[1]);
+                        }
+                    } else {
+                        if names.len() != first.len() {
+                            return Result<PatternId, AnalysisError>.Err(self.error(alternative.span, "OR alternatives must bind the same names"));
+                        }
+
+                        let replacements = HashMap<SymbolId, SymbolId>.new();
+                        defer replacements.drop();
+
+                        for entry in names.entries() {
+                            let original = match first.get(entry[0]) {
+                                Some(value) => *value,
+                                None => return Result<PatternId, AnalysisError>.Err(self.error(alternative.span, "OR alternatives must bind the same names")),
+                            };
+
+                            if self.ctx.session.symbols.get(*entry[1]).unwrap().type_id != self.ctx.session.symbols.get(original).unwrap().type_id {
+                                let record = self.ctx.session.symbols.get(*entry[1]).unwrap();
+                                return Result<PatternId, AnalysisError>.Err(AnalysisError.named(DiagnosticCode.Type,
+                                    record.span, "OR binding '", self.ctx.session.names.text(record.name), "' has a different type or mode"));
+                            }
+
+                            replacements.insert(*entry[1], original);
+                        }
+
+                        self.bindings(pattern, &names, Option<HashMap<SymbolId, SymbolId>&>.Some(&replacements))?;
+                    }
+
+                    patterns.push(pattern);
+                }
+
+                self.scope = previous;
+
+                for entry in first.entries() {
+                    if !self.ctx.session.symbols.bind(previous, *entry[0], *entry[1])? {
+                        return Result<PatternId, AnalysisError>.Err(self.error(span, "pattern binding conflicts with a local name"));
+                    }
+                }
+
+                accepted = true;
+                PatternKind.OrPattern(OrPattern(patterns))
+            },
+            RangePattern(bounds) => {
+                let low = match bounds {
+                    Integer(lower, _) => self.range_endpoint(span, Literal.Integer(*lower), expected)?, Character(lower, _) => self.range_endpoint(span, Literal.Character(*lower), expected)?
+                };
+                let high = match bounds {
+                    Integer(_, upper) => self.range_endpoint(span, Literal.Integer(*upper), expected)?, Character(_, upper) => self.range_endpoint(span, Literal.Character(*upper), expected)?
+                };
+
+                if low > high {
+                    return Result<PatternId, AnalysisError>.Err(self.error(span, "Range lower bound exceeds upper bound"));
+                }
+
+                let end = Boundary.Finite(high).next();
+                PatternKind.RangePattern(RangePattern(Boundary.Finite(low), end))
+            },
+            SequencePattern(prefix, suffix, rest) => {
+                let element = match self.ctx.session.types.require(expected)? {
+                    Array(element, _) => *element,
+                    Slice(element) => *element,
+                    _ => return Result<PatternId, AnalysisError>.Err(self.error(span, "sequence pattern requires an array or slice")),
+                };
+                let before = Vec<PatternId>.new();
+                let after = Vec<PatternId>.new();
+                let accepted = false;
+                defer {
+                    if !accepted {
+                        before.drop();
+                        after.drop();
+                    }
+                };
+
+                for pattern in *prefix {
+                    before.push(self.pattern(*pattern, element, borrowed)?);
+                }
+
+                for pattern in *suffix {
+                    after.push(self.pattern(*pattern, element, borrowed)?);
+                }
+
+                accepted = true;
+                PatternKind.SequencePattern(SequencePattern(before, after, *rest))
+            },
+        };
+
+        Result<PatternId, AnalysisError>.Ok(self.pattern_node(span, expected, kind))
+    }
+}

@@ -1,0 +1,77 @@
+// Consolidated basic type and diagnostics scenarios.
+
+
+
+// Named scenario: case_library_type_constructors
+// Built-in type constructors (library typedefs): Ptr / Slice / Array / Never.
+// Available without explicit import (injected by the prelude).
+//
+
+struct WP { p: i32* }
+struct WS { p: i32[] }
+
+impl<T> Ptr<T> {
+    static fn width() -> u64 { @sizeof<Ptr<T>> }
+}
+
+fn case_library_type_constructors() {
+    let expected_ptr_size: u64 = comptime if IS_RAW_MODE {
+        8u64
+    } else {
+        24u64
+    };
+
+    // sizeof / type position
+    assert @sizeof<Ptr<i32>> == @sizeof<WP>: "Ptr<i32>";
+    assert @sizeof<Slice<i32>> == @sizeof<WS>: "Slice<i32>";
+    assert @sizeof<Array<i32, 4>> == @sizeof<i32> * 4: "Array<i32,4>";
+    assert @sizeof<Never> == 0: "Never";
+    assert @sizeof<Ptr<Ptr<i32>>> == @sizeof<WP>: "nested Ptr";
+
+    let value: i32 = 0;
+    let p: Ptr<i32> = &value;
+
+    // static method receiver
+    assert Ptr<i32>.width() == expected_ptr_size: "static call on Ptr<i32>";
+}
+
+// Named scenario: case_hardcoded_type_constructors
+// Hardcoded built-in type constructors: Tuple<...> and Fn<(args,), ret>.
+// These CANNOT be library typedefs (variadic / type-unpacking needed).
+//
+
+struct WT { p: (i32, u8) }
+struct WF { p: fn(i32) -> bool }
+
+impl<A, B> Tuple<A, B> {
+    static fn size() -> u64 { @sizeof<Tuple<A, B>> }
+}
+
+fn case_hardcoded_type_constructors() {
+    let expected_ptr_size: u64 = comptime if IS_RAW_MODE {
+        8u64
+    } else {
+        24u64
+    };
+
+    // sizeof / type position
+    assert @sizeof<Tuple<i32, u8>> == @sizeof<WT>: "Tuple<i32,u8>";
+    assert @sizeof<Fn<(i32,), bool>> == @sizeof<WF>: "Fn<(i32,),bool>";
+    assert @sizeof<Fn<(), void>> == @sizeof<fn() -> void>: "Fn<(),void>";
+
+    // nesting (Tuple inside Ptr — Ptr is library typedef)
+    assert @sizeof<Ptr<Tuple<i32, u8>>> == expected_ptr_size: "Ptr<Tuple<...>>";
+
+    // static method receiver — use @sizeof<> to avoid integer-literal return
+    assert Tuple<i32, u8>.size() == @sizeof<WT>: "static call on Tuple<...>";
+
+}
+
+
+
+fn main() {
+
+    case_library_type_constructors();
+    case_hardcoded_type_constructors();
+
+}

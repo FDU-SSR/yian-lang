@@ -1,0 +1,30 @@
+trait Number {
+    fn number() -> i32;
+}
+
+impl Number for i32 {
+    fn number() -> i32 {
+        return *self;
+    }
+}
+
+struct Wrapper<T> {
+    value: T,
+}
+
+impl<T> Number for Wrapper<T> if T: Number {
+    fn number() -> i32 {
+        return self.value.number();
+    }
+}
+
+struct NotANumber {}
+
+fn generic_object<T>(value: T*) -> Number& {
+    return value;
+}
+
+fn main() {
+    let value: Wrapper<NotANumber> = Wrapper(value=NotANumber());
+    let object: Number& = generic_object(&value);
+}

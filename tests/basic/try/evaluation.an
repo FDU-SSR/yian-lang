@@ -1,0 +1,73 @@
+from std.core.try import Try, TryBranch, ResultResidual;
+
+struct Tracked {
+    pub calls: i32&,
+    pub result: Result<i32, i32>,
+}
+
+impl Try<i32, ResultResidual<i32>> for Tracked {
+    static fn branch(value: Self) -> TryBranch<i32, ResultResidual<i32>> {
+        *value.calls += 1;
+        match value.result {
+            Ok(number) => TryBranch<i32, ResultResidual<i32>>.Continue(number),
+            Err(error) => TryBranch<i32, ResultResidual<i32>>.Break(ResultResidual<i32>(error)),
+        }
+    }
+}
+
+fn source(calls: i32&, branch_calls: i32&, ok: bool) -> Tracked {
+    *calls += 1;
+    let result = if ok { Result<i32, i32>.Ok(7) } else { Result<i32, i32>.Err(3) };
+    Tracked(branch_calls, result)
+}
+
+fn sequence(calls: i32&, branch_calls: i32&, ok: bool) -> Result<i32, i32> {
+    let first = source(calls, branch_calls, ok)?;
+    let second = source(calls, branch_calls, true)?;
+    Result<i32, i32>.Ok(first + second)
+}
+
+fn short_circuit(calls: i32&, branch_calls: i32&) -> Result<bool, i32> {
+    let value = false && source(calls, branch_calls, false)? == 7;
+    Result<bool, i32>.Ok(value)
+}
+
+fn nested(value: Result<Result<i32, i32>, i32>) -> Result<i32, i32> {
+    Result<i32, i32>.Ok(-value??)
+}
+
+struct Item {
+    pub number: i32,
+}
+
+fn increment(value: i32) -> i32 { value + 1 }
+
+fn callable<T>(value: T) -> Option<T> { Option<T>.Some(value) }
+
+fn call_output() -> Option<i32> {
+    Option<i32>.Some(callable(increment)?(3))
+}
+
+fn postfix() -> Result<i32, i32> {
+    let field = Result<Item, i32>.Ok(Item(5))?.number;
+    let indexed = Result<i32[2], i32>.Ok([2, 3])?[1];
+    let value = Result<i32, i32>.Ok(4);
+    let pointer = &value;
+    Result<i32, i32>.Ok(field + indexed + (*pointer)?)
+}
+
+fn main() {
+    let calls: i32 = 0;
+    let branch_calls: i32 = 0;
+    assert *sequence(&calls, &branch_calls, false).unwrap_err() == 3;
+    assert calls == 1 && branch_calls == 1;
+    assert *sequence(&calls, &branch_calls, true).unwrap() == 14;
+    assert calls == 3 && branch_calls == 3;
+    assert !*short_circuit(&calls, &branch_calls).unwrap();
+    assert calls == 3 && branch_calls == 3;
+    assert *nested(Result<Result<i32, i32>, i32>.Ok(Result<i32, i32>.Ok(8))).unwrap() == -8;
+    assert *nested(Result<Result<i32, i32>, i32>.Ok(Result<i32, i32>.Err(9))).unwrap_err() == 9;
+    assert *nested(Result<Result<i32, i32>, i32>.Err(10)).unwrap_err() == 10;
+    assert *postfix().unwrap() == 12;
+    assert *call_output().unwrap() == 4;
+}

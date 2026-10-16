@@ -1,0 +1,174 @@
+from std.core.string import String;
+from std.core.vec import Vec;
+from std.core.option import Option;
+from std.core.result import Result;
+from std.core.drop import Drop;
+from std.core.fmt import ToString;
+from std.core.iter import Iterator;
+from std.core.ops import Index;
+from std.num.f64 import to_bits;
+from json.value import Value;
+from json.error import WriteError;
+
+enum Frame { Array { count: u64 }, Object { count: u64, expect_key: bool } }
+
+// Writer owns its buffer. The first error is sticky; finish consumes the output.
+pub struct Writer {
+    output: String, frames: Vec<Frame>, error: Option<WriteError>,
+    root_written: bool, finished: bool, max_depth: u64,
+}
+impl Writer {
+    static pub fn new() -> Self { Self.with_max_depth(128u64) }
+    static pub fn with_max_depth(max_depth: u64) -> Self {
+        Self(output=String.new(), frames=Vec<Frame>.new(), error=Option<WriteError>.None,
+             root_written=false, finished=false, max_depth=max_depth)
+    }
+    fn fail(error: WriteError) { if self.error.is_none() { self.error = Option<WriteError>.Some(error); } }
+    fn active() -> bool {
+        if self.finished { self.fail(WriteError.InvalidState); }
+        !self.finished && self.error.is_none()
+    }
+    fn before_value() -> bool {
+        if !self.active() { return false; }
+        if self.frames.len() == 0 {
+            if self.root_written { self.fail(WriteError.InvalidState); return false; }
+            self.root_written = true;
+            return true;
+        }
+        match &self.frames[self.frames.len() - 1] {
+            Array(count) => {
+                if *count != 0 { self.output.push(','); };
+                *count += 1;
+            },
+            Object(count, expect_key) => {
+                if *expect_key { self.fail(WriteError.InvalidState); return false; };
+                *count += 1; *expect_key = true;
+            },
+        };
+        true
+    }
+    fn quoted(text: str) {
+        self.output.push('"');
+        let chars = text.chars();
+        while let Some(c) = chars.next() {
+            let code = u32(c);
+            if code > 0x10ffff || (code >= 0xd800 && code <= 0xdfff) {
+                self.fail(WriteError.InvalidUnicode); return;
+            }
+            match c {
+                '"' => self.output.push_str("\\\""), '\\' => self.output.push_str("\\\\"),
+                '\n' => self.output.push_str("\\n"), '\r' => self.output.push_str("\\r"),
+                '\t' => self.output.push_str("\\t"),
+                _ => {
+                    if code < 32 {
+                        self.output.push_str("\\u00");
+                        let digits = "0123456789abcdef".as_slice();
+                        self.output.push(char(digits[u64(code >> 4)]));
+                        self.output.push(char(digits[u64(code & 15)]));
+                    } else { self.output.push(c); }
+                },
+            }
+        }
+        self.output.push('"');
+    }
+    pub fn write_null() { if self.before_value() { self.output.push_str("null"); } }
+    pub fn write_bool(value: bool) {
+        if self.before_value() { self.output.push_str(if value { "true" } else { "false" }); }
+    }
+    pub fn write_string(value: str) { if self.before_value() { self.quoted(value); } }
+    pub fn write_u64(value: u64) {
+        if self.before_value() { let text = value.to_string(); self.output.push_str(text.as_str()); text.drop(); }
+    }
+    pub fn write_i64(value: i64) {
+        if self.before_value() { let text = value.to_string(); self.output.push_str(text.as_str()); text.drop(); }
+    }
+    pub fn write_f64(value: f64) {
+        if !self.active() { return; }
+        if ((to_bits(value) >> 52u64) & 2047u64) == 2047u64 { self.fail(WriteError.NonFiniteNumber); return; }
+        if self.before_value() {
+            let text = value.to_string();
+            defer text.drop();
+            self.output.push_str(text.as_str());
+            let fractional = false;
+            let chars = text.as_str().chars();
+            while let Some(c) = chars.next() { if c == '.' || c == 'e' { fractional = true; } }
+            if !fractional { self.output.push_str(".0"); }
+        }
+    }
+    pub fn begin_array() {
+        if !self.active() { return; }
+        if self.frames.len() >= self.max_depth { self.fail(WriteError.DepthLimit); return; }
+        if self.before_value() { self.output.push('['); self.frames.push(Frame.Array(0u64)); }
+    }
+    pub fn begin_object() {
+        if !self.active() { return; }
+        if self.frames.len() >= self.max_depth { self.fail(WriteError.DepthLimit); return; }
+        if self.before_value() { self.output.push('{'); self.frames.push(Frame.Object(0u64, true)); }
+    }
+    pub fn key(name: str) {
+        if !self.active() { return; }
+        if self.frames.len() == 0 { self.fail(WriteError.InvalidState); return; }
+        match &self.frames[self.frames.len() - 1] {
+            Object(count, expect_key) => {
+                if !*expect_key { self.fail(WriteError.InvalidState); return; }
+                if *count != 0 { self.output.push(','); };
+                *expect_key = false;
+            },
+            _ => { self.fail(WriteError.InvalidState); return; },
+        };
+        self.quoted(name); self.output.push(':');
+    }
+    pub fn end_array() {
+        if !self.active() { return; }
+        if self.frames.len() == 0 { self.fail(WriteError.InvalidState); return; }
+        match &self.frames[self.frames.len() - 1] {
+            Array(_) => { self.frames.pop(); self.output.push(']'); },
+            _ => self.fail(WriteError.InvalidState),
+        }
+    }
+    pub fn end_object() {
+        if !self.active() { return; }
+        if self.frames.len() == 0 { self.fail(WriteError.InvalidState); return; }
+        match &self.frames[self.frames.len() - 1] {
+            Object(_, expect_key) if *expect_key => { self.frames.pop(); self.output.push('}'); },
+            _ => self.fail(WriteError.InvalidState),
+        }
+    }
+    pub fn write_value(value: Value&) {
+        if !self.active() { return; }
+        match value {
+            Null => self.write_null(), Boolean(value) => self.write_bool(*value),
+            String(value) => self.write_string(value.as_str()),
+            Number(number) => match number {
+                Signed(value) => self.write_i64(*value), Unsigned(value) => self.write_u64(*value),
+                Float(value) => self.write_f64(*value),
+            },
+            Array(values) => {
+                self.begin_array();
+                let i: u64 = 0;
+                while i < values.len() && self.error.is_none() { self.write_value(&values[i]); i += 1; }
+                self.end_array();
+            },
+            Object(value) => {
+                self.begin_object();
+                let iter = value.iter();
+                while let Some((key, child)) = iter.next() { self.key(key); self.write_value(child); }
+                self.end_object();
+            },
+        }
+    }
+    pub fn finish() -> Result<String, WriteError> {
+        if self.finished { return Result<String, WriteError>.Err(WriteError.InvalidState); }
+        self.finished = true;
+        if let Some(error) = self.error { return Result<String, WriteError>.Err(error); }
+        if !self.root_written || self.frames.len() != 0 { return Result<String, WriteError>.Err(WriteError.Incomplete); }
+        let text = self.output; self.output = String.new();
+        Result<String, WriteError>.Ok(text)
+    }
+}
+impl Drop for Writer { pub fn drop() { self.output.drop(); self.frames.drop(); } }
+
+pub fn stringify(value: Value&) -> Result<String, WriteError> {
+    let writer = Writer.new(); defer writer.drop();
+    writer.write_value(value); writer.finish()
+}

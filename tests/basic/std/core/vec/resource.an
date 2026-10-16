@@ -1,0 +1,98 @@
+// Resource-bearing elements survive growth; container operations never drop
+// elements, while callers can explicitly clean elements that remain reachable.
+from std.core.drop import Drop;
+from std.core.vec import Vec;
+
+struct Guard {
+    value: i32,
+    drops: i32*,
+}
+
+impl Drop for Guard {
+    fn drop() { *self.drops += 1; }
+}
+
+fn case_vec_resource_element_ownership() {
+    let drops: i32 = 0;
+    let values = Vec<Guard>.new();
+    for i in 0i32..10 {
+        values.push(Guard(i, &drops));
+    }
+    assert values.len() == 10 && values[9].value == 9;
+    assert drops == 0: "growth must not drop copied elements";
+
+    let popped = *values.pop().unwrap();
+    assert popped.value == 9 && drops == 0;
+    popped.drop();
+    assert drops == 1;
+
+    let removed = values.remove(2);
+    assert removed.value == 2 && drops == 1;
+    removed.drop();
+    assert drops == 2: "explicitly dropping a returned element takes effect";
+
+    values.truncate(3);
+    assert drops == 2: "truncate must not drop forgotten elements";
+    for i in 0u64..3u64 {
+        values[i].drop();
+    }
+    assert drops == 5: "callers can explicitly drop reachable elements";
+    values.drop();
+    assert drops == 5: "vec drop releases storage without dropping elements";
+
+    let strings = Vec<String>.new();
+    // Leave spare capacity in the first String to show clone-side push only changes its descriptor.
+    let one = String.with_capacity(8);
+    one.push_str("one");
+    strings.push(one);
+    strings.push(String.from(&"two"));
+    strings.push(String.from(&"three"));
+    strings.push(String.from(&"four"));
+    strings.push(String.from(&"five"));
+    assert strings[0] == "one" && strings[4] == "five";
+
+    // Vec::clone copies only its element buffer; cloned descriptors are independent, so pushing
+    // changes only the clone's length, while String elements still share their byte buffers.
+    let cloned = strings.clone();
+    cloned[0].push('!');
+    assert strings[0] == "one": "clone descriptors are independent";
+    assert cloned[0] == "one!": "growth through the clone stays local to its descriptor";
+
+    // Vec.drop() only releases its backing allocation.  Clean the reachable
+    // String values explicitly; both copies share buffers, so clean only one set.
+    for i in 0..strings.len() {
+        strings[i].drop();
+    }
+    strings.drop();
+    cloned.drop();
+}
+
+// Plain assignment shallow-copies a Vec descriptor, so both copies initially
+// share one buffer. Growing either copy may resize it in place or move it; the
+// other descriptor is not used to access or release the buffer. Only the live
+// descriptor is explicitly dropped, exactly once.
+fn case_vec_shallow_descriptor_alias() {
+    let v1 = Vec<i32>.new();
+    v1.push(10);
+    v1.push(20);
+    v1.push(30);
+    v1.push(40);
+
+    let v2 = v1;
+    assert v1.len() == 4 && v2.len() == 4;
+    assert &v1.as_slice()[0] == &v2.as_slice()[0]: "copies share the element buffer";
+    assert v1[0] == 10 && v2[3] == 40;
+
+    // Growth preserves v2's elements. The allocator may resize the buffer in
+    // place, so the other descriptor's pointer value is not inspected.
+    v2.push(50);
+    assert v1.len() == 4 && v2.len() == 5: "descriptor fields are independent";
+    assert v2[4] == 50;
+
+    v2.drop();
+}
+
+fn main() {
+    case_vec_resource_element_ownership();
+    case_vec_shallow_descriptor_alias();
+}

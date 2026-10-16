@@ -1,0 +1,170 @@
+{
+    "Function": {
+        "prefix": "fn",
+        "body": [
+            "fn ${1:name}(${2}) -> ${3:void} {",
+            "\t${4:return;}",
+            "}"
+        ],
+        "description": "函数定义"
+    },
+    "Entry point": {
+        "prefix": "main",
+        "body": [
+            "fn main() {",
+            "\t${1}",
+            "}"
+        ],
+        "description": "程序入口"
+    },
+    "Struct": {
+        "prefix": "struct",
+        "body": [
+            "struct ${1:Name} {",
+            "\tpub ${2:field}: ${3:i32},",
+            "}"
+        ],
+        "description": "结构体"
+    },
+    "Generic struct": {
+        "prefix": "structg",
+        "body": [
+            "struct ${1:Name}<T> {",
+            "\tpub ${2:value}: T,",
+            "}"
+        ],
+        "description": "泛型结构体"
+    },
+    "Enum": {
+        "prefix": "enum",
+        "body": [
+            "enum ${1:Name} {",
+            "\t${2:Unit},",
+            "\t${3:Payload} { ${4:value}: ${5:i32} },",
+            "}"
+        ],
+        "description": "枚举"
+    },
+    "Trait": {
+        "prefix": "trait",
+        "body": [
+            "trait ${1:Name} {",
+            "\tfn ${2:method}() -> ${3:void};",
+            "}"
+        ],
+        "description": "trait 声明"
+    },
+    "Inherent impl": {
+        "prefix": "impl",
+        "body": [
+            "impl ${1:Type} {",
+            "\tstatic pub fn ${2:new}(${3}) -> Self {",
+            "\t\treturn Self(${4});",
+            "\t}",
+            "",
+            "\tpub fn ${5:method}() -> ${6:void} {",
+            "\t\t${7}",
+            "\t}",
+            "}"
+        ],
+        "description": "固有方法实现"
+    },
+    "Trait impl": {
+        "prefix": "implfor",
+        "body": [
+            "impl ${1:Type} for ${2:Trait} {",
+            "\tfn ${3:method}() -> ${4:void} {",
+            "\t\t${5}",
+            "\t}",
+            "}"
+        ],
+        "description": "trait 实现"
+    },
+    "Type alias": {
+        "prefix": "typedef",
+        "body": [
+            "typedef ${1:Name} = ${2:i32};"
+        ],
+        "description": "类型别名"
+    },
+    "Import": {
+        "prefix": "from",
+        "body": [
+            "from ${1:package}.${2:module} import ${3:name};"
+        ],
+        "description": "导入"
+    },
+    "Variable": {
+        "prefix": "let",
+        "body": [
+            "let ${1:name}: ${2:i32} = ${3:0};"
+        ],
+        "description": "变量声明"
+    },
+    "If": {
+        "prefix": "if",
+        "body": [
+            "if (${1:condition}) {",
+            "\t${2}",
+            "} else {",
+            "\t${3}",
+            "}"
+        ],
+        "description": "条件分支"
+    },
+    "Match": {
+        "prefix": "match",
+        "body": [
+            "return match ${1:value} {",
+            "\t${2:Pattern} => ${3:expr},",
+            "\t_ => ${4:fallback},",
+            "};"
+        ],
+        "description": "匹配表达式"
+    },
+    "For loop": {
+        "prefix": "for",
+        "body": [
+            "for ${1:item} in ${2:items} {",
+            "\t${3}",
+            "}"
+        ],
+        "description": "遍历循环"
+    },
+    "While loop": {
+        "prefix": "while",
+        "body": [
+            "while (${1:condition}) {",
+            "\t${2}",
+            "}"
+        ],
+        "description": "条件循环"
+    },
+    "Assert": {
+        "prefix": "assert",
+        "body": [
+            "assert ${1:condition}: \"${2:message}\";"
+        ],
+        "description": "断言"
+    },
+    "Defer": {
+        "prefix": "defer",
+        "body": [
+            "defer {",
+            "\t${1}",
+            "}"
+        ],
+        "description": "延迟执行"
+    },
+    "Compile-time if": {
+        "prefix": "comptime",
+        "body": [
+            "comptime if ${1:IS_RAW_MODE} {",
+            "\t${2}",
+            "} else {",
+            "\t${3}",
+            "}"
+        ],
+        "description": "编译期条件"
+    }
+}

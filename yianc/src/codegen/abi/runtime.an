@@ -1,0 +1,27 @@
+// These constants are the Linux runtime protocol, independent of LLVM structure packing.
+pub const FRAME_LOCK_SLOTS: u64 = 1u64 << 20;
+pub const LOCK_TABLE_SLOTS: u64 = 1u64 << 26;
+pub const LITERAL_WORD: u64 = FRAME_LOCK_SLOTS;
+pub const ENV_WORD: u64 = FRAME_LOCK_SLOTS + 1;
+pub const HEAP_LOCK_BASE: u64 = FRAME_LOCK_SLOTS + 2;
+pub const LOCK_ENTRY_BYTES: u64 = 8;
+pub const HEADER_BYTES: u64 = 8;
+pub const LOCK_MASK: u64 = 0xFFFFFFFFu64;
+pub const FRAME_KEY_LIMIT: u64 = 0xFFFFFFFEu64;
+pub const SENTINEL: u64 = 0xFFFFFFFFFFFFFFFFu64;
+
+pub fn failure_message(code: str) -> str {
+    match code {
+        "S001" => "yian: safety error [S001]: out-of-bounds memory access\n",
+        "S002" => "yian: safety error [S002]: invalid memory access\n",
+        "S003" => "yian: safety error [S003]: dangling reference access\n",
+        "S004" => "yian: safety error [S004]: invalid pointer arithmetic\n",
+        "S005" => "yian: safety error [S005]: invalid cross-object pointer operation\n",
+        "S006" => "yian: safety error [S006]: invalid deallocation\n",
+        "S007" => "yian: safety error [S007]: empty slice cannot form a reference\n",
+        "R001" => "yian: runtime error [R001]: allocation size overflow\n",
+        "R002" => "yian: runtime error [R002]: memory allocation failed\n",
+        "R003" => "yian: runtime error [R003]: safety metadata exhausted\n",
+        _ => "yian: invalid runtime failure code\n",
+    }
+}

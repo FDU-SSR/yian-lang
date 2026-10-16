@@ -1,0 +1,116 @@
+// Test arithmetic and bitwise operator overloading.
+//
+// Expected output: 0
+
+from std.core.ops import Add, Sub, Mul, Div, Rem, Neg;
+from std.core.ops import BitAnd, BitOr, BitXor, BitNot, Shl, Shr;
+
+struct ArithValue<T> {
+    pub value: T,
+}
+
+impl<T> Add<ArithValue<T>, ArithValue<T>> for ArithValue<T> {
+    fn add(rhs: Self) -> Self {
+        return Self(self.value + rhs.value);
+    }
+}
+
+impl<T> Sub<ArithValue<T>, ArithValue<T>> for ArithValue<T> {
+    fn sub(rhs: Self) -> Self {
+        return Self(self.value - rhs.value);
+    }
+}
+
+impl<T> Mul<ArithValue<T>, ArithValue<T>> for ArithValue<T> {
+    fn mul(rhs: Self) -> Self {
+        return Self(self.value * rhs.value);
+    }
+}
+
+impl<T> Div<ArithValue<T>, ArithValue<T>> for ArithValue<T> {
+    fn div(rhs: Self) -> Self {
+        return Self(self.value / rhs.value);
+    }
+}
+
+impl<T> Rem<ArithValue<T>, ArithValue<T>> for ArithValue<T> {
+    fn rem(rhs: Self) -> Self {
+        return Self(self.value % rhs.value);
+    }
+}
+
+impl<T> Neg<ArithValue<T>> for ArithValue<T> {
+    fn neg() -> Self {
+        return Self(-self.value);
+    }
+}
+
+fn case_arithmetic_overloads() {
+    let a: ArithValue<i32> = ArithValue<i32>(10);
+    let b: ArithValue<i32> = ArithValue<i32>(20);
+
+    assert (a + b).value == 30: "Expected 30";
+    assert (b - a).value == 10: "Expected 10";
+    assert (a * b).value == 200: "Expected 200";
+    assert (b / a).value == 2: "Expected 2";
+    assert (b % a).value == 0: "Expected 0";
+    assert (-a).value == -10: "Expected -10";
+
+}
+
+struct BitwiseValue<T> {
+    pub value: T,
+}
+
+impl<T> BitAnd<BitwiseValue<T>, BitwiseValue<T>> for BitwiseValue<T> {
+    fn bit_and(rhs: Self) -> Self {
+        return Self(self.value & rhs.value);
+    }
+}
+
+impl<T> BitOr<BitwiseValue<T>, BitwiseValue<T>> for BitwiseValue<T> {
+    fn bit_or(rhs: Self) -> Self {
+        return Self(self.value | rhs.value);
+    }
+}
+
+impl<T> BitXor<BitwiseValue<T>, BitwiseValue<T>> for BitwiseValue<T> {
+    fn bit_xor(rhs: Self) -> Self {
+        return Self(self.value ^ rhs.value);
+    }
+}
+
+impl<T> BitNot<BitwiseValue<T>> for BitwiseValue<T> {
+    fn bit_not() -> Self {
+        return Self(~self.value);
+    }
+}
+
+impl<T> Shl<BitwiseValue<T>, BitwiseValue<T>> for BitwiseValue<T> {
+    fn shl(rhs: Self) -> Self {
+        return Self(self.value << rhs.value);
+    }
+}
+
+impl<T> Shr<BitwiseValue<T>, BitwiseValue<T>> for BitwiseValue<T> {
+    fn shr(rhs: Self) -> Self {
+        return Self(self.value >> rhs.value);
+    }
+}
+
+fn case_bitwise_overloads() {
+    let a: BitwiseValue<i32> = BitwiseValue<i32>(6); // 0b0110
+    let b: BitwiseValue<i32> = BitwiseValue<i32>(3); // 0b0011
+
+    assert (a & b).value == 2: "Expected 2"; // 0b0010
+    assert (a | b).value == 7: "Expected 7"; // 0b0111
+    assert (a ^ b).value == 5: "Expected 5"; // 0b0101
+    assert (~a).value == -7: "Expected -7"; // Two's complement
+    assert (a << b).value == 48: "Expected 48"; // 0b110000
+    assert (a >> b).value == 0: "Expected 0"; // 0b0000
+}
+
+fn main() {
+    case_arithmetic_overloads();
+    case_bitwise_overloads();
+}

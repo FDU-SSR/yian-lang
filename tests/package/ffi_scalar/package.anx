@@ -1,0 +1,4 @@
+[package]
+name = "ffi_scalar_test"
+kind = "bin"
+ffi = true

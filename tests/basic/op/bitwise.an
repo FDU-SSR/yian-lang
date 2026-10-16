@@ -1,0 +1,31 @@
+// Test bitwise operations: &, |, ^, ~, <<, >>
+//
+// Expected output: 0
+
+fn main() {
+    let a: i32 = 0b1100 // 12 in decimal;
+    let b: i32 = 0b1010 // 10 in decimal;
+    let c: i32 = -1;
+
+    let and_result: i32 = a & b;
+    assert and_result == 0b1000: "Bitwise AND failed";
+
+    let or_result: i32 = a | b;
+    assert or_result == 0b1110: "Bitwise OR failed";
+
+    let xor_result: i32 = a ^ b;
+    assert xor_result == 0b0110: "Bitwise XOR failed";
+
+    let not_result: i32 = ~c;
+    assert not_result == 0: "Bitwise NOT failed";
+
+    let left_shift_result: i32 = a << 2;
+    assert left_shift_result == 0b110000: "Left shift failed";
+
+    let right_shift_result: i32 = a >> 2;
+    assert right_shift_result == 0b0011: "Right shift failed";
+
+    let signed_right_shift_result: i32 = c >> 1;
+    assert signed_right_shift_result == -1: "Signed right shift failed";
+
+}

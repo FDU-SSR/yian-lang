@@ -1,0 +1,8 @@
+struct Tag<T> {
+    pub value: i32,
+}
+
+fn main() {
+    // Construction requires a concrete type even when its fields do not use T.
+    Tag(7);
+}

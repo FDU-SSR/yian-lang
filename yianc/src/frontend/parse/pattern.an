@@ -1,0 +1,333 @@
+from yianc.frontend.ast.node import Pattern, PatternData, Literal, RangeBounds, PatternArguments, FieldPattern, FieldPatternData, Identifier, TypeSyntax;
+from yianc.frontend.lex.token import KeywordKind, PunctuatorKind;
+from yianc.frontend.parse.literal import parse_literal;
+from yianc.frontend.parse.state import Parser;
+from yianc.frontend.parse.type import parse_type;
+from std.core.drop import Drop;
+from std.core.convert import From;
+from std.core.string import String;
+from std.core.ops import Index;
+from std.core.option import Option;
+from std.core.vec import Vec;
+
+fn pattern_literal(parser: Parser&) -> Option<Literal> {
+    if parser.at_punct(PunctuatorKind.Minus) {
+        let minus = parser.take_punct(PunctuatorKind.Minus);
+        if !parser.peek().is_integer() {
+            parser.error("Expected integer literal after '-' in pattern", minus);
+            return Option<Literal>.None;
+        }
+
+        let literal = parse_literal(parser)?;
+        match &literal {
+            Integer(value) => {
+                value.data.negative = true;
+                let raw = String.from(&"-");
+                raw.push_str(value.data.raw.as_str());
+                value.data.raw.drop();
+                value.data.raw = raw;
+                value.span = minus + value.span;
+            },
+            _ => {},
+        }
+
+        return Option<Literal>.Some(val=literal);
+    }
+
+    let literal = parse_literal(parser)?;
+    match literal {
+        Float(_) => {
+            parser.error("Expected literal in pattern", literal.span());
+            Option<Literal>.None
+        },
+        _ => Option<Literal>.Some(val=literal),
+    }
+}
+
+fn range_bounds(parser: Parser&, lower: Literal, upper: Literal) -> Option<RangeBounds> {
+    match lower {
+        Integer(a) => match upper {
+            Integer(b) => return Option<RangeBounds>.Some(val=RangeBounds.Integer(lower=a, upper=b)), _ => {}
+        },
+        Character(a) => match upper {
+            Character(b) => return Option<RangeBounds>.Some(val=RangeBounds.Character(lower=a, upper=b)), _ => {}
+        },
+        _ => {},
+    }
+    parser.error("Range endpoints must have the same literal kind", upper.span());
+    Option<RangeBounds>.None
+}
+
+fn pattern_atom(parser: Parser&) -> Option<Pattern&> {
+    parser.ready()?;
+
+    let token = parser.peek();
+    let span = token.span;
+    if parser.at_keyword(KeywordKind.Underscore) {
+        parser.advance();
+        return Option<Pattern&>.Some(val=parser.arena.alloc_pattern(PatternData.WildcardPattern, span));
+    }
+
+    let is_literal = match token.kind() {
+        Integer | Character | StringLiteral => true,
+        Keyword(kind) => *kind == KeywordKind.True_ || *kind == KeywordKind.False_,
+        _ => parser.at_punct(PunctuatorKind.Minus),
+    };
+
+    if is_literal {
+        let lower = pattern_literal(parser)?;
+        let span = lower.span();
+        if parser.at_punct(PunctuatorKind.DotDot) {
+            let valid = match lower { Integer | Character => true, _ => false };
+            if !valid {
+                parser.error("Range endpoints must be integer or character literals", parser.peek().span);
+                return Option<Pattern&>.None;
+            }
+            parser.advance();
+            let upper = pattern_literal(parser)?;
+            let bounds = range_bounds(parser, lower, upper)?;
+            return Option<Pattern&>.Some(val=parser.arena.alloc_pattern(PatternData.RangePattern(bounds=bounds), span + upper.span()));
+        }
+
+        return Option<Pattern&>.Some(val=parser.arena.alloc_pattern(PatternData.LiteralPattern(literal=lower), span));
+    }
+
+    if parser.at_punct(PunctuatorKind.LBracket) {
+        parser.advance();
+        let prefix = Vec<Pattern&>.new();
+        defer prefix.drop();
+        let suffix = Vec<Pattern&>.new();
+        defer suffix.drop();
+        let rest = false;
+
+        while !parser.failed() && !parser.at_punct(PunctuatorKind.RBracket) {
+            if parser.at_punct(PunctuatorKind.DotDot) {
+                if rest {
+                    parser.error("Only one '..' is allowed in a sequence pattern", parser.peek().span);
+                    return Option<Pattern&>.None;
+                }
+                parser.advance();
+                rest = true;
+            } else {
+                let item = pattern_or(parser)?;
+                if rest {
+                    suffix.push(item);
+                } else {
+                    prefix.push(item);
+                }
+            }
+
+            if !parser.at_punct(PunctuatorKind.Comma) {
+                break;
+            }
+            parser.advance();
+        }
+
+        parser.take_punct(PunctuatorKind.RBracket);
+        parser.ready()?;
+
+        return Option<Pattern&>.Some(val=parser.arena.alloc_pattern(
+            PatternData.SequencePattern(prefix=prefix.take(), suffix=suffix.take(), rest=rest), span));
+    }
+
+    if parser.at_punct(PunctuatorKind.LParen) {
+        parser.advance();
+        let members = Vec<Pattern&>.new();
+        defer members.drop();
+        if !parser.at_punct(PunctuatorKind.RParen) {
+            let first = pattern_or(parser)?;
+            if parser.at_punct(PunctuatorKind.RParen) {
+                parser.advance();
+                return Option<Pattern&>.Some(val=first);
+            }
+            parser.take_punct(PunctuatorKind.Comma);
+            parser.ready()?;
+            members.push(first);
+
+            while !parser.failed() && !parser.at_punct(PunctuatorKind.RParen) {
+                members.push(pattern_or(parser)?);
+                if !parser.at_punct(PunctuatorKind.Comma) {
+                    break;
+                }
+                parser.advance();
+            }
+        }
+
+        parser.take_punct(PunctuatorKind.RParen);
+        parser.ready()?;
+
+        return Option<Pattern&>.Some(val=parser.arena.alloc_pattern(PatternData.TuplePattern(elements=members.take()), span));
+    }
+
+    if token.is_identifier() || parser.keyword_token() {
+        return named_pattern(parser);
+    }
+    let message = String.from(&"Unexpected token '");
+    defer message.drop();
+    message.push_str(if token.is_eof() { token.value() } else { token.raw.as_str() });
+    message.push_str("' in pattern");
+    parser.error(message.as_str(), span);
+    Option<Pattern&>.None
+}
+
+// Probe a qualifying type, then distinguish name and constructor patterns; unsuitable type prefixes fall back to name parsing.
+fn named_pattern(parser: Parser&) -> Option<Pattern&> {
+    let mark = parser.mark();
+    let first = parser.peek();
+    let qualifier = parse_type(parser);
+    if qualifier.is_none() {
+        parser.clear_error();
+        parser.reset(mark);
+    }
+
+    let instantiated = match qualifier {
+        Some(value) => match &value.data { InstanceType => true, _ => false }, None => false
+    };
+
+    let name = if qualifier.is_some() && parser.at_punct(PunctuatorKind.Dot) {
+        parser.advance();
+        parser.identifier()?
+    } elif instantiated && parser.at_punct(PunctuatorKind.LParen) {
+        parser.named_identifier(first.span, first.value(), false)
+    } else {
+        parser.reset(mark);
+        qualifier = Option<TypeSyntax&>.None;
+        parser.identifier()?
+    };
+
+    if !parser.at_punct(PunctuatorKind.LParen) {
+        let data = if qualifier.is_some() {
+            PatternData.ConstructPattern(name=name, qualifier=qualifier, arguments=PatternArguments.None, rest=false)
+        } else { PatternData.NamePattern(name=name) };
+        return Option<Pattern&>.Some(val=parser.arena.alloc_pattern(data, name.span));
+    }
+    constructor_pattern(parser, name, qualifier)
+}
+
+// Enter at the field list's opening parenthesis; successful node construction transfers field containers to the arena.
+fn constructor_pattern(parser: Parser&, name: Identifier&, qualifier: Option<TypeSyntax&>) -> Option<Pattern&> {
+    parser.advance();
+    let positional = Vec<Pattern&>.new();
+    defer positional.drop();
+    let named = Vec<FieldPattern&>.new();
+    defer named.drop();
+
+    // Positional and named fields cannot be mixed; the omission marker must be the final field-list item.
+    let has_named = false;
+    let rest = false;
+
+    while !parser.failed() && !parser.at_punct(PunctuatorKind.RParen) {
+        let item = parser.peek();
+        if parser.at_punct(PunctuatorKind.DotDot) {
+            if rest {
+                parser.error("Only one '..' is allowed in a field pattern", item.span);
+                return Option<Pattern&>.None;
+            }
+            parser.advance();
+            rest = true;
+            if parser.at_punct(PunctuatorKind.Comma) {
+                parser.advance();
+            }
+
+            if !parser.at_punct(PunctuatorKind.RParen) {
+                parser.error("'..' must be the last field", item.span);
+            }
+            break;
+        }
+
+        if (item.is_identifier() || parser.keyword_token()) && parser.peek_at(1).is_punct(PunctuatorKind.Equal) {
+            if positional.len() != 0 {
+                parser.error("Cannot mix positional and named fields", item.span);
+                return Option<Pattern&>.None;
+            }
+            has_named = true;
+            let field = parser.identifier()?;
+            parser.advance();
+            let pattern = pattern_or(parser)?;
+            named.push(parser.arena.alloc_field_pattern(FieldPatternData(name=field, pattern=pattern), field.span));
+        } else {
+            if has_named || rest {
+                parser.error("Cannot mix positional and named fields", item.span);
+                return Option<Pattern&>.None;
+            }
+            positional.push(pattern_or(parser)?);
+        }
+
+        if !parser.at_punct(PunctuatorKind.Comma) {
+            break;
+        }
+        parser.advance();
+    }
+
+    parser.take_punct(PunctuatorKind.RParen);
+    parser.ready()?;
+
+    let arguments = if has_named { PatternArguments.Named(values=named.take()) } elif rest { PatternArguments.None } else { PatternArguments.Positional(values=positional.take()) };
+    Option<Pattern&>.Some(val=parser.arena.alloc_pattern(
+        PatternData.ConstructPattern(name=name, qualifier=qualifier, arguments=arguments, rest=rest), name.span))
+}
+
+fn pattern_at(parser: Parser&) -> Option<Pattern&> {
+    if parser.peek().is_identifier() && parser.peek_at(1).is_punct(PunctuatorKind.At) {
+        let name = parser.identifier()?;
+        parser.advance();
+        let inner = pattern_at(parser)?;
+        return Option<Pattern&>.Some(val=parser.arena.alloc_pattern(PatternData.BindPattern(name=name, inner=inner), name.span + inner.span));
+    }
+    pattern_atom(parser)
+}
+
+fn pattern_or(parser: Parser&) -> Option<Pattern&> {
+    let first = pattern_at(parser)?;
+    if !parser.at_punct(PunctuatorKind.Pipe) {
+        return Option<Pattern&>.Some(val=first);
+    }
+
+    let alternatives = Vec<Pattern&>.new();
+    defer alternatives.drop();
+    alternatives.push(first);
+
+    while parser.at_punct(PunctuatorKind.Pipe) {
+        parser.advance();
+        alternatives.push(pattern_at(parser)?);
+    }
+
+    let span = first.span + alternatives[alternatives.len() - 1].span;
+    Option<Pattern&>.Some(val=parser.arena.alloc_pattern(PatternData.OrPattern(alternatives=alternatives.take()), span))
+}
+
+pub fn parse_binding_pattern(parser: Parser&) -> Option<Pattern&> { pattern_or(parser) }
+
+// Comma-separated match alternatives must be literals of the same kind; pattern_or handles pipe-separated alternatives.
+pub fn parse_match_pattern(parser: Parser&) -> Option<Pattern&> {
+    let first = pattern_or(parser)?;
+    if !parser.at_punct(PunctuatorKind.Comma) {
+        return Option<Pattern&>.Some(val=first);
+    }
+
+    let kind = match &first.data {
+        LiteralPattern(literal) => literal.kind(),
+        _ => {
+            parser.error("Comma-separated alternatives require literals", parser.peek().span);
+            return Option<Pattern&>.None;
+        },
+    };
+
+    let alternatives = Vec<Pattern&>.new();
+    defer alternatives.drop();
+    alternatives.push(first);
+
+    while parser.at_punct(PunctuatorKind.Comma) {
+        parser.advance();
+        let next = pattern_atom(parser)?;
+        let valid = match &next.data { LiteralPattern(literal) => literal.kind() == kind, _ => false };
+        if !valid {
+            parser.error("Comma-separated alternatives must use the same literal kind", next.span);
+            return Option<Pattern&>.None;
+        }
+        alternatives.push(next);
+    }
+
+    let span = first.span + alternatives[alternatives.len() - 1].span;
+    Option<Pattern&>.Some(val=parser.arena.alloc_pattern(PatternData.OrPattern(alternatives=alternatives.take()), span))
+}

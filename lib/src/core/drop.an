@@ -1,0 +1,13 @@
+// A trait for types that need explicit resource cleanup.
+//
+// drop() releases resources held by the value.
+//
+// yian does NOT automatically call drop(). Users must call it
+// manually when a value is no longer needed.
+pub trait Drop {
+    fn drop();
+}
+
+impl void {
+    static pub fn new() -> void { return; }
+}

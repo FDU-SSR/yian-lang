@@ -1,0 +1,150 @@
+from std.core.range import Range;
+from std.core.hash import Murmur3Hasher, Hash;
+from std.core.convert import From, Into;
+from std.core.result import Result;
+from std.core.string import String;
+from std.num.parse_error import ParseNumberError;
+
+fn parse_digit(byte: u8) -> i32 {
+    if byte >= b'0' && byte <= b'9' { return i32(byte - b'0'); }
+    if byte >= b'a' && byte <= b'f' { return i32(byte - b'a') + 10i32; }
+    if byte >= b'A' && byte <= b'F' { return i32(byte - b'A') + 10i32; }
+    return -1i32;
+}
+
+impl u64 {
+    /// Type-level constant: the maximum u64 value. static permits calling it as `u64.max()`.
+    static pub fn max() -> u64 {
+        0xFFFF_FFFF_FFFF_FFFFu64
+    }
+
+    static pub fn parse(text: str) -> Result<u64, ParseNumberError> {
+        let bytes = text.as_slice();
+        let length = bytes.len();
+        if length == 0u64 {
+            return Result<u64, ParseNumberError>.Err(msg=ParseNumberError.Empty);
+        }
+
+        let base: u64 = 10u64;
+        let start: u64 = 0u64;
+        if length >= 2u64 && bytes[0u64] == b'0' {
+            if bytes[1u64] == b'b' || bytes[1u64] == b'B' { base = 2u64; start = 2u64; }
+            elif bytes[1u64] == b'o' || bytes[1u64] == b'O' { base = 8u64; start = 2u64; }
+            elif bytes[1u64] == b'x' || bytes[1u64] == b'X' { base = 16u64; start = 2u64; }
+        }
+        if start == length {
+            return Result<u64, ParseNumberError>.Err(msg=ParseNumberError.MissingDigits);
+        }
+
+        let value: u64 = 0u64;
+        let position = start;
+        let previous_digit = false;
+        while position < length {
+            let current = bytes[position];
+            if current == b'_' {
+                if !previous_digit || position + 1u64 == length {
+                    return Result<u64, ParseNumberError>.Err(msg=ParseNumberError.InvalidSeparator);
+                }
+                let next = parse_digit(bytes[position + 1u64]);
+                if next < 0i32 || u64(next) >= base {
+                    return Result<u64, ParseNumberError>.Err(msg=ParseNumberError.InvalidSeparator);
+                }
+                previous_digit = false;
+                position += 1u64;
+                continue;
+            }
+            let digit = parse_digit(current);
+            if digit < 0i32 || u64(digit) >= base {
+                return Result<u64, ParseNumberError>.Err(msg=ParseNumberError.InvalidDigit);
+            }
+            let part = u64(digit);
+            if value > (u64.max() - part) / base {
+                return Result<u64, ParseNumberError>.Err(msg=ParseNumberError.Overflow);
+            }
+            value = value * base + part;
+            previous_digit = true;
+            position += 1u64;
+        }
+        return Result<u64, ParseNumberError>.Ok(val=value);
+    }
+
+    pub fn rotate_left(n: u64) {
+        let shift = n % 64;
+        if shift == 0 {
+            return;
+        }
+        let left_part = *self << shift;
+        let right_part = *self >> (64 - shift);
+        *self = left_part | right_part;
+    }
+
+    pub fn next_power_of_two() -> u64 {
+        let n: u64 = *self;
+        if n <= 1 {
+            return 1;
+        }
+
+        n -= 1;
+        n |= n >> 1;
+        n |= n >> 2;
+        n |= n >> 4;
+        n |= n >> 8;
+        n |= n >> 16;
+        n |= n >> 32;
+        n + 1
+    }
+
+    pub fn align_up(alignment: u64) {
+        if alignment == 0 {
+            @panic("alignment must be greater than 0");
+        }
+        let mask = alignment - 1;
+        *self = (*self + mask) & ~mask;
+    }
+
+    pub fn to_string_radix(radix: u64) -> String {
+        if radix < 2 || radix > 36 {
+            @panic("radix must be between 2 and 36");
+        }
+        if *self == 0 {
+            return String.from(&"0");
+        }
+
+        // Use a static digit table and write a stack buffer from least to most significant digits, without allocating a 36-byte String;
+        // finish with one push_str (at most 64 binary digits for u64).
+        let digits: u8[36] = [
+            b'0', b'1', b'2', b'3', b'4', b'5', b'6', b'7', b'8', b'9',
+            b'A', b'B', b'C', b'D', b'E', b'F', b'G', b'H', b'I', b'J', b'K', b'L', b'M',
+            b'N', b'O', b'P', b'Q', b'R', b'S', b'T', b'U', b'V', b'W', b'X', b'Y', b'Z',
+        ];
+        let buf: u8[64] = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+        let pos: u64 = 64;
+        let n: u64 = *self;
+        while n > 0 {
+            pos -= 1;
+            buf[pos] = digits[n % radix];
+            n /= radix;
+        }
+        let out = String.with_capacity(64 - pos);
+        out.push_str(str.from_slice_unchecked(buf[pos..64]));
+        out
+    }
+}
+
+impl Hash<Murmur3Hasher> for u64 {
+    fn hash(hasher: Murmur3Hasher&) {
+        let val: u64 = *self;
+        let buf: u8[8] = [0, 0, 0, 0, 0, 0, 0, 0];
+        @memcpy(&buf, &val, 8);
+        hasher.write(buf.as_slice());
+    }
+}
+
+impl From<str> for u64 {
+    pub static fn from(value: str&) -> Self {
+        return match u64.parse(*value) {
+            Ok(parsed) => parsed,
+            Err(_) => @panic("invalid u64 string"),
+        };
+    }
+}

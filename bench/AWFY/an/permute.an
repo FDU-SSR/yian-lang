@@ -1,0 +1,55 @@
+// bench/AWFY/an/permute.an: recursive permutation swaps (shootout permute).
+//
+// Reference: AWFY benchmarks/Java/src/Permute.java; see AWFY LICENSE.md.
+// Semantic reference: bench/AWFY/c/permute.c, the project's C implementation.
+// Scale: n=6; assert count==8660.
+//
+// Algorithm: permute_inner(n,v) recursively swaps permutations of the n-element prefix; every call
+//       increments count. At n=0 return after counting; otherwise recurse on n-1, then for i from n-1
+//       down to zero, swap/recurse/swap. swap_indices swaps v[i] and v[j] through pointer indexing.
+//       Total calls = 1+n*(1+(n-1)*(1+...)).
+//
+// Array representation: v in swap_indices/permute_inner is i32[] with block access and no index field;
+//   count is i32&. benchmark_permute binds v directly as
+//   i32[] (let x:T[]=dyn[n] T; del T[] validly releases the whole block).
+//
+// Fat and raw modes share this source.
+// Use inferred dyn types and x[0u64..n] range views for both modes, retaining fat-mode checks.
+fn swap_indices(i: u64, j: u64, v: i32[]) {
+    let tmp: i32 = v[i];
+    v[i] = v[j];
+    v[j] = tmp;
+}
+
+fn permute_inner(n: i32, v: i32[], count: i32&) {
+    *count += 1;
+    if n != 0 {
+        let n1: i32 = n - 1;
+        permute_inner(n1, v, count);
+        let i: i32 = n1;
+        while i >= 0 {
+            swap_indices(u64(n1), u64(i), v);
+            permute_inner(n1, v, count);
+            swap_indices(u64(n1), u64(i), v);
+            i -= 1;
+        }
+    }
+}
+
+fn benchmark_permute() -> i32 {
+    let count: i32 = 0;
+    let v = dyn[6] 0i32;
+    permute_inner(6, v[0u64..6u64], &count);
+    del v;
+    return count;
+}
+
+fn main() {
+    let ITER: u64 = 70866;  // bench-scale
+    let iter: u64 = 0;
+    while iter < ITER {
+        let result: i32 = benchmark_permute();
+        assert result == 8660: "permute count not expected";
+        iter += 1;
+    }
+}

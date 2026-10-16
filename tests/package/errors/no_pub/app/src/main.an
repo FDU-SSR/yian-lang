@@ -1,0 +1,2 @@
+from mylib.secret import secret;
+fn main() { return 0; }

@@ -1,0 +1,30 @@
+from json.parse import parse, parse_with_options, ParseOptions;
+from json.error import ParseErrorKind;
+from std.core.drop import Drop;
+from std.core.ops import Index;
+
+fn reject(text: str) {
+    match parse(text) { Err(_) => {}, Ok(value) => { value.drop(); @panic("invalid JSON accepted"); } }
+}
+fn main() {
+    let value = parse(" {\"a\":[null,true,false,18446744073709551615,-9223372036854775808,1.25],\"a\":[2],\"b\":{}} ").unwrap();
+    defer value.drop();
+    let object = value.as_object().unwrap();
+    assert object.len() == 2: "duplicate keys replace";
+    let array = object.get("a").unwrap().as_array().unwrap();
+    assert array.len() == 1: "old duplicate tree released";
+    match &array[0] { Number(number) => match number { Unsigned(n) => { assert *n == 2: "payload"; }, _ => @panic("number kind") }, _ => @panic("value kind") };
+    reject(""); reject("[1,]"); reject("{\"a\":1,}"); reject("true false");
+    reject("01"); reject("-01"); reject("+1"); reject(".1"); reject("1."); reject("1e+");
+    reject("NaN"); reject("Infinity"); reject("18446744073709551616"); reject("-9223372036854775809");
+    reject("1e309"); reject("1e-999"); reject("\"line\nfeed\""); reject("\"\\q\"");
+    let zero = parse("0e-9999").unwrap(); zero.drop();
+    match parse_with_options("[[0]]", ParseOptions(max_depth=1u64)) {
+        Err(error) => { assert error.kind == ParseErrorKind.DepthLimit: "depth limit"; },
+        Ok(value) => { value.drop(); @panic("depth accepted"); },
+    };
+    match parse("[\n  1,\n  ?]") {
+        Err(error) => { assert error.row == 2 && error.column == 2: "codepoint position"; },
+        Ok(value) => { value.drop(); @panic("invalid character accepted"); },
+    }
+}

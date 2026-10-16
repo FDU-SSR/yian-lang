@@ -1,0 +1,4 @@
+from std.core.ops import min;
+fn main() {
+    assert min(3, 7) == 3;
+}

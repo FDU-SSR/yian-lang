@@ -1,0 +1,249 @@
+from lsp_protocol.types import TextDocumentIdentifier, VersionedDocumentIdentifier, TextDocumentItem, ContentChangeEvent;
+from json.value import Value, Number, Object;
+from std.core.drop import Drop;
+from std.core.option import Option;
+from std.core.vec import Vec;
+from std.core.string import String;
+
+pub struct DidOpenParams { pub text_document: TextDocumentItem }
+pub struct DidChangeParams {
+    pub text_document: VersionedDocumentIdentifier,
+    pub content_changes: Vec<ContentChangeEvent>,
+}
+pub struct DidSaveParams {
+    pub text_document: TextDocumentIdentifier,
+    pub text: Option<String>,
+}
+pub struct DidCloseParams { pub text_document: TextDocumentIdentifier }
+
+pub enum FileChangeType { Created, Changed, Deleted, Unknown { value: u64 } }
+
+pub struct FileEvent {
+    pub uri: String,
+    pub kind: FileChangeType,
+}
+
+pub struct DidChangeWatchedFilesParams { pub changes: Vec<FileEvent> }
+
+fn unsigned_field(object: Object&, key: str) -> Option<u64> {
+    match object.get(key) {
+        Some(value) => match value {
+            Number(number) => match number {
+                Unsigned(number) => Option<u64>.Some(*number),
+                Signed(number) if *number >= 0i64 => Option<u64>.Some(u64(*number)),
+                _ => Option<u64>.None,
+            },
+            _ => Option<u64>.None,
+        },
+        None => Option<u64>.None,
+    }
+}
+
+fn optional_text(object: Object&) -> Option<Option<String>> {
+    match object.get("text") {
+        None => Option<Option<String>>.Some(Option<String>.None),
+        Some(value) => match value.as_string() {
+            Some(text) => Option<Option<String>>.Some(Option<String>.Some(String.from(&text))),
+            None => Option<Option<String>>.None,
+        },
+    }
+}
+
+impl FileChangeType {
+    static pub fn from_value(value: u64) -> Self {
+        match value {
+            1 => Self.Created,
+            2 => Self.Changed,
+            3 => Self.Deleted,
+            _ => Self.Unknown(value),
+        }
+    }
+
+    pub fn value() -> u64 {
+        match self {
+            Created => 1u64,
+            Changed => 2u64,
+            Deleted => 3u64,
+            Unknown(value) => *value,
+        }
+    }
+}
+
+impl FileEvent {
+    static pub fn from_json(value: Value&) -> Option<Self> {
+        let object = match value.as_object() {
+            Some(value) => value,
+            None => return Option<Self>.None,
+        };
+        let uri = match object.get("uri") {
+            Some(value) => match value.as_string() {
+                Some(text) => String.from(&text),
+                None => return Option<Self>.None,
+            },
+            None => return Option<Self>.None,
+        };
+        let kind = match unsigned_field(object, "type") {
+            Some(value) => FileChangeType.from_value(value),
+            None => {
+                uri.drop();
+                return Option<Self>.None;
+            },
+        };
+        Option<Self>.Some(Self(uri=uri, kind=kind))
+    }
+}
+
+impl DidOpenParams {
+    static pub fn from_json(value: Value&) -> Option<Self> {
+        let object = match value.as_object() {
+            Some(value) => value,
+            None => return Option<Self>.None,
+        };
+        let document = match object.get("textDocument") {
+            Some(value) => TextDocumentItem.from_json(value),
+            None => Option<TextDocumentItem>.None,
+        };
+        match document {
+            Some(value) => Option<Self>.Some(Self(text_document=value)),
+            None => Option<Self>.None,
+        }
+    }
+}
+
+impl DidChangeParams {
+    static pub fn from_json(value: Value&) -> Option<Self> {
+        let object = match value.as_object() {
+            Some(value) => value,
+            None => return Option<Self>.None,
+        };
+        let document_result = match object.get("textDocument") {
+            Some(value) => VersionedDocumentIdentifier.from_json(value),
+            None => Option<VersionedDocumentIdentifier>.None,
+        };
+        let document = match document_result {
+            Some(value) => value,
+            None => return Option<Self>.None,
+        };
+        let changes = match object.get("contentChanges") {
+            Some(value) => match value.as_array() {
+                Some(value) => value,
+                None => {
+                    document.drop();
+                    return Option<Self>.None;
+                },
+            },
+            None => {
+                document.drop();
+                return Option<Self>.None;
+            },
+        };
+        let decoded = Vec<ContentChangeEvent>.new();
+        for change in *changes {
+            match ContentChangeEvent.from_json(change) {
+                Some(value) => decoded.push(value),
+                None => {
+                    for item in decoded { item.drop(); }
+                    decoded.drop();
+                    document.drop();
+                    return Option<Self>.None;
+                },
+            }
+        }
+        Option<Self>.Some(Self(text_document=document, content_changes=decoded))
+    }
+
+}
+
+impl DidSaveParams {
+    static pub fn from_json(value: Value&) -> Option<Self> {
+        let object = match value.as_object() {
+            Some(value) => value,
+            None => return Option<Self>.None,
+        };
+        let document_result = match object.get("textDocument") {
+            Some(value) => TextDocumentIdentifier.from_json(value),
+            None => Option<TextDocumentIdentifier>.None,
+        };
+        let document = match document_result {
+            Some(value) => value,
+            None => return Option<Self>.None,
+        };
+        match optional_text(object) {
+            Some(text) => Option<Self>.Some(Self(text_document=document, text=text)),
+            None => {
+                document.drop();
+                Option<Self>.None
+            },
+        }
+    }
+
+}
+
+impl DidCloseParams {
+    static pub fn from_json(value: Value&) -> Option<Self> {
+        let object = match value.as_object() {
+            Some(value) => value,
+            None => return Option<Self>.None,
+        };
+        let document = match object.get("textDocument") {
+            Some(value) => TextDocumentIdentifier.from_json(value),
+            None => Option<TextDocumentIdentifier>.None,
+        };
+        match document {
+            Some(value) => Option<Self>.Some(Self(text_document=value)),
+            None => Option<Self>.None,
+        }
+    }
+}
+
+impl DidChangeWatchedFilesParams {
+    static pub fn from_json(value: Value&) -> Option<Self> {
+        let object = match value.as_object() {
+            Some(value) => value,
+            None => return Option<Self>.None,
+        };
+        let changes = match object.get("changes") {
+            Some(value) => match value.as_array() {
+                Some(value) => value,
+                None => return Option<Self>.None,
+            },
+            None => return Option<Self>.None,
+        };
+        let decoded = Vec<FileEvent>.new();
+        for change in *changes {
+            match FileEvent.from_json(change) {
+                Some(value) => decoded.push(value),
+                None => {
+                    for item in decoded { item.drop(); }
+                    decoded.drop();
+                    return Option<Self>.None;
+                },
+            }
+        }
+        Option<Self>.Some(Self(changes=decoded))
+    }
+
+}
+
+impl Drop for DidOpenParams { pub fn drop() { self.text_document.drop(); } }
+impl Drop for DidChangeParams {
+    pub fn drop() {
+        self.text_document.drop();
+        for change in self.content_changes { change.drop(); }
+        self.content_changes.drop();
+    }
+}
+impl Drop for DidSaveParams {
+    pub fn drop() {
+        self.text_document.drop();
+        match &self.text { Some(value) => value.drop(), None => {}, }
+    }
+}
+impl Drop for FileEvent { pub fn drop() { self.uri.drop(); } }
+impl Drop for DidCloseParams { pub fn drop() { self.text_document.drop(); } }
+impl Drop for DidChangeWatchedFilesParams {
+    pub fn drop() {
+        for change in self.changes { change.drop(); }
+        self.changes.drop();
+    }
+}

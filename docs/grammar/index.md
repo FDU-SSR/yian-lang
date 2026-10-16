@@ -1,56 +1,36 @@
-# YIAN 语言概览
+# Yian 语言参考
 
-YIAN 是一个面向系统编程场景的静态类型语言，采用编译型工作流：将 `.an` 源码编译为可执行程序。
+本文档描述 Yian 编程语言的语法和语义，包含规则、示例和常见陷阱。
 
-如果你第一次接触 YIAN，建议先阅读 [快速开始](00.quick_start.md)，再按顺序浏览后续章节。
+语言规则由规范和测试表达；编译器源码路径仅说明实现位置。日常行为以 native `yianc` 为准，Python 编译器只维护显式
+冷启动恢复所需兼容性，不要求与 native 功能对等。
 
-## YIAN 是什么
+## 目录
 
-- 目标定位：提供清晰、可预测的语义与类型系统，适合构建需要性能与类型安全的程序。
-- 语言形态：类 C 风格语法，显式类型标注，函数与方法并重。
-- 工具链现状：当前仓库提供编译脚本、标准库源码与覆盖较广的测试用例，适合学习和实验。
+| 章节                         | 标题          | 说明                                                                |
+| ---------------------------- | ------------- | ------------------------------------------------------------------- |
+| [00](00.quick_start.md)      | Quick Start   | 30 分钟快速上手                                                     |
+| [01](01.lexicon.md)          | 词法          | 标识符、关键字、字面量、注释、运算符                                |
+| [02](02.type_system.md)      | 类型系统      | 基础类型、指针、引用、trait object、数组、切片、元组、struct、enum   |
+| [03](03.variables.md)        | 变量与声明    | `let`、解构声明、模块常量、类型标注与推断                            |
+| [04](04.functions.md)        | 函数          | 定义、参数、返回值、泛型函数、函数指针、闭包                        |
+| [05](05.methods.md)          | 方法          | `impl` 块、实例方法、静态方法、可见性                               |
+| [06](06.control_flow.md)     | 控制流        | `if`/`elif`/`else`、`loop`、`while`、`for`-`in`、`break`/`continue` |
+| [07](07.match.md)            | 模式匹配      | 结构化模式、守卫、解构绑定、条件模式、穷尽性与不可达检查              |
+| [08](08.expressions.md)      | 表达式        | 运算、赋值、错误传播、编译期条件与内建函数                          |
+| [09](09.operators.md)        | 运算符重载    | `Add`、`PartialEq`、`Index`、`Deref`、复合赋值等全部 trait          |
+| [10](10.generics.md)         | 泛型          | 泛型函数/struct/enum、泛型 impl、条件约束                           |
+| [11](11.structs_enums.md)    | 结构体与枚举  | 定义、构造、字段访问                                                |
+| [12](12.traits_impls.md)     | Trait 与 Impl | trait 定义、静态调用、trait object、默认方法、条件 impl              |
+| [13](13.modules.md)          | 模块系统      | `import`、`from...import`、可见性、Package/Standalone 模式、包名解析 |
+| [14](14.standard_library.md) | 标准库        | 容器、字符串、迭代器、错误传播、同步 IO、文件系统与路径             |
+| [15](15.assign_semantics.md) | 赋值与显式内存管理 | 按位复制、显式 `Clone`、`del` 与 `Drop`、容器别名                 |
+| [16](16.runtime_errors.md)   | 运行时错误与安全终止 | fail-stop、安全错误编号、诊断格式与进程退出约定                 |
+| [17](17.ffi.md)              | C ABI FFI      | FFI 权限、C 类型、外部声明、封送操作与资源边界                    |
 
-## 核心特性
+## 约定
 
-- 静态类型系统：包含基本类型、数组、元组、指针、函数类型、结构体、枚举、trait 等。
-- 泛型能力：支持泛型函数、泛型类型与泛型 trait，泛型在编译期实例化。
-- 方法系统：支持 inherent method 与 trait method，通过 `impl` 块组织行为。
-- 模块系统：以源文件为模块，使用 `from ... import ...` / `import ...` 组织多文件项目。
-- 表达式与控制流：覆盖常见字面量、算术与逻辑表达式，以及 if/for/while/match 等语句结构。
-- 标准库：提供 `std.core`、`std.collections`、`std.num` 等核心模块。
-
-## 一个最小程序
-
-```yian
-from std.core.io import print
-
-i32 main() {
-	print("Hello, yian!\n")
-	return 0
-}
-```
-
-编译并运行：
-
-```bash
-./scripts/yian_compiler.py hello.an
-./tests/yian_workspace/bin/out
-```
-
-## 文档导览
-
-- [00.quick_start.md](00.quick_start.md)：30-45 分钟跑通最小示例。
-- [01.intro.md](01.intro.md)：语法入口与程序结构。
-- [02.type_system.md](02.type_system.md)：类型系统全景。
-- [03.methods.md](03.methods.md)：方法、`impl` 与 trait 实现。
-- [04.statements.md](04.statements.md)：语句与控制流。
-- [05.generics.md](05.generics.md)：泛型机制与使用方式。
-- [06.modules.md](06.modules.md)：模块、导入与可见性。
-- [07.expression.md](07.expression.md)：表达式构成与规则。
-- [08.standard_library.md](08.standard_library.md)：标准库模块与常见类型。
-
-## 当前阶段说明
-
-- YIAN 仍在持续演进，部分特性与标准库接口可能会迭代。
-- 学习或验证语义时，建议结合 `tests/` 目录中的示例与用例一起阅读。
-- 如果你准备编写较完整的程序，优先熟悉类型系统、模块系统和标准库章节。
+- 完整程序示例可通过 `yianc lib/src <file>` 编译；使用 FFI 的独立程序还需 `--allow-ffi`，包项目则按清单授予权限
+- 示例标注 `-- 来源: tests/...` 指明出处
+- 错误示例标注 `-- 期望: 编译错误`
+- 语法规则使用代码块表示

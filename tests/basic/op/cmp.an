@@ -1,0 +1,24 @@
+// Test comparison operations: ==, !=, <, <=, >, >=
+//
+// Expected output: 0
+
+fn main() {
+    let a: i32 = 5;
+    let b: i32 = 10;
+
+    assert (a == b) == false: "Equality check failed";
+    assert (a != b) == true: "Inequality check failed";
+    assert (a < b) == true: "Less than check failed";
+    assert (a <= b) == true: "Less than || equal check failed";
+    assert (a > b) == false: "Greater than check failed";
+    assert (a >= b) == false: "Greater than || equal check failed";
+
+    let less: Ordering = Ordering.Less;
+    let equal: Ordering = Ordering.Equal;
+    let greater: Ordering = Ordering.Greater;
+
+    assert less == Ordering.Less: "Enum equality check failed";
+    assert equal == Ordering.Equal: "Enum equality check failed";
+    assert greater == Ordering.Greater: "Enum equality check failed";
+
+}

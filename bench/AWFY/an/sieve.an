@@ -1,0 +1,45 @@
+// bench/AWFY/an/sieve.an: Sieve of Eratosthenes (shootout sieve).
+//
+// Reference: AWFY benchmarks/Java/src/Sieve.java; see AWFY LICENSE.md.
+// Semantic reference: bench/AWFY/c/sieve.c, the project's C implementation.
+// Scale: allocate SIEVE_SIZE=5000 flags per work unit; assert prime_count==669.
+//
+// Algorithm: initialize flags[0..SIEVE_SIZE-1] to true, with index i representing i+1;
+//        sieve() marks composites starting at i=2 and counts primes.
+//
+// flags is bool[] with block-access semantics and no index field.
+//   main binds flags directly as bool[] (let x:T[]=dyn[n] T);
+//   del T[] validly releases the whole block.
+//
+// Fat and raw modes share this source.
+// Use inferred dyn types and x[0u64..n] range views for both modes, retaining fat-mode checks.
+fn sieve(flags: bool[], size: u64) -> i32 {
+    let prime_count: i32 = 0;
+    let i: u64 = 2;
+    while i <= size {
+        if flags[i - 1] {
+            prime_count += 1;
+            let k: u64 = i + i;
+            while k <= size {
+                flags[k - 1] = false;
+                k += i;
+            }
+        }
+        i += 1;
+    }
+    return prime_count;
+}
+
+fn main() {
+    let SIEVE_SIZE: u64 = 5000;
+    let ITER: u64 = 268657;  // bench-scale
+    let iter: u64 = 0;
+    while iter < ITER {
+        let flags = dyn[SIEVE_SIZE] true;
+        let flags_view: bool[] = flags[0u64..SIEVE_SIZE];
+        let prime_count: i32 = sieve(flags_view, SIEVE_SIZE);
+        assert prime_count == 669: "sieve: prime_count is not correct";
+        del flags;
+        iter += 1;
+    }
+}

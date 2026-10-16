@@ -1,0 +1,100 @@
+from std.core.drop import Drop;
+from std.core.fs import canonicalize;
+from std.core.option import Option;
+from std.core.path import Path, PathBuf;
+from std.core.process import env_var;
+from std.core.result import Result;
+from std.core.string import String;
+from yianc.driver.host import associated_root;
+
+fn checkout_library(root: str) -> Result<PathBuf, String> {
+    let base = match canonicalize(root) {
+        Ok(value) => value,
+        Err(problem) => {
+            let message = String.from(&"Cannot resolve compiler checkout: ");
+            message.push_str(problem.msg());
+            problem.drop();
+            return Result<PathBuf, String>.Err(msg=message);
+        },
+    };
+    defer base.drop();
+    let candidate = Path.new(base.as_str()).join("lib/src");
+    defer candidate.drop();
+    match canonicalize(candidate.as_str()) {
+        Ok(value) => Result<PathBuf, String>.Ok(val=value),
+        Err(problem) => {
+            let message = String.from(&"Standard library source root does not exist: ");
+            message.push_str(candidate.as_str());
+            problem.drop();
+            Result<PathBuf, String>.Err(msg=message)
+        },
+    }
+}
+
+fn library_directory(path: str) -> Result<PathBuf, String> {
+    match canonicalize(path) {
+        Ok(value) => Result<PathBuf, String>.Ok(val=value),
+        Err(problem) => {
+            let message = String.from(&"Standard library source root does not exist: ");
+            message.push_str(path);
+            problem.drop();
+            Result<PathBuf, String>.Err(msg=message)
+        },
+    }
+}
+
+pub fn standard_library_root() -> Result<PathBuf, String> {
+    let library = match env_var("YIAN_LIB") {
+        Ok(value) => value,
+        Err(problem) => {
+            let message = String.from(&"Could not read YIAN_LIB: ");
+            message.push_str(problem.msg());
+            problem.drop();
+            return Result<PathBuf, String>.Err(msg=message);
+        },
+    };
+    match library {
+        Some(value) => {
+            if !value.is_empty() {
+                let result = library_directory(value.as_str());
+                value.drop();
+                return result;
+            }
+            value.drop();
+        },
+        None => {},
+    }
+
+    let checkout = match env_var("YIAN_ROOT") {
+        Ok(value) => value,
+        Err(problem) => {
+            let message = String.from(&"Could not read YIAN_ROOT: ");
+            message.push_str(problem.msg());
+            problem.drop();
+            return Result<PathBuf, String>.Err(msg=message);
+        },
+    };
+    match checkout {
+        Some(value) => {
+            if !value.is_empty() {
+                let result = checkout_library(value.as_str());
+                value.drop();
+                return result;
+            }
+            value.drop();
+        },
+        None => {},
+    }
+
+    match associated_root() {
+        Ok(root) => {
+            let result = checkout_library(root.as_str());
+            root.drop();
+            result
+        },
+        Err(problem) => {
+            problem.drop();
+            Result<PathBuf, String>.Err(msg=String.from(&"Cannot locate the compiler checkout; set YIAN_LIB or YIAN_ROOT"))
+        },
+    }
+}

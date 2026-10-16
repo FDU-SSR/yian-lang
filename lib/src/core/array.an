@@ -1,0 +1,53 @@
+from std.core.hash import Hash, Murmur3Hasher;
+from std.core.ops import Index;
+from std.core.range import Range;
+from std.core.vec import Vec;
+from std.core.slice import SliceIter;
+from std.core.iter import IntoIterator;
+
+impl<T, const N: u64> T[N] {
+    fn as_slice() -> T[] {
+        @slice_from_parts(@bitcast<T*>(self), N)
+    }
+
+    fn to_vec() -> Vec<T> {
+        self.as_slice().to_vec()
+    }
+
+    fn ptr() -> T* {
+        @bitcast<T*>(self)
+    }
+}
+
+impl<T, const N: u64> Index<u64, T&> for T[N] {
+    fn index(index: u64&) -> T& {
+        if *index >= N {
+            @runtime_fail("S001");
+        }
+        @bitcast<T*>(self) + *index
+    }
+}
+
+impl<T, const N: u64> Index<Range<u64>, T[]> for T[N] {
+    fn index(range: Range<u64>&) -> T[] {
+        if (*range).start > (*range).end || (*range).end > N {
+            @runtime_fail("S001");
+        }
+        let start: T* = @bitcast<T*>(self) + (*range).start;
+        let len: u64 = (*range).end - (*range).start;
+        @slice_from_parts(start, len)
+    }
+}
+
+impl<T, const N: u64> IntoIterator<SliceIter<T>> for T[N] {
+    pub fn into_iter() -> SliceIter<T> {
+        SliceIter<T>(
+            ptr=@bitcast<T*>(self),
+            n=N,
+        )
+    }
+}
+
+impl<T, const N: u64> Hash<Murmur3Hasher> for T[N] {
+    fn hash(hasher: Murmur3Hasher&) { self.as_slice().hash(hasher); }
+}

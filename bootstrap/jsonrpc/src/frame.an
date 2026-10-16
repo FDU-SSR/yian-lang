@@ -1,0 +1,278 @@
+from std.core.string import String;
+from std.core.fmt import ToString;
+from std.core.vec import Vec;
+from std.core.result import Result;
+from std.core.option import Option;
+from std.core.drop import Drop;
+
+pub struct FrameLimits {
+    pub max_header_bytes: u64,
+    pub max_body_bytes: u64,
+    pub max_buffered_bytes: u64,
+}
+
+impl FrameLimits {
+    static pub fn defaults() -> Self {
+        Self(max_header_bytes=8192u64, max_body_bytes=67108864u64,
+            max_buffered_bytes=134217728u64)
+    }
+}
+
+pub enum FrameErrorKind {
+    HeaderTooLarge,
+    BodyTooLarge,
+    BufferTooLarge,
+    InvalidHeader,
+    MissingLength,
+    DuplicateLength,
+    InvalidLength,
+    Incomplete,
+}
+
+pub struct FrameError { pub kind: FrameErrorKind }
+
+impl FrameError {
+    static fn new(kind: FrameErrorKind) -> Self { Self(kind=kind) }
+}
+
+// The decoder owns buffered bytes and yields at most one complete body per call.
+pub struct FrameDecoder {
+    bytes: Vec<u8>,
+    offset: u64,
+    limits: FrameLimits,
+}
+
+impl FrameDecoder {
+    static pub fn new() -> Self { Self.with_limits(FrameLimits.defaults()) }
+
+    static pub fn with_limits(limits: FrameLimits) -> Self {
+        Self(bytes=Vec<u8>.new(), offset=0u64, limits=limits)
+    }
+
+    fn pending_length() -> u64 { self.bytes.len() - self.offset }
+
+    fn compact() {
+        if self.offset == 0u64 { return; }
+        let remaining = self.pending_length();
+        if remaining == 0u64 {
+            self.bytes.clear();
+            self.offset = 0u64;
+            return;
+        }
+        if self.offset < 65536u64 && self.offset < remaining { return; }
+
+        let compacted = Vec<u8>.with_capacity(remaining);
+        for byte in self.bytes.as_slice()[self.offset..self.bytes.len()] {
+            compacted.push(*byte);
+        }
+        self.bytes.drop();
+        self.bytes = compacted;
+        self.offset = 0u64;
+    }
+
+    pub fn feed(input: u8[]) -> Result<(), FrameError> {
+        self.compact();
+        let pending = self.pending_length();
+        if pending > self.limits.max_buffered_bytes ||
+        input.len() > self.limits.max_buffered_bytes - pending {
+            return Result<(), FrameError>.Err(FrameError.new(FrameErrorKind.BufferTooLarge));
+        }
+        self.bytes.extend_from_slice(input);
+        Result<(), FrameError>.Ok(())
+    }
+
+    fn header_end() -> Option<u64> {
+        let end = self.bytes.len();
+        let i = self.offset;
+        while i + 3u64 < end {
+            if self.bytes[i] == 13u8 && self.bytes[i + 1u64] == 10u8 &&
+            self.bytes[i + 2u64] == 13u8 && self.bytes[i + 3u64] == 10u8 {
+                return Option<u64>.Some(i);
+            }
+            i += 1u64;
+        }
+        Option<u64>.None
+    }
+
+    static fn lower_ascii(byte: u8) -> u8 {
+        if byte >= 65u8 && byte <= 90u8 { byte + 32u8 } else { byte }
+    }
+
+    fn is_content_length(start: u64, end: u64) -> bool {
+        let expected = "content-length".as_slice();
+        if end - start != expected.len() { return false; }
+        let i = 0u64;
+        while i < expected.len() {
+            if Self.lower_ascii(self.bytes[start + i]) != expected[i] { return false; }
+            i += 1u64;
+        }
+        true
+    }
+
+    fn parse_length(header_end: u64) -> Result<u64, FrameError> {
+        let cursor = self.offset;
+        let found = false;
+        let length = 0u64;
+        while cursor < header_end {
+            let line_end = cursor;
+            while line_end + 1u64 <= header_end &&
+            !(self.bytes[line_end] == 13u8 && self.bytes[line_end + 1u64] == 10u8) {
+                line_end += 1u64;
+            }
+            let has_line_ending = line_end + 1u64 <= header_end &&
+            self.bytes[line_end] == 13u8 && self.bytes[line_end + 1u64] == 10u8;
+
+            let colon = cursor;
+            while colon < line_end && self.bytes[colon] != 58u8 { colon += 1u64; }
+            if colon == line_end {
+                return Result<u64, FrameError>.Err(FrameError.new(FrameErrorKind.InvalidHeader));
+            }
+            let name_end = colon;
+            while name_end > cursor && (self.bytes[name_end - 1u64] == 32u8 || self.bytes[name_end - 1u64] == 9u8) {
+                name_end -= 1u64;
+            }
+            if self.is_content_length(cursor, name_end) {
+                if found { return Result<u64, FrameError>.Err(FrameError.new(FrameErrorKind.DuplicateLength)); }
+                found = true;
+                let value_start = colon + 1u64;
+                while value_start < line_end && (self.bytes[value_start] == 32u8 || self.bytes[value_start] == 9u8) {
+                    value_start += 1u64;
+                }
+                let value_end = line_end;
+                while value_end > value_start && (self.bytes[value_end - 1u64] == 32u8 || self.bytes[value_end - 1u64] == 9u8) {
+                    value_end -= 1u64;
+                }
+                if value_start == value_end {
+                    return Result<u64, FrameError>.Err(FrameError.new(FrameErrorKind.InvalidLength));
+                }
+                let digit_index = value_start;
+                while digit_index < value_end {
+                    let byte = self.bytes[digit_index];
+                    if byte < 48u8 || byte > 57u8 {
+                        return Result<u64, FrameError>.Err(FrameError.new(FrameErrorKind.InvalidLength));
+                    }
+                    let digit = u64(byte - 48u8);
+                    if length > (18446744073709551615u64 - digit) / 10u64 {
+                        return Result<u64, FrameError>.Err(FrameError.new(FrameErrorKind.InvalidLength));
+                    }
+                    length = length * 10u64 + digit;
+                    digit_index += 1u64;
+                }
+            }
+            if has_line_ending { cursor = line_end + 2u64; } else { cursor = header_end; }
+        }
+
+        if !found { return Result<u64, FrameError>.Err(FrameError.new(FrameErrorKind.MissingLength)); }
+        Result<u64, FrameError>.Ok(length)
+    }
+
+    pub fn next_body() -> Result<Option<Vec<u8>>, FrameError> {
+        let header_end = match self.header_end() {
+            Some(value) => value,
+            None => {
+                if self.pending_length() > self.limits.max_header_bytes {
+                    return Result<Option<Vec<u8>>, FrameError>.Err(FrameError.new(FrameErrorKind.HeaderTooLarge));
+                }
+                return Result<Option<Vec<u8>>, FrameError>.Ok(Option<Vec<u8>>.None);
+            },
+        };
+        if header_end - self.offset > self.limits.max_header_bytes {
+            return Result<Option<Vec<u8>>, FrameError>.Err(FrameError.new(FrameErrorKind.HeaderTooLarge));
+        }
+        let length = self.parse_length(header_end)?;
+        if length > self.limits.max_body_bytes {
+            return Result<Option<Vec<u8>>, FrameError>.Err(FrameError.new(FrameErrorKind.BodyTooLarge));
+        }
+        let body_start = header_end + 4u64;
+        if length > self.bytes.len() - body_start {
+            return Result<Option<Vec<u8>>, FrameError>.Ok(Option<Vec<u8>>.None);
+        }
+
+        let body = Vec<u8>.with_capacity(length);
+        let index = body_start;
+        let body_end = body_start + length;
+        while index < body_end {
+            body.push(self.bytes[index]);
+            index += 1u64;
+        }
+        self.offset = body_start + length;
+        Result<Option<Vec<u8>>, FrameError>.Ok(Option<Vec<u8>>.Some(body))
+    }
+
+    pub fn finish() -> Result<(), FrameError> {
+        loop {
+            if self.pending_length() == 0u64 { return Result<(), FrameError>.Ok(()); }
+            match self.next_body()? {
+                Some(body) => body.drop(),
+                None => return Result<(), FrameError>.Err(FrameError.new(FrameErrorKind.Incomplete)),
+            }
+        }
+    }
+}
+
+impl Drop for FrameDecoder { pub fn drop() { self.bytes.drop(); } }
+
+// A flat queue preserves partial-write offsets without allocating one object per frame.
+pub struct WriteQueue { bytes: Vec<u8>, offset: u64, limit: u64 }
+
+impl WriteQueue {
+    static pub fn new() -> Self { Self.with_limit(134217728u64) }
+
+    static pub fn with_limit(limit: u64) -> Self {
+        Self(bytes=Vec<u8>.new(), offset=0u64, limit=limit)
+    }
+
+    fn pending_length() -> u64 { self.bytes.len() - self.offset }
+
+    fn compact() {
+        if self.offset == 0u64 { return; }
+        let remaining = self.pending_length();
+        if remaining == 0u64 {
+            self.bytes.clear();
+            self.offset = 0u64;
+            return;
+        }
+        let compacted = Vec<u8>.with_capacity(remaining);
+        for byte in self.bytes.as_slice()[self.offset..self.bytes.len()] { compacted.push(*byte); }
+        self.bytes.drop();
+        self.bytes = compacted;
+        self.offset = 0u64;
+    }
+
+    pub fn enqueue(body: u8[]) -> Result<(), FrameError> {
+        let length = body.len();
+        let number = length.to_string();
+        defer number.drop();
+        let header = String.new();
+        defer header.drop();
+        header.push_str("Content-Length: ");
+        header.push_str(number.as_str());
+        header.push_str("\r\n\r\n");
+        let total = header.len() + length;
+        let pending = self.pending_length();
+        if pending > self.limit || total > self.limit - pending {
+            return Result<(), FrameError>.Err(FrameError.new(FrameErrorKind.BufferTooLarge));
+        }
+        self.compact();
+        self.bytes.extend_from_slice(header.as_slice());
+        self.bytes.extend_from_slice(body);
+        Result<(), FrameError>.Ok(())
+    }
+
+    pub fn pending() -> u8[] { self.bytes.as_slice()[self.offset..self.bytes.len()] }
+    pub fn pending_bytes() -> u64 { self.pending_length() }
+
+    pub fn advance(written: u64) -> Result<(), FrameError> {
+        if written > self.pending_length() {
+            return Result<(), FrameError>.Err(FrameError.new(FrameErrorKind.InvalidLength));
+        }
+        self.offset += written;
+        if self.offset == self.bytes.len() {
+            self.bytes.clear();
+            self.offset = 0u64;
+        }
+        Result<(), FrameError>.Ok(())
+    }
+}
+
+impl Drop for WriteQueue { pub fn drop() { self.bytes.drop(); } }

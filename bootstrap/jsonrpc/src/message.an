@@ -1,0 +1,289 @@
+from std.core.string import String;
+from std.core.option import Option;
+from std.core.result import Result;
+from std.core.clone import Clone;
+from std.core.drop import Drop;
+from json.parse import parse as parse_json;
+from json.value import Value, Number, Object;
+from json.write import Writer;
+
+pub enum RequestId {
+    Null,
+    Signed { value: i64 },
+    Unsigned { value: u64 },
+    String { value: String },
+}
+
+pub struct RpcError {
+    pub code: i64,
+    pub message: String,
+    pub data: Option<Value>,
+}
+
+pub enum Message {
+    Request { id: RequestId, method: String, params: Option<Value> },
+    Notification { method: String, params: Option<Value> },
+    SuccessResponse { id: RequestId, result: Value },
+    ErrorResponse { id: RequestId, error: RpcError },
+}
+
+pub enum ProtocolErrorKind {
+    InvalidJson,
+    InvalidRequest,
+    InvalidId,
+    InvalidResponse,
+    Serialization,
+}
+
+pub struct ProtocolError { pub kind: ProtocolErrorKind }
+
+impl ProtocolError {
+    static fn new(kind: ProtocolErrorKind) -> Self { Self(kind=kind) }
+}
+
+impl RequestId {
+    static fn from_value(value: Value&) -> Result<RequestId, ProtocolError> {
+        match value {
+            Null => Result<RequestId, ProtocolError>.Ok(RequestId.Null),
+            String(text) => Result<RequestId, ProtocolError>.Ok(RequestId.String(text.clone())),
+            Number(number) => match number {
+                Signed(value) => Result<RequestId, ProtocolError>.Ok(RequestId.Signed(*value)),
+                Unsigned(value) => Result<RequestId, ProtocolError>.Ok(RequestId.Unsigned(*value)),
+                Float(_) => Result<RequestId, ProtocolError>.Err(ProtocolError.new(ProtocolErrorKind.InvalidId)),
+            },
+            _ => Result<RequestId, ProtocolError>.Err(ProtocolError.new(ProtocolErrorKind.InvalidId)),
+        }
+    }
+
+}
+
+fn request_id_value(id: RequestId&) -> Value {
+    match id {
+        Null => Value.Null,
+        Signed(value) => Value.Number(Number.Signed(*value)),
+        Unsigned(value) => Value.Number(Number.Unsigned(*value)),
+        String(value) => Value.String(value.clone()),
+    }
+}
+
+fn required_string(object: Object&, key: str) -> Result<String, ProtocolError> {
+    let value = match object.remove(key) {
+        Some(value) => value,
+        None => return Result<String, ProtocolError>.Err(ProtocolError.new(ProtocolErrorKind.InvalidRequest)),
+    };
+    defer value.drop();
+    match value.as_string() {
+        Some(text) => Result<String, ProtocolError>.Ok(String.from(&text)),
+        None => Result<String, ProtocolError>.Err(ProtocolError.new(ProtocolErrorKind.InvalidRequest)),
+    }
+}
+
+fn required_id(object: Object&, allow_null: bool) -> Result<RequestId, ProtocolError> {
+    let value = match object.remove("id") {
+        Some(value) => value,
+        None => return Result<RequestId, ProtocolError>.Err(ProtocolError.new(ProtocolErrorKind.InvalidRequest)),
+    };
+    defer value.drop();
+    let id = RequestId.from_value(&value)?;
+    if !allow_null {
+        if let RequestId.Null = id {
+            return Result<RequestId, ProtocolError>.Err(ProtocolError.new(ProtocolErrorKind.InvalidId));
+        }
+    }
+    Result<RequestId, ProtocolError>.Ok(id)
+}
+
+fn required_integer(value: Value) -> Result<i64, ProtocolError> {
+    defer value.drop();
+    match value {
+        Number(number) => match number {
+            Signed(number) => Result<i64, ProtocolError>.Ok(number),
+            Unsigned(number) if number <= 9223372036854775807u64 => Result<i64, ProtocolError>.Ok(i64(number)),
+            _ => Result<i64, ProtocolError>.Err(ProtocolError.new(ProtocolErrorKind.InvalidResponse)),
+        },
+        _ => Result<i64, ProtocolError>.Err(ProtocolError.new(ProtocolErrorKind.InvalidResponse)),
+    }
+}
+
+fn parse_error(value: Value) -> Result<RpcError, ProtocolError> {
+    defer value.drop();
+    let object = match value.as_object() {
+        Some(object) => object,
+        None => return Result<RpcError, ProtocolError>.Err(ProtocolError.new(ProtocolErrorKind.InvalidResponse)),
+    };
+    let code = match object.remove("code") {
+        Some(number) => required_integer(number)?,
+        None => return Result<RpcError, ProtocolError>.Err(ProtocolError.new(ProtocolErrorKind.InvalidResponse)),
+    };
+    let message = required_string(object, "message")?;
+    let data = object.remove("data");
+    Result<RpcError, ProtocolError>.Ok(RpcError(code=code, message=message, data=data))
+}
+
+fn valid_params(params: Option<Value>&) -> bool {
+    match params {
+        None => true,
+        Some(value) => match value {
+            Array(_) | Object(_) => true,
+            _ => false,
+        },
+    }
+}
+
+pub fn parse(body: str) -> Result<Message, ProtocolError> {
+    let value = match parse_json(body) {
+        Ok(value) => value,
+        Err(_) => return Result<Message, ProtocolError>.Err(ProtocolError.new(ProtocolErrorKind.InvalidJson)),
+    };
+    defer value.drop();
+    let object = match value.as_object() {
+        Some(object) => object,
+        None => return Result<Message, ProtocolError>.Err(ProtocolError.new(ProtocolErrorKind.InvalidRequest)),
+    };
+    let version = required_string(object, "jsonrpc")?;
+    defer version.drop();
+    if version.as_str() != "2.0" {
+        return Result<Message, ProtocolError>.Err(ProtocolError.new(ProtocolErrorKind.InvalidRequest));
+    }
+
+    if let Some(method_value) = object.remove("method") {
+        defer method_value.drop();
+        let method = match method_value.as_string() {
+            Some(text) => String.from(&text),
+            None => return Result<Message, ProtocolError>.Err(ProtocolError.new(ProtocolErrorKind.InvalidRequest)),
+        };
+        let raw_params = object.remove("params");
+        let params = match raw_params {
+            Some(value) => match value {
+                Null => Option<Value>.None,
+                _ => Option<Value>.Some(value),
+            },
+            None => Option<Value>.None,
+        };
+        if !valid_params(&params) {
+            method.drop();
+            if let Some(value) = params { value.drop(); }
+            return Result<Message, ProtocolError>.Err(ProtocolError.new(ProtocolErrorKind.InvalidRequest));
+        }
+        if object.get("id").is_some() {
+            let id = match required_id(object, false) {
+                Ok(id) => id,
+                Err(problem) => {
+                    method.drop();
+                    if let Some(value) = params { value.drop(); }
+                    return Result<Message, ProtocolError>.Err(problem);
+                },
+            };
+            return Result<Message, ProtocolError>.Ok(Message.Request(id, method, params));
+        }
+        return Result<Message, ProtocolError>.Ok(Message.Notification(method, params));
+    }
+
+    let result = object.remove("result");
+    let error = object.remove("error");
+    if result.is_some() {
+        if error.is_some() {
+            result.take().unwrap().drop();
+            error.take().unwrap().drop();
+            return Result<Message, ProtocolError>.Err(ProtocolError.new(ProtocolErrorKind.InvalidResponse));
+        }
+        let payload = *result.take().unwrap();
+        let id = match required_id(object, true) {
+            Ok(id) => id,
+            Err(problem) => { payload.drop(); return Result<Message, ProtocolError>.Err(problem); },
+        };
+        return Result<Message, ProtocolError>.Ok(Message.SuccessResponse(id, payload));
+    }
+    if error.is_some() {
+        let payload = parse_error(*error.take().unwrap())?;
+        let id = match required_id(object, true) {
+            Ok(id) => id,
+            Err(problem) => { payload.drop(); return Result<Message, ProtocolError>.Err(problem); },
+        };
+        return Result<Message, ProtocolError>.Ok(Message.ErrorResponse(id, payload));
+    }
+    Result<Message, ProtocolError>.Err(ProtocolError.new(ProtocolErrorKind.InvalidResponse))
+}
+
+pub fn encode(message: Message&) -> Result<String, ProtocolError> {
+    let writer = Writer.new();
+    defer writer.drop();
+    writer.begin_object();
+    writer.key("jsonrpc");
+    writer.write_string("2.0");
+    match message {
+        Request(id, method, params) => {
+            writer.key("id");
+            let id_value = request_id_value(id);
+            writer.write_value(&id_value);
+            id_value.drop();
+            writer.key("method");
+            writer.write_string(method.as_str());
+            if let Some(value) = params { writer.key("params"); writer.write_value(value); }
+        },
+        Notification(method, params) => {
+            writer.key("method");
+            writer.write_string(method.as_str());
+            if let Some(value) = params { writer.key("params"); writer.write_value(value); }
+        },
+        SuccessResponse(id, result) => {
+            writer.key("id");
+            let id_value = request_id_value(id);
+            writer.write_value(&id_value);
+            id_value.drop();
+            writer.key("result");
+            writer.write_value(result);
+        },
+        ErrorResponse(id, error) => {
+            writer.key("id");
+            let id_value = request_id_value(id);
+            writer.write_value(&id_value);
+            id_value.drop();
+            writer.key("error");
+            writer.begin_object();
+            writer.key("code");
+            writer.write_i64(error.code);
+            writer.key("message");
+            writer.write_string(error.message.as_str());
+            if let Some(data) = error.data {
+                writer.key("data");
+                writer.write_value(&data);
+            }
+            writer.end_object();
+        },
+    };
+    writer.end_object();
+    match writer.finish() {
+        Ok(text) => Result<String, ProtocolError>.Ok(text),
+        Err(_) => Result<String, ProtocolError>.Err(ProtocolError.new(ProtocolErrorKind.Serialization)),
+    }
+}
+
+impl Drop for RequestId {
+    pub fn drop() { if let String(value) = self { value.drop(); }; }
+}
+
+impl Drop for RpcError {
+    pub fn drop() {
+        self.message.drop();
+        if let Some(value) = self.data { value.drop(); }
+    }
+}
+
+impl Drop for Message {
+    pub fn drop() {
+        match self {
+            Request(id, method, params) => {
+                id.drop();
+                method.drop();
+                if let Some(value) = params { value.drop(); }
+            },
+            Notification(method, params) => {
+                method.drop();
+                if let Some(value) = params { value.drop(); }
+            },
+            SuccessResponse(id, result) => { id.drop(); result.drop(); },
+            ErrorResponse(id, error) => { id.drop(); error.drop(); },
+        }
+    }
+}

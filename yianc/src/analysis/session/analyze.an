@@ -1,0 +1,151 @@
+from yianc.analysis.session.session import AnalysisSession, AnalysisPhase;
+from yianc.analysis.session.output import AnalysisOptions, AnalysisOutput, AnalysisReport;
+from yianc.analysis.resolution.context import ResolutionContext;
+from yianc.analysis.resolution.declarations import collect_declarations;
+from yianc.analysis.resolution.imports import resolve_imports;
+from yianc.analysis.resolution.definitions import resolve_definitions;
+from yianc.analysis.resolution.methods import resolve_impls;
+from yianc.analysis.resolution.automatic import register_automatic;
+from yianc.analysis.passes.restricted import check_restricted;
+from yianc.analysis.passes.type_check import check_procedures;
+from yianc.analysis.constant.definitions import evaluate_constants;
+from yianc.analysis.ty.finalize import finalize_types;
+from yianc.analysis.ty.impl_check import check_impls;
+from yianc.analysis.ty.validation import validate_declarations;
+from yianc.analysis.passes.definite_assignment import check_assignment;
+from yianc.analysis.passes.coverage import check_coverage;
+from yianc.analysis.passes.verify_hir import verify_hir;
+from yianc.diagnostics.model import AnalysisError, AnalysisErrorKind, AnalysisStage;
+from yianc.diagnostics.order import order_diagnostics;
+from yianc.common.ids import TypeId;
+from std.core.drop import Drop;
+from std.core.result import Result;
+from std.core.option import Option;
+from std.core.iter import Iterator, IntoIterator;
+
+impl AnalysisSession {
+    pub fn analyze(options: AnalysisOptions) -> Result<AnalysisOutput, AnalysisError> {
+        options.recover = false;
+        let report = self.analyze_report(options)?;
+        defer report.drop();
+        let output = match report.output.take() {
+            Some(value) => value,
+            None => return Result<AnalysisOutput, AnalysisError>.Err(AnalysisError.internal("strict analysis returned no output")),
+        };
+        for diagnostic in report.diagnostics { output.warnings.push(*diagnostic); }
+        report.diagnostics.clear();
+        Result<AnalysisOutput, AnalysisError>.Ok(output)
+    }
+
+    // A failed run leaves its partial semantic data owned by the session for diagnostics.
+    pub fn analyze_report(options: AnalysisOptions) -> Result<AnalysisReport, AnalysisError> {
+        if self.phase != AnalysisPhase.Prepared {
+            return Result<AnalysisReport, AnalysisError>.Err(AnalysisError.internal("analysis session cannot be analyzed twice"));
+        }
+
+        self.phase = AnalysisPhase.Analyzing;
+        let completed = false;
+        defer {
+            self.phase = if completed {
+                AnalysisPhase.Complete
+            } else {
+                AnalysisPhase.Failed
+            };
+        };
+
+        let started = start_stage(&options, AnalysisStage.Restricted);
+        editor_stage(self, check_restricted(self), AnalysisStage.Restricted, &options, started)?;
+        let context = ResolutionContext.new(self)?;
+        defer context.drop();
+        context.sizes = options.sizes;
+        started = start_stage(&options, AnalysisStage.Resolve);
+        at_stage(collect_declarations(&context), AnalysisStage.Resolve, &options, started)?;
+        started = start_stage(&options, AnalysisStage.Resolve);
+        at_stage(resolve_imports(&context), AnalysisStage.Resolve, &options, started)?;
+        started = start_stage(&options, AnalysisStage.Resolve);
+        at_stage(resolve_definitions(&context), AnalysisStage.Resolve, &options, started)?;
+        started = start_stage(&options, AnalysisStage.Resolve);
+        at_stage(resolve_impls(&context), AnalysisStage.Resolve, &options, started)?;
+        started = start_stage(&options, AnalysisStage.Resolve);
+        editor_stage(self, register_automatic(&context), AnalysisStage.Resolve, &options, started)?;
+        started = start_stage(&options, AnalysisStage.Resolve);
+        editor_stage(self, evaluate_constants(&context, options.sizes), AnalysisStage.Resolve, &options, started)?;
+        started = start_stage(&options, AnalysisStage.Finalize);
+        editor_stage(self, finalize_types(&context), AnalysisStage.Finalize, &options, started)?;
+        started = start_stage(&options, AnalysisStage.Resolve);
+        editor_stage(self, check_impls(&context), AnalysisStage.Resolve, &options, started)?;
+        started = start_stage(&options, AnalysisStage.Resolve);
+        editor_stage(self, validate_declarations(&context), AnalysisStage.Resolve, &options, started)?;
+        let report = AnalysisReport.new();
+        let report_transferred = false;
+        defer { if !report_transferred { report.drop(); } };
+        started = start_stage(&options, AnalysisStage.TypeCheck);
+        let output = match check_procedures(&context, &options, &report.diagnostics) {
+            Ok(value) => value,
+            Err(problem) => return Result<AnalysisReport, AnalysisError>.Err(problem.with_stage(AnalysisStage.TypeCheck)),
+        };
+        finish_stage(&options, AnalysisStage.TypeCheck, started);
+        let accepted = false;
+        defer {
+            if !accepted {
+                output.drop();
+            }
+        };
+        // A recovered callee failure leaves a partial call graph. It is never exported to the backend.
+        if report.ok() && (!self.editor_recovery || !self.diagnostics.has_errors()) && options.verify_hir { verify_hir(&context, &output)?; }
+        started = start_stage(&options, AnalysisStage.Coverage);
+        at_stage(check_coverage(&context, &output, options.recover, &report.diagnostics), AnalysisStage.Coverage, &options, started)?;
+        for warning in output.warnings { report.diagnostics.push(*warning); }
+        output.warnings.clear();
+
+        for procedure in output.procedures {
+            match check_assignment(&context, procedure) {
+                Ok(_) => {},
+                Err(problem) => {
+                    if !options.recover || problem.kind == AnalysisErrorKind.Internal {
+                        return Result<AnalysisReport, AnalysisError>.Err(problem.with_stage(AnalysisStage.Assignment));
+                    }
+                    report.diagnostics.push(problem.diagnostic);
+                },
+            }
+        }
+
+        order_diagnostics(&report.diagnostics, self.source_manager());
+        completed = report.ok() && (!self.editor_recovery || !self.diagnostics.has_errors());
+        if completed {
+            accepted = true;
+            report.output = Option<AnalysisOutput>.Some(output);
+        }
+        report_transferred = true;
+        Result<AnalysisReport, AnalysisError>.Ok(report)
+    }
+}
+
+// Stage recovery retains independent declarations without converting internal failures into diagnostics.
+fn editor_stage(session: AnalysisSession&, result: Result<(), AnalysisError>, stage: AnalysisStage,
+    options: AnalysisOptions&, started: u64) -> Result<(), AnalysisError> {
+    match at_stage(result, stage, options, started) {
+        Ok(_) => Result<(), AnalysisError>.Ok(()),
+        Err(error) => {
+            if !session.editor_recovery || error.kind == AnalysisErrorKind.Internal { return Result<(), AnalysisError>.Err(error); }
+            if error.kind == AnalysisErrorKind.EditorIncomplete { error.drop(); } else { session.diagnostics.push_unique(error.diagnostic); }
+            Result<(), AnalysisError>.Ok(())
+        },
+    }
+}
+
+fn at_stage(result: Result<(), AnalysisError>, stage: AnalysisStage, options: AnalysisOptions&, started: u64) -> Result<(), AnalysisError> {
+    finish_stage(options, stage, started);
+    match result { Ok(_) => Result<(), AnalysisError>.Ok(()), Err(problem) => Result<(), AnalysisError>.Err(problem.with_stage(stage)), }
+}
+
+fn start_stage(options: AnalysisOptions&, stage: AnalysisStage) -> u64 {
+    match options.trace {
+        Some(trace) => trace.start(stage.name(), stage.name()),
+        None => 0,
+    }
+}
+
+fn finish_stage(options: AnalysisOptions&, stage: AnalysisStage, started: u64) {
+    match options.trace { Some(trace) => trace.finish(stage.name(), started), None => {}, }
+}

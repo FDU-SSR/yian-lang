@@ -1,0 +1,611 @@
+from std.core.hash import Murmur3Hasher, Hash;
+
+from std.core.slice import SliceIter, RevSliceIter;
+from std.core.option import Option;
+from std.core.iter import Iterator, IntoIterator;
+from std.core.convert import From, Into;
+from std.core.ops import PartialEq, Index;
+from std.core.range import Range;
+from std.core.fmt import ToString;
+from std.core.string import String;
+
+impl str {
+    // Create a str from a byte slice without validation.
+    // Caller must guarantee the byte slice is valid UTF-8.
+    pub static fn from_slice_unchecked(s: u8[]) -> Self {
+        @str_from_parts(@slice_get_ptr(s), @slice_get_len(s))
+    }
+
+    // Create a str from a byte slice with UTF-8 validation.
+    // Returns None if the byte slice contains invalid UTF-8 sequences.
+    pub static fn from_slice(s: u8[]) -> Option<Self> {
+        if !Self.is_valid_utf8(s) {
+            return Option<str>.None;
+        }
+        Option<str>.Some(@str_from_parts(@slice_get_ptr(s), @slice_get_len(s)))
+    }
+
+    // Validate that a byte slice is a well-formed UTF-8 sequence.
+    static fn is_valid_utf8(bytes: u8[]) -> bool {
+        let len = bytes.len();
+        let i: u64 = 0;
+
+        while i < len {
+            // Skip ASCII spans a word at a time with one eight-byte read and mask check rather than bytewise comparison.
+            // Use @memcpy into a local u64 to avoid an unaligned eight-byte dereference.
+            while i + 8 <= len {
+                let word: u64 = 0;
+                @memcpy(&word, &bytes[i], 8);
+                if (word & 0x8080_8080_8080_8080u64) != 0 {
+                    break;
+                }
+                i += 8;
+            }
+            if i >= len {
+                break;
+            }
+
+            let b1 = bytes[i];
+
+            // ASCII: 0xxxxxxx
+            if b1 < 128 {
+                i += 1;
+                continue;
+            }
+
+            // 2-byte: 110xxxxx 10xxxxxx
+            if (b1 & 224) == 192 {
+                if i + 1 >= len { return false; }
+                let b2 = bytes[i + 1];
+                if (b2 & 192) != 128 { return false; }
+                // overlong: codepoint < U+0080 encoded as 2 bytes
+                if b1 < 194 { return false; }
+                i += 2;
+                continue;
+            }
+
+            // 3-byte: 1110xxxx 10xxxxxx 10xxxxxx
+            if (b1 & 240) == 224 {
+                if i + 2 >= len { return false; }
+                let b2 = bytes[i + 1];
+                let b3 = bytes[i + 2];
+                if (b2 & 192) != 128 { return false; }
+                if (b3 & 192) != 128 { return false; }
+                // surrogate: U+D800–U+DFFF → ED A0 80 – ED BF BF
+                if b1 == 237 && b2 >= 160 { return false; }
+                // overlong: codepoint < U+0800 encoded as 3 bytes
+                if b1 == 224 && b2 < 160 { return false; }
+                i += 3;
+                continue;
+            }
+
+            // 4-byte: 11110xxx 10xxxxxx 10xxxxxx 10xxxxxx
+            if (b1 & 248) == 240 {
+                if i + 3 >= len { return false; }
+                let b2 = bytes[i + 1];
+                let b3 = bytes[i + 2];
+                let b4 = bytes[i + 3];
+                if (b2 & 192) != 128 { return false; }
+                if (b3 & 192) != 128 { return false; }
+                if (b4 & 192) != 128 { return false; }
+                // beyond U+10FFFF: max is F4 8F BF BF
+                if b1 > 244 { return false; }
+                if b1 == 244 && b2 > 143 { return false; }
+                // overlong: codepoint < U+10000 encoded as 4 bytes
+                if b1 == 240 && b2 < 144 { return false; }
+                i += 4;
+                continue;
+            }
+
+            // Invalid leading byte (10xxxxxx, 11111xxx, etc.)
+            return false;
+        }
+
+        true
+    }
+
+    // Get the byte slice of the str
+    pub fn as_slice() -> u8[] {
+        @slice_from_parts(@str_get_ptr(*self), @str_get_len(*self))
+    }
+
+    // Get an iterator over the characters of the str
+    pub fn chars() -> CharIter {
+        CharIter(self.as_slice().into_iter())
+    }
+
+    // Get an iterator over the characters and their byte indices
+    pub fn char_indices() -> CharIndicesIter {
+        CharIndicesIter(0, self.chars())
+    }
+
+    // Check if the str starts with the given prefix character
+    pub fn starts_with_char(prefix: char) -> bool {
+        let first_char = self.chars().next();
+        first_char.is_some() && *first_char.unwrap() == prefix
+    }
+
+    pub fn starts_with(prefix: str) -> bool {
+        let self_bytes = self.as_slice();
+        let prefix_bytes = prefix.as_slice();
+        if prefix_bytes.len() > self_bytes.len() {
+            return false;
+        }
+        for i in 0..prefix_bytes.len() {
+            if self_bytes[i] != prefix_bytes[i] {
+                return false;
+            }
+        }
+        true
+    }
+
+    // Check if the str contains the given character
+    pub fn contains_char(c: char) -> bool {
+        let code: u32 = u32(c);
+        if code < 128 {
+            // ASCII characters are single bytes: scan bytes directly without decoding characters (Rust's
+            // `str::contains(char)` likewise applies memchr to the first byte).
+            let bytes = self.as_slice();
+            let len = bytes.len();
+            let i: u64 = 0;
+            while i < len {
+                if bytes[i] == u8(code) {
+                    return true;
+                }
+                i += 1;
+            }
+            return false;
+        }
+        for ch in self.chars() {
+            if ch == c {
+                return true;
+            }
+        }
+        false
+    }
+
+    fn is_char_boundary(index: u64) -> bool {
+        let bytes = self.as_slice();
+        let len = bytes.len();
+
+        if index > len {
+            return false;
+        }
+        if index == len {
+            return true;
+        }
+
+        return (bytes[index] & 192) != 128;
+    }
+
+    // Check if the str ends with the given suffix
+    pub fn ends_with(suffix: str) -> bool {
+        let bytes = self.as_slice();
+        let tail = suffix.as_slice();
+        let blen = bytes.len();
+        let tlen = tail.len();
+        if tlen > blen {
+            return false;
+        }
+        let base = blen - tlen;
+        for i in 0..tlen {
+            if bytes[base + i] != tail[i] {
+                return false;
+            }
+        }
+        true
+    }
+
+    // Check if the str ends with the given character
+    pub fn ends_with_char(c: char) -> bool {
+        let last = self.chars().rev().next();
+        last.is_some() && *last.unwrap() == c
+    }
+
+    // Find the first byte index of sep in hay[from..] (shared internal helper for find/split).
+    // Return from when sep is empty.
+    static fn find_in(hay: u8[], sep: u8[], from: u64) -> Option<u64> {
+        let hlen = hay.len();
+        let nlen = sep.len();
+        if nlen == 0 {
+            return Option<u64>.Some(from);
+        }
+        if from + nlen > hlen {
+            return Option<u64>.None;
+        }
+
+        // For multibyte patterns, compare the first byte before checking the rest.
+        let last = hlen - nlen;
+        let first_byte = sep[0];
+        let i: u64 = from;
+        while i <= last {
+            if hay[i] == first_byte {
+                let j: u64 = 1;
+                while j < nlen {
+                    if hay[i + j] != sep[j] {
+                        break;
+                    }
+                    j += 1;
+                }
+                if j == nlen {
+                    return Option<u64>.Some(i);
+                }
+            }
+            i += 1;
+        }
+        Option<u64>.None
+    }
+
+    // Find the last byte index of sep in hay[..=from] (internal helper for rfind).
+    static fn rfind_in(hay: u8[], sep: u8[], from: u64) -> Option<u64> {
+        let hlen = hay.len();
+        let nlen = sep.len();
+        if nlen == 0 {
+            return Option<u64>.Some(from);
+        }
+        if nlen > hlen {
+            return Option<u64>.None;
+        }
+
+        // The starting position must not exceed the last possible match start.
+        let last: u64 = if from + nlen > hlen { hlen - nlen } else { from };
+        let first_byte = sep[0];
+        let i: u64 = last + 1;
+        while i > 0 {
+            i -= 1;
+            if hay[i] == first_byte {
+                let j: u64 = 1;
+                while j < nlen {
+                    if hay[i + j] != sep[j] {
+                        break;
+                    }
+                    j += 1;
+                }
+                if j == nlen {
+                    return Option<u64>.Some(i);
+                }
+            }
+        }
+        Option<u64>.None
+    }
+
+    // Return the byte index of the first occurrence of `needle`.
+    pub fn find(needle: str) -> Option<u64> {
+        Self.find_in(self.as_slice(), needle.as_slice(), 0)
+    }
+
+    // Return the byte index of the last occurrence of `needle`.
+    pub fn rfind(needle: str) -> Option<u64> {
+        Self.rfind_in(self.as_slice(), needle.as_slice(), self.as_slice().len())
+    }
+
+    // Return true if `needle` occurs in the str.
+    pub fn contains(needle: str) -> bool {
+        Self.find_in(self.as_slice(), needle.as_slice(), 0).is_some()
+    }
+
+    // Return the byte index of the first occurrence of `c`.
+    pub fn find_char(c: char) -> Option<u64> {
+        let code: u32 = u32(c);
+        if code < 128 {
+            // Scan bytes directly for ASCII characters (Rust uses memchr for single-byte patterns).
+            let byte = u8(code);
+            let bytes = self.as_slice();
+            let len = bytes.len();
+            let i: u64 = 0;
+            while i < len {
+                if bytes[i] == byte {
+                    return Option<u64>.Some(i);
+                }
+                i += 1;
+            }
+            return Option<u64>.None;
+        }
+        for pair in self.char_indices() {
+            if pair[1] == c {
+                return Option<u64>.Some(pair[0]);
+            }
+        }
+        Option<u64>.None
+    }
+
+    // Split the str on `sep`, yielding the segments in order (empty segments
+    // included). `sep` must not be empty.
+    pub fn split(sep: str) -> SplitIter {
+        if sep.as_slice().len() == 0 {
+            @panic("str::split: separator must not be empty");
+        }
+        SplitIter(hay=self.as_slice(), sep=sep.as_slice(), pos=0, done=false)
+    }
+
+    // Trim whitespace from both ends of the String
+    pub fn trim() -> str {
+        let bytes: u8[] = self.as_slice();
+        let start: u64 = 0;
+        let end = bytes.len();
+        while start < end && bytes[start].is_ascii_whitespace() {
+            start += 1
+        }
+        while end > start && bytes[end - 1].is_ascii_whitespace() {
+            end -= 1
+        }
+        str.from(&bytes[start..end])
+    }
+
+    // Parse the str into specified type T, panicking if parsing fails
+    pub fn parse<T>() -> T {
+        T.from(self)
+    }
+}
+
+pub struct SplitIter {
+    pub hay: u8[],
+    pub sep: u8[],
+    pub pos: u64,
+    pub done: bool,
+}
+
+impl IntoIterator<SplitIter> for SplitIter {
+    fn into_iter() -> SplitIter {
+        *self
+    }
+}
+
+impl Iterator<str> for SplitIter {
+    pub fn next() -> Option<str> {
+        if self.done {
+            return Option<str>.None;
+        }
+
+        let start = self.pos;
+        let hit = str.find_in(self.hay, self.sep, start);
+        match hit {
+            None => {
+                // The final segment may be empty; iteration ends after it.
+                self.done = true;
+                Option<str>.Some(str.from_slice_unchecked(self.hay[start..self.hay.len()]))
+            }
+            Some(at) => {
+                self.pos = at + self.sep.len();
+                Option<str>.Some(str.from_slice_unchecked(self.hay[start..at]))
+            }
+        }
+    }
+}
+
+pub struct CharIter {
+    pub byte_iter: SliceIter<u8>,
+}
+
+impl CharIter {
+    pub fn rev() -> RevCharIter {
+        RevCharIter(self.byte_iter.rev())
+    }
+
+    pub fn collect() -> String {
+        let out = String.new();
+        for ch in self {
+            out += ch;
+        }
+        out
+    }
+}
+
+impl Iterator<char> for CharIter {
+    pub fn next() -> Option<char> {
+        // Decode directly from the pointer and remaining byte count, without constructing
+        // and unwrapping `Option<u8*>` for each byte (as in Rust's `Chars::next` / `next_code_point`).
+        let n = self.byte_iter.n;
+        if n == 0 {
+            return Option<char>.None;
+        }
+        let p: u8* = self.byte_iter.ptr;
+        let b1: u8 = p[0];
+
+        if b1 < 128 { // 0xxxxxxx
+            self.byte_iter.ptr = p + 1;
+            self.byte_iter.n = n - 1;
+            return Option<char>.Some(char(b1));
+        }
+
+        // 2-byte: 110xxxxx 10xxxxxx
+        if (b1 & 224) == 192 {
+            if n < 2 {
+                @panic("str: truncated UTF-8 sequence");
+            }
+            let b2: u8 = p[1];
+            self.byte_iter.ptr = p + 2;
+            self.byte_iter.n = n - 2;
+            return Option<char>.Some(char((u32(b1 & 31) << 6) | u32(b2 & 63)));
+        }
+
+        // 3-byte: 1110xxxx 10xxxxxx 10xxxxxx
+        if (b1 & 240) == 224 {
+            if n < 3 {
+                @panic("str: truncated UTF-8 sequence");
+            }
+            let b2: u8 = p[1];
+            let b3: u8 = p[2];
+            self.byte_iter.ptr = p + 3;
+            self.byte_iter.n = n - 3;
+            return Option<char>.Some(char((u32(b1 & 15) << 12) | (u32(b2 & 63) << 6) | u32(b3 & 63)));
+        }
+
+        // 4-byte: 11110xxx 10xxxxxx 10xxxxxx 10xxxxxx
+        if (b1 & 248) == 240 {
+            if n < 4 {
+                @panic("str: truncated UTF-8 sequence");
+            }
+            let b2: u8 = p[1];
+            let b3: u8 = p[2];
+            let b4: u8 = p[3];
+            self.byte_iter.ptr = p + 4;
+            self.byte_iter.n = n - 4;
+            return Option<char>.Some(char((u32(b1 & 7) << 18) | (u32(b2 & 63) << 12) | (u32(b3 & 63) << 6) | u32(b4 & 63)));
+        }
+
+        // Invalid leading byte: return None and consume that byte.
+        self.byte_iter.ptr = p + 1;
+        self.byte_iter.n = n - 1;
+        return Option<char>.None;
+    }
+}
+
+impl IntoIterator<CharIter> for CharIter {
+    fn into_iter() -> CharIter {
+        *self
+    }
+}
+
+pub struct RevCharIter {
+    pub byte_iter: RevSliceIter<u8>
+}
+
+impl RevCharIter {
+    pub fn rev() -> CharIter {
+        CharIter(self.byte_iter.rev())
+    }
+
+    pub fn collect() -> String {
+        let out = String.new();
+        for ch in self {
+            out += ch;
+        }
+        out
+    }
+}
+
+impl Iterator<char> for RevCharIter {
+    pub fn next() -> Option<char> {
+        // Reverse decoding: `ptr` is the forward start; search backward from n-1 for the leading byte in [0, n).
+        let n = self.byte_iter.n;
+        if n == 0 {
+            return Option<char>.None;
+        }
+        let p: u8* = self.byte_iter.ptr;
+        let b_last: u8 = p[n - 1];
+
+        if b_last < 128 {
+            self.byte_iter.n = n - 1;
+            return Option<char>.Some(char(b_last));
+        }
+
+        if n < 2 {
+            self.byte_iter.n = 0;
+            return Option<char>.None;
+        }
+        let b2: u8 = p[n - 2];
+
+        if (b2 & 224) == 192 {
+            self.byte_iter.n = n - 2;
+            return Option<char>.Some(char((u32(b2 & 31) << 6) | u32(b_last & 63)));
+        }
+
+        if n < 3 {
+            self.byte_iter.n = 0;
+            return Option<char>.None;
+        }
+        let b3: u8 = p[n - 3];
+
+        if (b3 & 240) == 224 {
+            self.byte_iter.n = n - 3;
+            return Option<char>.Some(char((u32(b3 & 15) << 12) | (u32(b2 & 63) << 6) | u32(b_last & 63)));
+        }
+
+        if n < 4 {
+            self.byte_iter.n = 0;
+            return Option<char>.None;
+        }
+        let b4: u8 = p[n - 4];
+
+        if (b4 & 248) == 240 {
+            self.byte_iter.n = n - 4;
+            return Option<char>.Some(char((u32(b4 & 7) << 18) | (u32(b3 & 63) << 12) | (u32(b2 & 63) << 6) | u32(b_last & 63)));
+        }
+
+        self.byte_iter.n = 0;
+        return Option<char>.None;
+    }
+}
+
+impl IntoIterator<RevCharIter> for RevCharIter {
+    fn into_iter() -> RevCharIter {
+        *self
+    }
+}
+
+pub struct CharIndicesIter {
+    pub front_offset: u64,
+    pub iter: CharIter,
+}
+
+impl IntoIterator<CharIndicesIter> for CharIndicesIter {
+    fn into_iter() -> CharIndicesIter {
+        *self
+    }
+}
+
+impl Iterator<(u64, char)> for CharIndicesIter {
+    pub fn next() -> Option<(u64, char)> {
+        let pre_len: u64 = self.iter.byte_iter.len();
+        match self.iter.next() {
+            None => Option<(u64, char)>.None,
+            Some(val) => {
+                let index: u64 = self.front_offset;
+                let len: u64 = self.iter.byte_iter.len();
+                self.front_offset += pre_len - len;
+                Option<(u64, char)>.Some((index, val))
+            },
+        }
+    }
+}
+
+impl From<u8[]> for str {
+    pub static fn from(value: u8[]&) -> Self {
+        match Self.from_slice(*value) {
+            Some(s) => s,
+            None => @panic("invalid UTF-8 sequence"),
+        }
+    }
+}
+
+impl Into<u8[]> for str {
+    pub fn into() -> u8[] {
+        self.as_slice()
+    }
+}
+
+impl PartialEq<str> for str {
+    pub fn eq(other: str&) -> bool {
+        self.as_slice() == other.as_slice()
+    }
+}
+
+impl Index<Range<u64>, str> for str {
+    pub fn index(range: Range<u64>&) -> str {
+        let bytes = self.as_slice();
+        let len = bytes.len();
+
+        if range.start > range.end || range.end > len {
+            @runtime_fail("S001");
+        }
+        if !self.is_char_boundary(range.start) || !self.is_char_boundary(range.end) {
+            @panic("str slice index is ! on a char boundary");
+        }
+
+        Self.from_slice_unchecked(bytes[range.start..range.end])
+    }
+}
+
+impl Hash<Murmur3Hasher> for str {
+    fn hash(hasher: Murmur3Hasher&) {
+        let bytes: u8[] = self.as_slice();
+        hasher.write(bytes);
+    }
+}
+
+impl ToString for str {
+    fn to_string() -> String {
+        String.from(self)
+    }
+}

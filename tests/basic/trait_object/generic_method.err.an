@@ -1,0 +1,7 @@
+trait Factory {
+    fn make<T>(value: T) -> i32;
+}
+
+fn main() {
+    let factory: Factory&;
+}

@@ -1,0 +1,4 @@
+fn never_called() -> i32 {
+    let x: i32 = "hello"
+    return x
+}

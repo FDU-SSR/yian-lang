@@ -1,0 +1,213 @@
+from std.core.drop import Drop;
+from std.core.option import Option;
+from std.core.path import PathBuf;
+from std.core.string import String;
+from std.core.vec import Vec;
+from anx.manifest.model import NativeLLVM, PackageKind;
+from anx.diagnostics.model import Diagnostic, release_diagnostics;
+
+pub struct Package {
+    name: String,
+    kind: PackageKind,
+    version: String,
+    root: PathBuf,
+    manifest_path: PathBuf,
+    source_root: PathBuf,
+    entry: Option<PathBuf>,
+    dependencies: Vec<String>,
+    dev_dependencies: Vec<String>,
+    ffi_allowed: bool,
+    native_llvm: Option<NativeLLVM>,
+}
+
+impl Package {
+    static pub fn new(name: str, kind: PackageKind, version: str, root: PathBuf,
+        manifest_path: PathBuf, source_root: PathBuf, entry: Option<PathBuf>,
+        dependencies: Vec<String>, dev_dependencies: Vec<String>, ffi_allowed: bool,
+        native_llvm: Option<NativeLLVM>) -> Self {
+        Self(name=String.from(&name), kind=kind, version=String.from(&version), root=root,
+            manifest_path=manifest_path, source_root=source_root, entry=entry,
+            dependencies=dependencies, dev_dependencies=dev_dependencies,
+            ffi_allowed=ffi_allowed, native_llvm=native_llvm)
+    }
+
+    pub fn name() -> str { self.name.as_str() }
+    pub fn kind() -> PackageKind { self.kind }
+    pub fn version() -> str { self.version.as_str() }
+    pub fn root() -> str { self.root.as_str() }
+    pub fn manifest_path() -> str { self.manifest_path.as_str() }
+    pub fn source_root() -> str { self.source_root.as_str() }
+    pub fn entry() -> Option<str> {
+        match self.entry { Some(value) => Option<str>.Some(value.as_str()), None => Option<str>.None }
+    }
+    pub fn dependency_count() -> u64 { self.dependencies.len() }
+    pub fn dependency(index: u64) -> str { self.dependencies[index].as_str() }
+    pub fn dev_dependency_count() -> u64 { self.dev_dependencies.len() }
+    pub fn dev_dependency(index: u64) -> str { self.dev_dependencies[index].as_str() }
+    pub fn allows_ffi() -> bool { self.ffi_allowed }
+    pub fn native_llvm() -> Option<NativeLLVM&> {
+        match &self.native_llvm { Some(value) => Option<NativeLLVM&>.Some(value), None => Option<NativeLLVM&>.None }
+    }
+}
+
+impl Drop for Package {
+    pub fn drop() {
+        self.name.drop();
+        self.version.drop();
+        self.root.drop();
+        self.manifest_path.drop();
+        self.source_root.drop();
+        match self.entry.take() { Some(value) => value.drop(), None => {}, }
+        let index = 0u64;
+        while index < self.dependencies.len() { self.dependencies[index].drop(); index += 1u64; }
+        self.dependencies.drop();
+        index = 0u64;
+        while index < self.dev_dependencies.len() { self.dev_dependencies[index].drop(); index += 1u64; }
+        self.dev_dependencies.drop();
+        match self.native_llvm.take() { Some(value) => value.drop(), None => {}, }
+    }
+}
+
+pub struct SourceFile { path: PathBuf, package: String, module: Vec<String> }
+
+impl SourceFile {
+    static pub fn new(path: PathBuf, package: str, module: Vec<String>) -> Self {
+        Self(path=path, package=String.from(&package), module=module)
+    }
+    pub fn path() -> str { self.path.as_str() }
+    pub fn package() -> str { self.package.as_str() }
+    pub fn module_len() -> u64 { self.module.len() }
+    pub fn module_segment(index: u64) -> str { self.module[index].as_str() }
+}
+
+impl Drop for SourceFile {
+    pub fn drop() {
+        self.path.drop();
+        self.package.drop();
+        let index = 0u64;
+        while index < self.module.len() { self.module[index].drop(); index += 1u64; }
+        self.module.drop();
+    }
+}
+
+pub struct Project {
+    root_package: String,
+    packages: Vec<Package>,
+    files: Vec<SourceFile>,
+    std_package: String,
+}
+
+impl Project {
+    static pub fn new(root_package: str, packages: Vec<Package>, files: Vec<SourceFile>, std_package: str) -> Self {
+        Self(root_package=String.from(&root_package), packages=packages, files=files,
+            std_package=String.from(&std_package))
+    }
+
+    pub fn root_package() -> str { self.root_package.as_str() }
+    pub fn std_package() -> str { self.std_package.as_str() }
+    pub fn package_count() -> u64 { self.packages.len() }
+    pub fn package(index: u64) -> Package& { &self.packages[index] }
+    pub fn file_count() -> u64 { self.files.len() }
+    pub fn file(index: u64) -> SourceFile& { &self.files[index] }
+
+    pub fn package_by_name(name: str) -> Option<Package&> {
+        match self.package_index(name) {
+            Some(index) => Option<Package&>.Some(&self.packages[index]),
+            None => Option<Package&>.None,
+        }
+    }
+
+    pub fn package_index(name: str) -> Option<u64> {
+        let index = 0u64;
+        while index < self.packages.len() {
+            if self.packages[index].name() == name { return Option<u64>.Some(index); }
+            index += 1u64;
+        }
+        Option<u64>.None
+    }
+
+    pub fn build_files() -> Vec<PathBuf> {
+        let reachable = Vec<String>.new();
+        let pending = Vec<String>.new();
+        defer { drop_names(&reachable); drop_names(&pending); };
+        pending.push(String.from(&self.root_package.as_str()));
+        pending.push(String.from(&self.std_package.as_str()));
+
+        while pending.len() > 0u64 {
+            let name = match pending.pop() { Some(value) => value, None => break };
+            if contains_name(&reachable, name.as_str()) { name.drop(); continue; }
+            reachable.push(String.from(&name.as_str()));
+            match self.package_index(name.as_str()) {
+                Some(package_index) => {
+                    let package = &self.packages[package_index];
+                    let index = 0u64;
+                    while index < package.dependency_count() {
+                        pending.push(String.from(&package.dependency(index)));
+                        index += 1u64;
+                    }
+                },
+                None => {},
+            }
+            name.drop();
+        }
+
+        let result = Vec<PathBuf>.new();
+        let index = 0u64;
+        while index < self.files.len() {
+            if contains_name(&reachable, self.files[index].package()) {
+                result.push(PathBuf.from(self.files[index].path()));
+            }
+            index += 1u64;
+        }
+        result
+    }
+}
+
+pub struct LoadReport { project: Option<Project>, diagnostics: Vec<Diagnostic> }
+
+impl LoadReport {
+    static pub fn new(project: Option<Project>, diagnostics: Vec<Diagnostic>) -> Self {
+        Self(project=project, diagnostics=diagnostics)
+    }
+    pub fn project() -> Option<Project&> {
+        match &self.project { Some(value) => Option<Project&>.Some(value), None => Option<Project&>.None }
+    }
+    pub fn take_project() -> Option<Project> { self.project.take() }
+    pub fn diagnostics() -> Vec<Diagnostic>& { &self.diagnostics }
+    pub fn clean() -> bool { self.diagnostics.len() == 0u64 }
+}
+
+impl Drop for LoadReport {
+    pub fn drop() {
+        match self.project.take() { Some(value) => value.drop(), None => {}, }
+        release_diagnostics(&self.diagnostics);
+    }
+}
+
+fn contains_name(names: Vec<String>&, name: str) -> bool {
+    let index = 0u64;
+    while index < names.len() {
+        if names[index].as_str() == name { return true; }
+        index += 1u64;
+    }
+    false
+}
+
+fn drop_names(names: Vec<String>&) {
+    let index = 0u64;
+    while index < names.len() { names[index].drop(); index += 1u64; }
+    names.drop();
+}
+
+impl Drop for Project {
+    pub fn drop() {
+        self.root_package.drop();
+        let index = 0u64;
+        while index < self.packages.len() { self.packages[index].drop(); index += 1u64; }
+        self.packages.drop();
+        index = 0u64;
+        while index < self.files.len() { self.files[index].drop(); index += 1u64; }
+        self.files.drop();
+        self.std_package.drop();
+    }
+}

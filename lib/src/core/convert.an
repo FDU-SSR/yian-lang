@@ -1,0 +1,13 @@
+pub trait From<Src> {
+    static fn from(value: Src&) -> Self;
+}
+
+pub trait Into<Dst> {
+    fn into() -> Dst;
+}
+
+impl<T> From<T> for T {
+    pub static fn from(value: T&) -> Self {
+        *value
+    }
+}

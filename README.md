@@ -1,43 +1,114 @@
-# YIAN编译器
+# YIAN
 
-## 运行环境
+YIAN is a statically typed programming language with a Python recovery compiler and a native compiler and package manager written in YIAN. The native tools are the daily compiler and package workflow; Python remains for the explicit cold-recovery build and the compatibility it needs.
 
-- Linux(like ubuntu)
-- python3.10+
-- clang
+The native compiler and package manager live in the root `yianc/` and `anx/` packages. Their shared JSON, TOML, LLVM, FFI and protocol libraries live under `bootstrap/`; the Python recovery compiler lives in `python/yianc/`.
 
-## 安装依赖库
+## Requirements
 
-```bash
-pip install -r ./requirements.txt
-```
+- Linux x86-64.
+- Python 3.12+ and llvmlite 0.49+ for the initial native compiler build.
+- LLVM 22, clang 22, `llvm-config`, and a C toolchain for compilation and linking.
 
-## 编译yian代码
+The installed `yianc`, `anx`, and `yian-lsp` commands are native executables. The language server uses the same installed toolchain resources and LLVM runtime libraries.
 
-使用下来命令进行基础编译
+For a fresh development environment, install the Python recovery dependency from the requirements file, then install the LLVM and native C build tools system-wide:
 
 ```bash
-./scripts/yian_compiler.py <文件或者目录路径>
+conda create -n yian-env python=3.12 -y
+conda activate yian-env
+python -m pip install -r python/requirements.txt
+bash scripts/setup_llvm_toolchain.sh
+export YIAN_CC=/usr/lib/llvm-22/bin/clang
 ```
 
-编译脚本的详细用法见[编译脚本文档](docs/compile_script.md)
+`setup_llvm_toolchain.sh` does not depend on Python. It installs missing LLVM 22 tools from the official `apt.llvm.org` repository and native C build tools from the distribution repository using `sudo`, then switches unversioned LLVM commands to version 22. Use `--check` to report the current state without installing anything. The script does not install Python packages.
 
-## For github users
+## Install
 
-### Environment
-
-- Linux(like ubuntu)
-- python3.10+
-- clang
-
-Install required packages:
+Build and install native `yianc` and `anx`, the standard library, and the runtime from this checkout:
 
 ```bash
-pip install -r ./requirements.txt
+conda run --no-capture-output -n yian-env bash scripts/bootstrap_toolchain.sh \
+  --prefix "$HOME/.local" --python python
 ```
 
-### Compiling an example file
+The cold bootstrap does not build the language server. If you also need `yian-lsp`, refresh the complete native toolchain with the newly installed native seeds:
 
 ```bash
-./scripts/yian_compiler.py tests/array/access.an
+scripts/refresh_toolchain.sh --anx "$HOME/.local/bin/anx" \
+  --yianc "$HOME/.local/bin/yianc" --prefix "$HOME/.local"
+"$HOME/.local/bin/yian-lsp" --version
 ```
+
+The server analyzes source in fat mode by default. Set `yian.languageServer.args` to `["--raw-pointers"]` in the VS Code settings to analyze raw-pointer targets.
+
+Remove only the language server while keeping the compiler tools and shared resources, or remove the complete managed installation:
+
+```bash
+scripts/uninstall.sh --lsp-only --prefix "$HOME/.local"
+scripts/uninstall.sh --prefix "$HOME/.local"
+```
+
+The cold bootstrap uses the Python recovery compiler once to build raw `yianc` from its fixed five-package closure, then uses staged native `yianc` to build raw `anx` from its fixed seven-package closure. It never selects installed `yianc` or `anx` from `PATH` and does not build the language server. The warm refresh freezes existing native seeds, rebuilds raw/O2 `yianc`, `anx`, and `yian-lsp`, verifies a stdio handshake against staged resources, and publishes the complete set transactionally.
+
+If working native `yianc` and `anx` commands are already available, refresh the full native toolchain, including the language server, without a Python runtime:
+
+```bash
+scripts/refresh_toolchain.sh --anx "$HOME/.local/bin/anx" --yianc "$HOME/.local/bin/yianc" --prefix "$HOME/.local"
+```
+
+## Compile YIAN programs
+
+The standard library is not an implicit input. Include `lib/src` when compiling code that imports `std.*`:
+
+```bash
+yianc lib/src tests/basic/array/assign.an
+yianc -t ll lib/src tests/basic/array/assign.an -o build/assign.ll
+yianc --log-spec "main=DEBUG" lib/src tests/basic/array/assign.an
+```
+
+See the [compiler CLI guide](docs/compile_script.md) for targets, package maps, analysis, formatting, and diagnostics.
+
+## Use anx
+
+`anx` manages projects, local dependencies, builds, tests, formatting, and package graphs:
+
+```bash
+anx new myapp
+cd myapp
+anx run
+anx check
+anx test
+anx fmt --check
+anx graph --json
+```
+
+Packages declare local dependencies in `package.anx` and import them by package name. See the [anx guide](docs/anx/index.md).
+
+## Run checks
+
+The test runner uses the already installed native compiler tools and never builds or refreshes them. It runs fat and raw target modes by default; `--pointer-mode fat|raw` selects one mode. The safety suite reports raw cases as N/A because raw pointers do not provide the runtime checks those cases exercise. Prepare a current installation explicitly with the cold or warm toolchain entry before selecting native/package suites:
+
+The examples below select the complete test matrix. In repository work, inspect suite selection and nested package-test effects and obtain explicit authorization before running broad checks. The LSP `--mode check` command runs the default protocol scenarios in both pointer modes; `--mode infrastructure` runs bootstrap package tests, all unit tests, formatter checks, and runtime normal/sanitized checks without running the protocol scenarios.
+
+```bash
+conda run --no-capture-output -n yian-env python scripts/run_tests.py --all -q
+```
+
+Check the native language-server protocol against standalone, JSON-package, and compiler-package workspaces:
+
+```bash
+PATH="$HOME/.local/bin:$PATH" \
+  conda run --no-capture-output -n yian-env python scripts/check_lsp.py --mode check
+```
+
+## Documentation
+
+- [Language reference](docs/grammar/index.md)
+- [anx guide](docs/anx/index.md)
+- [Developer manual](docs/manual/index.md)
+- [Language-server installation and manual verification](docs/manual/27.language_server.md)
+- [Quick start](docs/grammar/00.quick_start.md)
+- [Language and tooling overview](docs/proposal.md)
+- [Memory-safety model](docs/security.md)

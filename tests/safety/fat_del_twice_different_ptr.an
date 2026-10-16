@@ -1,0 +1,11 @@
+// Fat-pointer double-free negative test: two pointers to one object; fat_double_free uses one pointer twice.
+//
+// q copies p, sharing lock_ptr/key; first del p writes SENTINEL,
+// then del q fails live because SENTINEL differs from key, terminating with exit code 1.
+
+fn main() {
+    let p: i32* = dyn[2] 0i32;
+    let q: i32* = p;
+    del p;
+    del q // q copies p; the slot already contains SENTINEL, so live fails with a safety error.
+}

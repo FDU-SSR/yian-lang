@@ -1,0 +1,21 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "yian"
+version = "0.1.1"
+description = "YIAN programming language compiler (yianc)"
+requires-python = ">=3.12"
+dependencies = ["llvmlite>=0.49.0"]
+
+[tool.setuptools.packages.find]
+include = ["yianc*"]
+namespaces = true
+
+[tool.pyright]
+include = ["yianc"]
+exclude = ["bak", "tests", "docs", "**/node_modules", "**/__pycache__", "**/.*"]
+typeCheckingMode = "strict"
+useLibraryCodeForTypes = true
+reportMissingTypeStubs = false

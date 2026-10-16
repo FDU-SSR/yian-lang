@@ -1,0 +1,13 @@
+enum Color {
+    Red,
+    Blue,
+}
+
+fn main() {
+    let color = Color.Red;
+    let pointer: Color* = &color;
+    match pointer {
+        Red => 1,
+        Blue => 2,
+    }
+}

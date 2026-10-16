@@ -1,0 +1,155 @@
+from std.core.option import Option;
+
+pub enum AttrKind {
+    Pub,
+    PubFfi,
+    Ffi,
+    Static,
+}
+
+impl AttrKind {
+    pub fn spelling() -> str {
+        match self {
+            Pub => "pub",
+            PubFfi => "pub(ffi)",
+            Ffi => "ffi",
+            Static => "static",
+        }
+    }
+}
+
+pub enum MatchArmOrigin {
+    User,
+    Condition,
+    ForItem,
+    Synthetic,
+}
+
+impl MatchArmOrigin {
+    pub fn spelling() -> str {
+        match self {
+            User => "user",
+            Condition => "condition",
+            ForItem => "for_item",
+            Synthetic => "synthetic",
+        }
+    }
+}
+
+pub enum BuiltinKind {
+    SizeOf,
+    Undef,
+    Dangling,
+    BitCast,
+    Alloc,
+    Realloc,
+    Panic,
+    RuntimeFail,
+    AssumeInit,
+    MemCopy,
+    SliceFromParts,
+    SliceGetPtr,
+    SliceGetLen,
+    StrFromParts,
+    StrGetPtr,
+    StrGetLen,
+    SysRead,
+    SysReadBytes,
+    SysWrite,
+    SysWriteBytes,
+    Open,
+    Close,
+    Sqrt,
+    Sin,
+    Cos,
+    Argc,
+    ArgBytes,
+    Exit,
+    FfiAddr,
+    FfiParts,
+    FfiNull,
+    FfiPtrCast,
+    FfiCopyFrom,
+    FfiCopyTo,
+}
+
+impl BuiltinKind {
+    pub fn spelling() -> str {
+        match self {
+            SizeOf => "sizeof",
+            Undef => "undef",
+            Dangling => "dangling",
+            BitCast => "bitcast",
+            Alloc => "alloc",
+            Realloc => "realloc",
+            Panic => "panic",
+            RuntimeFail => "runtime_fail",
+            AssumeInit => "assume_init",
+            MemCopy => "memcpy",
+            SliceFromParts => "slice_from_parts",
+            SliceGetPtr => "slice_get_ptr",
+            SliceGetLen => "slice_get_len",
+            StrFromParts => "str_from_parts",
+            StrGetPtr => "str_get_ptr",
+            StrGetLen => "str_get_len",
+            SysRead => "sys_read",
+            SysReadBytes => "sys_read_bytes",
+            SysWrite => "sys_write",
+            SysWriteBytes => "sys_write_bytes",
+            Open => "open",
+            Close => "close",
+            Sqrt => "sqrt",
+            Sin => "sin",
+            Cos => "cos",
+            Argc => "argc",
+            ArgBytes => "arg_bytes",
+            Exit => "exit",
+            FfiAddr => "ffi_addr",
+            FfiParts => "ffi_parts",
+            FfiNull => "ffi_null",
+            FfiPtrCast => "ffi_ptr_cast",
+            FfiCopyFrom => "ffi_copy_from",
+            FfiCopyTo => "ffi_copy_to",
+        }
+    }
+
+    static pub fn from_text(text: str) -> Option<Self> {
+        return match text {
+            "sizeof" => Option<Self>.Some(val=Self.SizeOf),
+            "undef" => Option<Self>.Some(val=Self.Undef),
+            "dangling" => Option<Self>.Some(val=Self.Dangling),
+            "bitcast" => Option<Self>.Some(val=Self.BitCast),
+            "alloc" => Option<Self>.Some(val=Self.Alloc),
+            "realloc" => Option<Self>.Some(val=Self.Realloc),
+            "panic" => Option<Self>.Some(val=Self.Panic),
+            "runtime_fail" => Option<Self>.Some(val=Self.RuntimeFail),
+            "assume_init" => Option<Self>.Some(val=Self.AssumeInit),
+            "memcpy" => Option<Self>.Some(val=Self.MemCopy),
+            "slice_from_parts" => Option<Self>.Some(val=Self.SliceFromParts),
+            "slice_get_ptr" => Option<Self>.Some(val=Self.SliceGetPtr),
+            "slice_get_len" => Option<Self>.Some(val=Self.SliceGetLen),
+            "str_from_parts" => Option<Self>.Some(val=Self.StrFromParts),
+            "str_get_ptr" => Option<Self>.Some(val=Self.StrGetPtr),
+            "str_get_len" => Option<Self>.Some(val=Self.StrGetLen),
+            "sys_read" => Option<Self>.Some(val=Self.SysRead),
+            "sys_read_bytes" => Option<Self>.Some(val=Self.SysReadBytes),
+            "sys_write" => Option<Self>.Some(val=Self.SysWrite),
+            "sys_write_bytes" => Option<Self>.Some(val=Self.SysWriteBytes),
+            "open" => Option<Self>.Some(val=Self.Open),
+            "close" => Option<Self>.Some(val=Self.Close),
+            "sqrt" => Option<Self>.Some(val=Self.Sqrt),
+            "sin" => Option<Self>.Some(val=Self.Sin),
+            "cos" => Option<Self>.Some(val=Self.Cos),
+            "argc" => Option<Self>.Some(val=Self.Argc),
+            "arg_bytes" => Option<Self>.Some(val=Self.ArgBytes),
+            "exit" => Option<Self>.Some(val=Self.Exit),
+            "ffi_addr" => Option<Self>.Some(val=Self.FfiAddr),
+            "ffi_parts" => Option<Self>.Some(val=Self.FfiParts),
+            "ffi_null" => Option<Self>.Some(val=Self.FfiNull),
+            "ffi_ptr_cast" => Option<Self>.Some(val=Self.FfiPtrCast),
+            "ffi_copy_from" => Option<Self>.Some(val=Self.FfiCopyFrom),
+            "ffi_copy_to" => Option<Self>.Some(val=Self.FfiCopyTo),
+            _ => Option<Self>.None,
+        };
+    }
+}

@@ -1,0 +1,6 @@
+// Explicit exit has no diagnostic output and preserves its status code.
+from std.core.env import exit;
+
+fn main() {
+    exit(42);
+}

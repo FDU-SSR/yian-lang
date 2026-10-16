@@ -1,0 +1,4 @@
+[package]
+name = "ffi_anx_test"
+kind = "lib"
+ffi = true

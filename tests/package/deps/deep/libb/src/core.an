@@ -1,0 +1,2 @@
+from libc.secret import the_answer;
+pub fn magic() -> i32 { return the_answer(); }

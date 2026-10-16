@@ -1,0 +1,51 @@
+// HashSet discards duplicates without drop; remove, clear and final drop only
+// release table storage.
+from std.collections.hash_set import HashSet;
+from std.core.drop import Drop;
+from std.core.hash import Hash, Murmur3Hasher;
+from std.core.ops import PartialEq;
+
+struct Key {
+    id: i32,
+    drops: i32*,
+}
+
+impl Drop for Key {
+    fn drop() { *self.drops += 1; }
+}
+
+impl Hash<Murmur3Hasher> for Key {
+    fn hash(hasher: Murmur3Hasher&) { self.id.hash(hasher); }
+}
+
+impl PartialEq<Key> for Key {
+    fn eq(other: Key&) -> bool { self.id == other.id }
+}
+
+fn main() {
+    let drops: i32 = 0;
+    let set = HashSet<Key>.new();
+    assert set.insert(Key(1, &drops));
+    assert !set.insert(Key(1, &drops));
+    assert drops == 0: "duplicate is discarded without drop (it may alias the stored key)";
+
+    let lookup = Key(1, &drops);
+    assert set.remove(&lookup);
+    assert drops == 0: "remove must not clean the stored key";
+    lookup.drop();
+    assert drops == 1: "explicitly dropping a reachable key takes effect";
+
+    // Same-variable re-insert must never drop the shared incoming copy.
+    let k = Key(7, &drops);
+    assert set.insert(k);
+    for i in 0..4 {
+        assert !set.insert(k);
+    }
+    assert drops == 1: "loop duplicates must not drop the incoming copy";
+
+    set.clear();
+    assert drops == 1: "clear must not drop stored keys";
+    set.insert(Key(2, &drops));
+    set.drop();
+    assert drops == 1: "set drop releases storage without dropping keys";
+}

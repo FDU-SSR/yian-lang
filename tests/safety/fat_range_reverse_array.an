@@ -1,0 +1,7 @@
+// A reversed fixed-array range must fail before computing end - start.
+
+fn main() {
+    let values: i32[4] = [1, 2, 3, 4];
+    let s: i32[] = values[3u64..1];
+    s[0] = 99;
+}

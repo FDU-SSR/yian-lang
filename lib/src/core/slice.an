@@ -1,0 +1,173 @@
+from std.core.hash import Hash, Murmur3Hasher;
+from std.core.option import Option;
+from std.core.vec import Vec;
+from std.core.iter import Iterator, IntoIterator;
+from std.core.ops import PartialEq, Index;
+from std.core.range import Range;
+
+// A struct representation of a slice
+struct SliceStruct<T> {
+    pub ptr: T*,
+    pub len: u64,
+}
+
+impl<T> T[] {
+    // Convert a slice to a SliceStruct
+    fn as_struct() -> SliceStruct<T> {
+        SliceStruct<T>(
+            ptr=@slice_get_ptr(*self),
+            len=@slice_get_len(*self),
+        )
+    }
+
+    // Get the raw pointer to the slice data
+    pub fn ptr() -> T* {
+        self.as_struct().ptr
+    }
+
+    // Get length of the slice
+    pub fn len() -> u64 {
+        self.as_struct().len
+    }
+
+    // Get element at index
+    pub fn get(index: u64) -> Option<T&> {
+        if index >= self.len() {
+            return Option<T&>.None;
+        }
+        let ptr = self.as_struct().ptr + index;
+        Option<T&>.Some(ptr)
+    }
+
+    // Get first element of the slice
+    pub fn first() -> Option<T&> {
+        self.get(0)
+    }
+
+    // Get last element of the slice
+    pub fn last() -> Option<T&> {
+        if self.len() == 0 {
+            return Option<T&>.None;
+        }
+        self.get(self.len() - 1)
+    }
+
+    // Clone the slice into a Vec
+    // Copy only the element buffer; do not recursively copy resources owned by elements. For deep copies,
+    // callers explicitly invoke clone() on elements.
+    pub fn to_vec() -> Vec<T> {
+        let vec = Vec<T>.with_capacity(self.len());
+        vec.extend_from_slice(*self);
+        vec
+    }
+}
+
+pub struct SliceIter<T> {
+    pub ptr: T*,
+    pub n: u64, // remaining count (ZST-safe, also used for len())
+}
+
+impl<T> SliceIter<T> {
+    pub fn len() -> u64 {
+        self.n
+    }
+
+    pub fn rev() -> RevSliceIter<T> {
+        // ptr stays at the forward start; Rev moves backward from ptr+n
+        RevSliceIter<T>(
+            ptr=self.ptr,
+            n=self.n,
+        )
+    }
+}
+
+pub struct RevSliceIter<T> {
+    pub ptr: T*, // forward start, stays fixed; next() returns ptr+n
+    pub n: u64,
+}
+
+impl<T> RevSliceIter<T> {
+    pub fn len() -> u64 {
+        self.n
+    }
+
+    pub fn rev() -> SliceIter<T> {
+        SliceIter<T>(
+            ptr=self.ptr,
+            n=self.n,
+        )
+    }
+}
+
+impl<T> Iterator<T&> for SliceIter<T> {
+    fn next() -> Option<T&> {
+        if self.n == 0 {
+            return Option<T&>.None;
+        }
+        let current = self.ptr;
+        self.ptr += 1
+        self.n -= 1
+        Option<T&>.Some(current)
+    }
+}
+
+impl<T> Iterator<T&> for RevSliceIter<T> {
+    pub fn next() -> Option<T&> {
+        if self.n == 0 {
+            return Option<T&>.None
+        }
+        self.n -= 1
+        Option<T&>.Some(self.ptr + self.n)
+    }
+}
+
+impl<T> IntoIterator<SliceIter<T>> for T[] {
+    pub fn into_iter() -> SliceIter<T> {
+        let s = self.as_struct();
+        SliceIter<T>(
+            ptr=s.ptr,
+            n=s.len,
+        )
+    }
+}
+
+impl<T> PartialEq<T[]> for T[] {
+    pub fn eq(other: T[]&) -> bool {
+        if self.len() != other.len() {
+            return false;
+        }
+        for i in 0..self.len() {
+            if self.ptr()[i] != other.ptr()[i] {
+                return false;
+            }
+        }
+        true
+    }
+}
+
+impl<T> Index<u64, T&> for T[] {
+    fn index(index: u64&) -> T& {
+        if *index >= self.len() {
+            @runtime_fail("S001");
+        }
+        self.ptr() + *index
+    }
+}
+
+impl<T> Index<Range<u64>, T[]> for T[] {
+    fn index(range: Range<u64>&) -> T[] {
+        if range.start > range.end || range.end > self.len() {
+            @runtime_fail("S001");
+        }
+        let start_ptr = self.ptr() + range.start;
+        let len = range.end - range.start;
+        @slice_from_parts(start_ptr, len)
+    }
+}
+
+impl<T> Hash<Murmur3Hasher> for T[] {
+    fn hash(hasher: Murmur3Hasher&) {
+        self.len().hash(hasher);
+        for value in *self { value.hash(hasher); }
+    }
+}

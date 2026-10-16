@@ -1,0 +1,15 @@
+// Built-in type constructors — generic spellings for composite types, so they
+// can appear in expression contexts (sizeof, static-method receivers) without
+// the postfix syntax that collides with expression grammar.
+//
+//   Ptr<T>              == T*
+//   Slice<T>            == T[]
+//   Array<T, const N>   == T[N]
+//   Never               == !
+//
+// These are prelude-injected, so they are available without an explicit import.
+
+pub typedef Ptr<T> = T*;
+pub typedef Slice<T> = T[];
+pub typedef Array<T, const N: u64> = T[N];
+pub typedef Never = !;

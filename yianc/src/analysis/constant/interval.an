@@ -1,0 +1,140 @@
+from std.collections.sort import sort_by;
+from std.core.iter import Iterator, IntoIterator;
+from std.core.ops import Index;
+from std.core.option import Option;
+from std.core.vec import Vec;
+
+// AfterMax denotes the exclusive boundary following the largest u64 key.
+pub enum Boundary {
+    Finite {
+        key: u64
+    }, AfterMax
+}
+
+impl Boundary {
+    pub fn less(other: Self) -> bool {
+        match self {
+            AfterMax => false,
+            Finite(key) => match &other {
+                AfterMax => true,
+                Finite(right) => *key < *right
+            },
+        }
+    }
+
+    pub fn next() -> Self {
+        match self {
+            AfterMax => Self.AfterMax,
+            Finite(key) => if *key == 0xFFFFFFFFFFFFFFFFu64 {
+                Self.AfterMax
+            } else {
+                Self.Finite(*key + 1)
+            },
+        }
+    }
+
+    pub fn clamp(low: Self, high: Self) -> Self {
+        if self.less(low) {
+            return low;
+        }
+
+        if high.less(*self) {
+            return high;
+        }
+
+        return *self;
+    }
+}
+
+pub struct Interval {
+    pub low: Boundary,
+    pub high: Boundary
+}
+
+impl Interval {
+    pub fn is_empty() -> bool {
+        !self.low.less(self.high)
+    }
+
+    pub fn intersect(other: Self) -> Option<Self> {
+        let low = if self.low.less(other.low) {
+            other.low
+        } else {
+            self.low
+        };
+
+        let high = if self.high.less(other.high) {
+            self.high
+        } else {
+            other.high
+        };
+
+        if !low.less(high) {
+            return Option<Self>.None;
+        }
+
+        Option<Self>.Some(Self(low, high))
+    }
+
+    // Split using sorted, deduplicated, domain-clamped cuts; input storage stays borrowed.
+    pub fn split(cuts: Boundary[]) -> Vec<Self> {
+        if self.is_empty() {
+            return Vec<Self>.new();
+        }
+
+        let points = Vec<Boundary>.new();
+        defer points.drop();
+        points.push(self.low);
+        points.push(self.high);
+
+        for cut in cuts {
+            points.push(cut.clamp(self.low, self.high));
+        }
+
+        sort_by(points.as_slice(), boundary_less);
+        let result = Vec<Self>.new();
+
+        for index in 1u64..points.len() {
+            if points[index - 1].less(points[index]) {
+                result.push(Self(points[index - 1], points[index]));
+            }
+        }
+
+        result
+    }
+}
+
+fn boundary_less(left: Boundary&, right: Boundary&) -> bool {
+    left.less(*right)
+}
+
+// Flipping the sign bit makes unsigned ordering match signed numeric ordering.
+pub fn scalar_key(bits: u64, width: u32, signed: bool) -> u64 {
+    if width == 0 || width > 64 {
+        @panic("E599: invalid scalar width");
+    }
+
+    let masked = if width == 64 {
+        bits
+    } else {
+        bits & ((1u64 << width) - 1)
+    };
+
+    if signed {
+        masked ^ (1u64 << (width - 1))
+    } else {
+        masked
+    }
+}
+
+pub fn scalar_domain(width: u32) -> Interval {
+    if width == 0 || width > 64 {
+        @panic("E599: invalid scalar width");
+    }
+
+    Interval(Boundary.Finite(0), if width == 64 {
+            Boundary.AfterMax
+        } else {
+            Boundary.Finite(1u64 << width)
+        })
+}

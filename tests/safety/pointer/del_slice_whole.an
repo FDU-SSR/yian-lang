@@ -1,0 +1,20 @@
+// Deletion-view positive (a): whole-block T[] succeeds. let arr:i32[]=dyn[4] 0i32
+// converts T* to a full heap view with data=lock_ptr+8,lo=0. CheckDelete's
+// is_heap/live/is_raw terms pass. SliceType has no index,
+// so the index-zero check is true and only data==lock_ptr+8 matters; del arr releases the block,
+// writes SENTINEL, and frees the lock-addressed allocation. Reallocate to verify stability.
+//
+// Expected output: 0
+
+fn main() {
+    let arr: i32[] = dyn[4] 0i32;
+    assert arr.len() == 4: "whole-block view preserves element count";
+    del arr;
+
+    // Reallocate after del; the new block is independently usable.
+    let q: i32* = dyn[2] 0i32;
+    q[0] = 9;
+    q[1] = 8;
+    assert q[0] + q[1] == 17: "heap stable after del slice";
+    del q;
+}

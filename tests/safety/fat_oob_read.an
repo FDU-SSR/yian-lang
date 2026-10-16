@@ -1,0 +1,16 @@
+// Fat-pointer out-of-bounds read negative test.
+//
+// r[4] reads a size-four buffer with index 4+1>size 4, failing safe_access's
+// in_bounds term and terminating with exit code 1.
+// Compare safety_oob_ptr.an's write r[4]=99.
+
+fn main() {
+    let r: i32* = dyn[4] 0i32;
+    r[0] = 1;
+    r[1] = 2;
+    r[2] = 3;
+    r[3] = 4;
+
+    let v: i32 = r[4]; // OOB read: index 4+1>size 4 fails in_bounds with a safety error.
+    assert v == 5: "unreachable"
+}

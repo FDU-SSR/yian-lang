@@ -1,0 +1,17 @@
+{
+  "name": "call_abi",
+  "source": "fatptr",
+  "tags": [
+    "micro"
+  ],
+  "argv": [],
+  "check": {
+    "rc": 0
+  },
+  "note": "rc==0 (内部断言: 两被调者校验和 == ROUNDS·(193·Σn + 3744·CALLS)); 被调者函数体大到三态都不内联, 跑的都是真实调用; mix_in 传一个 24 B 胖参, mix_wide 传两个",
+  "scale": {
+    "default": 4096,
+    "fast": 1024,
+    "c": "argv"
+  }
+}

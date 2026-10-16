@@ -1,0 +1,8 @@
+from std.core.env import exit;
+from std.core.io import Stderr;
+
+fn main() {
+    Stderr.new().write_str("before\n").unwrap();
+    defer Stderr.new().write_str("deferred\n").unwrap();
+    exit(7);
+}

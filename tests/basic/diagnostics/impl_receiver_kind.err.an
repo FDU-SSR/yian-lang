@@ -1,0 +1,12 @@
+trait Transform {
+    fn apply(value: i32) -> i32;
+}
+
+impl Transform for i32 {
+    // An instance trait method requires an instance implementation.
+    static fn apply(value: i32) -> i32 {
+        value
+    }
+}
+
+fn main() {}

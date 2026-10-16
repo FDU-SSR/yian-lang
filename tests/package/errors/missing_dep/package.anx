@@ -1,0 +1,5 @@
+[package]
+name = "bad"
+version = "0.1.0"
+[dependencies]
+ghost = { path = "../no/such/dir" }

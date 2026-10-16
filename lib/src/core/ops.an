@@ -1,0 +1,172 @@
+// =============================================================================
+// Arithmetic operators
+// =============================================================================
+
+pub trait Add<Rhs, Output> {
+    fn add(rhs: Rhs) -> Output;
+}
+
+pub trait Sub<Rhs, Output> {
+    fn sub(rhs: Rhs) -> Output;
+}
+
+pub trait Mul<Rhs, Output> {
+    fn mul(rhs: Rhs) -> Output;
+}
+
+pub trait Div<Rhs, Output> {
+    fn div(rhs: Rhs) -> Output;
+}
+
+pub trait Rem<Rhs, Output> {
+    fn rem(rhs: Rhs) -> Output;
+}
+
+pub trait Neg<Output> {
+    fn neg() -> Output;
+}
+
+// =============================================================================
+// Arithmetic compound assignment
+// =============================================================================
+
+pub trait AddAssign<Rhs, Output> {
+    fn add_assign(rhs: Rhs) -> Output;
+}
+
+pub trait SubAssign<Rhs, Output> {
+    fn sub_assign(rhs: Rhs) -> Output;
+}
+
+pub trait MulAssign<Rhs, Output> {
+    fn mul_assign(rhs: Rhs) -> Output;
+}
+
+pub trait DivAssign<Rhs, Output> {
+    fn div_assign(rhs: Rhs) -> Output;
+}
+
+pub trait RemAssign<Rhs, Output> {
+    fn rem_assign(rhs: Rhs) -> Output;
+}
+
+// =============================================================================
+// Bitwise operators
+// =============================================================================
+
+pub trait BitAnd<Rhs, Output> {
+    fn bit_and(rhs: Rhs) -> Output;
+}
+
+pub trait BitOr<Rhs, Output> {
+    fn bit_or(rhs: Rhs) -> Output;
+}
+
+pub trait BitXor<Rhs, Output> {
+    fn bit_xor(rhs: Rhs) -> Output;
+}
+
+pub trait BitNot<Output> {
+    fn bit_not() -> Output;
+}
+
+pub trait Shl<Rhs, Output> {
+    fn shl(rhs: Rhs) -> Output;
+}
+
+pub trait Shr<Rhs, Output> {
+    fn shr(rhs: Rhs) -> Output;
+}
+
+// =============================================================================
+// Bitwise compound assignment
+// =============================================================================
+
+pub trait BitAndAssign<Rhs, Output> {
+    fn bitand_assign(rhs: Rhs) -> Output;
+}
+
+pub trait BitOrAssign<Rhs, Output> {
+    fn bitor_assign(rhs: Rhs) -> Output;
+}
+
+pub trait BitXorAssign<Rhs, Output> {
+    fn bitxor_assign(rhs: Rhs) -> Output;
+}
+
+pub trait ShlAssign<Rhs, Output> {
+    fn shl_assign(rhs: Rhs) -> Output;
+}
+
+pub trait ShrAssign<Rhs, Output> {
+    fn shr_assign(rhs: Rhs) -> Output;
+}
+
+// =============================================================================
+// Comparison
+// =============================================================================
+
+pub trait PartialEq<Rhs> {
+    fn eq(rhs: Rhs&) -> bool;
+    fn ne(rhs: Rhs&) -> bool {
+        !self.eq(rhs)
+    }
+}
+
+pub enum Ordering {
+    Less,
+    Equal,
+    Greater,
+}
+
+pub trait PartialOrd<Rhs> {
+    fn partial_cmp(rhs: Rhs&) -> Ordering;
+
+    fn lt(rhs: Rhs&) -> bool {
+        match self.partial_cmp(rhs) {
+            Less => true,
+            _ => false,
+        }
+    }
+
+    fn le(rhs: Rhs&) -> bool {
+        match self.partial_cmp(rhs) {
+            Greater => false,
+            _ => true,
+        }
+    }
+
+    fn gt(rhs: Rhs&) -> bool {
+        match self.partial_cmp(rhs) {
+            Greater => true,
+            _ => false,
+        }
+    }
+
+    fn ge(rhs: Rhs&) -> bool {
+        match self.partial_cmp(rhs) {
+            Less => false,
+            _ => true,
+        }
+    }
+}
+
+pub fn max<T>(a: T, b: T) -> T {
+    if a < b { b } else { a }
+}
+
+pub fn min<T>(a: T, b: T) -> T {
+    if a < b { a } else { b }
+}
+
+// =============================================================================
+// Indexing and dereference
+// =============================================================================
+
+pub trait Index<Idx, Target> {
+    fn index(idx: Idx&) -> Target;
+}
+
+pub trait Deref<Target> {
+    fn deref() -> Target;
+}

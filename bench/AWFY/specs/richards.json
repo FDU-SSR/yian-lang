@@ -1,0 +1,16 @@
+{
+  "name": "richards",
+  "source": "AWFY",
+  "tags": [
+    "ptr"
+  ],
+  "argv": [],
+  "check": {
+    "rc": 0
+  },
+  "note": "官方工作单元: queuePacketCount=23246、holdCount=9297; 外层默认 3303 次",
+  "scale": {
+    "default": 3303,
+    "c": "argv"
+  }
+}

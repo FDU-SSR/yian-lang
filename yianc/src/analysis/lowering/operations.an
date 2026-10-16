@@ -1,0 +1,213 @@
+from yianc.analysis.lowering.checker import ExprChecker;
+from yianc.analysis.ty.callable import signature, schedule;
+from yianc.analysis.ty.substitution import has_generic;
+from yianc.analysis.ty.relations import compatible, is_integer, is_numeric, default_type;
+from yianc.analysis.ty.properties import is_zst;
+from yianc.analysis.hir.node import HirKind, Binary as HirBinary, Unary as HirUnary, Block as HirBlock;
+from yianc.common.ids import HirId, TypeId;
+from yianc.frontend.ast.node import Expr;
+from yianc.frontend.ast.operator import BinaryOperator, UnaryOperator;
+from yianc.frontend.source import Span;
+from yianc.diagnostics.model import AnalysisError;
+from std.core.drop import Drop;
+from std.core.clone import Clone;
+from std.core.iter import Iterator, IntoIterator;
+from std.core.result import Result;
+from std.core.vec import Vec;
+
+fn assignment_operator(op: BinaryOperator) -> bool {
+    match &op {
+        Assign | AddAssign | SubAssign | MulAssign | DivAssign | ModAssign |
+        BitAndAssign | BitOrAssign | BitXorAssign | ShlAssign | ShrAssign => true,
+        _ => false,
+    }
+}
+
+impl ExprChecker {
+    fn unary(span: Span, op: UnaryOperator, operand: Expr&) -> Result<HirId, AnalysisError> {
+        if op == UnaryOperator.Neg {
+            match &operand.data {
+                Literal(literal) => match literal {
+                    Integer(value) => {
+                        // The smallest signed value is checked after its leading sign.
+                        let signed = match &value.data.suffix {
+                            Unsuffixed | I8 | I16 | I32 | I64 | Int => true,
+                            _ => false,
+                        };
+                        if signed {
+                            return self.integer_literal(span, value.data.value, !value.data.negative, value.data.suffix);
+                        }
+                    },
+                    _ => {},
+                },
+                _ => {},
+            }
+        }
+
+        let value = self.expression(operand)?;
+        let type_id = self.type_of(value);
+        let result = match &op {
+            LogicalNot => {
+                self.coerce(value, self.ctx.primitives.boolean)?;
+                self.ctx.primitives.boolean
+            },
+            Neg => {
+                if !is_numeric(self.ctx, type_id) {
+                    return self.overloaded_unary(span, op, value);
+                }
+
+                type_id
+            },
+            BitNot => {
+                if !is_integer(self.ctx, type_id) && type_id != self.ctx.primitives.boolean {
+                    return self.overloaded_unary(span, op, value);
+                }
+
+                type_id
+            },
+            AddrOf => {
+                match &self.ctx.session.hir.get(value).unwrap().kind {
+                    Unary(unary) => {
+                        if unary.op == UnaryOperator.Deref {
+                            match self.ctx.session.types.require(self.type_of(unary.operand))? {
+                                Reference(_) => return Result<HirId, AnalysisError>.Ok(unary.operand),
+                                _ => {},
+                            }
+                        }
+
+                        self.ctx.session.types.pointer(type_id)
+                    },
+                    Ty => {
+                        let callable = signature(self.ctx, type_id)?;
+                        defer callable.drop();
+                        let types = Vec<TypeId>.new();
+                        defer types.drop();
+
+                        for parameter in callable.parameters {
+                            types.push(parameter.type_id);
+                        }
+
+                        if !callable.is_header && !has_generic(&self.ctx.session.types, type_id) {
+                            schedule(self.ctx, type_id)?;
+                        }
+
+                        self.ctx.session.types.function_pointer(&types, callable.result)
+                    },
+                    _ => self.ctx.session.types.pointer(type_id),
+                }
+            },
+            Deref => match self.ctx.session.types.require(type_id)? {
+                Pointer(inner) => *inner,
+                Reference(inner) => *inner,
+                CPointer(inner) => *inner,
+                _ => return self.overloaded_unary(span, op, value),
+            },
+        };
+
+        Result<HirId, AnalysisError>.Ok(self.node(span, result, op == UnaryOperator.Deref, HirKind.Unary(HirUnary(op, value))))
+    }
+
+    fn binary(span: Span, op: BinaryOperator, left: Expr&, right: Expr&) -> Result<HirId, AnalysisError> {
+        let lhs = self.expression(left)?;
+        let rhs = self.expression(right)?;
+        let lhs_type = self.type_of(lhs);
+        let rhs_type = self.type_of(rhs);
+        let assignment = assignment_operator(op);
+
+        match self.pointer_binary(span, op, lhs, rhs)? {
+            Some(value) => return Result<HirId, AnalysisError>.Ok(value),
+            None => {},
+        }
+
+        if (op == BinaryOperator.Shl || op == BinaryOperator.Shr || op == BinaryOperator.ShlAssign || op == BinaryOperator.ShrAssign) && is_integer(self.ctx, lhs_type) && is_integer(self.ctx, rhs_type) {
+            if assignment && !self.ctx.session.hir.require(lhs)?.is_place {
+                return Result<HirId, AnalysisError>.Err(self.error(span, "shift assignment target must be an l-value"));
+            }
+
+            let result = if assignment {
+                self.ctx.primitives.void
+            } else {
+                lhs_type
+            };
+            return Result<HirId, AnalysisError>.Ok(self.node(span, result, false, HirKind.Binary(HirBinary(op, lhs, rhs))));
+        }
+
+        if assignment {
+            if !self.ctx.session.hir.get(lhs).unwrap().is_place {
+                return Result<HirId, AnalysisError>.Err(self.error(span, "assignment target must be an l-value"));
+            }
+
+            let boolean_bit = lhs_type == self.ctx.primitives.boolean && (op == BinaryOperator.BitAndAssign || op == BinaryOperator.BitOrAssign || op == BinaryOperator.BitXorAssign);
+            if op != BinaryOperator.Assign && !is_numeric(self.ctx, lhs_type) && !boolean_bit {
+                return self.overloaded_binary(span, op, lhs, rhs);
+            }
+
+            let converted = self.coerce(rhs, lhs_type)?;
+
+            return Result<HirId, AnalysisError>.Ok(self.node(span, self.ctx.primitives.void, false, HirKind.Binary(HirBinary(op, lhs, converted))));
+        }
+
+        if op == BinaryOperator.Index {
+            return self.index(span, lhs, rhs);
+        }
+
+        if op == BinaryOperator.LogicalAnd || op == BinaryOperator.LogicalOr {
+            let lhs = self.coerce(lhs, self.ctx.primitives.boolean)?;
+            let rhs = self.coerce(rhs, self.ctx.primitives.boolean)?;
+            return Result<HirId, AnalysisError>.Ok(self.node(span, self.ctx.primitives.boolean, false, HirKind.Binary(HirBinary(op, lhs, rhs))));
+        }
+
+        // Overloaded operands can have different types, such as String + str.
+        let comparison = op == BinaryOperator.Eq || op == BinaryOperator.Neq || op == BinaryOperator.Lt || op == BinaryOperator.Leq || op == BinaryOperator.Gt || op == BinaryOperator.Geq;
+
+        if comparison && lhs_type == rhs_type && is_zst(self.ctx, lhs_type)? {
+            // Operands still execute even when the comparison has a constant result.
+            let values = Vec<HirId>.new();
+            values.push(lhs);
+            values.push(rhs);
+            let truth = op == BinaryOperator.Eq || op == BinaryOperator.Leq || op == BinaryOperator.Geq;
+            values.push(self.node(span, self.ctx.primitives.boolean, false, HirKind.BoolLiteral(truth)));
+            return Result<HirId, AnalysisError>.Ok(self.node(span, self.ctx.primitives.boolean, false, HirKind.Block(HirBlock(values))));
+        }
+
+        let builtin_non_numeric = lhs_type == rhs_type &&
+        ((comparison && (lhs_type == self.ctx.primitives.boolean || lhs_type == self.ctx.primitives.character)) ||
+            ((op == BinaryOperator.BitAnd || op == BinaryOperator.BitOr || op == BinaryOperator.BitXor) && lhs_type == self.ctx.primitives.boolean));
+
+        if (!is_numeric(self.ctx, lhs_type) || !is_numeric(self.ctx, rhs_type)) && !builtin_non_numeric {
+            return self.overloaded_binary(span, op, lhs, rhs);
+        }
+
+        let common = if lhs_type == rhs_type {
+            lhs_type
+        } elif compatible(self.ctx, lhs_type, rhs_type) {
+            rhs_type
+        } elif compatible(self.ctx, rhs_type, lhs_type) {
+            lhs_type
+        } else {
+            return Result<HirId, AnalysisError>.Err(self.error(span, "binary operands have incompatible types"));
+        };
+        let boolean_bit = (op == BinaryOperator.BitAnd || op == BinaryOperator.BitOr || op == BinaryOperator.BitXor) && common == self.ctx.primitives.boolean;
+
+        if !is_numeric(self.ctx, common) && !boolean_bit && !(comparison && (common == self.ctx.primitives.boolean || common == self.ctx.primitives.character)) {
+            return self.overloaded_binary(span, op, lhs, rhs);
+        }
+
+        if (op == BinaryOperator.BitAnd || op == BinaryOperator.BitOr || op == BinaryOperator.BitXor || op == BinaryOperator.Shl || op == BinaryOperator.Shr) && !is_integer(self.ctx, common) && !boolean_bit {
+            return Result<HirId, AnalysisError>.Err(self.error(span, "operator requires integer operands"));
+        }
+
+        if op == BinaryOperator.In || op == BinaryOperator.Range {
+            return Result<HirId, AnalysisError>.Err(AnalysisError.internal("range and membership operators must be desugared before lowering"));
+        }
+
+        lhs = self.coerce(lhs, common)?;
+        rhs = self.coerce(rhs, common)?;
+        let result = if comparison {
+            self.ctx.primitives.boolean
+        } else {
+            common
+        };
+        Result<HirId, AnalysisError>.Ok(self.node(span, result, false, HirKind.Binary(HirBinary(op, lhs, rhs))))
+    }
+}

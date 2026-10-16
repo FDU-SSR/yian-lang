@@ -1,0 +1,128 @@
+// Consolidated basic type and diagnostics scenarios.
+
+
+
+// Named scenario: case_alias_in_field_and_generic
+// typedef: alias inside a field type and inside a generic argument.
+
+typedef FieldCode = u64;
+
+struct FieldBox<T> { pub v: T }
+
+struct Holder { pub b: FieldBox<FieldCode> }
+
+fn case_alias_in_field_and_generic() {
+    let h: Holder = Holder(b=FieldBox<FieldCode>(v=9u64));
+    assert h.b.v == 9u64;
+    let g: FieldBox<u64> = FieldBox<u64>(v=8u64);
+    assert g.v == 8u64;
+}
+
+// Named scenario: case_alias_to_generic_instance
+// typedef: alias to a generic instance keeps working as a value type.
+
+struct InstanceBox<T> { pub v: T }
+
+typedef IntBox = InstanceBox<i32>;
+
+fn case_alias_to_generic_instance() { let b: IntBox = InstanceBox<i32>(v=3); assert b.v == 3; }
+
+// Named scenario: case_common_type_with_alias
+// typedef: array elements spelled as an alias and as its target stay compatible.
+// Array element type inference accepts an alias alongside its target type.
+
+typedef CommonTypeCode = u64;
+
+fn pair(a: CommonTypeCode, b: u64) -> u64[2] { return [a, b]; }
+
+fn case_common_type_with_alias() {
+    let v: u64[2] = pair(1u64, 2u64);
+    assert v[0] == 1u64;
+    assert v[1] == 2u64;
+}
+
+// Named scenario: case_nested_alias_argument
+// typedef: an alias chain inside a generic argument is one type written twice.
+
+typedef A = u64;
+typedef B = A;
+
+struct NestedBox<T> { pub v: T }
+
+fn case_nested_alias_argument() {
+    let x: NestedBox<B> = NestedBox<B>(v=4u64);
+    let y: NestedBox<u64> = NestedBox<u64>(v=5u64);
+    assert x.v == 4u64;
+    assert y.v == 5u64;
+}
+
+// Named scenario: case_alias_templates
+struct Pair<A, B> { pub first: A, pub second: B }
+
+typedef Reverse<A, B> = Pair<B, A>;
+typedef Twice<T> = Pair<T, T>;
+typedef First<A, B> = A;
+typedef Chain<A, B> = Reverse<B, A>;
+typedef Count = u64;
+typedef Array<T, const N: Count> = T[N];
+
+enum Choice<T> { Empty, Value { value: T } }
+typedef AliasChoice<T> = Choice<T>;
+
+impl<A, B> Pair<A, B> {
+    pub static fn of(first: A, second: B) -> Pair<A, B> {
+        Pair<A, B>(first, second)
+    }
+}
+
+fn identity<T>(value: T) -> T { value }
+
+fn case_alias_templates() {
+    let swapped: Pair<u64, i32> = Reverse<i32, u64>.of(7u64, 8i32);
+    assert swapped.first == 7u64 && swapped.second == 8i32;
+    let chain: Pair<i32, u64> = Chain<i32, u64>(9i32, 10u64);
+    assert identity<Chain<i32, u64>>(chain).first == 9i32;
+    let repeated: Pair<i32, i32> = Twice<i32>(11, 12);
+    assert repeated.second == 12;
+    let scalar: First<i32, u64> = 13;
+    assert scalar == 13;
+    let array: Array<i32, 3> = [1, 2, 3];
+    assert array[2] == 3;
+    let option: Choice<i32> = AliasChoice<i32>.Value(14);
+    match option {
+        AliasChoice<i32>.Value(value) => { assert value == 14; },
+        AliasChoice<i32>.Empty => { assert false; },
+    }
+}
+
+// Named scenario: case_generic_typedefs
+// typedef: generic alias — over pointer / generic struct / array (const generic).
+// Generic aliases substitute type and const arguments into their definitions.
+
+struct GenericAliasBox<T> { v: T }
+typedef Ptr<T> = T*;
+typedef MyBox<T> = GenericAliasBox<T>;
+typedef Arr<T, const N: u64> = T[N];
+
+struct WP { p: i32* }
+
+fn case_generic_typedefs() {
+    assert @sizeof<Ptr<i32>> == @sizeof<WP>: "generic alias to pointer"
+    assert @sizeof<MyBox<i32>> == @sizeof<GenericAliasBox<i32>>: "generic alias to generic struct"
+    assert @sizeof<Arr<i32, 4>> == @sizeof<i32> * 4: "generic alias to array (const generic)"
+    let b: MyBox<i32> = MyBox<i32>(7)
+    assert b.v == 7: "generic alias: construct + field"
+}
+
+
+
+fn main() {
+
+    case_alias_in_field_and_generic();
+    case_alias_to_generic_instance();
+    case_common_type_with_alias();
+    case_nested_alias_argument();
+    case_alias_templates();
+    case_generic_typedefs();
+
+}

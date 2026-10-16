@@ -1,0 +1,3 @@
+fn broken() {
+    let value = "\q";
+}

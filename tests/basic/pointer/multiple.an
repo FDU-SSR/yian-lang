@@ -1,0 +1,54 @@
+// Consolidated basic pointer and allocation scenarios.
+
+
+
+// Multi-level pointer chain: &v → p1 (i32*) → p2 (i32**) → p3 (i32***).
+// Dereference through all levels, pointer equality across levels, and a write
+// through the chain. Complementary to multiple.an (which only reads ***f).
+//
+
+fn case_three_level_chain() {
+    let v: i32 = 7;
+    let p1: i32* = &v;
+    let p2: i32** = &p1;
+    let p3: i32*** = &p2;
+
+    // deref through all levels
+    assert ***p3 == 7: "***p3 == 7";
+
+    // pointer equality across levels
+    assert **p3 == &v: "**p3 == &v";
+    assert **p3 == p1: "**p3 == p1";
+    assert *p3 == &p1: "*p3 == &p1";
+    assert *p3 == p2: "*p3 == p2";
+    assert p1 == &v: "p1 == &v";
+
+    // write through the chain
+    ***p3 = 8;
+    assert v == 8: "write through ***p3 updates v";
+    assert ***p3 == 8: "read back ***p3 == 8";
+}
+
+// Test for multiple levels of pointers
+//
+
+fn case_five_level_chain() {
+    let a: i32 = 66;
+    let b: i32* = &a;
+    let c: i32** = &b;
+    let d: i32*** = &c;
+    let e: i32**** = &d;
+    let f: i32***** = &e;
+
+    assert *****f == 66: "Expected *****f to be 66";
+
+}
+
+
+
+fn main() {
+
+    case_three_level_chain();
+    case_five_level_chain();
+
+}

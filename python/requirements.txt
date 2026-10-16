@@ -1,0 +1,2 @@
+# Python dependency for the recovery compiler; LLVM command-line tools are managed separately.
+llvmlite==0.49.0

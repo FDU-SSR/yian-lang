@@ -1,0 +1,17 @@
+// Test for pointer circular dependencies between structs, this is allowed
+//
+// Expected output: 0
+
+struct Node {
+    data: i32,
+    next: Option<Node*>,
+}
+
+fn main() {
+    let n: Node = Node(data=10, next=Option<Node*>.None);
+    n.next = Option<Node*>.Some(&n);
+
+    assert n.data == 10: "n.data should be 10";
+    assert n.next.unwrap().data == 10: "n.next.data should be 10";
+
+}

@@ -1,0 +1,19 @@
+from std.core.convert import From;
+
+struct Error {}
+
+impl From<i32> for Error {
+    static fn from(value: i32&) -> Self { Error() }
+}
+
+impl<T> From<T> for Error {
+    static fn from(value: T&) -> Self { Error() }
+}
+
+fn run() -> Result<i32, Error> {
+    Result<i32, Error>.Ok(Result<i32, i32>.Err(3)?)
+}
+
+fn main() {
+    run();
+}

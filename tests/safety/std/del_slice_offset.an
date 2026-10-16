@@ -1,0 +1,14 @@
+// Deletion-view negative (d,stdlib): deleting an offset @slice_from_parts view causes a safety error.
+// A T[] view with data=lock_ptr+8+4 fails CheckDelete's is_raw data
+// comparison against lock_ptr+8. SliceType has no index; the offset resides in data,
+// causing termination with exit code 1. Only whole-block lo=0 views can be deleted.
+//
+// Run this negative case only in fat mode; raw mode omits checks and has different semantics.
+//
+// Expected exit code: 1
+
+fn main() {
+    let p: i32* = dyn[4] 0i32;
+    let s: i32[] = @slice_from_parts(p + 1, 3);
+    del s;
+}

@@ -1,0 +1,22 @@
+from std.core.hash import Murmur3Hasher, Murmur3BuildHasher;
+
+fn main() {
+    // Hashers with the same seed must have identical initial state.
+    let h1: Murmur3Hasher = Murmur3Hasher.with_seed(0);
+    let h2: Murmur3Hasher = Murmur3Hasher.with_seed(0);
+    let f1: u64 = h1.finish();
+    let f2: u64 = h2.finish();
+    assert f1 == f2: "hashers with same seed should match";
+
+    // Different seeds should produce different results through seed mixing.
+    let h3: Murmur3Hasher = Murmur3Hasher.with_seed(123);
+    let f3: u64 = h3.finish();
+    assert f1 != f3: "hashers with different seeds should differ";
+
+    // BuildHasher must construct equivalent hashers.
+    let builder: Murmur3BuildHasher = Murmur3BuildHasher.with_seed(42);
+    let h4: Murmur3Hasher = builder.build_hasher();
+    let h5: Murmur3Hasher = Murmur3Hasher.with_seed(42);
+    assert h4.finish() == h5.finish(): "builder should produce hasher with same seed state";
+
+}

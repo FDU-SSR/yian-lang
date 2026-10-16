@@ -1,0 +1,17 @@
+trait Measure {
+    fn value() -> i32;
+}
+
+struct Value {
+    value: i32,
+}
+
+impl Measure for Value {
+    fn value() -> i32 {
+        return self.value;
+    }
+}
+
+fn main() {
+    let object: Measure& = &Value(value=5);
+}

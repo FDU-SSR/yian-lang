@@ -1,0 +1,5 @@
+[package]
+name = "io_fs_links"
+kind = "bin"
+version = "0.1.0"
+ffi = true
