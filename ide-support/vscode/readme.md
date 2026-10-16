@@ -20,7 +20,7 @@ warm refresh 需要可用的原生 `anx` 与 `yianc`、LLVM 22、clang 22，以�
 服务器卸载：
 
 ```bash
-scripts/uninstall_lsp.sh --prefix "$HOME/.local"
+scripts/uninstall.sh --lsp-only --prefix "$HOME/.local"
 ```
 
 已有原生 `anx` 和 `yianc` 时，也可以直接用 warm 入口重建完整工具链和服务器；它会校验 staging 上的 LSP 握手后再发布：

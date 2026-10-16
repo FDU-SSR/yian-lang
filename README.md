@@ -41,10 +41,10 @@ scripts/refresh_toolchain.sh --anx "$HOME/.local/bin/anx" \
 
 The server analyzes source in fat mode by default. Set `yian.languageServer.args` to `["--raw-pointers"]` in the VS Code settings to analyze raw-pointer targets.
 
-Uninstall the language server and the shared toolchain independently:
+Remove only the language server while keeping the compiler tools and shared resources, or remove the complete managed installation:
 
 ```bash
-scripts/uninstall_lsp.sh --prefix "$HOME/.local"
+scripts/uninstall.sh --lsp-only --prefix "$HOME/.local"
 scripts/uninstall.sh --prefix "$HOME/.local"
 ```
 
