@@ -1,0 +1,5 @@
+typedef CInt = c_int;
+
+fn main() {
+    let value: CInt;
+}

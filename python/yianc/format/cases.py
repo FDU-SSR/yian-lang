@@ -1,13 +1,14 @@
-"""The formatter's own fixtures.
+"""Shared formatter fixtures used by the recovery formatter and native checks.
 
 A fixture is a pair: ``fixtures/<topic>/<name>.an`` and the ``.expected.an`` file
 the formatter must produce for it.  They cover what the repository corpus rarely
 shows (block comments, generic brackets, f-strings, one-line blocks, blank-line
-and comment placement), and they belong to the formatter — nothing here is wired
-into the compiler's test runner.
+and comment placement), and they belong to the formatter. The native parity oracle
+and native formatter integration test consume these fixed inputs; the standard
+language-suite runner does not discover this fixture directory.
 
-``--bless`` rewrites every expectation from the current implementation, so a rule
-change is reviewed as a diff over these files.
+The native formatter is authoritative for daily checks. ``--bless`` remains a
+recovery-only convenience and must not be used to establish new expectations.
 """
 
 from __future__ import annotations
@@ -19,8 +20,8 @@ from yianc.format.selfcheck import Problem
 
 __all__ = ["FIXTURES", "bless_cases", "case_files", "run_cases"]
 
-#: Where the fixture pairs live, next to this module.
-FIXTURES = Path(__file__).with_name("fixtures")
+#: Neutral fixture location shared with native formatter tests.
+FIXTURES = Path(__file__).resolve().parents[3] / "tests" / "format" / "fixtures"
 
 
 def case_files() -> list[Path]:

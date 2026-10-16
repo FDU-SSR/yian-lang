@@ -57,7 +57,7 @@ pub fn parameters(ctx: ResolutionContext&, unit: UnitId, scope: ScopeId, syntax:
     Result<Vec<Parameter>, AnalysisError>.Ok(result)
 }
 
-pub fn annotations(ctx: ResolutionContext&, unit: UnitId, scope: ScopeId, generics: Vec<GenericParam>&) -> Result<(), AnalysisError> {
+pub fn annotations(ctx: ResolutionContext&, unit: UnitId, scope: ScopeId, generics: Vec<GenericParam>&, allow_dependent_constants: bool) -> Result<(), AnalysisError> {
     for generic in *generics {
         match generic {
             Constant(value) => {
@@ -66,6 +66,7 @@ pub fn annotations(ctx: ResolutionContext&, unit: UnitId, scope: ScopeId, generi
                 match ctx.session.types.require(type_id)? {
                     Integer(_, _) => {},
                     Bool => {},
+                    Generic(_) if allow_dependent_constants => {},
                     _ => return Result<(), AnalysisError>.Err(ctx.error(unit, value.span, DiagnosticCode.GenericArguments, "constant parameter requires an integer or boolean type")),
                 }
 
@@ -364,19 +365,19 @@ fn resolve_annotations(ctx: ResolutionContext&, index: u64) -> Result<(), Analys
     let declaration = ctx.declaration(index);
     match &declaration.item.data {
         FuncDef(_, _, generics, _, _, _) => {
-            annotations(ctx, declaration.unit, declaration.scope, generics)?;
+            annotations(ctx, declaration.unit, declaration.scope, generics, false)?;
         },
         StructDef(_, _, generics, _) => {
-            annotations(ctx, declaration.unit, declaration.scope, generics)?;
+            annotations(ctx, declaration.unit, declaration.scope, generics, false)?;
         },
         EnumDef(_, _, generics, _) => {
-            annotations(ctx, declaration.unit, declaration.scope, generics)?;
+            annotations(ctx, declaration.unit, declaration.scope, generics, false)?;
         },
         TraitDef(_, _, generics, _) => {
-            annotations(ctx, declaration.unit, declaration.scope, generics)?;
+            annotations(ctx, declaration.unit, declaration.scope, generics, false)?;
         },
         Alias(_, _, generics, _) => {
-            annotations(ctx, declaration.unit, declaration.scope, generics)?;
+            annotations(ctx, declaration.unit, declaration.scope, generics, true)?;
         },
         _ => {},
     }

@@ -29,6 +29,7 @@ Usage:
   python3 bench/bench_three_way.py --set ptr --scale full
   python3 bench/bench_three_way.py --bench AWFY/queen,BG/fasta
   python3 bench/bench_three_way.py --source AWFY --set fast
+  python3 bench/bench_three_way.py --set fast --yianc /path/to/yianc
   python3 bench/bench_three_way.py --compile-only | --no-compile | --runs N | --pin 4
 
 Output:
@@ -53,6 +54,10 @@ import sys
 import time
 from dataclasses import dataclass
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
+
+from _toolchain.native import file_sha256, resolve_native_selection
 
 ROOT = Path(__file__).resolve().parent.parent
 LIB = ROOT / "lib" / "src"
@@ -420,23 +425,18 @@ def compile_c(spec: BenchSpec) -> Path:
     return binary
 
 
-def compile_an(spec: BenchSpec, profile: str, raw: bool) -> Path:
+def compile_an(spec: BenchSpec, profile: str, raw: bool, compiler: Path) -> Path:
     """Compile one YIAN mode; stop on failure because compile errors invalidate the baseline."""
     state = "raw" if raw else "fat"
     binary = spec_bin(spec, state)
     fat_src, raw_src = materialize(spec, profile)
     src = raw_src if raw else fat_src
-    cmd = [sys.executable, "-m", "yianc.main", OPT_LEVEL]
+    cmd = [str(compiler), OPT_LEVEL]
     if raw:
         cmd.append("--raw-pointers")
     cmd += [str(LIB), str(src), "-o", str(binary)]
     binary.parent.mkdir(parents=True, exist_ok=True)
     environment = os.environ.copy()
-    python_root = str(ROOT / "python")
-    existing_python_path = environment.get("PYTHONPATH")
-    environment["PYTHONPATH"] = (
-        python_root if not existing_python_path else f"{python_root}{os.pathsep}{existing_python_path}"
-    )
     res = subprocess.run(cmd, capture_output=True, text=True, cwd=ROOT, env=environment)
     if res.returncode != 0:
         raise SystemExit(f"[compile] {spec.key} ({state}) 失败:\n{res.stdout}\n{res.stderr}")
@@ -581,18 +581,6 @@ def _tool_version(tool: str) -> str:
     return res.stdout.splitlines()[0].strip()
 
 
-def _llvmlite_info() -> tuple[str, str]:
-    """Return (llvmlite version,LLVM version), or ('n/a','n/a') when unavailable."""
-    try:
-        import llvmlite  # noqa: PLC0415
-        import llvmlite.binding as llvm_binding  # noqa: PLC0415
-    except ImportError:
-        return "n/a", "n/a"
-    info = getattr(llvm_binding, "llvm_version_info", None)
-    llvm_ver = ".".join(str(part) for part in info) if info else "n/a"
-    return str(llvmlite.__version__), llvm_ver
-
-
 def _git_head() -> str:
     try:
         res = subprocess.run(
@@ -607,8 +595,15 @@ def _git_head() -> str:
     return res.stdout.strip() if res.returncode == 0 else "n/a"
 
 
-def machine_fingerprint(pin: int | None, runs: int, bench_set: str, profile: str) -> dict[str, str]:
-    llvmlite_ver, llvm_ver = _llvmlite_info()
+def machine_fingerprint(
+    pin: int | None,
+    runs: int,
+    bench_set: str,
+    profile: str,
+    compiler: Path,
+    compiler_source: str,
+    compiler_used: bool,
+) -> dict[str, str]:
     return {
         "set": bench_set,
         "scale": profile,
@@ -618,8 +613,10 @@ def machine_fingerprint(pin: int | None, runs: int, bench_set: str, profile: str
         "clang": _tool_version(C_COMPILER),
         "cflags": " ".join(C_FLAGS),
         "python": platform.python_version(),
-        "llvmlite": llvmlite_ver,
-        "llvm": llvm_ver,
+        "yianc": str(compiler),
+        "yianc_sha256": file_sha256(compiler),
+        "yianc_source": compiler_source,
+        "yianc_used": "yes" if compiler_used else "no (--no-compile; existing artifacts reused)",
         "opt": OPT_LEVEL,
         "pin": str(pin) if pin is not None else "none",
         "runs": str(runs),
@@ -670,7 +667,8 @@ def render_md(rows: list[Row], fingerprint: dict[str, str]) -> str:
     lines.append(f"| C 编译器 | `{fingerprint['clang']}` (`{fingerprint['cflags']}`) |")
     lines.append(f"| Python | {fingerprint['python']} |")
     lines.append(
-        f"| llvmlite | `{fingerprint['llvmlite']}` (LLVM {fingerprint['llvm']}) |"
+        f"| YIAN 编译器 | `{fingerprint['yianc']}` (SHA-256 `{fingerprint['yianc_sha256']}`, "
+        f"来源 `{fingerprint['yianc_source']}`, 本次调用: {fingerprint['yianc_used']}) |"
     )
     lines.append(f"| YIAN 优化级 | `{fingerprint['opt']}` (两态相同) |")
     lines.append(f"| 绑核 | `taskset -c {fingerprint['pin']}` |")
@@ -780,8 +778,9 @@ def write_csv(rows: list[Row], fingerprint: dict[str, str], path: Path) -> None:
         "runs, stdout_match (raw/fat), c_check (C 权威值), c_argv, raw_source",
         f"# fingerprint: hostname={fingerprint['hostname']} machine={fingerprint['machine']} "
         f"cpu_count={fingerprint['cpu_count']} clang={fingerprint['clang']} cflags={fingerprint['cflags']}",
-        f"# env: python={fingerprint['python']} llvmlite={fingerprint['llvmlite']} "
-        f"llvm={fingerprint['llvm']} opt={fingerprint['opt']} pin={fingerprint['pin']} "
+        f"# env: python={fingerprint['python']} yianc={fingerprint['yianc']} "
+        f"yianc_sha256={fingerprint['yianc_sha256']} yianc_source={fingerprint['yianc_source']} "
+        f"yianc_used={fingerprint['yianc_used']} opt={fingerprint['opt']} pin={fingerprint['pin']} "
         f"runs={fingerprint['runs']}",
         f"# set: {fingerprint['set']}  scale: {fingerprint['scale']}",
         f"# commit: {fingerprint['commit']}",
@@ -833,6 +832,7 @@ def main() -> int:
     parser.add_argument("--runs", type=int, default=None,
                         help="每态测量次数 (默认取集合的 runs)")
     parser.add_argument("--pin", type=int, help="taskset 绑定的 CPU 编号")
+    parser.add_argument("--yianc", metavar="PATH", help="Native compiler (default: nonempty YIANC, then PATH)")
     parser.add_argument("--max-state-sec", type=float, default=DEFAULT_MAX_STATE_SEC,
                         help="三态 warmup 合计超过该秒数则测量次数降到 3 (fast 档不降次)")
     parser.add_argument("--no-compile", action="store_true", help="不重新编译, 复用已有二进制")
@@ -850,6 +850,15 @@ def main() -> int:
                 f"members={len(members):2d}  {set_def.note}"
             )
         return 0
+
+    try:
+        compiler, compiler_source = resolve_native_selection(
+            explicit=args.yianc,
+            configured=os.environ.get("YIANC"),
+            default="yianc",
+        )
+    except ValueError as error:
+        parser.error(str(error))
 
     if args.bench_set not in sets:
         raise SystemExit(
@@ -870,15 +879,17 @@ def main() -> int:
     if not args.no_compile:
         for spec in chosen:
             compile_c(spec)
-            compile_an(spec, profile, raw=False)
-            compile_an(spec, profile, raw=True)
+            compile_an(spec, profile, raw=False, compiler=compiler)
+            compile_an(spec, profile, raw=True, compiler=compiler)
             scale_value = spec.scale_value(profile)
             scale_note = f" scale={scale_value}" if scale_value is not None else ""
             print(f"[compile] {spec.key} ok{scale_note}", file=sys.stderr)
     if args.compile_only:
         return 0
 
-    fingerprint = machine_fingerprint(args.pin, runs, set_def.name, profile)
+    fingerprint = machine_fingerprint(
+        args.pin, runs, set_def.name, profile, compiler, compiler_source, not args.no_compile
+    )
     max_state_sec = float("inf") if profile == "fast" else args.max_state_sec
     rows: list[Row] = []
     for spec in chosen:

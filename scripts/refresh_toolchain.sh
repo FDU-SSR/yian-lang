@@ -207,7 +207,7 @@ record_command() {
 }
 
 build_component() {
-    local label="$1" project="$2" compiler="$3" builder="$4" mode="${5:-fat}"
+    local label="$1" project="$2" compiler="$3" builder="$4"
     local build_app="$project/build/app" backup="$RUN_DIR/backups/$label-app" had_original=0 code=0
     mkdir -p -- "$(dirname "$build_app")" "$RUN_DIR/backups"
     if [[ -e "$build_app" || -L "$build_app" ]]; then
@@ -222,8 +222,7 @@ build_component() {
         ACTIVE_BUILD_BACKUP="$backup"
         ACTIVE_BUILD_HAD_ORIGINAL=0
     fi
-    local -a arguments=("$builder" build "$project" -O2)
-    [[ "$mode" == raw ]] && arguments+=(--raw-pointers)
+    local -a arguments=("$builder" build "$project" -O2 --raw-pointers)
     printf 'Building %s with %s and %s...\n' "$label" "$builder" "$compiler"
     (cd "$ROOT_DIR" && env -u PYTHONPATH YIAN_ROOT="$ROOT_DIR" YIAN_LIB="$ROOT_DIR/lib/src" YIANC="$compiler" YIAN_CC="$CLANG_BIN" "${arguments[@]}") || code=$?
     record_command "build-$label" "$code" "${arguments[@]}"
@@ -253,7 +252,7 @@ build_component yianc "$ROOT_DIR/bootstrap/yianc" "$YIANC_SEED" "$ANX_SEED"
 staged_yianc="$BUNDLE/bin/yianc"
 build_component anx "$ROOT_DIR/bootstrap/anx" "$staged_yianc" "$ANX_SEED"
 staged_anx="$BUNDLE/bin/anx"
-build_component yian-lsp "$ROOT_DIR/lsp" "$staged_yianc" "$staged_anx" raw
+build_component yian-lsp "$ROOT_DIR/lsp" "$staged_yianc" "$staged_anx"
 staged_lsp="$BUNDLE/bin/yian-lsp"
 
 for command_name in yianc anx; do
@@ -314,15 +313,15 @@ revision="$(git -C "$ROOT_DIR" rev-parse HEAD 2>/dev/null || true)"
     printf '{\n  "format": 1,\n  "revision": '
     if [[ -n "$revision" ]]; then yian_json_string "$revision"; else printf 'null'; fi
     printf ',\n  "components": {\n'
-    printf '    "yianc": {"source_sha256":"%s","artifact_sha256":"%s","seed_sha256":"%s","builder":"native-seed","builder_inputs":{"anx_sha256":"%s","yianc_sha256":"%s"}},\n' \
+    printf '    "yianc": {"source_sha256":"%s","artifact_sha256":"%s","seed_sha256":"%s","builder":"native-seed","build_mode":"raw","optimization":2,"builder_inputs":{"anx_sha256":"%s","yianc_sha256":"%s"}},\n' \
         "$initial_yianc_source" "$yianc_sha" "$seed_anx_sha" "$seed_anx_sha" "$seed_yianc_sha"
-    printf '    "anx": {"source_sha256":"%s","artifact_sha256":"%s","seed_sha256":"%s","builder":"staged-yianc","builder_inputs":{"anx_sha256":"%s","yianc_sha256":"%s"}},\n' \
+    printf '    "anx": {"source_sha256":"%s","artifact_sha256":"%s","seed_sha256":"%s","builder":"staged-yianc","build_mode":"raw","optimization":2,"builder_inputs":{"anx_sha256":"%s","yianc_sha256":"%s"}},\n' \
         "$initial_anx_source" "$anx_sha" "$seed_anx_sha" "$seed_anx_sha" "$yianc_sha"
     printf '    "yian-lsp": {"source_sha256":"%s","artifact_sha256":"%s","seed_sha256":"%s","builder":"staged-anx","build_mode":"raw","optimization":2,"builder_inputs":{"anx_sha256":"%s","yianc_sha256":"%s"}}\n' \
         "$initial_lsp_source" "$lsp_sha" "$anx_sha" "$anx_sha" "$yianc_sha"
     printf '  },\n'
     printf '  "resources":{"source_sha256":"%s","artifact_sha256":"%s"},\n' "$resource_source_sha" "$resource_artifact_sha"
-    printf '  "build_options":{"optimization":"-O2","pointer_mode":"fat","lsp_pointer_mode":"raw","workflow":"warm"},\n'
+    printf '  "build_options":{"optimization":"-O2","pointer_mode":"raw","lsp_pointer_mode":"raw","workflow":"warm"},\n'
     printf '  "build_tools": {\n'
     first=1
     for name in llvm-config clang llvm-ar; do
@@ -357,6 +356,10 @@ yianc=$yianc_sha
 anx=$anx_sha
 resources=$resource_artifact_sha
 build_info_sha256=$(sha256sum -- "$BUNDLE/share/yian/.build-info" | cut -d' ' -f1)
+yianc_build_mode=raw
+anx_build_mode=raw
+optimization=2
+pointer_mode=raw
 EOF
 
 if ! bash "$SCRIPT_DIR/publish.sh" --prefix "$PREFIX" --bundle "$BUNDLE"; then

@@ -129,7 +129,6 @@ def tool_build_info(
     *,
     yianc: Path,
     anx: Path,
-    seed_anx: Path,
     python: Path,
     build_options: dict[str, Any],
     build_tools: dict[str, dict[str, str]],
@@ -145,6 +144,8 @@ def tool_build_info(
         ).stdout.strip()
     except OSError:
         revision = ""
+    python_source_sha256 = _python_compiler_source_sha256(root)
+    python_sha256 = file_sha256(python)
     return {
         "format": BUILD_INFO_FORMAT,
         "revision": revision or None,
@@ -152,25 +153,32 @@ def tool_build_info(
             "yianc": {
                 "source_sha256": component_source_sha256(root, "yianc"),
                 "artifact_sha256": file_sha256(yianc),
-                "seed_sha256": file_sha256(seed_anx),
-                "builder": "python-reference",
+                "build_mode": "raw",
+                "optimization": 2,
+                "builder": "python-recovery",
+                "builder_inputs": {
+                    "python_path": str(python),
+                    "python_sha256": python_sha256,
+                    "python_compiler_source_sha256": python_source_sha256,
+                },
             },
             "anx": {
                 "source_sha256": component_source_sha256(root, "anx"),
                 "artifact_sha256": file_sha256(anx),
-                "seed_sha256": file_sha256(seed_anx),
+                "build_mode": "raw",
+                "optimization": 2,
                 "builder": "staged-yianc",
+                "builder_inputs": {"yianc_sha256": file_sha256(yianc)},
             },
         },
-        "reference_compiler_source_sha256": _python_compiler_source_sha256(root),
+        "reference_compiler_source_sha256": python_source_sha256,
         "resources": {
             "source_sha256": resources_source_sha256(root),
             "artifact_sha256": tree_sha256(resource_stage),
         },
         "build_options": build_options,
         "build_tools": build_tools,
-        "seed_anx_sha256": file_sha256(seed_anx),
-        "build_python": {"path": str(python), "sha256": file_sha256(python)},
+        "build_python": {"path": str(python), "sha256": python_sha256},
     }
 
 

@@ -3,11 +3,12 @@ from std.core.fs import create_dir_all, read_to_string, resolve, write_string;
 from std.core.io import IoErrorKind, Stderr, Write;
 from std.core.option import Option;
 from std.core.path import Path, PathBuf;
-from std.core.process import Command, ExitStatus, env_var;
+from std.core.process import Command, ExitStatus;
 from std.core.result import Result;
 from std.core.string import String;
 from std.core.vec import Vec;
 from anx.diagnostics.model import Diagnostic;
+from anx.driver.compiler import compiler_program;
 from anx.project.load import discover, load;
 from anx.manifest.model import PackageKind;
 from anx.project.model import LoadReport, Project;
@@ -48,30 +49,6 @@ fn report_diagnostics(report: LoadReport&) -> bool {
         index += 1u64;
     }
     diagnostics.len() != 0u64
-}
-
-fn compiler_program() -> Result<String, String> {
-    let configured = match env_var("YIANC") {
-        Ok(value) => value,
-        Err(problem) => {
-            let message = String.from(&"Could not read YIANC: ");
-            message.push_str(problem.msg());
-            problem.drop();
-            return Result<String, String>.Err(msg=message);
-        },
-    };
-    match configured {
-        Some(value) => {
-            if !value.is_empty() {
-                let result = String.from(&value.as_str());
-                value.drop();
-                return Result<String, String>.Ok(val=result);
-            }
-            value.drop();
-        },
-        None => {},
-    }
-    Result<String, String>.Ok(val=String.from(&"yianc"))
 }
 
 fn package_map_path(project: Project&) -> Result<PathBuf, String> {
@@ -127,14 +104,9 @@ fn package_map_path(project: Project&) -> Result<PathBuf, String> {
     Result<PathBuf, String>.Ok(val=path)
 }
 
-fn compiler_command(project: Project&, target: str, level: Option<u8>, release: bool,
+fn compiler_command(program: str, project: Project&, target: str, level: Option<u8>, release: bool,
     raw_pointers: bool, map_path: str, executable: Option<PathBuf>) -> bool {
-    let program = match compiler_program() {
-        Ok(value) => value,
-        Err(message) => { write_error("error: "); write_error(message.as_str()); write_error("\n"); message.drop(); return false; },
-    };
-    defer program.drop();
-    let command = Command.new(program.as_str());
+    let command = Command.new(program);
     defer command.drop();
     command.interruptible(true);
     let root_index = match project.package_index(project.root_package()) {
@@ -182,6 +154,11 @@ fn compiler_command(project: Project&, target: str, level: Option<u8>, release: 
 
 pub fn compile_project(start: str, target: str, level: Option<u8>, release: bool,
     raw_pointers: bool, executable_out: Option<PathBuf>&) -> bool {
+    let compiler = match compiler_program() {
+        Ok(value) => value,
+        Err(message) => { write_error("error: "); write_error(message.as_str()); write_error("\n"); message.drop(); return false; },
+    };
+    defer compiler.drop();
     let std_root = match standard_library_root() {
         Ok(value) => value,
         Err(message) => {
@@ -241,7 +218,7 @@ pub fn compile_project(start: str, target: str, level: Option<u8>, release: bool
         Some(path) => Option<PathBuf>.Some(PathBuf.from(path.as_str())),
         None => Option<PathBuf>.None,
     };
-    let succeeded = compiler_command(&project, target, level, release, raw_pointers,
+    let succeeded = compiler_command(compiler.as_str(), &project, target, level, release, raw_pointers,
         map.as_str(), command_output);
     if !succeeded {
         match output.take() { Some(path) => path.drop(), None => {}, }

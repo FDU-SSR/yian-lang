@@ -1,19 +1,13 @@
 #!/usr/bin/env python3
-"""Build the first native anx from this checkout's fixed bootstrap closure.
+"""Validate and describe the checkout's fixed bootstrap package closures.
 
-This is an installation helper, not a general package manager. The package
-recipe is deliberately explicit so changes to the compiler bootstrap closure
-fail with a useful error and require an intentional recipe update.
+This is installation support, not a general package manager. The package
+recipes are deliberately explicit so changes to either closure fail with a
+useful error and require an intentional recipe update.
 """
 
 from __future__ import annotations
 
-import argparse
-import json
-import os
-import subprocess
-import sys
-import tempfile
 import tomllib
 from dataclasses import dataclass
 from pathlib import Path
@@ -33,9 +27,12 @@ class PackageRecipe:
     llvm_sources: tuple[str, ...] = ()
 
 
-# This traversal matches anx's manifest walk and source indexing order. Source
-# files within each package are sorted before being passed to yianc.
-PACKAGE_ORDER = ("anx", "yianc", "json", "llvm", "ffi", "toml", "std")
+# Each tuple is a fixed root-first traversal. Source files within each package
+# are sorted before being passed to yianc.
+PACKAGE_ORDERS = {
+    "yianc": ("yianc", "json", "llvm", "ffi", "std"),
+    "anx": ("anx", "yianc", "json", "llvm", "ffi", "toml", "std"),
+}
 PACKAGES = {
     "anx": PackageRecipe(
         "anx", "bootstrap/anx", "hybrid", ("json", "toml", "yianc"), entry="src/main.an"
@@ -161,12 +158,17 @@ def _manifest(root: Path, recipe: PackageRecipe) -> dict[str, object]:
     return result
 
 
-def build_recipe(checkout: Path) -> BootstrapRecipe:
-    """Validate the fixed manifest closure and produce the seed inputs."""
+def build_recipe(checkout: Path, *, root_package: str) -> BootstrapRecipe:
+    """Validate one fixed manifest closure and produce its compiler inputs."""
+    try:
+        package_order = PACKAGE_ORDERS[root_package]
+    except KeyError:
+        supported = ", ".join(sorted(PACKAGE_ORDERS))
+        _fail(f"unsupported bootstrap root {root_package!r}; expected one of: {supported}")
     root = checkout.resolve()
     packages: dict[str, object] = {}
     source_files: list[Path] = []
-    for name in PACKAGE_ORDER:
+    for name in package_order:
         recipe = PACKAGES[name]
         packages[name] = _manifest(root, recipe)
         source_root = root / recipe.root / "src"
@@ -175,61 +177,14 @@ def build_recipe(checkout: Path) -> BootstrapRecipe:
             _fail(f"bootstrap package has no .an sources: {source_root}")
         source_files.extend(files)
     return BootstrapRecipe(
-        package_map={"format": 2, "root": "anx", "packages": packages},
+        package_map={"format": 2, "root": root_package, "packages": packages},
         source_files=tuple(source_files),
     )
 
 
 def compiler_arguments(recipe: BootstrapRecipe, map_path: Path, output: Path) -> list[str]:
-    """Return the exact Python yianc argv for the one fixed seed package."""
+    """Return the exact raw, optimized yianc argv for one fixed package."""
     return [
-        "--packages", str(map_path), "-t", "exe", "-O2", "-o", str(output),
+        "--packages", str(map_path), "-t", "exe", "-O2", "--raw-pointers", "-o", str(output),
         *(str(path) for path in recipe.source_files),
     ]
-
-
-def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--python", required=True, help="Python interpreter with yianc dependencies")
-    parser.add_argument("--output", required=True, type=Path, help="absolute seed anx output path")
-    return parser.parse_args(argv)
-
-
-def main(argv: list[str] | None = None) -> int:
-    args = _parse_args(argv)
-    root = Path(__file__).resolve().parents[2]
-    output = args.output
-    if not output.is_absolute():
-        print("error: --output must be an absolute path", file=sys.stderr)
-        return 2
-    if output.exists():
-        print(f"error: refusing to replace existing seed output: {output}", file=sys.stderr)
-        return 2
-
-    try:
-        recipe = build_recipe(root)
-        output.parent.mkdir(parents=True, exist_ok=True)
-        with tempfile.TemporaryDirectory(prefix="yian-native-anx-seed-") as temporary:
-            map_path = Path(temporary) / "package-map.json"
-            map_path.write_text(json.dumps(recipe.package_map, indent=2) + "\n", encoding="utf-8")
-            environment = os.environ.copy()
-            environment["PYTHONPATH"] = str(root / "python")
-            environment["YIAN_ROOT"] = str(root)
-            environment["YIAN_LIB"] = str(root / "lib" / "src")
-            environment.pop("YIANC", None)
-            command = [args.python, "-m", "yianc.main", *compiler_arguments(recipe, map_path, output)]
-            completed = subprocess.run(command, cwd=root, env=environment, check=False)
-            if completed.returncode != 0:
-                output.unlink(missing_ok=True)
-                return completed.returncode
-        if not output.is_file():
-            _fail(f"Python yianc succeeded without creating the seed executable: {output}")
-        return 0
-    except (BootstrapError, OSError, subprocess.SubprocessError) as error:
-        output.unlink(missing_ok=True)
-        print(f"error: {error}", file=sys.stderr)
-        return 1
-
-
-if __name__ == "__main__":
-    raise SystemExit(main())

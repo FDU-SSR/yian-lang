@@ -21,6 +21,7 @@ Usage:
   python3 bench/bench_allocator.py --scale fast          # Fast scale
   python3 bench/bench_allocator.py --names churn_single --runs 5 --pin 4
   python3 bench/bench_allocator.py --compiler-root /tmp/yian-copy  # Compile a selected source tree
+  python3 bench/bench_allocator.py --yianc /path/to/yianc # Select the native compiler explicitly
 """
 
 from __future__ import annotations
@@ -34,6 +35,10 @@ import subprocess
 import sys
 import time
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
+
+from _toolchain.native import file_sha256, resolve_native_selection
 
 ROOT = Path(__file__).resolve().parent.parent
 BENCH_DIR = ROOT / "bench" / "ALLOC"
@@ -116,20 +121,22 @@ def source_path(name: str, raw: bool, spec: dict[str, object], profile: str) -> 
     raise SystemExit(f"[src] {name}: 找不到合适的源")
 
 
-def compile_one(name: str, raw: bool, compiler_root: Path, spec: dict[str, object], profile: str) -> Path:
+def compile_one(
+    name: str,
+    raw: bool,
+    compiler_root: Path,
+    spec: dict[str, object],
+    profile: str,
+    compiler: Path,
+) -> Path:
     binary = BUILD_DIR / f"{name}.{'raw' if raw else 'fat'}"
     binary.parent.mkdir(parents=True, exist_ok=True)
     src = source_path(name, raw, spec, profile)
-    cmd = [sys.executable, "-m", "yianc.main", OPT_LEVEL]
+    cmd = [str(compiler), OPT_LEVEL]
     if raw:
         cmd.append("--raw-pointers")
     cmd += [str(compiler_root / "lib" / "src"), str(src), "-o", str(binary)]
     environment = os.environ.copy()
-    python_root = str(compiler_root / "python")
-    existing_python_path = environment.get("PYTHONPATH")
-    environment["PYTHONPATH"] = (
-        python_root if not existing_python_path else f"{python_root}{os.pathsep}{existing_python_path}"
-    )
     proc = subprocess.run(cmd, capture_output=True, text=True, cwd=compiler_root, env=environment)
     if proc.returncode != 0:
         raise SystemExit(f"[compile] {name} ({'raw' if raw else 'fat'}) 失败:\n{proc.stdout}\n{proc.stderr}")
@@ -162,13 +169,24 @@ def main() -> int:
     parser.add_argument("--scale", choices=PROFILES, default="full", help="规模档 (默认 full)")
     parser.add_argument("--runs", type=int, default=None, help="每个二进制的测量次数 (默认 fast=3 / full=7)")
     parser.add_argument("--pin", type=int, default=None, help="taskset 绑定的 CPU 编号")
-    parser.add_argument("--compiler-root", type=Path, default=ROOT, help="用哪份源码树编译 (默认本仓库)")
+    parser.add_argument("--compiler-root", type=Path, default=ROOT, help="标准库和输入文件所在源码树 (默认本仓库)")
+    parser.add_argument("--yianc", metavar="PATH", help="Native compiler (default: nonempty YIANC, then PATH)")
     args = parser.parse_args()
 
     root = args.compiler_root.resolve()
+    try:
+        compiler, compiler_source = resolve_native_selection(
+            explicit=args.yianc,
+            configured=os.environ.get("YIANC"),
+            default="yianc",
+        )
+    except ValueError as error:
+        parser.error(str(error))
+    compiler_hash = file_sha256(compiler)
     runs = args.runs if args.runs is not None else DEFAULT_RUNS[args.scale]
     names = discover(args.names)
-    print(f"编译器源码树: {root}")
+    print(f"标准库/输入源码树: {root}")
+    print(f"Native yianc: {compiler}  SHA-256: {compiler_hash}  来源: {compiler_source}")
     print(f"集合: ALLOC  规模档: {args.scale}  采样: 每态 {runs} 次取最小墙钟 / 最大峰值 RSS; 绑核: {args.pin if args.pin is not None else '否'}")
     print("")
     header = "| 基准 | fat 最小 (ms) | raw 最小 (ms) | fat/raw | fat 峰值 RSS (MB) | raw 峰值 RSS (MB) | 输出一致 | 规模 |"
@@ -180,7 +198,7 @@ def main() -> int:
         value = scale_value(spec, args.scale)
         results: dict[str, tuple[float, float, str]] = {}
         for raw in (False, True):
-            binary = compile_one(name, raw, root, spec, args.scale)
+            binary = compile_one(name, raw, root, spec, args.scale, compiler)
             samples = [run_one(binary, args.pin) for _ in range(runs)]
             results["raw" if raw else "fat"] = (
                 min(sample[0] for sample in samples),
@@ -207,6 +225,7 @@ def main() -> int:
         "由 `bench/bench_allocator.py` 生成; 分配器基准没有 C 参考, 对照态是 libc `malloc`/`free`。",
         f"采样: 每态 {runs} 次取最小墙钟 / 最大峰值 RSS; 绑核: {args.pin if args.pin is not None else '否'}; "
         f"commit: `{_git_head()}`; 日期: {datetime.date.today().isoformat()}",
+        f"Native yianc: `{compiler}` (SHA-256 `{compiler_hash}`, source `{compiler_source}`).",
         "",
         header,
         "| --- | ---: | ---: | ---: | ---: | ---: | --- | ---: |",
@@ -218,6 +237,7 @@ def main() -> int:
         "# bench/results/alloc.csv — 分配器基准 (fat vs raw)\n"
         f"# scale: {args.scale}  runs: {runs}  pin: {args.pin if args.pin is not None else 'none'}"
         f"  commit: {_git_head()}  date: {datetime.date.today().isoformat()}\n"
+        f"# yianc: {compiler}  sha256: {compiler_hash}  source: {compiler_source}\n"
         "name,fat_min_ms,raw_min_ms,ratio_fat_raw,fat_rss_mb,raw_rss_mb,stdout_match,scale\n"
         + "\n".join(csv_rows)
         + "\n",

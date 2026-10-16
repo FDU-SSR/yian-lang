@@ -1,0 +1,7 @@
+// Whitespace and comments remain attached to the token stream.
+fn main() {
+    let text = f"value: {1 + 2}"; // Keep this comment.
+    if true {
+        let pair = (1, 2);
+    } else {}
+}

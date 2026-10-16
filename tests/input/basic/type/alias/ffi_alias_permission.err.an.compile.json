@@ -1,0 +1,10 @@
+{
+  "pointer_modes": ["fat", "raw"],
+  "variants": [
+    {
+      "name": "ffi-permission-does-not-transfer-through-alias",
+      "compiler_args": ["--allow-ffi"],
+      "expect_error_substring": "C ABI types require an ffi fn"
+    }
+  ]
+}

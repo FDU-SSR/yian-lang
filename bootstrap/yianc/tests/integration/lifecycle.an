@@ -367,13 +367,122 @@ fn editor_rename_queries() {
     let unsafe_rename = generic_snapshot.rename_at(SourceId(0u64), 0u64, 3u64, "renamed");
     assert !unsafe_rename.ok() && unsafe_rename.refusal.is_some():
     "rename refuses when an uninstantiated generic body may contain an unresolved same-spelled use";
+    assert match &unsafe_rename.refusal {
+        Some(message) => message.as_str().contains("did not check uses 'target'"),
+        None => false,
+    }: "rename explains that the generic body has an unchecked use of target";
     unsafe_rename.drop();
     let unsafe_prepare = generic_snapshot.prepare_rename(SourceId(0u64), 0u64, 3u64);
     assert !unsafe_prepare.ok() && unsafe_prepare.refusal.is_some():
     "prepare rename refuses when an unchecked generic body may contain a matching name";
+    assert match &unsafe_prepare.refusal {
+        Some(message) => message.as_str().contains("did not check uses 'target'"),
+        None => false,
+    }: "prepare rename reports the same unchecked generic use";
     unsafe_prepare.drop();
     generic_snapshot.drop();
     generic_inputs.drop();
+}
+
+fn editor_partial_receiver_queries() {
+    let inputs = FrozenInputs.new(37u64, 8u64, "fat:partial-receivers");
+    let main_text = String.from(&"struct PartialPoint { pub x: i32 }\n");
+    main_text.push_str("impl PartialPoint { pub fn push(value: i32) {} }\n");
+    main_text.push_str("fn make_partial_point() -> PartialPoint { PartialPoint(1) }\n");
+    main_text.push_str("fn helper(value: i32, other: i32) -> i32 { value + other }\n");
+    main_text.push_str("fn main() {\n    let value = PartialPoint(1);\n    value.p;\n");
+    main_text.push_str("    make_partial_point().p;\n    (value).p;\n    [value][0].p;\n");
+    main_text.push_str("    value.push(1);\n    helper(1, 2);\n}\n");
+    inputs.add("/tmp/yian-editor-partial-main.an", main_text.as_str(), Option<i64>.Some(1i64));
+    inputs.add("/tmp/yian-editor-partial-broken.an", "fn broken( {\n", Option<i64>.Some(1i64));
+    inputs.add("/tmp/yian-editor-partial-trait.an",
+        "trait PartialTrait { fn push(value: i32); }\nfn query(value: PartialTrait&) { value.p; }\n",
+        Option<i64>.Some(1i64));
+    inputs.add("/tmp/yian-editor-partial-missing.an",
+        "fn query() { let value = missing; value.p; }\n",
+        Option<i64>.Some(1i64));
+
+    let raw = false;
+    while true {
+        let trust = source_trust();
+        let options = editor_options(trust, Option<PackageMap>.None, EditorMode.Full);
+        options.raw_pointers = raw;
+        let snapshot = EditorEngine.analyze(&inputs, options).unwrap();
+        assert !snapshot.semantic_complete(): "damaged and unresolved documents keep a recoverable partial snapshot";
+        assert snapshot.document_state(SourceId(0u64)).unwrap().declarations_available:
+            "the main document retains declaration facts beside damaged documents";
+        assert !snapshot.document_state(SourceId(1u64)).unwrap().syntax_complete:
+            "the malformed document is marked syntax-incomplete";
+
+        let member_rows = [6u64, 7u64, 8u64, 9u64];
+        let member_lines = [
+            "    value.p;",
+            "    make_partial_point().p;",
+            "    (value).p;",
+            "    [value][0].p;",
+        ];
+        let member_index = 0u64;
+        while member_index < member_rows.len() {
+            let column = member_lines[member_index].find(".p").unwrap() + 2u64;
+            let result = completion_at(&snapshot, SourceId(0u64), member_rows[member_index], column).unwrap();
+            let found_method = false;
+            let found_missing_field = false;
+            for item in result.items {
+                if item.label.as_str() == "push" && item.kind == EditorCompletionKind.Method { found_method = true; }
+                if item.label.as_str() == "p" { found_missing_field = true; }
+            }
+            assert found_method && !found_missing_field:
+                "variable, call, parenthesized and indexed receivers retain method completion";
+            result.drop();
+            member_index += 1u64;
+        }
+
+        let trait_line = "fn query(value: PartialTrait&) { value.p; }";
+        let trait_result = completion_at(&snapshot, SourceId(2u64), 1u64,
+            trait_line.find(".p").unwrap() + 2u64).unwrap();
+        let trait_method = false;
+        for item in trait_result.items {
+            if item.label.as_str() == "push" && item.kind == EditorCompletionKind.Method { trait_method = true; }
+        }
+        assert trait_method: "trait-object receivers retain applicable method completion";
+        trait_result.drop();
+
+        let missing_line = "fn query() { let value = missing; value.p; }";
+        let missing_result = completion_at(&snapshot, SourceId(3u64), 0u64,
+            missing_line.find(".p").unwrap() + 2u64).unwrap();
+        assert missing_result.items.is_empty(): "a receiver with no reliable type does not invent member candidates";
+        missing_result.drop();
+
+        let symbols = snapshot.document_symbols(SourceId(0u64)).unwrap();
+        assert !symbols.is_empty(): "partial semantic recovery retains document symbols";
+        for symbol in symbols { symbol.drop(); }
+        symbols.drop();
+        let tokens = semantic_tokens(&snapshot, SourceId(0u64)).unwrap();
+        assert !tokens.is_empty(): "partial semantic recovery retains semantic tokens";
+        tokens.drop();
+
+        let rename = snapshot.prepare_rename(SourceId(0u64), 5u64, 8u64);
+        assert !rename.ok(): "partial reference facts cannot authorize rename";
+        rename.drop();
+
+        let method_line = "    value.push(1);";
+        let method_help = signature_help_at(&snapshot, SourceId(0u64), 10u64,
+            method_line.find("push(").unwrap() + 5u64).unwrap();
+        assert method_help.label.as_str().contains("value: i32"):
+            "a method signature remains available during independent document recovery";
+        method_help.drop();
+        let helper_line = "    helper(1, 2);";
+        let helper_help = signature_help_at(&snapshot, SourceId(0u64), 11u64,
+            helper_line.find(",").unwrap() + 1u64).unwrap();
+        assert helper_help.active_parameter == 1u64:
+            "signature help retains the active argument index in a partial snapshot";
+        helper_help.drop();
+        snapshot.drop();
+        if raw { break; }
+        raw = true;
+    }
+    inputs.drop();
+    main_text.drop();
 }
 
 fn editor_member_queries() {
@@ -451,6 +560,10 @@ fn editor_member_queries() {
     assert method_occurrences.len() == 2u64: "method references include declaration and call";
     for location in method_occurrences { location.drop(); }
     method_occurrences.drop();
+    let method_rename = snapshot.rename_at(member_source, 6u64, 7u64, "editor_member_renamed");
+    assert method_rename.ok() && method_rename.edits.len() == 2u64:
+    "method rename edits its declaration and call by resolved identity";
+    method_rename.drop();
 
     let variant = match snapshot.resolved_member_at(member_source, 7u64, 29u64) {
         Some(value) => value,
@@ -462,6 +575,10 @@ fn editor_member_queries() {
     assert variant_occurrences.len() == 3u64: "variant references include declaration, construction, and pattern";
     for location in variant_occurrences { location.drop(); }
     variant_occurrences.drop();
+    let variant_rename = snapshot.rename_at(member_source, 7u64, 29u64, "Selected");
+    assert variant_rename.ok() && variant_rename.edits.len() == 3u64:
+    "variant rename edits declaration, construction and pattern";
+    variant_rename.drop();
 
     let payload = match snapshot.resolved_member_at(member_source, 7u64, 35u64) {
         Some(value) => value,
@@ -473,6 +590,10 @@ fn editor_member_queries() {
     assert payload_occurrences.len() == 3u64: "payload field references include declaration, construction, and pattern";
     for location in payload_occurrences { location.drop(); }
     payload_occurrences.drop();
+    let payload_rename = snapshot.rename_at(member_source, 7u64, 35u64, "payload");
+    assert payload_rename.ok() && payload_rename.edits.len() == 3u64:
+    "payload rename edits declaration, construction and pattern";
+    payload_rename.drop();
 
     let classified = match semantic_tokens(&snapshot, member_source) {
         Ok(value) => value,
@@ -615,7 +736,9 @@ fn editor_snapshot() {
 
 fn editor_frontend_recovery() {
     let inputs = FrozenInputs.new(21u64, 5u64, "fat:frontend-recovery");
-    inputs.add("/tmp/yian-editor-valid.an", "fn valid() {}\n", Option<i64>.Some(1i64));
+    inputs.add("/tmp/yian-editor-valid.an",
+        "fn valid() {}\nfn helper(value: i32) -> i32 { value }\nfn main() { helper(1); }\n",
+        Option<i64>.Some(1i64));
     inputs.add("/tmp/yian-editor-broken.an", "fn broken( {\n", Option<i64>.Some(2i64));
 
     let syntax_trust = source_trust();
@@ -639,6 +762,11 @@ fn editor_frontend_recovery() {
     assert syntax_diagnostic.message.as_str().contains("RParen") &&
     syntax.diagnostic(1u64).unwrap().message.as_str().contains("RBrace"):
     "each missing delimiter retains its own parse diagnostic";
+    let invalid_format = match syntax.format_document(SourceId(1u64)).unwrap() {
+        None => true,
+        Some(value) => { value.drop(); false },
+    };
+    assert invalid_format: "a syntax-only recovered snapshot cannot authorize formatting";
     syntax.drop();
 
     let full_trust = source_trust();
@@ -651,6 +779,21 @@ fn editor_frontend_recovery() {
     "recovery in another document preserves reliable declaration queries";
     for symbol in valid_symbols { symbol.drop(); }
     valid_symbols.drop();
+    let helper_completion = completion_at(&full, SourceId(0u64), 2u64, 12u64).unwrap();
+    let found_helper = false;
+    for item in helper_completion.items {
+        if item.label.as_str() == "helper" && item.kind == EditorCompletionKind.Function {
+            found_helper = item.parameter_labels.len() == 1u64 &&
+                item.parameter_labels[0u64].as_str() == "value";
+        }
+    }
+    assert found_helper: "an unrelated parse error preserves function completion and its signature";
+    helper_completion.drop();
+    let helper_signature = signature_help_at(&full, SourceId(0u64), 2u64, 20u64).unwrap();
+    assert helper_signature.active_parameter == 0u64 &&
+        helper_signature.parameter_labels[0u64].as_str() == "value":
+        "an unrelated parse error preserves signature help in a valid document";
+    helper_signature.drop();
     full.drop();
     inputs.drop();
 }
@@ -694,6 +837,53 @@ fn editor_document_symbol_facts() {
     snapshot.drop();
     inputs.drop();
     source.drop();
+}
+
+fn editor_partial_import_recovery() {
+    let inputs = FrozenInputs.new(24u64, 7u64, "fat:partial-import");
+    inputs.add("/tmp/yian-editor-import-broken.an",
+        "from absent import Missing;\nfn broken() {}\n", Option<i64>.Some(1i64));
+    inputs.add("/tmp/yian-editor-import-target.an",
+        "pub fn helper(value: i32) -> i32 { value + 1 }\nfn main() { helper(40); }\n",
+        Option<i64>.Some(1i64));
+    let trust = source_trust();
+    let options = editor_options(trust, Option<PackageMap>.None, EditorMode.Full);
+    let snapshot = EditorEngine.analyze(&inputs, options).unwrap();
+    assert !snapshot.semantic_complete(): "an unresolved import keeps the combined snapshot incomplete";
+
+    let found_import_diagnostic = false;
+    let diagnostic_index = 0u64;
+    while diagnostic_index < snapshot.diagnostic_count() {
+        let diagnostic = snapshot.diagnostic(diagnostic_index).unwrap();
+        if diagnostic.code.text() == "E304" && diagnostic.message.as_str().contains("Missing") {
+            found_import_diagnostic = match &diagnostic.location {
+                Some(location) => location.span().start.row == 0u64 &&
+                    location.span().start.column == 19u64,
+                None => false,
+            };
+        }
+        diagnostic_index += 1u64;
+    }
+    assert found_import_diagnostic: "the unresolved import retains E304 at the missing item";
+
+    let completion = completion_at(&snapshot, SourceId(1u64), 1u64, 15u64).unwrap();
+    let found_helper = false;
+    for item in completion.items {
+        if item.label.as_str() == "helper" && item.kind == EditorCompletionKind.Function {
+            found_helper = item.parameter_labels.len() == 1u64 &&
+                item.parameter_labels[0u64].as_str() == "value";
+        }
+    }
+    assert found_helper: "a broken import document preserves independent function completion";
+    completion.drop();
+
+    let signature = signature_help_at(&snapshot, SourceId(1u64), 1u64, 19u64).unwrap();
+    assert signature.active_parameter == 0u64 && signature.label.as_str().contains("value: i32") &&
+        signature.parameter_labels[0u64].as_str() == "value":
+        "a broken import document preserves parameter signature help";
+    signature.drop();
+    snapshot.drop();
+    inputs.drop();
 }
 
 fn editor_import_quick_fixes() {
@@ -757,11 +947,13 @@ fn editor_import_quick_fixes() {
 fn main() {
     editor_snapshot();
     editor_frontend_recovery();
+    editor_partial_import_recovery();
     editor_import_quick_fixes();
     editor_scope_queries();
     editor_signature_help();
     editor_completion_queries();
     editor_rename_queries();
+    editor_partial_receiver_queries();
     editor_member_queries();
     editor_document_symbol_facts();
     let round = 0u64;

@@ -1,7 +1,8 @@
 # Yian 编译器命令行手册
 
-本文档说明 Python 参考编译器和原生 `yianc` 共用的命令行契约。Python 入口是
-`PYTHONPATH=python python -m yianc.main`；安装后的 `yianc` 是由 `bootstrap/yianc/` 构建的原生程序。
+本文档说明日常使用的原生 `yianc` 命令行。Python 恢复编译器通过
+`PYTHONPATH=python python -m yianc.main` 显式调用，只维护冷启动所需兼容性，不承诺与 native 完整功能对等。
+安装后的 `yianc` 是由 `bootstrap/yianc/` 构建的原生程序，也是日常编译、分析和格式化的权威入口。
 
 ## 1. 基本用法
 
@@ -23,8 +24,8 @@ yianc lib/src tests/basic/type/alias/imported_scope/types.an tests/basic/type/al
 
 ### 1.1 工具链要求
 
-编译器源码使用 Python 3.12 的泛型函数语法，需要 Python 3.12+。安装元数据和安装脚本的
-最低版本要求均为 Python 3.12。
+Python 恢复编译器源码使用 Python 3.12 的泛型函数语法，冷启动因此需要 Python 3.12+。安装元数据和
+安装脚本的最低版本要求均为 Python 3.12；日常 native 编译器不通过 Python CLI 启动。
 
 编译器依赖 **LLVM 22**：`llvmlite 0.49`（自带 LLVM 22）、`clang` 22，以及 LLVM 工具（`opt`、`llvm-dis`、`llvm-link`、`llvm-config`）。
 
@@ -341,10 +342,11 @@ yianc -t ll -o output.ll lib/src tests/basic/array/assign.an
 `-t exe` 与 `-t obj` 的产物需要运行时库（`runtime/`）：进程级对象（参数、锁槽、键计数器、帧锁影子栈）、失败路径、C 入口包装 `main`，以及堆分配器。
 
 ```text
-runtime/include/yian_rt.h        ABI 常量与声明（唯一真值）
+bootstrap/yianc/src/codegen/abi/runtime.an 共享帧锁/块头常量与运行时消息
+runtime/include/yian_rt.h        C ABI 声明与唯一尺寸类表
 runtime/src/*.c                  C 源码
 runtime/selftest/selftest.c      自测
-runtime/build.py                 构建、ABI 一致性断言、自测
+runtime/build.py                 构建、native/C ABI 一致性断言、自测
 build/runtime/libyian_rt.{o,a}   产物（首次使用时构建并缓存）
 ```
 
@@ -365,12 +367,13 @@ build/runtime/libyian_rt.{o,a}   产物（首次使用时构建并缓存）
 
 堆分配器是单线程尺寸类 arena：64 KiB、64 KiB 对齐的 slab，每个尺寸类一条空闲块链加一个正在填充的 slab；大于最大类的请求走独占尺寸块，并按额度缓存、按 `madvise` 归还物理页。用户程序不直接调用它：尺寸在编译期已知的分配点由编译器直接传尺寸类号（`YIAN_CLASS_BYTES` 的下标），否则传字节数。
 
-尺寸类表属于 ABI：`runtime/build.py --check` 逐项断言它与 `python/yianc/runtime_lib.py::CLASS_BYTES` 相等，并断言帧锁常量、块头字节数、S002/R002 消息分别与 `python/yianc/codegen/abi/lockmech.py`、`python/yianc/runtime_error.py` 一致，然后运行自测。
+尺寸类表是 C 分配器的唯一来源。`runtime/build.py --check-consistency-only` 将 native `runtime.an` 中的帧锁槽数、槽宽、块头字节数和 S002/R002/R003 消息与 C 头文件核对；Clang 静态断言检查整数表达式、尺寸类数量、正数和递增顺序。该入口不构建运行时库或运行自测。`--check` 仍会构建运行时库、执行 ABI 核对并运行普通自测，`--asan` 保留 ASan/UBSan 流程。
 
 手动构建与校验：
 
 ```bash
 python3 runtime/build.py            # Build unless already current.
+python3 runtime/build.py --check-consistency-only  # Check native/C ABI only.
 python3 runtime/build.py --check    # ABI consistency checks and self-tests.
 python3 runtime/build.py --asan     # ASan/UBSan self-tests.
 ```
@@ -387,7 +390,7 @@ python3 runtime/build.py --asan     # ASan/UBSan self-tests.
 
 | 文件                    | 说明             |
 | ----------------------- | ---------------- |
-| `python/yianc/main.py`      | 编译器入口       |
+| `python/yianc/main.py`      | 冷启动恢复编译器入口 |
 | `python/yianc/utils/log.py` | 日志系统实现     |
-| `python/yianc/format/`      | 源码格式化器     |
+| `python/yianc/format/`      | 恢复格式化器副本 |
 | `runtime/`              | 运行时库（C）    |

@@ -7,8 +7,10 @@
  *   - Check decisions, key generation, slot writes, SENTINEL invalidation, and live predicates belong
  *     to compiler-emitted inline code.
  *
- * This header defines the ABI constants; yianc/codegen/abi/lockmech.py is their Python mirror.
- * runtime/build.py --check verifies consistency.
+ * This header is authoritative for the C runtime ABI and allocation size classes.
+ * Compiler protocol constants and failure messages live in
+ * bootstrap/yianc/src/codegen/abi/runtime.an. runtime/build.py --check-consistency-only
+ * compares those fixed declarations and asks Clang to verify the integer assertions.
  */
 
 #ifndef YIAN_RT_H
@@ -18,7 +20,7 @@
 
 /* Lock entries occupy 8 B: {key:u32 @0,anchor_lo32:u32 @4}. Index ranges encode kind:
  * [0,YIAN_FRAME_LOCK_SLOTS) holds frame slots indexed by depth, followed by two constant slots,
- * then allocator-issued heap slots. Slot count/width must match lockmech.py::FrameLockArena. */
+ * then allocator-issued heap slots. Slot count/width must match runtime.an. */
 #define YIAN_FRAME_LOCK_SLOTS (1u << 20)
 #define YIAN_FRAME_LOCK_SLOT_BYTES 8u
 #define YIAN_LOCK_TABLE_SLOTS ((uint64_t)1 << 26)
@@ -26,7 +28,7 @@
 #define YIAN_ENV_LOCK_INDEX (YIAN_FRAME_LOCK_SLOTS + 1u)
 #define YIAN_HEAP_LOCK_BASE (YIAN_FRAME_LOCK_SLOTS + 2u)
 
-/* Heap header bytes must match lockmech.py::BlockHeader.BYTES.
+/* Heap header bytes must match runtime.an::HEADER_BYTES.
  * 8 B = {extent:u32,pad:u32}; payload = base + YIAN_HDR_BYTES. */
 #define YIAN_HDR_BYTES 8u
 
@@ -40,20 +42,20 @@
  * so no word macros are defined here. */
 
 /* Diagnostic for the main wrapper's argument-ABI failure; must match
- * yianc/runtime_error.py S002 byte-for-byte. */
+ * bootstrap/yianc/src/codegen/abi/runtime.an S002 byte-for-byte. */
 #define YIAN_ABI_FAIL_MESSAGE "yian: safety error [S002]: invalid memory access\n"
 
-/* Allocation-failure diagnostic; must match yianc/runtime_error.py R002 byte-for-byte. */
+/* Allocation-failure diagnostic; must match runtime.an R002 byte-for-byte. */
 #define YIAN_OOM_MESSAGE "yian: runtime error [R002]: memory allocation failed\n"
-/* Lock-table exhaustion message matching yianc/runtime_error.py R003. */
+/* Lock-table exhaustion message matching runtime.an R003. */
 #define YIAN_METADATA_MESSAGE "yian: runtime error [R003]: safety metadata exhausted\n"
 
 /* Size-class payload capacities in bytes, from 16 to 49152 at approximately 1.25 ratios.
  * The table index is the class number; larger requests use the large-object path.
  *
  * The compiler passes class indices for known sizes (see __secl_pool_alloc_class), making this table
- * part of the ABI. yianc/runtime_lib.py::CLASS_BYTES is its Python mirror;
- * runtime/build.py --check verifies elementwise equality. */
+ * part of the ABI. This C table is the sole allocation size-class source;
+ * runtime/build.py checks its count and monotonicity with Clang. */
 #define YIAN_CLASS_COUNT 36u
 #define YIAN_CLASS_BYTES                                                                     \
     16, 20, 25, 32, 40, 50, 64, 80, 100, 128, 160, 200, 256, 320, 400, 512, 640, 800, 1024, \

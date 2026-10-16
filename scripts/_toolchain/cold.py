@@ -28,6 +28,11 @@ from _toolchain.identity import (  # noqa: E402
     tool_build_info,
     tree_sha256,
 )
+from _toolchain.bootstrap_anx import (  # noqa: E402
+    BootstrapError,
+    build_recipe,
+    compiler_arguments,
+)
 
 
 class ColdInstallError(Exception):
@@ -115,54 +120,6 @@ def _run(
     _record_command(journal, label=label, argv=argv, cwd=cwd, code=completed.returncode)
     if completed.returncode != 0:
         raise ColdInstallError(f"{label} failed with exit code {completed.returncode}: {argv!r}")
-
-
-def _copy_fresh_build(
-    *,
-    anx: Path,
-    compiler: Path,
-    project: Path,
-    output: Path,
-    label: str,
-    root: Path,
-    environment: dict[str, str],
-    journal: Path,
-    backup_root: Path,
-) -> None:
-    build_app = project / "build" / "app"
-    backup = backup_root / f"{label}-app"
-    build_app.parent.mkdir(parents=True, exist_ok=True)
-    backup_root.mkdir(parents=True, exist_ok=True)
-    had_original = build_app.exists() or build_app.is_symlink()
-    if had_original:
-        os.replace(build_app, backup)
-    try:
-        build_environment = environment.copy()
-        build_environment.update(
-            {"YIAN_ROOT": str(root), "YIAN_LIB": str(root / "lib" / "src"), "YIANC": str(compiler)}
-        )
-        _run(
-            [str(anx), "build", str(project), "-O2"],
-            cwd=root,
-            environment=build_environment,
-            journal=journal,
-            label=f"build-{label}",
-        )
-        if not build_app.is_file() or build_app.is_symlink():
-            raise ColdInstallError(f"native anx did not create a fresh build output for {project}")
-        output.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(build_app, output)
-        output.chmod(0o755)
-    finally:
-        if build_app.exists() or build_app.is_symlink():
-            if build_app.is_dir() and not build_app.is_symlink():
-                shutil.rmtree(build_app)
-            else:
-                build_app.unlink()
-        if had_original and (backup.exists() or backup.is_symlink()):
-            os.replace(backup, build_app)
-        elif had_original:
-            raise ColdInstallError(f"previous build output could not be restored: {build_app}")
 
 
 def _lock(root: Path, prefix: Path):
@@ -255,63 +212,65 @@ def _build(args: argparse.Namespace) -> None:
         (data / "lib").mkdir(parents=True)
         (data / "runtime").mkdir(parents=True)
 
-        initial_sources = _source_snapshot(root)
-        python_compiler = bootstrap / "yianc-python"
-        python_compiler.write_text(
-            "#!/usr/bin/env bash\n"
-            f"export PYTHONPATH={shlex_quote(str(root / 'python'))}\n"
-            f"exec {shlex_quote(str(python))} -m yianc.main \"$@\"\n",
-            encoding="utf-8",
-        )
-        python_compiler.chmod(0o755)
+        try:
+            yianc_recipe = build_recipe(root, root_package="yianc")
+            anx_recipe = build_recipe(root, root_package="anx")
+        except BootstrapError as error:
+            raise ColdInstallError(str(error)) from None
 
+        recipe_dir = stage / "recipes"
+        recipe_dir.mkdir()
+        yianc_map = recipe_dir / "yianc.json"
+        anx_map = recipe_dir / "anx.json"
+        yianc_map.write_text(
+            json.dumps(yianc_recipe.package_map, indent=2) + "\n", encoding="utf-8"
+        )
+        anx_map.write_text(
+            json.dumps(anx_recipe.package_map, indent=2) + "\n", encoding="utf-8"
+        )
+
+        initial_sources = _source_snapshot(root)
         clean_environment = os.environ.copy()
         for variable in ("YIANC", "YIAN_ROOT", "YIAN_LIB", "PYTHONPATH"):
             clean_environment.pop(variable, None)
-        seed = bootstrap / "anx-seed"
-        seed_command = [
-            str(python),
-            str(root / "scripts" / "_toolchain" / "bootstrap_anx.py"),
-            "--python",
-            str(python),
-            "--output",
-            str(seed),
-        ]
+        build_environment = clean_environment.copy()
+        build_environment.update(
+            {"YIAN_ROOT": str(root), "YIAN_LIB": str(root / "lib" / "src")}
+        )
+        python_environment = build_environment.copy()
+        python_environment["PYTHONPATH"] = str(root / "python")
+
+        staged_yianc = binaries / "yianc"
+        print("Building raw native yianc with the Python recovery compiler...", flush=True)
         _run(
-            seed_command,
+            [
+                str(python),
+                "-m",
+                "yianc.main",
+                *compiler_arguments(yianc_recipe, yianc_map, staged_yianc),
+            ],
             cwd=root,
-            environment=clean_environment,
+            environment=python_environment,
             journal=journal,
-            label="bootstrap-seed-anx",
+            label="build-yianc-python-recovery",
         )
-        if not seed.is_file() or not os.access(seed, os.X_OK):
-            raise ColdInstallError(f"Python yianc did not create an executable seed anx: {seed}")
+        if not staged_yianc.is_file() or not os.access(staged_yianc, os.X_OK):
+            raise ColdInstallError(f"Python yianc did not create an executable compiler: {staged_yianc}")
 
-        print("Building native yianc with the temporary native anx and checkout Python compiler...", flush=True)
-        _copy_fresh_build(
-            anx=seed,
-            compiler=python_compiler,
-            project=root / "bootstrap" / "yianc",
-            output=binaries / "yianc",
-            label="yianc",
-            root=root,
-            environment=clean_environment,
+        staged_anx = binaries / "anx"
+        print("Building raw native anx with the staged native yianc...", flush=True)
+        _run(
+            [str(staged_yianc), *compiler_arguments(anx_recipe, anx_map, staged_anx)],
+            cwd=root,
+            environment=build_environment,
             journal=journal,
-            backup_root=stage / "build-backups",
+            label="build-anx-staged-yianc",
         )
+        if not staged_anx.is_file() or not os.access(staged_anx, os.X_OK):
+            raise ColdInstallError(f"native yianc did not create an executable anx: {staged_anx}")
 
-        print("Building final native anx with the temporary native anx and staged yianc...", flush=True)
-        _copy_fresh_build(
-            anx=seed,
-            compiler=binaries / "yianc",
-            project=root / "bootstrap" / "anx",
-            output=binaries / "anx",
-            label="anx",
-            root=root,
-            environment=clean_environment,
-            journal=journal,
-            backup_root=stage / "build-backups",
-        )
+        if _source_snapshot(root) != initial_sources:
+            raise ColdInstallError("toolchain source inputs changed during the cold build; refusing publication")
 
         for command_name in ("yianc", "anx"):
             command = binaries / command_name
@@ -333,11 +292,10 @@ def _build(args: argparse.Namespace) -> None:
 
         info = tool_build_info(
             root,
-            yianc=binaries / "yianc",
-            anx=binaries / "anx",
-            seed_anx=seed,
+            yianc=staged_yianc,
+            anx=staged_anx,
             python=python,
-            build_options={"optimization": "-O2", "pointer_mode": "fat", "workflow": "cold"},
+            build_options={"optimization": "-O2", "pointer_mode": "raw", "workflow": "cold"},
             build_tools=tools,
             resource_stage=data,
         )
@@ -348,9 +306,13 @@ def _build(args: argparse.Namespace) -> None:
         build_info_hash = file_sha256(data / ".build-info")
         (data / ".native-install").write_text(
             "yian-native-install-v1\n"
-            f"yianc={file_sha256(binaries / 'yianc')}\n"
-            f"anx={file_sha256(binaries / 'anx')}\n"
-            f"resources={resource_hash}\n",
+            f"yianc={file_sha256(staged_yianc)}\n"
+            f"anx={file_sha256(staged_anx)}\n"
+            f"resources={resource_hash}\n"
+            "yianc_build_mode=raw\n"
+            "anx_build_mode=raw\n"
+            "optimization=2\n"
+            "pointer_mode=raw\n",
             encoding="utf-8",
         )
         with (data / ".native-install").open("a", encoding="utf-8") as stream:
@@ -380,12 +342,6 @@ def _build(args: argparse.Namespace) -> None:
     finally:
         fcntl.flock(lock.fileno(), fcntl.LOCK_UN)
         lock.close()
-
-
-def shlex_quote(value: str) -> str:
-    import shlex
-
-    return shlex.quote(value)
 
 
 def main(argv: list[str] | None = None) -> int:

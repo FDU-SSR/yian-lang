@@ -1,0 +1,93 @@
+from yianc.analysis.names import NameInterner;
+from yianc.analysis.ty.model import DefinitionHeader, NominalKind, TypeData;
+from yianc.analysis.ty.store import TypeStore;
+from yianc.common.ids import SourceId, UnitId, TypeId;
+from yianc.common.location import SourceSpan;
+from yianc.frontend.source import Position, Span;
+from std.core.drop import Drop;
+from std.core.ops import Index;
+from std.core.vec import Vec;
+
+fn main() {
+    let names = NameInterner.new(); defer names.drop();
+    let types = TypeStore.new(); defer types.drop();
+
+    let i32 = types.primitive(TypeData.Integer(32u32, true)).unwrap();
+    let u64 = types.primitive(TypeData.Integer(64u32, false)).unwrap();
+    let generic_name = names.intern("T");
+    let generic = types.generic(generic_name);
+    let another_generic = types.generic(generic_name);
+    assert generic != another_generic: "generic binders have distinct declaration identities";
+
+    let span = SourceSpan(SourceId(0u64), Span(Position(0u64, 0u64), Position(0u64, 0u64)));
+    let box_name = names.intern("Box");
+    let first_generics = Vec<TypeId>.new();
+    first_generics.push(generic);
+    let first_definition = types.register(
+        DefinitionHeader(NominalKind.Struct, box_name, span, UnitId(0u64)),
+        first_generics,
+    );
+
+    let other_generic = types.generic(generic_name);
+    let second_generics = Vec<TypeId>.new();
+    second_generics.push(other_generic);
+    let second_definition = types.register(
+        DefinitionHeader(NominalKind.Struct, box_name, span, UnitId(0u64)),
+        second_generics,
+    );
+    assert first_definition != second_definition: "same-spelled nominal declarations stay distinct";
+
+    let arguments = Vec<TypeId>.new(); defer arguments.drop();
+    arguments.push(i32);
+    let first_instance = types.instance(first_definition, &arguments).unwrap();
+    let second_instance = types.instance(second_definition, &arguments).unwrap();
+    assert first_instance != second_instance: "nominal instance identity includes its DefId";
+    assert types.instance(first_definition, &arguments).unwrap() == first_instance:
+    "repeated nominal instantiation is interned";
+
+    let mutable_instance_arguments = Vec<TypeId>.new(); defer mutable_instance_arguments.drop();
+    mutable_instance_arguments.push(i32);
+    let copied_instance = types.instance(first_definition, &mutable_instance_arguments).unwrap();
+    mutable_instance_arguments[0u64] = u64;
+    match types.get(copied_instance).unwrap() {
+        Nominal(_, copied_arguments) => assert copied_arguments[0u64] == i32:
+            "nominal instance interning copies its input key",
+        _ => @panic("expected nominal type"),
+    }
+    assert copied_instance == first_instance: "mutating the caller's key does not change interned identity";
+
+    let structural_arguments = Vec<TypeId>.new(); defer structural_arguments.drop();
+    structural_arguments.push(i32);
+    let tuple = types.tuple(&structural_arguments);
+    let void = types.primitive(TypeData.Void).unwrap();
+    let function = types.function_pointer(&structural_arguments, void);
+    structural_arguments[0u64] = u64;
+    match types.get(tuple).unwrap() {
+        Tuple(elements) => assert elements[0u64] == i32: "tuple interning copies its input key",
+        _ => @panic("expected tuple type"),
+    }
+    match types.get(function).unwrap() {
+        FunctionPointer(parameters, _) => assert parameters[0u64] == i32:
+            "function-pointer interning copies its input key",
+        _ => @panic("expected function-pointer type"),
+    }
+
+    let before_reuse = types.len();
+    let same_tuple_args = Vec<TypeId>.new(); defer same_tuple_args.drop();
+    same_tuple_args.push(i32);
+    let same_function_args = Vec<TypeId>.new(); defer same_function_args.drop();
+    same_function_args.push(i32);
+    assert types.tuple(&same_tuple_args) == tuple: "equal tuple keys reuse one TypeId";
+    assert types.function_pointer(&same_function_args, void) == function:
+    "equal function-pointer keys reuse one TypeId";
+    let changed_arguments = Vec<TypeId>.new(); defer changed_arguments.drop();
+    changed_arguments.push(u64);
+    assert types.instance(first_definition, &changed_arguments) != first_instance:
+    "a different nominal argument creates a different instance";
+    assert types.len() == before_reuse + 1u64:
+    "only the deliberately changed nominal argument adds a type";
+
+    let c_int_name = names.intern("c_int");
+    let c_int = types.primitive(TypeData.CScalar(32u32, true, c_int_name)).unwrap();
+    assert c_int != i32: "C ABI integer identity is distinct from language i32";
+}

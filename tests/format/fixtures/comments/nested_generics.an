@@ -1,0 +1,9 @@
+// Header.
+
+fn main(){ // trailing
+/* before let */ let nested:Vec<Vec<i32>>=values;
+let pointer:i32* = **raw; // pointer comment
+
+// standalone comment
+return [1,2];
+}

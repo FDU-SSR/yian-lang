@@ -26,6 +26,8 @@ bench/
 
 当前评测来源与许可登记见 `bench/SUITES.md`。
 
+这些命令用于编译、运行和测量所选基准，不属于默认局部验收。执行仓库验证前应检查集合、基准数、规模和采样次数；性能测量需要明确授权。
+
 ## 集合
 
 ```bash
@@ -38,6 +40,7 @@ python3 bench/bench_three_way.py --set string          # Focus: strings/I/O.
 python3 bench/bench_three_way.py --set micro           # Mechanism microbenchmarks: representation size/copying/pointer chasing.
 python3 bench/bench_three_way.py --bench AWFY/queen,BG/fasta --scale full
 python3 bench/bench_three_way.py --source AWFY --set fast
+python3 bench/bench_three_way.py --set fast --yianc "$HOME/.local/bin/yianc"
 ```
 
 | 集合 | 内容 | 默认规模档 | 用途 |
@@ -92,6 +95,10 @@ fatptr 3 项（call_abi、copy_struct、chase）。
 | raw | `yianc -O2 --raw-pointers lib/src <src>` + libc `malloc`/`free` |
 | fat | `yianc -O2 lib/src <src>`（胖指针为默认） |
 
+两个 runner 都只调用 native `yianc`，按 `--yianc PATH`、非空 `YIANC`、`PATH` 的顺序选择，并拒绝
+脚本、目录、不可执行文件和非 ELF 文件。报告记录规范化 compiler 路径、SHA-256 与选择来源。
+`bench_allocator.py --compiler-root PATH` 只指定标准库和输入源码根，不选择编译器。
+
 - 产物：`build/bench/{cbin,yraw,yfat}/<SOURCE>_<name>`（三态**等长路径**——分配密集型基准的
   绝对值对 argv[0] 长度 → 进程布局敏感）。
 - 采样：每态 1 次 warmup（不计入样本）后按 C→raw→fat **逐次轮转**测量 N 次；正式指标取最小值，
@@ -103,12 +110,14 @@ fatptr 3 项（call_abi、copy_struct、chase）。
 - **不设回归门槛**：性能试验只作参考，不写阈值脚本；噪声量级取决于采样环境，判断变化需结合重复测量与样本分布。
 - **算法等价需独立核对**：退出码与输出一致只能说明结果校验通过，不能证明搜索路径、读写恢复、分配或错误路径一致。
   解释比值前须核对 C/raw/fat 的算法与工作量；未经核对的条目不能作为表示开销的证据。
+- **运行范围需先审查**：bench 命令会编译并运行所选负载，含 warmup 和多次采样；benchmark 是性能测量，不是默认局部测试。仓库任务中执行前需明确选择和测量范围并取得相应授权。
 
 ## 分配器专项
 
 ```bash
 python3 bench/bench_allocator.py --scale full --pin 4    # Full scale: seven samples per mode.
 python3 bench/bench_allocator.py --scale fast --pin 4    # Fast scale: three samples per mode at reduced scale.
+python3 bench/bench_allocator.py --scale fast --yianc "$HOME/.local/bin/yianc"
 ```
 
 `bench/ALLOC` 的四项没有 C 参考，对照态是 libc `malloc`/`free`（raw 态），因此是两态比较：

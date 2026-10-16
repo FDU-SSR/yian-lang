@@ -77,6 +77,10 @@ fi
 
 staged_marker="$BUNDLE/share/yian/.native-install"
 grep -Fxq 'yian-native-install-v1' "$staged_marker" || die "unrecognized staged native install marker: $staged_marker"
+for identity_line in yianc_build_mode=raw anx_build_mode=raw optimization=2 pointer_mode=raw; do
+    grep -Fxq "$identity_line" "$staged_marker" \
+        || die "staged toolchain identity is missing required setting: $identity_line"
+done
 for command_name in yianc anx; do
     staged_hash="$(sha256sum -- "$BUNDLE/bin/$command_name")"
     staged_hash="${staged_hash%% *}"

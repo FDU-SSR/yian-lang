@@ -1,10 +1,9 @@
 #!/usr/bin/env python3
-"""Compare compiler behavior; native anx supplies metadata for package fixtures."""
+"""Run the stable compiler case catalog against native binaries and fixed oracles."""
 
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
 import os
 import re
@@ -12,32 +11,18 @@ import shutil
 import subprocess
 import sys
 import tempfile
-from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TypeAlias, cast
 
 __SCRIPT_ROOT = Path(__file__).resolve().parents[1]
 __ROOT = __SCRIPT_ROOT.parent
-__PYTHON_ROOT = __ROOT / "python"
 sys.path.insert(0, str(__SCRIPT_ROOT))
-sys.path.insert(0, str(__PYTHON_ROOT))
 
-from run_tests import discover_tests
-from yianc.analysis.package_map import PackageMap
-from yianc.error import CompilerError
+from _toolchain.identity import component_source_sha256, file_sha256
+from _toolchain.native import NativeToolError, resolve_native
 
 Json: TypeAlias = None | bool | int | float | str | list["Json"] | dict[str, "Json"]
-FIXTURE_DEPENDENCIES = {
-    "tests/package/ffi_llvm": ("bootstrap/llvm", "bootstrap/ffi"),
-}
-
-
-@dataclass(frozen=True)
-class FixtureMetadata:
-    package_map: dict[str, Json]
-    source_files: tuple[str, ...]
-    capture_argv: tuple[str, ...]
 
 
 @dataclass(frozen=True)
@@ -54,6 +39,7 @@ class Case:
     observability: str = ""
     expected_error: str = ""
     expected_error_count: int | None = None
+    expected_error_code: str = ""
     fixture: str = ""
     environment: tuple[tuple[str, str], ...] = ()
     newlines: str = ""
@@ -65,13 +51,13 @@ class Case:
     preexisting: tuple[tuple[str, str], ...] = ()
     target_modes: tuple[bool, ...] = (False, True)
     package_build: bool = False
+    expected_exit_code: int | None = None
+    expected_output: str = ""
 
 
 class __Arguments(argparse.Namespace):
-    reference: str
-    bootstrap: str
+    native: str
     anx: str | None
-    build_mode: str
     groups: str
     filter: str
     report: Path
@@ -90,9 +76,14 @@ def __cases() -> list[Case]:
         Case("bool-float-cast", "analyze", ("tests/basic/diagnostics/comptime_bool_float_cast.err.an",), ("--analyze", "--json"), json_output=True),
         Case("bool-integer-constant-error", "analyze", ("tests/basic/diagnostics/comptime_bool_integer_cast.err.an",), ("--analyze", "--json"), json_output=True),
         Case("bool-integer-casts", "analyze", ("tests/compiler_parity/bool_conversion.an",), ("--analyze", "--json", "--allow-ffi"), json_output=True, expected_error="cannot convert bool to an integer", expected_error_count=12),
-        Case("division-by-zero", "analyze", ("tests/basic/error/comptime_if_div_zero.err.an",), ("--analyze", "--json"), json_output=True),
+        Case("division-by-zero", "analyze", ("tests/basic/error/comptime_if_div_zero.err.an",), ("--analyze", "--json"), json_output=True, expected_error_code="E503", expected_error_count=1),
+        Case("defer-uninitialized", "analyze", ("tests/basic/error/defer_uninitialized.err.an",), ("--analyze", "--json"), json_output=True, expected_error_code="E502", expected_error_count=1),
+        Case("uncalled-concrete-definition", "analyze", ("tests/basic/error/uncalled_concrete_definition.err.an",), ("--analyze", "--json"), json_output=True, expected_error_code="E502", expected_error_count=1),
+        Case("uncalled-comptime-condition", "analyze", ("tests/basic/error/uncalled_comptime_condition.err.an",), ("--analyze", "--json"), json_output=True, expected_error_code="E503", expected_error_count=1),
+        Case("ffi-alias-permission", "analyze", ("tests/basic/type/alias/ffi_alias_permission.err.an",), ("--analyze", "--json", "--allow-ffi"), json_output=True, expected_error="C ABI types require an ffi fn", expected_error_count=1),
         Case("negative-shift", "analyze", ("tests/basic/error/comptime_if_negative_shift.err.an",), ("--analyze", "--json"), json_output=True),
         Case("multiple-errors", "analyze", ("tests/compiler_parity/multiple_errors.an",), ("--analyze", "--json"), json_output=True),
+        Case("strict-partial-input", "analyze", ("tests/compiler_parity/partial_analysis_invalid.an",), ("--analyze", "--json"), json_output=True, expected_error="Unknown identifier 'missing'", expected_error_code="E301", expected_error_count=1),
         Case("stage-error-order", "analyze", ("tests/compiler_parity/parse_before_lex.an", "tests/compiler_parity/later_lex_error.an"), ("--analyze", "--json"), json_output=True),
         Case("syntax-error", "analyze", ("tests/compiler_parity/parse_before_lex.an",), ("--analyze", "--json"), standard_library=False, json_output=True),
         Case("entry-errors", "analyze", ("tests/compiler_parity/entry_error_order.an",), ("--analyze", "--json"), json_output=True),
@@ -105,6 +96,7 @@ def __cases() -> list[Case]:
         Case("character-witness", "analyze", ("tests/basic/diagnostics/non_exhaustive_char.err.an",), ("--analyze", "--json"), json_output=True),
         Case("multiple-main", "analyze", ("tests/basic/array/access.an", "tests/basic/literal/float.an"), ("--analyze", "--json"), json_output=True),
         Case("default-roots", "cli", ("tests/basic/array/access.an",), ("--analyze", "--json"), json_output=True, root_option=False),
+        Case("explicit-root-precedence", "cli", ("tests/basic/array/access.an",), ("--analyze", "--json"), json_output=True, environment=(("YIAN_LIB", "/nonexistent/library"), ("YIAN_ROOT", "/nonexistent/checkout"))),
         Case("analysis-observation-flags", "cli", ("tests/basic/array/access.an",), ("--analyze", "--json", "--profile", "--dump"), json_output=True),
         Case("missing-package-entry", "cli", ("tests/basic/array/access.an",), ("--analyze", "--json"), json_output=True, package=True),
         Case("mode-precedence", "cli", ("tests/basic/array/access.an",), ("--frontend-json", "tokens", "--analyze"), standard_library=False, json_output=True),
@@ -120,6 +112,7 @@ def __cases() -> list[Case]:
         Case("dump-parse-failure", "observability", ("tests/compiler_parity/parse_before_lex.an",), ("-t", "none", "--dump"), observability="dump"),
         Case("empty-root-environment", "cli", ("tests/basic/array/access.an",), ("--analyze", "--json"), json_output=True, root_option=False, environment=(("YIAN_LIB", ""), ("YIAN_ROOT", ""))),
         Case("library-environment", "cli", ("tests/basic/array/access.an",), ("--analyze", "--json"), json_output=True, root_option=False, environment=(("YIAN_LIB", str(__ROOT / "lib/src")), ("YIAN_ROOT", "/nonexistent"))),
+        Case("restricted-bitcast", "analyze", ("tests/basic/error/restricted_bitcast.err.an",), ("--analyze", "--json"), json_output=True, expected_error="restricted operation '@bitcast' is only allowed in the standard library", expected_error_code="E501", expected_error_count=1),
         Case("no-input", "cli", (), ("--analyze", "--json"), standard_library=False),
         Case("invalid-json-mode", "cli", ("tests/basic/array/access.an",), ("--json",)),
         Case("invalid-option", "cli", (), ("--unknown-option",), standard_library=False),
@@ -148,17 +141,18 @@ def __cases() -> list[Case]:
         cases.append(Case("missing-input-" + name, "cli", (), (*flags, "missing.an"), standard_library=False))
         cases.append(Case("empty-input-" + name, "cli", (), (*flags, "empty"), standard_library=False, json_output=name in ("analyze", "frontend"), preexisting=(("empty/.keep", ""),)))
     for flags, name in ((("--check",), "check"), (("--write",), "write"), ((), "stdout")):
-        cases.append(Case("crlf-format-" + name, "format", ("tests/basic/array/access.an",), ("--format", *flags), standard_library=False, newlines="\r\n"))
+        cases.append(Case("crlf-format-" + name, "format", ("tests/compiler_parity/format.an",), ("--format", *flags), standard_library=False, newlines="\r\n"))
     for phase in ("tokens", "ast", "desugared"):
         cases.append(Case(phase, "frontend", ("tests/basic/literal/float.an", "tests/basic/fmt/fstring_basic.an", "tests/basic/try/generic.an"), ("--frontend-json", phase), standard_library=False, json_output=True))
     for name, flags in (("format-stdout", ()), ("format-check", ("--check",)), ("format-write", ("--write",))):
         cases.append(Case(name, "format", ("tests/compiler_parity/format.an",), ("--format", *flags), standard_library=False))
-    for fixture in sorted((__PYTHON_ROOT / "yianc/format/fixtures").rglob("*.an")):
+    format_fixtures = __ROOT / "tests/format/fixtures"
+    for fixture in sorted(format_fixtures.rglob("*.an")):
         if not fixture.name.endswith(".expected.an"):
-            cases.append(Case("fixture-" + fixture.relative_to(__PYTHON_ROOT / "yianc/format/fixtures").as_posix(), "format", (fixture.relative_to(__ROOT).as_posix(),), ("--format",), standard_library=False))
+            cases.append(Case("fixture-" + fixture.relative_to(format_fixtures).as_posix(), "format", (fixture.relative_to(__ROOT).as_posix(),), ("--format",), standard_library=False))
     for name in ("mixed", "only"):
         for flag in ("--write", "--check"):
-            cases.append(Case(f"comments-{name}-{flag[2:]}", "format", (f"python/yianc/format/fixtures/comments/{name}.an",), ("--format", flag), standard_library=False))
+            cases.append(Case(f"comments-{name}-{flag[2:]}", "format", (f"tests/format/fixtures/comments/{name}.an",), ("--format", flag), standard_library=False))
     for target in ("none", "exe", "ll", "bc", "obj", "asm"):
         cases.append(Case("no-main-" + target, "cli", ("tests/compiler_parity/no_main.an",), ("-t", target, "-o", "result")))
         cases.append(Case("output-" + target, "native", ("tests/basic/type/sizeof_full.an",), ("-t", target, "-o", "result"), run=target == "exe"))
@@ -195,284 +189,197 @@ def __normalize(value: Json, directory: Path, stdlib_root: Path) -> Json:
     return value
 
 
-def __capture_native_package_metadata(
-    anx: list[str],
-    fixture: str,
-    directory: Path,
-    root_source_root: Path,
-    root_inputs: Mapping[Path, Path],
-    stdlib_root: Path,
-) -> FixtureMetadata:
-    """Capture the v2 map and compiler inputs for the one LLVM package fixture.
-
-    The native anx check runs against isolated copies with a capture-only
-    compiler. The selected fixture source is then relocated into the parity
-    work directory; dependency and shim paths stay inside the isolated copy.
-    """
-    dependencies = FIXTURE_DEPENDENCIES.get(fixture)
-    if dependencies is None:
-        raise RuntimeError(f"no isolated native anx fixture recipe for {fixture}")
-
-    metadata_root = directory / "native-anx-metadata"
-    project_root = metadata_root / fixture
-    shutil.copytree(
-        __ROOT / fixture,
-        project_root,
-        ignore=shutil.ignore_patterns("build", "__pycache__", ".pytest_cache"),
-    )
-    for dependency in dependencies:
-        shutil.copytree(
-            __ROOT / dependency,
-            metadata_root / dependency,
-            ignore=shutil.ignore_patterns("build", "__pycache__", ".pytest_cache"),
-        )
-
-    capture_path = directory / "native-anx-capture.json"
-    capture_launcher = directory / "native-anx-capture"
-    capture_launcher.write_text(
-        f"#!{sys.executable}\n"
-        "import json, os, sys\n"
-        "with open(os.environ['ANX_CAPTURE_RECORD'], 'w', encoding='utf-8') as stream:\n"
-        "    json.dump({'argv': sys.argv[1:], 'cwd': os.getcwd()}, stream)\n",
-        encoding="utf-8",
-    )
-    capture_launcher.chmod(0o755)
-
-    environment = os.environ.copy()
-    environment["YIAN_ROOT"] = str(__ROOT)
-    environment["YIAN_LIB"] = str(stdlib_root.resolve())
-    environment["YIANC"] = str(capture_launcher)
-    environment["ANX_CAPTURE_RECORD"] = str(capture_path)
-    process = subprocess.run(
-        [*anx, "check", str(project_root)],
-        cwd=directory,
-        env=environment,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    if process.returncode != 0:
-        raise RuntimeError(f"native anx metadata check failed: {process.stdout}\n{process.stderr}")
-
-    map_path = project_root / "build" / "pkg.json"
-    if not map_path.is_file() or not capture_path.is_file():
-        raise RuntimeError("native anx metadata check did not produce a package map and capture record")
-    package_map = cast(dict[str, Json], json.loads(map_path.read_text(encoding="utf-8")))
-    captured = cast(dict[str, Json], json.loads(capture_path.read_text(encoding="utf-8")))
-    capture_argv = cast(list[str], captured.get("argv", []))
-    if capture_argv[:4] != ["--packages", str(map_path), "-t", "none"]:
-        raise RuntimeError("native anx did not invoke the capture compiler with a metadata-only check")
-
-    compiler_inputs = [value for value in capture_argv[4:] if value.endswith(".an")]
-    metadata_source_root = (project_root / "src").resolve()
-    root_package = cast(str, package_map.get("root", ""))
-    package_table = cast(dict[str, Json], package_map.get("packages", {}))
-    root_spec = cast(dict[str, Json], package_table.get(root_package, {}))
-    raw_entry = root_spec.get("entry")
-    if not isinstance(raw_entry, str):
-        raise RuntimeError("native anx package map omitted the fixture entry")
-    relative_entry = Path(raw_entry).resolve().relative_to(metadata_source_root)
-    root_source_root = root_source_root.resolve()
-    if not root_source_root.is_dir():
-        raise RuntimeError(f"relocated fixture source root is missing: {root_source_root}")
-    root_spec["sourceRoot"] = str(root_source_root)
-    root_spec["entry"] = str((root_source_root / relative_entry).resolve())
-
-    relocated_inputs: list[str] = []
-    matched_root_inputs: set[Path] = set()
-    for source in compiler_inputs:
-        source_path = Path(source).resolve()
-        try:
-            relative = source_path.relative_to(metadata_source_root)
-        except ValueError:
-            relocated_inputs.append(str(source_path))
-            continue
-        destination = root_inputs.get(relative)
-        if destination is None or not destination.is_file():
-            raise RuntimeError(f"no parity input corresponds to fixture source {relative}")
-        matched_root_inputs.add(relative)
-        relocated_inputs.append(str(destination.resolve()))
-    if matched_root_inputs != set(root_inputs):
-        raise RuntimeError("native anx source selection does not match the parity fixture inputs")
-    if not compiler_inputs or any(not Path(source).is_file() for source in relocated_inputs):
-        raise RuntimeError("native anx produced an empty or incomplete compiler input list")
-
-    parsed_map = PackageMap.from_document(package_map, source="native anx fixture metadata")
-    for package in parsed_map.packages.values():
-        if package.native_llvm is not None and any(not source.is_file() for source in package.native_llvm.sources):
-            raise RuntimeError(f"native anx metadata references a missing LLVM shim in {package.name}")
-    return FixtureMetadata(
-        package_map=package_map,
-        source_files=tuple(relocated_inputs),
-        capture_argv=tuple(capture_argv),
-    )
-
-
 cases = __cases
-normalize = __normalize
-capture_native_package_metadata = __capture_native_package_metadata
 
 
 def __run(
-    compiler: list[str],
+    native: list[str],
     case: Case,
     directory: Path,
     raw: bool,
     default_library: Path,
     anx: list[str] | None,
-    reference_launcher: Path | None = None,
 ) -> dict[str, Json]:
     if case.package_build:
-        return __run_package_build(
-            compiler,
-            case,
-            directory,
-            raw,
-            default_library,
-            anx,
-            reference_launcher,
-        )
+        return __run_package_build(native, case, directory, raw, default_library, anx)
 
     sources: list[str] = []
     for path, contents in case.preexisting:
         destination = directory / path
         destination.parent.mkdir(parents=True, exist_ok=True)
-        destination.write_text(contents)
+        destination.write_text(contents, encoding="utf-8")
     for source in case.sources:
         destination = directory / case.source_prefix / source
         destination.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(__ROOT / source, destination)
         if case.newlines:
-            text = destination.read_text()
+            text = destination.read_text(encoding="utf-8")
             destination.write_bytes(text.replace("\n", case.newlines).encode())
         sources.append(str(destination))
+
+    source_inputs = {
+        source: (directory / case.source_prefix / source).read_bytes().decode("utf-8")
+        for source in case.sources
+    }
+    mapping: dict[str, Json] | None = None
     arguments = list(case.arguments)
     if case.root_option:
         arguments.extend(("--compiler-root", str(__ROOT)))
     if case.package:
         mapping: dict[str, Json] = {
-            "format": 2, "root": "probe", "packages": {
-                "probe": {"sourceRoot": str(directory / "entry"), "kind": "bin", "entry": str(directory / "entry/main.an"), "dependencies": [], "ffi": False},
-                "std": {"sourceRoot": str(__ROOT / "lib/src"), "kind": "lib", "dependencies": [], "ffi": True},
+            "format": 2,
+            "root": "probe",
+            "packages": {
+                "probe": {
+                    "sourceRoot": str(directory / "entry"),
+                    "kind": "bin",
+                    "entry": str(directory / "entry/main.an"),
+                    "dependencies": [],
+                    "ffi": False,
+                },
+                "std": {
+                    "sourceRoot": str(default_library.resolve()),
+                    "kind": "lib",
+                    "dependencies": [],
+                    "ffi": True,
+                },
             },
         }
-        (directory / "entry").mkdir()
-        (directory / "entry/main.an").write_text("fn main() {}\n")
-        (directory / "packages.json").write_text(json.dumps(mapping))
-        arguments.extend(("--packages", str(directory / "packages.json")))
-    if case.fixture:
-        if anx is None:
-            raise RuntimeError(f"native anx is required for package fixture {case.fixture}")
-        fixture_source_root = Path(case.fixture) / "src"
-        root_inputs = {
-            Path(source).relative_to(fixture_source_root): directory / case.source_prefix / source
-            for source in case.sources
-        }
-        relocated_source_root = directory / case.source_prefix / fixture_source_root
-        metadata = __capture_native_package_metadata(
-            anx,
-            case.fixture,
-            directory,
-            relocated_source_root,
-            root_inputs,
-            default_library,
-        )
-        mapping = metadata.package_map
-        sources = list(metadata.source_files)
-        (directory / "packages.json").write_text(json.dumps(mapping))
+        entry_root = directory / "entry"
+        entry_root.mkdir(parents=True, exist_ok=True)
+        (entry_root / "main.an").write_text("fn main() {}\n", encoding="utf-8")
+        (directory / "packages.json").write_text(json.dumps(mapping), encoding="utf-8")
         arguments.extend(("--packages", str(directory / "packages.json")))
     if raw:
         arguments.append("--raw-pointers")
-    if case.standard_library and not case.fixture:
+    if case.standard_library:
         environment_values = dict(case.environment)
-        library_root = __ROOT / "lib/src"
+        library_root = default_library
         if environment_values.get("YIAN_LIB") == "" and environment_values.get("YIAN_ROOT") == "":
             library_root = default_library
-        sources.insert(0, str(library_root))
-    command = [*compiler, *arguments, *(["--"] if case.separator else []), *sources]
+        sources.insert(0, str(library_root.resolve()))
+
+    command = [*native, *arguments, *(["--"] if case.separator else []), *sources]
     if case.interleave:
-        command = [*compiler, sources[0], *arguments, *sources[1:]]
+        command = [*native, sources[0], *arguments, *sources[1:]]
     environment = os.environ.copy()
     for name in ("YIAN_LIB", "YIAN_ROOT", "YIAN_LOG", "YIAN_LOG_FILE", "YIANC"):
         environment.pop(name, None)
     environment["YIAN_ROOT"] = str(__ROOT)
-    environment["YIAN_LIB"] = str(default_library if case.fixture else __ROOT / "lib/src")
-    source_path = str(__PYTHON_ROOT)
-    if environment.get("PYTHONPATH"):
-        source_path += os.pathsep + environment["PYTHONPATH"]
-    environment["PYTHONPATH"] = source_path
-    environment.update(case.environment)
-    process = subprocess.run(command, cwd=directory, env=environment, capture_output=True, text=True)
+    environment["YIAN_LIB"] = str(default_library.resolve())
+    environment["YIANC"] = native[0]
+    environment.update(dict(case.environment))
+    process = subprocess.run(command, cwd=directory, env=environment, capture_output=True,
+                             text=True, check=False)
+
     stdout: Json = process.stdout
     if case.json_output:
         try:
             stdout = cast(Json, json.loads(process.stdout))
         except json.JSONDecodeError:
             pass
-    # Diagnostic text layout is implementation-specific; machine output is compared in full.
-    stderr: Json = process.stderr
-    artifacts: list[Json] = [name for name in sorted({path.relative_to(directory).as_posix() for pattern in case.artifact_patterns for path in directory.glob(pattern) if path.is_file()})]
-    result: dict[str, Json] = {"status": process.returncode, "stdout": stdout, "artifacts": artifacts}
+    artifacts: list[Json] = [
+        name
+        for name in sorted({
+            path.relative_to(directory).as_posix()
+            for pattern in case.artifact_patterns
+            for path in directory.glob(pattern)
+            if path.is_file()
+        })
+    ]
+    result: dict[str, Json] = {
+        "status": process.returncode,
+        "stdout": stdout,
+        "stderr": process.stderr,
+        "artifacts": artifacts,
+    }
+    if mapping is not None:
+        result["package_map"] = cast(Json, mapping)
     if case.preexisting:
-        result["preserved"] = {path: (directory / path).read_text() == contents for path, contents in case.preexisting}
-    if case.expected_error:
+        result["preserved"] = {
+            path: (directory / path).read_text(encoding="utf-8") == contents
+            for path, contents in case.preexisting
+        }
+    expected_error = __expected_error_text(case)
+    if expected_error:
         if case.json_output:
             diagnostics = cast(list[dict[str, Json]], stdout.get("diagnostics", [])) if isinstance(stdout, dict) else []
             errors = [item for item in diagnostics if item.get("severity") == "error"]
-            result["expected_error"] = process.returncode == 1 and bool(errors) and all(case.expected_error in cast(str, item.get("message", "")) for item in errors)
+            rendered_errors = "\n".join(
+                " ".join(str(item.get(key, "")) for key in ("code", "message")) for item in errors
+            )
+            result["expected_error"] = (
+                process.returncode == 1
+                and bool(errors)
+                and expected_error in rendered_errors
+            )
             if case.expected_error_count is not None:
                 result["expected_error"] = result["expected_error"] is True and len(errors) == case.expected_error_count
+            if case.expected_error_code:
+                result["expected_error_code"] = process.returncode == 1 and any(
+                    item.get("code") == case.expected_error_code for item in errors
+                )
         else:
-            result["expected_error"] = process.returncode == 1 and case.expected_error in process.stderr
-    if case.json_output or case.group == "format":
-        result["stderr"] = stderr
+            result["expected_error"] = process.returncode != 0 and expected_error in process.stderr
     if case.group == "format":
-        result["sources"] = {source: (directory / case.source_prefix / source).read_bytes().decode() for source in case.sources}
+        result["source_inputs"] = cast(Json, source_inputs)
+        result["sources"] = {
+            source: (directory / case.source_prefix / source).read_bytes().decode("utf-8")
+            for source in case.sources
+        }
     if case.observability == "profile":
-        # Timing magnitudes and labels may differ. A real profile contains multiple measured durations.
         durations = [float(value) for value in re.findall(r"(\d+\.\d+)(?:\s*ms|s\s*\()", process.stderr)]
         result["profile_measured"] = len(durations) >= 3 and sum(durations) > 0
     elif case.observability in ("log", "off"):
         log = directory / "requested.log"
         result["log_created"] = log.is_file()
-        contents = log.read_text() if log.is_file() else ""
+        contents = log.read_text(encoding="utf-8") if log.is_file() else ""
         result["log_enabled"] = bool(contents)
         result["stderr_logging"] = bool(process.stderr)
     elif case.observability == "dump":
         required = ("tokens.txt", "ast.txt", "hir.txt", "cfg.txt")
-        result["dumps"] = {name: (directory / "build" / name).is_file() and (directory / "build" / name).stat().st_size > 0 for name in required}
+        result["dumps"] = {
+            name: (directory / "build" / name).is_file()
+            and (directory / "build" / name).stat().st_size > 0
+            for name in required
+        }
         result["llvm_dump"] = (directory / "build/ir.ll").is_file()
+
     if case.run and process.returncode == 0:
         executable = directory / case.executable
         if executable.is_file():
-            run = subprocess.run([str(executable)], cwd=directory, capture_output=True, text=True)
+            run = subprocess.run([str(executable)], cwd=directory, env=environment,
+                                 capture_output=True, text=True, check=False)
             result["run"] = {"status": run.returncode, "stdout": run.stdout, "stderr": run.stderr}
         else:
             result["run"] = "missing executable"
-    return {"command": [str(value) for value in command], "observation": __normalize(result, directory, default_library), "raw_stdout": process.stdout, "raw_stderr": process.stderr}
+    return {
+        "command": [str(value) for value in command],
+        "observation": __normalize(result, directory, default_library),
+        "raw_stdout": process.stdout,
+        "raw_stderr": process.stderr,
+    }
 
 
 def run_case(
-    compiler: list[str],
+    native: list[str],
     case: Case,
     directory: Path,
     raw: bool,
     default_library: Path,
     anx: list[str] | None,
-    reference_launcher: Path | None = None,
 ) -> dict[str, Json]:
-    """Run one compiler or package observation in an isolated work directory."""
-    return __run(compiler, case, directory, raw, default_library, anx, reference_launcher)
+    """Run one native compiler or package case in an isolated work directory."""
+    return __run(native, case, directory, raw, default_library, anx)
 
 
 def __run_package_build(
-    compiler: list[str],
+    native: list[str],
     case: Case,
     directory: Path,
     raw: bool,
     default_library: Path,
     anx: list[str] | None,
-    reference_launcher: Path | None,
 ) -> dict[str, Json]:
     if not case.fixture:
         raise RuntimeError(f"package build case {case.name} has no fixture")
@@ -490,22 +397,12 @@ def __run_package_build(
         command.append("--raw-pointers")
 
     environment = os.environ.copy()
-    for name in ("YIAN_LOG", "YIAN_LOG_FILE"):
+    for name in ("YIAN_LOG", "YIAN_LOG_FILE", "YIANC"):
         environment.pop(name, None)
     environment["YIAN_ROOT"] = str(__ROOT)
-    environment["YIAN_LIB"] = str(default_library)
-    environment["PATH"] = str(Path(compiler[0]).resolve().parent) + os.pathsep + environment.get("PATH", "")
-    python_path = str(__PYTHON_ROOT)
-    if environment.get("PYTHONPATH"):
-        python_path += os.pathsep + environment["PYTHONPATH"]
-    environment["PYTHONPATH"] = python_path
-    if compiler == [sys.executable, "-m", "yianc.main"]:
-        if reference_launcher is None:
-            raise RuntimeError("Python package builds require a reference compiler launcher")
-        environment["YIANC"] = str(reference_launcher)
-    else:
-        environment["YIANC"] = compiler[0]
-
+    environment["YIAN_LIB"] = str(default_library.resolve())
+    environment["YIANC"] = native[0]
+    environment["PATH"] = str(Path(native[0]).resolve().parent) + os.pathsep + environment.get("PATH", "")
     process = subprocess.run(
         command,
         cwd=directory,
@@ -514,17 +411,16 @@ def __run_package_build(
         text=True,
         check=False,
     )
+
     mapping_path = project / "build" / "pkg.json"
-    mapping: dict[str, Json] | None = None
-    mapping_error: str | None = None
+    package_map: Json = None
     if mapping_path.is_file():
         try:
-            mapping = cast(dict[str, Json], json.loads(mapping_path.read_text(encoding="utf-8")))
-            PackageMap.from_document(mapping, source="native anx package parity build")
-        except (OSError, json.JSONDecodeError, CompilerError, ValueError) as error:
-            mapping_error = str(error)
+            package_map = cast(Json, json.loads(mapping_path.read_text(encoding="utf-8")))
+        except (OSError, json.JSONDecodeError):
+            package_map = None
 
-    run_result: dict[str, Json] | None = None
+    run_result: Json = None
     executable = project / "build" / "app"
     if process.returncode == 0 and executable.is_file():
         run = subprocess.run(
@@ -539,137 +435,486 @@ def __run_package_build(
 
     observation: dict[str, Json] = {
         "status": process.returncode,
-        "package_map": mapping,
-        "package_map_error": mapping_error,
+        "stdout": process.stdout,
+        "stderr": process.stderr,
+        "package_map": package_map,
         "run": run_result,
     }
     return {
         "command": [str(value) for value in command],
-        "environment": {"YIANC": environment["YIANC"], "YIAN_LIB": str(default_library)},
+        "environment": {"YIANC": environment["YIANC"], "YIAN_LIB": environment["YIAN_LIB"]},
         "observation": __normalize(observation, directory, default_library),
         "raw_stdout": process.stdout,
         "raw_stderr": process.stderr,
     }
 
 
+__ANALYSIS_ERRORS = frozenset({
+    "nonfinite-cast", "bool-float-cast", "bool-integer-constant-error",
+    "bool-integer-casts", "division-by-zero", "negative-shift", "multiple-errors",
+    "stage-error-order", "syntax-error", "entry-errors", "unicode-range",
+    "nested-witness", "character-witness", "multiple-main",
+})
+__CLI_ERRORS = frozenset({
+    "strict-entry-first", "missing-package-entry", "log-invalid-spec", "log-empty-path",
+    "no-input", "invalid-json-mode", "invalid-option", "invalid-optimization",
+    "invalid-package-map", "invalid-library", "empty-library", "unicode-library",
+    "nonalnum-library", "no-main-exe", "no-main-ll", "no-main-bc", "no-main-obj",
+    "no-main-asm",
+})
+__NATIVE_ERRORS = frozenset({
+    "blocked-output-directory", "missing-native-tool", "failed-native-tool",
+    "boolean-conversion", "boolean-integer-conversion",
+})
+
+
+def __expects_error(case: Case) -> bool:
+    if case.expected_error or case.name in __ANALYSIS_ERRORS | __CLI_ERRORS | __NATIVE_ERRORS:
+        return True
+    return any(source.endswith(".err.an") for source in case.sources)
+
+
+def __expected_error_text(case: Case) -> str:
+    if case.expected_error:
+        return case.expected_error
+    for source in case.sources:
+        path = Path(source)
+        if path.parts[:2] != ("tests", "basic") or not path.name.endswith(".err.an"):
+            continue
+        relative = Path(*path.parts[2:])
+        expected_name = relative.with_name(relative.name[:-7] + ".an.ans")
+        expected = __ROOT / "tests/output/basic" / expected_name
+        if expected.is_file():
+            return expected.read_text(encoding="utf-8").rstrip("\n")
+    return ""
+
+
+def __output_expectation(source: str) -> tuple[int, str] | None:
+    path = Path(source)
+    if path.parts[:2] == ("tests", "basic"):
+        relative = Path(*path.parts[2:])
+        if relative.name.endswith(".err.an"):
+            relative = relative.with_name(relative.name[:-7] + ".an")
+        expected = __ROOT / "tests/output/basic" / (relative.as_posix() + ".ans")
+    elif path.parts[:2] == ("tests", "safety"):
+        relative = Path(*path.parts[2:])
+        expected = __ROOT / "tests/output/safety" / (relative.as_posix() + ".ans")
+    else:
+        return None
+    if not expected.is_file():
+        return (0, "")
+    text = expected.read_text(encoding="utf-8").rstrip("\n")
+    if text.startswith("Exit code "):
+        header, _, text = text.partition("\n")
+        return (int(header.removeprefix("Exit code ")), text)
+    return (0, text)
+
+
+def __package_map_valid(value: Json) -> bool:
+    if not isinstance(value, dict) or value.get("format") != 2:
+        return False
+    packages = value.get("packages")
+    if not isinstance(packages, dict) or not isinstance(value.get("root"), str):
+        return False
+    if value["root"] not in packages:
+        return False
+    for entry in packages.values():
+        if not isinstance(entry, dict):
+            return False
+        if not all(key in entry for key in ("sourceRoot", "kind", "dependencies", "ffi")):
+            return False
+        source_root = entry["sourceRoot"]
+        if not isinstance(source_root, str) or not (source_root.startswith("<") or Path(source_root).is_absolute()):
+            return False
+        if not isinstance(entry["dependencies"], list) or not isinstance(entry["ffi"], bool):
+            return False
+    return True
+
+
+def __format_expected(case: Case, source: str) -> str | None:
+    path = __ROOT / source
+    expected = path.with_name(path.stem + ".expected.an")
+    if expected.is_file():
+        return expected.read_text(encoding="utf-8")
+    return None
+
+
+def oracle_passes(case: Case, record: dict[str, Json]) -> bool:
+    """Check one native observation against a fixed source, output or behavior oracle."""
+    observation = cast(dict[str, Json], record["observation"])
+    status = observation.get("status")
+    expects_error = __expects_error(case)
+
+    if case.group == "format":
+        source_texts = observation.get("sources")
+        source_inputs = observation.get("source_inputs")
+        if not isinstance(source_texts, dict):
+            return False
+        for source in case.sources:
+            arguments = set(case.arguments)
+            actual = source_texts.get(source)
+            original = source_inputs.get(source) if isinstance(source_inputs, dict) else None
+            if not isinstance(actual, str) or not isinstance(original, str):
+                return False
+            if case.name.startswith("crlf-format-"):
+                normalized_path = "<work>/" + "/".join(part for part in (case.source_prefix, source) if part)
+                formatted = __format_expected(case, source)
+                if formatted is None:
+                    return False
+                if "--check" in arguments:
+                    expected_stdout = normalized_path + "\n1 of 1 file(s) need formatting\n"
+                    return status == 1 and actual == original and "\r" in original and observation.get("stdout") == expected_stdout
+                if "--write" in arguments:
+                    expected_stdout = "1 file(s) checked, 1 rewritten\n"
+                    return status == 0 and actual == formatted and "\r" not in actual and observation.get("stdout") == expected_stdout
+                output = observation.get("stdout")
+                return status == 0 and output == formatted and "\r" not in output
+            formatted = __format_expected(case, source)
+            if formatted is None:
+                return False
+            if "--write" in arguments:
+                expected_stdout = f"1 file(s) checked, {1 if original != formatted else 0} rewritten\n"
+                if status != 0 or actual != formatted or observation.get("stdout") != expected_stdout:
+                    return False
+            elif "--check" in arguments:
+                expected_status = 0 if original == formatted else 1
+                expected_stdout = ""
+                if original != formatted:
+                    expected_stdout += "<work>/" + "/".join(part for part in (case.source_prefix, source) if part) + "\n"
+                changed = 1 if original != formatted else 0
+                expected_stdout += f"{changed} of 1 file(s) need formatting\n"
+                if status != expected_status or actual != original or observation.get("stdout") != expected_stdout:
+                    return False
+            else:
+                if status != 0 or observation.get("stdout") != formatted:
+                    return False
+        return True
+
+    if case.package_build:
+        package_map = observation.get("package_map")
+        run = observation.get("run")
+        if not (
+            status == 0
+            and __package_map_valid(package_map)
+            and isinstance(run, dict)
+            and run.get("status") == 0
+            and run.get("stdout") == ""
+            and run.get("stderr") == ""
+        ):
+            return False
+        if not isinstance(package_map, dict):
+            return False
+        packages = package_map.get("packages")
+        root_package = packages.get("ffi_llvm_test") if isinstance(packages, dict) else None
+        llvm_package = packages.get("llvm") if isinstance(packages, dict) else None
+        if not isinstance(root_package, dict) or "llvm" not in root_package.get("dependencies", []):
+            return False
+        if not isinstance(llvm_package, dict):
+            return False
+        native_llvm = llvm_package.get("nativeLLVM")
+        return (
+            isinstance(native_llvm, dict)
+            and native_llvm.get("major") == 22
+            and "core" in native_llvm.get("components", [])
+            and len(native_llvm.get("sources", [])) == 1
+        )
+
+    if case.group == "analyze" and case.json_output:
+        result = observation.get("stdout")
+        if not isinstance(result, dict):
+            return False
+        diagnostics = result.get("diagnostics")
+        if not isinstance(diagnostics, list):
+            return False
+        errors = [item for item in diagnostics if isinstance(item, dict) and item.get("severity") == "error"]
+        expected_ok = not expects_error
+        expected_status = 0 if expected_ok else 1
+        if result.get("ok") is not expected_ok or status != expected_status:
+            return False
+        if result.get("format") != 1 or result.get("stage") != "semantic":
+            return False
+        if expected_ok and errors:
+            return False
+        if expects_error and not errors:
+            return False
+        if __expected_error_text(case) and observation.get("expected_error") is not True:
+            return False
+        if case.expected_error_code and observation.get("expected_error_code") is not True:
+            return False
+        if case.expected_error_count is not None and len(errors) != case.expected_error_count:
+            return False
+        if case.name in {"pattern-warnings", "existing-warning"}:
+            warnings = [item for item in diagnostics if isinstance(item, dict) and item.get("severity") == "warning"]
+            return bool(warnings)
+        return True
+
+    if case.group == "frontend" and case.json_output:
+        result = observation.get("stdout")
+        if not isinstance(result, dict):
+            return False
+        expected_error = case.name.startswith("error-")
+        if status != (1 if expected_error else 0):
+            return False
+        phase = case.arguments[1] if len(case.arguments) > 1 else ""
+        files = result.get("files")
+        if result.get("version") != 1 or result.get("phase") != phase or not isinstance(files, list):
+            return False
+        if expected_error:
+            diagnostic = result.get("diagnostic")
+            expected_stage = "lex" if phase == "tokens" else "parse"
+            return (
+                isinstance(diagnostic, dict)
+                and diagnostic.get("stage") == expected_stage
+                and isinstance(diagnostic.get("code"), str)
+                and isinstance(diagnostic.get("message"), str)
+                and bool(diagnostic.get("message"))
+            )
+        if result.get("diagnostic") is not None or len(files) != len(case.sources):
+            return False
+        return all(
+            isinstance(item, dict) and ("tokens" in item if phase == "tokens" else "ast" in item)
+            for item in files
+        )
+
+    if case.group == "cli":
+        if expects_error:
+            if not isinstance(status, int) or status == 0:
+                return False
+            result = observation.get("stdout")
+            if isinstance(result, dict):
+                diagnostics = result.get("diagnostics")
+                if result.get("ok") is not False or not isinstance(diagnostics, list):
+                    return False
+                if not any(isinstance(item, dict) and item.get("severity") == "error" for item in diagnostics):
+                    return False
+            elif not observation.get("stderr"):
+                return False
+            if __expected_error_text(case) and observation.get("expected_error") is not True:
+                return False
+            return True
+        return status == 0
+
+    if case.group == "observability":
+        if case.observability == "profile":
+            return status == 0 and observation.get("profile_measured") is True
+        if case.observability == "dump":
+            dumps = observation.get("dumps")
+            if not isinstance(dumps, dict):
+                return False
+            if case.name == "dump-parse-failure":
+                return (
+                    status != 0
+                    and dumps.get("tokens.txt") is True
+                    and dumps.get("ast.txt") is False
+                    and dumps.get("hir.txt") is False
+                    and dumps.get("cfg.txt") is False
+                    and observation.get("llvm_dump") is False
+                )
+            return (
+                status == 0
+                and all(value is True for value in dumps.values())
+                and observation.get("llvm_dump") is False
+            )
+        if case.observability == "off":
+            return status == 0 and observation.get("log_enabled") is False and observation.get("stderr_logging") is False
+        return status == 0 and observation.get("log_created") is True and observation.get("log_enabled") is True
+
+    if expects_error:
+        if not isinstance(status, int) or status == 0:
+            return False
+        if __expected_error_text(case) and observation.get("expected_error") is not True:
+            return False
+        if case.preexisting and not all(cast(dict[str, Json], observation.get("preserved", {})).values()):
+            return False
+        return True
+    if status != 0:
+        return False
+    if case.run or case.package_build:
+        run = observation.get("run")
+        if not isinstance(run, dict):
+            return False
+        expected = __output_expectation(case.sources[0]) if case.sources else (0, "")
+        if expected is not None:
+            expected_status, expected_output = expected
+            actual_output = cast(str, run.get("stdout", ""))
+            actual_error = cast(str, run.get("stderr", ""))
+            if run.get("status") != expected_status:
+                return False
+            if expected_status == 0 and actual_output.rstrip("\n") != expected_output:
+                return False
+            if expected_status != 0 and (actual_output + actual_error).rstrip("\n") != expected_output:
+                return False
+        elif run.get("status") != 0 or run.get("stdout") != "" or run.get("stderr") != "":
+            return False
+    if case.package:
+        return __package_map_valid(observation.get("package_map"))
+    if case.group == "native":
+        expected_artifact = {
+            "output-exe": "result",
+            "default-output-exe": "build/a.out",
+            "output-ll": "result.ll",
+            "default-output-ll": "build/access.ll",
+            "output-bc": "result.bc",
+            "default-output-bc": "build/access.bc",
+            "output-obj": "result.o",
+            "default-output-obj": "build/access.o",
+            "output-asm": "result.s",
+            "default-output-asm": "access.s",
+            "output-space": "result with space",
+            "output-extension": "result.old",
+        }.get(case.name)
+        artifacts = observation.get("artifacts")
+        if expected_artifact is not None and (
+            not isinstance(artifacts, list) or expected_artifact not in artifacts
+        ):
+            return False
+        if case.name == "blocked-output-directory":
+            preserved = observation.get("preserved")
+            return isinstance(preserved, dict) and preserved.get("result") is True
+    return True
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--reference", default="python", help="Python module (default) or compiler executable path.")
-    parser.add_argument("--bootstrap", required=True)
-    parser.add_argument("--anx", help="Native anx executable used only to load package-fixture metadata.")
-    parser.add_argument("--build-mode", choices=("fat", "raw", "unspecified"), default="unspecified")
+    parser.add_argument("--native", required=True, help="Native yianc executable.")
+    parser.add_argument("--anx", help="Native anx executable for package build cases.")
     parser.add_argument("--groups", default="analyze,cli,frontend,format,native,observability")
     parser.add_argument("--filter", default="")
     parser.add_argument("--report", type=Path, required=True)
-    parser.add_argument("--full-corpus", action="store_true", help="also compare all existing nonexperimental basic frontend sources")
-    parser.add_argument("--full-analysis", action="store_true", help="also compare the existing basic suite's semantic JSON")
-    parser.add_argument("--failed-from", type=Path, help="select cases that failed in a previous complete report")
+    parser.add_argument("--full-corpus", action="store_true", help="include all nonexperimental basic frontend sources")
+    parser.add_argument("--full-analysis", action="store_true", help="include semantic analysis cases from the basic suite")
+    parser.add_argument("--failed-from", type=Path, help="select cases that failed in a previous native report")
     args = parser.parse_args(namespace=__Arguments())
-    if args.reference == "python":
-        reference = [sys.executable, "-m", "yianc.main"]
-        reference_label = "python -m yianc.main"
-    else:
-        reference_path = shutil.which(args.reference)
-        if reference_path is None:
-            parser.error(f"reference compiler not found: {args.reference}")
-        reference = [str(Path(reference_path).resolve())]
-        reference_label = reference[0]
 
-    bootstrap_path = shutil.which(args.bootstrap)
-    if bootstrap_path is None:
-        parser.error(f"bootstrap compiler not found: {args.bootstrap}")
-    bootstrap = [str(Path(bootstrap_path).resolve())]
-    bootstrap_label = bootstrap[0]
-    bootstrap_executable = Path(bootstrap[0])
-    installed_root = bootstrap_executable.parent.parent / "share/yian"
-    bootstrap_library = installed_root / "lib/src"
-    if not bootstrap_library.is_dir():
-        bootstrap_library = __ROOT / "lib/src"
-    groups = set(args.groups.split(","))
+    try:
+        native_path = resolve_native(args.native)
+    except NativeToolError as error:
+        parser.error(str(error))
+    native = [str(native_path)]
+    installed_root = native_path.parent.parent / "share/yian"
+    native_library = installed_root / "lib/src"
+    if not native_library.is_dir():
+        native_library = __ROOT / "lib/src"
+
     available = __cases()
     if args.full_analysis:
+        from run_tests import discover_tests
+
         for test in discover_tests():
             if "experimental" in Path(test.name).parts:
                 continue
-            available.append(Case("analysis-" + test.name, "analyze", tuple(path.relative_to(__ROOT).as_posix() for path in test.source_files), ("--analyze", "--json", *test.compiler_args), json_output=True))
+            available.append(Case(
+                "analysis-" + test.name,
+                "analyze",
+                tuple(path.relative_to(__ROOT).as_posix() for path in test.source_files),
+                ("--analyze", "--json", *test.compiler_args),
+                json_output=True,
+                expected_error=test.expected_substring,
+                expected_exit_code=test.expected_exit_code,
+                expected_output=test.expected_output,
+            ))
     if args.full_corpus:
         for source in sorted((__ROOT / "tests/basic").rglob("*.an")):
             if "experimental" in source.parts or source.name.endswith(".err.an"):
                 continue
             name = source.relative_to(__ROOT).as_posix()
             for phase in ("tokens", "ast", "desugared"):
-                available.append(Case("corpus-" + name + "-" + phase, "frontend", (name,), ("--frontend-json", phase), standard_library=False, json_output=True))
-    cases = [case for case in available if case.group in groups and args.filter in case.name]
+                available.append(Case(
+                    "corpus-" + name + "-" + phase,
+                    "frontend",
+                    (name,),
+                    ("--frontend-json", phase),
+                    standard_library=False,
+                    json_output=True,
+                ))
+
     if len({case.name for case in available}) != len(available):
         parser.error("case names must be unique")
     if args.failed_from:
-        previous = cast(dict[str, Json], json.loads(args.failed_from.read_text()))
-        previous_cases = cast(list[dict[str, Json]], previous["cases"])
-        failed_names = {cast(str, case["case"]) for case in previous_cases if case["equal"] is False}
+        try:
+            previous = cast(dict[str, Json], json.loads(args.failed_from.read_text(encoding="utf-8")))
+            previous_cases = cast(list[dict[str, Json]], previous["cases"])
+        except (OSError, json.JSONDecodeError, KeyError, TypeError) as error:
+            parser.error(f"cannot read previous report {args.failed_from}: {error}")
+        failed_names = {
+            cast(str, item["case"])
+            for item in previous_cases
+            if item.get("passed") is False and isinstance(item.get("case"), str)
+        }
         missing = failed_names - {case.name for case in available}
         if missing:
-            parser.error("previous failures are absent from the selected corpus: " + ", ".join(sorted(missing)))
-        cases = [case for case in cases if case.name in failed_names]
-    if not cases:
-        parser.error("no matching cases; an empty selection is not a parity check")
+            parser.error("previous failures are absent from this corpus: " + ", ".join(sorted(missing)))
+        available = [case for case in available if case.name in failed_names]
+
+    groups = set(args.groups.split(","))
+    selected = [case for case in available if case.group in groups and args.filter in case.name]
+    if not selected:
+        parser.error("no matching cases; an empty native oracle selection is not a verification")
     anx_command: list[str] | None = None
-    if any(case.fixture for case in cases):
+    if any(case.package_build for case in selected):
         if not args.anx:
-            parser.error("--anx PATH is required when the selection includes a package fixture")
-        anx_path = shutil.which(args.anx)
-        if anx_path is None:
-            parser.error(f"native anx not found: {args.anx}")
-        anx_command = [str(Path(anx_path).resolve())]
-    revision = subprocess.run(["git", "rev-parse", "HEAD"], cwd=__ROOT, text=True, capture_output=True).stdout.strip()
-    changes = subprocess.run(["git", "status", "--porcelain"], cwd=__ROOT, text=True, capture_output=True).stdout
-    compiler_hashes = [
-        hashlib.sha256(Path(command[0]).read_bytes()).hexdigest()
-        if len(command) == 1 and Path(command[0]).is_file()
-        else None
-        for command in (reference, bootstrap)
-    ]
-    # A dirty checkout needs a content identity in addition to its committed revision.
-    paths = subprocess.run(["git", "ls-files", "-co", "--exclude-standard", "-z"], cwd=__ROOT, capture_output=True, check=True).stdout.decode().split("\0")
-    source_hash = hashlib.sha256()
-    for name in sorted(set(paths)):
-        source = __ROOT / name
-        if source.suffix not in (".an", ".anx", ".py", ".c", ".h", ".inc", ".toml") or not source.is_file():
-            continue
-        contents = source.read_bytes()
-        source_hash.update(name.encode() + b"\0" + str(len(contents)).encode() + b"\0" + contents)
+            parser.error("--anx PATH is required when the selection contains a package build case")
+        try:
+            anx_command = [str(resolve_native(args.anx))]
+        except NativeToolError as error:
+            parser.error(str(error))
+
+    revision = subprocess.run(
+        ["git", "rev-parse", "HEAD"], cwd=__ROOT, text=True, capture_output=True, check=False
+    ).stdout.strip()
+    changes = subprocess.run(
+        ["git", "status", "--porcelain"], cwd=__ROOT, text=True, capture_output=True, check=False
+    ).stdout
+    source_identity = file_sha256(native_path)
     records: list[Json] = []
     failures = 0
     args.report.parent.mkdir(parents=True, exist_ok=True)
     failure_log = args.report.with_suffix(".failures.jsonl")
-    failure_log.write_text("")
-    for case in cases:
+    failure_log.write_text("", encoding="utf-8")
+
+    for case in selected:
         for raw in case.target_modes:
-            with tempfile.TemporaryDirectory(prefix="yian-parity-") as temporary:
-                directories = [Path(temporary) / "reference", Path(temporary) / "bootstrap"]
-                for directory in directories:
-                    directory.mkdir()
-                expected = __run(reference, case, directories[0], raw, __ROOT / "lib/src", anx_command)
-                actual = __run(bootstrap, case, directories[1], raw, bootstrap_library, anx_command)
-                equal = expected["observation"] == actual["observation"]
-                if case.expected_error:
-                    observations = [cast(dict[str, Json], item["observation"]) for item in (expected, actual)]
-                    equal = equal and all(item.get("expected_error") is True for item in observations)
-                failures += not equal
-                record: dict[str, Json] = {"case": case.name, "group": case.group, "raw": raw, "equal": equal, "reference": expected, "bootstrap": actual}
-                records.append(record)
-                if not equal:
-                    # Preserve raw evidence immediately, including when a later compiler invocation fails.
-                    with failure_log.open("a") as output:
-                        output.write(json.dumps(record, ensure_ascii=False) + "\n")
-                print(f"{'PASS' if equal else 'FAIL'} {case.name}@{'raw' if raw else 'fat'}", flush=True)
+            mode = "raw" if raw else "fat"
+            with tempfile.TemporaryDirectory(prefix="yian-native-parity-") as temporary:
+                observed = run_case(
+                    native,
+                    case,
+                    Path(temporary),
+                    raw,
+                    native_library,
+                    anx_command,
+                )
+            passed = oracle_passes(case, observed)
+            record: dict[str, Json] = {
+                "case": case.name,
+                "group": case.group,
+                "pointer_mode": mode,
+                "native": observed,
+                "oracle_passed": passed,
+                "passed": passed,
+            }
+            records.append(record)
+            if not passed:
+                with failure_log.open("a", encoding="utf-8") as stream:
+                    stream.write(json.dumps(record, ensure_ascii=False) + "\n")
+            print(f"{'PASS' if passed else 'FAIL'} {case.name}@{mode}", flush=True)
+            failures += not passed
+
     report: dict[str, Json] = {
-        "revision": revision, "source_sha256": source_hash.hexdigest(), "worktree_changes": changes, "build_mode": args.build_mode,
-        "reference": reference_label, "bootstrap": bootstrap_label,
-        "reference_sha256": compiler_hashes[0], "bootstrap_sha256": compiler_hashes[1],
-        "total": len(records), "failures": failures, "cases": records,
+        "format": 2,
+        "mode": "native-oracle",
+        "revision": revision,
+        "source_worktree": changes,
+        "native": str(native_path),
+        "native_sha256": source_identity,
+        "native_source_sha256": component_source_sha256(__ROOT, "yianc"),
+        "anx": anx_command[0] if anx_command else None,
+        "total": len(records),
+        "failures": failures,
+        "cases": records,
     }
     args.report.parent.mkdir(parents=True, exist_ok=True)
-    args.report.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n")
+    args.report.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     print(f"Total: {len(records)}; failures: {failures}; report: {args.report}")
     return 1 if failures else 0
 

@@ -3,14 +3,17 @@ from std.core.fs import create_dir_all, read_to_string, try_exists, write_string
 from std.core.io import IoError, IoErrorKind, Stderr, Stdout;
 from std.core.option import Option;
 from std.core.path import Path, PathBuf;
-from std.core.process import Command, ExitStatus, ProcessOutput, env_var;
+from std.core.process import Command, ExitStatus, ProcessOutput;
 from std.core.result import Result;
 from std.core.string import String;
 from std.core.vec import Vec;
 from yianc.frontend.source import collect_sources;
+from anx.driver.compiler import compiler_program;
 from anx.manifest.model import PackageKind;
 from anx.project.model import Project;
 from anx.project.package_map import test_package_map_json;
+
+pub enum PointerMode { Both, Fat, Raw }
 
 struct ProjectTest {
     name: String,
@@ -383,26 +386,6 @@ fn executable_name(name: str) -> String {
     output
 }
 
-fn compiler_program() -> Result<String, String> {
-    let configured = match env_var("YIANC") {
-        Ok(value) => value,
-        Err(problem) => {
-            let message = String.from(&"could not read YIANC: ");
-            message.push_str(problem.msg());
-            problem.drop();
-            return Result<String, String>.Err(msg=message);
-        },
-    };
-    match configured {
-        Some(value) => {
-            if !value.is_empty() { return Result<String, String>.Ok(val=value); }
-            value.drop();
-        },
-        None => {},
-    }
-    Result<String, String>.Ok(val=String.from(&"yianc"))
-}
-
 fn compiler_args(command: Command&, project: Project&, test: ProjectTest&, map_path: str,
     executable: Option<PathBuf>, raw_pointers: bool, optimization: Option<u8>, release: bool) {
     command.arg("--packages");
@@ -453,7 +436,7 @@ fn append_bin_root_hint(detail: String&, project: Project&, output: str) {
     detail.push_str("' has kind 'bin', so its modules are not visible to tests.\n      Declare kind = \"hybrid\" to expose a library interface, or move the\n      reusable code into a lib dependency.\n");
 }
 
-fn run_one(project: Project&, test: ProjectTest&, build_dir: str, map_path: str,
+fn run_one(program: str, project: Project&, test: ProjectTest&, build_dir: str, map_path: str,
     raw_pointers: bool, optimization: Option<u8>, release: bool) -> Option<String> {
     if !test.load_error.is_empty() { return Option<String>.Some(String.from(&test.load_error.as_str())); }
 
@@ -482,18 +465,7 @@ fn run_one(project: Project&, test: ProjectTest&, build_dir: str, map_path: str,
         },
     }
 
-    let program = match compiler_program() {
-        Ok(value) => value,
-        Err(problem) => {
-            let detail = String.from(&"could not select YIAN compiler: ");
-            detail.push_str(problem.as_str());
-            problem.drop();
-            executable.drop();
-            return Option<String>.Some(detail);
-        },
-    };
-    defer program.drop();
-    let command = Command.new(program.as_str());
+    let command = Command.new(program);
     defer command.drop();
     command.current_dir(project.package(root_index).root());
     command.interruptible(true);
@@ -608,28 +580,16 @@ fn run_one(project: Project&, test: ProjectTest&, build_dir: str, map_path: str,
     Option<String>.None
 }
 
-pub fn run(project: Project&, raw_pointers: bool, optimization: Option<u8>, release: bool) -> i32 {
+fn run_pointer_mode(project: Project&, tests: Vec<ProjectTest>&, compiler: str,
+    mode_name: str, raw_pointers: bool, optimization: Option<u8>, release: bool) -> i32 {
     let root_index = match project.package_index(project.root_package()) {
         Some(value) => value,
         None => { write_stdout("error: project root package is missing\n"); return 1i32; },
     };
     let root = project.package(root_index).root();
-    let tests_root = Path.new(root).join("tests");
-    defer tests_root.drop();
-    let tests = discover_tests(root);
-    defer release_tests(&tests);
-    if tests.is_empty() {
-        write_stdout("No tests found under ");
-        write_stdout(tests_root.as_str());
-        write_stdout("\n");
-        return 1i32;
-    }
-    if project.package_index("__anx_test").is_some() {
-        write_stdout("error: the project already declares a package named '__anx_test', which `anx test` needs for its own test root\n");
-        return 1i32;
-    }
-
-    let build_dir = Path.new(root).join("build/test");
+    let test_build_root = Path.new(root).join("build/test");
+    defer test_build_root.drop();
+    let build_dir = Path.new(test_build_root.as_str()).join(mode_name);
     defer build_dir.drop();
     match create_dir_all(build_dir.as_str()) {
         Ok(_) => {},
@@ -644,11 +604,14 @@ pub fn run(project: Project&, raw_pointers: bool, optimization: Option<u8>, rele
     let map_path = Path.new(build_dir.as_str()).join("pkg.json");
     defer map_path.drop();
 
+    write_stdout("\nPointer mode: ");
+    write_stdout(mode_name);
+    write_stdout("\n");
     let failures = Vec<TestFailure>.new();
     let index = 0u64;
     while index < tests.len() {
         let test = &tests[index];
-        let detail = run_one(project, test, build_dir.as_str(), map_path.as_str(), raw_pointers, optimization, release);
+        let detail = run_one(compiler, project, test, build_dir.as_str(), map_path.as_str(), raw_pointers, optimization, release);
         match detail {
             Some(problem) => {
                 write_stdout("  [FAIL] ");
@@ -690,4 +653,48 @@ pub fn run(project: Project&, raw_pointers: bool, optimization: Option<u8>, rele
     let failed = failures.len() != 0u64;
     release_failures(&failures);
     if failed { 1i32 } else { 0i32 }
+}
+
+pub fn run(project: Project&, mode: PointerMode, optimization: Option<u8>, release: bool) -> i32 {
+    let root_index = match project.package_index(project.root_package()) {
+        Some(value) => value,
+        None => { write_stdout("error: project root package is missing\n"); return 1i32; },
+    };
+    let root = project.package(root_index).root();
+    let tests_root = Path.new(root).join("tests");
+    defer tests_root.drop();
+    let tests = discover_tests(root);
+    defer release_tests(&tests);
+    if tests.is_empty() {
+        write_stdout("No tests found under ");
+        write_stdout(tests_root.as_str());
+        write_stdout("\n");
+        return 1i32;
+    }
+    if project.package_index("__anx_test").is_some() {
+        write_stdout("error: the project already declares a package named '__anx_test', which `anx test` needs for its own test root\n");
+        return 1i32;
+    }
+
+    let compiler = match compiler_program() {
+        Ok(value) => value,
+        Err(message) => {
+            write_stdout("error: could not select YIAN compiler: ");
+            write_stdout(message.as_str());
+            write_stdout("\n");
+            message.drop();
+            return 1i32;
+        },
+    };
+    defer compiler.drop();
+
+    match mode {
+        PointerMode.Both => {
+            let fat_status = run_pointer_mode(project, &tests, compiler.as_str(), "fat", false, optimization, release);
+            let raw_status = run_pointer_mode(project, &tests, compiler.as_str(), "raw", true, optimization, release);
+            if fat_status != 0i32 || raw_status != 0i32 { 1i32 } else { 0i32 }
+        },
+        PointerMode.Fat => run_pointer_mode(project, &tests, compiler.as_str(), "fat", false, optimization, release),
+        PointerMode.Raw => run_pointer_mode(project, &tests, compiler.as_str(), "raw", true, optimization, release),
+    }
 }

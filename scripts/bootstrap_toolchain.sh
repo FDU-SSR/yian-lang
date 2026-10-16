@@ -17,9 +17,10 @@ Options:
   --python PATH  Python 3.12+ with llvmlite 0.49+ and LLVM 22 (default: python3).
   -h, --help     Show this help.
 
-Requires llvm-config, clang and llvm-ar from LLVM 22. The workflow builds a
-temporary seed anx, native yianc, then final anx; it does not use installed
-yianc/anx commands and does not install the language server.
+Requires llvm-config, clang and llvm-ar from LLVM 22. The Python recovery
+compiler builds raw yianc from its fixed five-package closure; staged native
+yianc builds raw anx from its fixed seven-package closure. The workflow does
+not use installed yianc/anx commands and does not install the language server.
 EOF
 }
 

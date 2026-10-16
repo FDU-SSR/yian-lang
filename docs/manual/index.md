@@ -1,9 +1,9 @@
 # Yian 开发文档
 
-本文档描述 Yian 工具链的内部实现。01–19 章介绍 Python 参考编译器，20–25 章介绍原生包管理器 `anx`；
+本文档描述 Yian 工具链的内部实现。01–19 章记录 Python 恢复编译器的源码结构，20–25 章介绍原生包管理器 `anx`；
 26–29 章覆盖分析、语言服务器、格式化器与 FFI，30 章介绍以 YIAN 编写的原生工具链：
 
-- **Python 参考编译器**（01–19）：内部架构、数据流与关键算法，覆盖编译管线和编译器的主要子系统。
+- **Python 恢复编译器**（01–19）：恢复源码的内部架构、数据流与关键算法。它只维护显式冷启动所需兼容性，不是日常编译入口，也不承诺与 native 功能对等。
 - **原生 anx 包管理器**（20–25）：YIAN 项目模型、清单与诊断、依赖图与 `build/pkg.json` 契约、CLI、
   以及项目测试驱动。
 - **分析接口与语言服务器**（26–27）：编译器分析会话与位置/引用模型，以及 `lsp/` 中的原生
@@ -43,7 +43,7 @@
 | [20](20.anx_overview.md) | anx 概览 | `bootstrap/anx/src/`：模块地图、build 数据流、compiler 契约 |
 | [21](21.anx_manifest.md) | 清单解析与诊断 | `bootstrap/anx/src/manifest/`、`diagnostics/model.an` |
 | [22](22.anx_project.md) | 项目模型与文件归属 | `bootstrap/anx/src/project/model.an`、`project/load.an` |
-| [23](23.anx_graph.md) | 依赖图与 v2 包图 | `bootstrap/anx/src/project/`、两种 compiler 的 package-map consumer |
+| [23](23.anx_graph.md) | 依赖图与 v2 包图 | `bootstrap/anx/src/project/`、native `yianc` 的日常 package-map consumer |
 | [24](24.anx_cli.md) | CLI 与标准库定位 | `bootstrap/anx/src/main.an`、`project/paths.an` |
 | [25](25.anx_tests.md) | anx 项目测试与仓库 fixtures | `bootstrap/anx/src/driver/test.an`、`scripts/run_tests.py` |
 
@@ -51,10 +51,10 @@
 
 | 章 | 标题 | 对应源文件 |
 |----|------|-----------|
-| [26](26.analysis_interface.md) | 分析接口 | `python/yianc/analysis/`：语义分析会话、位置模型、声明索引、导航/补全/语义/重命名 |
+| [26](26.analysis_interface.md) | 分析接口 | Python 恢复分析 API 与 native 编辑器分析接口 |
 | [27](27.language_server.md) | 语言服务器 | `lsp/`、`ide-support/vscode/` |
 | [28](28.formatter.md) | 格式化器 | `python/yianc/format/`、`lsp/src/worker/service.an` |
-| [29](29.ffi.md) | FFI 编译与链接 | `python/yianc/analysis/`、`python/yianc/codegen/llvm/emitters/ffi.py`、`python/yianc/native_link.py` |
+| [29](29.ffi.md) | FFI 编译与链接 | native 日常编译器与 anx 包图；另记录 Python 恢复实现 |
 | [30](30.bootstrap.md) | 自举编译器与原生工具链 | `bootstrap/yianc/`、`bootstrap/anx/`、`bootstrap/json/`、`bootstrap/toml/`、`bootstrap/jsonrpc/`、`bootstrap/lsp_protocol/`、`bootstrap/ffi/`、`bootstrap/llvm/` |
 
-> 用户视角的用法见 [anx 用户指南](../anx/index.md)。Python 与 native compiler CLI 契约见[编译器命令行手册](../compile_script.md)。
+> 用户视角的用法见 [anx 用户指南](../anx/index.md)。日常 native compiler CLI 与显式 Python 恢复入口见[编译器命令行手册](../compile_script.md)。

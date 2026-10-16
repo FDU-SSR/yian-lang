@@ -22,6 +22,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TypeAlias, cast
 
+from _toolchain.native import NativeToolError, resolve_native
+
 ROOT = Path(__file__).resolve().parents[1]
 Json: TypeAlias = None | bool | int | float | str | list["Json"] | dict[str, "Json"]
 
@@ -386,12 +388,15 @@ def __command(template: list[str], root: Path, raw: bool) -> list[str]:
 
 
 def __default_command() -> list[str]:
-    executable = os.environ.get("YIAN_LSP_BIN") or shutil.which("yian-lsp")
-    if executable is None:
+    executable = os.environ.get("YIAN_LSP_BIN") or "yian-lsp"
+    try:
+        resolved = resolve_native(executable)
+    except NativeToolError as error:
         raise ValueError(
-            "native yian-lsp is not installed; run scripts/refresh_toolchain.sh with a compatible native anx/yianc pair"
-        )
-    return [executable, "--stdio", "--compiler-root", "{compiler_root}"]
+            f"native yian-lsp is unavailable ({error}); run scripts/refresh_toolchain.sh "
+            "with a compatible native anx/yianc pair"
+        ) from error
+    return [str(resolved), "--stdio", "--compiler-root", "{compiler_root}"]
 
 
 def __observe(client: StdioSession, scenario: Scenario) -> dict[str, Json]:
@@ -1504,7 +1509,15 @@ def __run_infrastructure(args: argparse.Namespace) -> int:
     prefix = args.prefix.expanduser().resolve()
     native_bin = prefix / "bin"
     required = (native_bin / "yianc", native_bin / "anx", native_bin / "yian-lsp")
-    missing = [path for path in required if not path.is_file() or not os.access(path, os.X_OK)]
+    native_tools: dict[str, Path] = {}
+    missing: list[Path] = []
+    tool_errors: list[str] = []
+    for path in required:
+        try:
+            native_tools[path.name] = resolve_native(str(path))
+        except NativeToolError as error:
+            missing.append(path)
+            tool_errors.append(str(error))
     resources = (
         prefix / "share" / "yian" / "lib" / "src",
         prefix / "share" / "yian" / "runtime" / "src",
@@ -1512,7 +1525,7 @@ def __run_infrastructure(args: argparse.Namespace) -> int:
     )
     missing.extend(path for path in resources if not path.is_dir())
     if missing:
-        native_seeds = all(path.is_file() and os.access(path, os.X_OK) for path in required[:2])
+        native_seeds = all(path.name in native_tools for path in required[:2])
         if native_seeds:
             recovery = (
                 f"scripts/refresh_toolchain.sh --prefix {shlex.quote(str(prefix))} "
@@ -1527,7 +1540,8 @@ def __run_infrastructure(args: argparse.Namespace) -> int:
             )
         print(
             "error: LSP infrastructure requires an existing native yianc/anx/yian-lsp installation "
-            f"and shared resources; missing: {', '.join(str(path) for path in missing)}. "
+            f"and shared resources; missing or invalid: {', '.join(str(path) for path in missing)}. "
+            f"{' '.join(tool_errors)} "
             f"Prepare it explicitly with {recovery}",
             file=sys.stderr,
         )
@@ -1535,13 +1549,8 @@ def __run_infrastructure(args: argparse.Namespace) -> int:
     environment = os.environ.copy()
     environment["PATH"] = str(native_bin) + os.pathsep + environment.get("PATH", "")
     environment["YIAN_INSTALL_PREFIX"] = str(prefix)
-    environment["YIANC"] = str(native_bin / "yianc")
-    environment["YIAN_LSP_BIN"] = str(native_bin / "yian-lsp")
-    python_root = str(ROOT / "python")
-    existing_python_path = environment.get("PYTHONPATH")
-    environment["PYTHONPATH"] = (
-        python_root if not existing_python_path else f"{python_root}{os.pathsep}{existing_python_path}"
-    )
+    environment["YIANC"] = str(native_tools["yianc"])
+    environment["YIAN_LSP_BIN"] = str(native_tools["yian-lsp"])
     commands = [
         [
             sys.executable,
@@ -1549,14 +1558,13 @@ def __run_infrastructure(args: argparse.Namespace) -> int:
             "--suite",
             "bootstrap",
             "--implementation",
-            "both",
+            "native",
             "--prefix",
             str(prefix),
             "-q",
         ],
         [sys.executable, "-m", "unittest", "discover", "-s", "tests/unit", "-v"],
-        [sys.executable, "-m", "yianc.format", "--verify", "bootstrap/yianc/src"],
-        [sys.executable, "-m", "yianc.format", "--check", "bootstrap/yianc/src"],
+        [str(native_tools["anx"]), "fmt", "--check", str(ROOT / "bootstrap/yianc/src")],
         [str(native_bin / "anx"), "fmt", "--check", str(ROOT / "lsp")],
         [sys.executable, "runtime/build.py", "--check"],
         [sys.executable, "runtime/build.py", "--asan"],
@@ -1673,7 +1681,9 @@ def main(argv: list[str] | None = None) -> int:
         return __run_infrastructure(args)
 
     try:
-        command = __parse_command(args.server_command, default=__default_command())
+        default_command = __default_command() if args.server_command is None else []
+        command = __parse_command(args.server_command, default=default_command)
+        command[0] = str(resolve_native(command[0]))
     except ValueError as error:
         parser.error(str(error))
     if min(args.cold_samples, args.analysis_samples, args.query_samples, args.memory_samples) < 1:

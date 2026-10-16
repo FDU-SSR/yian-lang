@@ -1,6 +1,6 @@
 # YIAN
 
-YIAN is a statically typed programming language with a Python reference compiler and a native compiler and package manager written in YIAN. Both compilers support the `.an source → tokens → AST → desugared AST → HIR → CFG → LLVM IR → executable` pipeline.
+YIAN is a statically typed programming language with a Python recovery compiler and a native compiler and package manager written in YIAN. The native tools are the daily compiler and package workflow; Python remains for the explicit cold-recovery build and the compatibility it needs.
 
 ## Requirements
 
@@ -36,7 +36,7 @@ scripts/uninstall_lsp.sh --prefix "$HOME/.local"
 scripts/uninstall.sh --prefix "$HOME/.local"
 ```
 
-The cold bootstrap builds a temporary seed `anx` with the Python reference compiler, then builds native `yianc` and final `anx`. It never selects installed `yianc` or `anx` from `PATH` and does not build the language server. The warm refresh freezes existing native seeds, rebuilds `yianc`, `anx`, and raw/O2 `yian-lsp`, verifies a stdio handshake against staged resources, and publishes the complete set transactionally.
+The cold bootstrap uses the Python recovery compiler once to build raw `yianc` from its fixed five-package closure, then uses staged native `yianc` to build raw `anx` from its fixed seven-package closure. It never selects installed `yianc` or `anx` from `PATH` and does not build the language server. The warm refresh freezes existing native seeds, rebuilds raw/O2 `yianc`, `anx`, and `yian-lsp`, verifies a stdio handshake against staged resources, and publishes the complete set transactionally.
 
 If working native `yianc` and `anx` commands are already available, refresh the full native toolchain, including the language server, without a Python runtime:
 
@@ -74,7 +74,9 @@ Packages declare local dependencies in `package.anx` and import them by package 
 
 ## Run checks
 
-The paired test runner uses the already installed native compiler tools and never builds or refreshes them. Prepare a current installation explicitly with the cold or warm toolchain entry before selecting native/package suites:
+The test runner uses the already installed native compiler tools and never builds or refreshes them. It runs fat and raw target modes by default; `--pointer-mode fat|raw` selects one mode. The safety suite reports raw cases as N/A because raw pointers do not provide the runtime checks those cases exercise. Prepare a current installation explicitly with the cold or warm toolchain entry before selecting native/package suites:
+
+The examples below select the complete test matrix. In repository work, inspect suite selection and nested package-test effects and obtain explicit authorization before running broad checks. The LSP `--mode check` command runs the default protocol scenarios in both pointer modes; `--mode infrastructure` runs bootstrap package tests, all unit tests, formatter checks, and runtime normal/sanitized checks without running the protocol scenarios.
 
 ```bash
 conda run --no-capture-output -n yian-env python scripts/run_tests.py --all -q

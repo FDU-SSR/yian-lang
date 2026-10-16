@@ -1,4 +1,4 @@
-"""Focused tests for the native anx seed recipe and installer orchestration."""
+"""Focused tests for fixed bootstrap recipes and toolchain orchestration."""
 
 from __future__ import annotations
 
@@ -8,119 +8,84 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import textwrap
 import unittest
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "scripts"))
 
-from _toolchain.bootstrap_anx import PACKAGE_ORDER, PACKAGES, build_recipe
+from _toolchain.bootstrap_anx import PACKAGE_ORDERS, PACKAGES, build_recipe, compiler_arguments
 from _toolchain.identity import component_source_sha256, file_sha256, tree_sha256
-from yianc.analysis.package_map import PackageMap
 
 
 class NativeAnxBootstrapTests(unittest.TestCase):
-    def test_bootstrap_recipe_matches_native_package_map(self) -> None:
-        prefix_value = os.environ.get("YIAN_INSTALL_PREFIX")
-        self.assertTrue(prefix_value, "YIAN_INSTALL_PREFIX must select a current native toolchain")
-        native_anx = Path(prefix_value) / "bin" / "anx"
-        self.assertTrue(native_anx.is_file(), native_anx)
-
+    def test_bootstrap_recipes_use_fixed_package_closures(self) -> None:
         with tempfile.TemporaryDirectory(prefix="native anx recipe 空格 ") as temporary:
             checkout = Path(temporary)
-            for name in PACKAGE_ORDER:
+            package_names = dict.fromkeys(
+                name for order in PACKAGE_ORDERS.values() for name in order
+            )
+            for name in package_names:
                 relative_root = PACKAGES[name].root
                 shutil.copytree(
                     ROOT / relative_root,
                     checkout / relative_root,
                     ignore=shutil.ignore_patterns("build", "__pycache__", ".pytest_cache"),
                 )
-            recipe = build_recipe(checkout)
+            yianc_recipe = build_recipe(checkout, root_package="yianc")
+            anx_recipe = build_recipe(checkout, root_package="anx")
 
-            capture_path = checkout / "captured compiler.json"
-            capture_launcher = checkout / "capture compiler"
-            capture_launcher.write_text(
-                "#!/usr/bin/env python3\n"
-                "import json, os, sys\n"
-                "with open(os.environ['CAPTURE_RECORD'], 'w', encoding='utf-8') as stream:\n"
-                "    json.dump({'argv': sys.argv[1:], 'cwd': os.getcwd()}, stream)\n"
-                "\n",
-                encoding="utf-8",
-            )
-            capture_launcher.chmod(0o755)
-
-            environment = os.environ.copy()
-            environment["CAPTURE_RECORD"] = str(capture_path)
-            environment["YIAN_ROOT"] = str(checkout)
-            environment["YIAN_LIB"] = str(checkout / "lib" / "src")
-            environment["YIANC"] = str(capture_launcher)
-            process = subprocess.run(
-                [str(native_anx), "check", str(checkout / "bootstrap" / "anx")],
-                cwd=checkout,
-                env=environment,
-                capture_output=True,
-                text=True,
-                check=False,
-            )
-            self.assertEqual(process.returncode, 0, f"{process.stdout}\n{process.stderr}")
-
-            package_map_path = checkout / "bootstrap" / "anx" / "build" / "pkg.json"
-            native_map = json.loads(package_map_path.read_text(encoding="utf-8"))
-            self.assertEqual(native_map, recipe.package_map)
-            parsed = PackageMap.from_document(native_map, source="native anx bootstrap probe")
-            self.assertEqual(parsed.root, "anx")
-            llvm = parsed.packages["llvm"].native_llvm
-            self.assertIsNotNone(llvm)
+            self.assertEqual(yianc_recipe.package_map["root"], "yianc")
+            self.assertEqual(tuple(yianc_recipe.package_map["packages"]), PACKAGE_ORDERS["yianc"])
+            self.assertEqual(anx_recipe.package_map["root"], "anx")
+            self.assertEqual(tuple(anx_recipe.package_map["packages"]), PACKAGE_ORDERS["anx"])
+            self.assertNotIn("toml", yianc_recipe.package_map["packages"])
             self.assertEqual(
-                llvm.sources,
-                ((checkout / "bootstrap" / "llvm" / "native" / "target.c").resolve(),),
+                yianc_recipe.package_map["packages"]["llvm"]["nativeLLVM"]["sources"],
+                ["native/target.c"],
             )
-
-            captured = json.loads(capture_path.read_text(encoding="utf-8"))
-            args = captured["argv"]
-            self.assertEqual(Path(captured["cwd"]), checkout / "bootstrap" / "anx")
-            self.assertEqual(args[:4], ["--packages", str(package_map_path), "-t", "none"])
-            compiler_inputs = [value for value in args[4:] if value.endswith(".an")]
-            self.assertEqual(compiler_inputs, [str(path) for path in recipe.source_files])
-            self.assertEqual(len(compiler_inputs), len(recipe.source_files))
-            self.assertTrue(all(Path(path).is_file() for path in compiler_inputs))
+            for recipe in (yianc_recipe, anx_recipe):
+                self.assertTrue(all(path.is_file() for path in recipe.source_files))
+                arguments = compiler_arguments(
+                    recipe, Path("package-map.json"), Path("output")
+                )
+                self.assertIn("--raw-pointers", arguments)
+                self.assertIn("-O2", arguments)
+                self.assertEqual(
+                    [value for value in arguments if value.endswith(".an")],
+                    [str(path) for path in recipe.source_files],
+                )
 
     def test_installer_uses_staged_native_anx(self) -> None:
         with tempfile.TemporaryDirectory(prefix="native anx installer ") as temporary:
             workspace = Path(temporary)
             checkout = workspace / "checkout"
             (checkout / "scripts").mkdir(parents=True)
-            shutil.copy2(
-                ROOT / "scripts" / "bootstrap_toolchain.sh",
-                checkout / "scripts" / "bootstrap_toolchain.sh",
-            )
+            shutil.copy2(ROOT / "scripts" / "bootstrap_toolchain.sh", checkout / "scripts" / "bootstrap_toolchain.sh")
             shutil.copytree(ROOT / "scripts" / "_toolchain", checkout / "scripts" / "_toolchain")
-            for package in ("yianc", "anx", "json", "llvm", "ffi", "toml"):
+            package_names = dict.fromkeys(name for order in PACKAGE_ORDERS.values() for name in order)
+            for name in package_names:
+                relative = PACKAGES[name].root
                 shutil.copytree(
-                    ROOT / "bootstrap" / package,
-                    checkout / "bootstrap" / package,
+                    ROOT / relative,
+                    checkout / relative,
                     ignore=shutil.ignore_patterns("build", "__pycache__", ".pytest_cache"),
                 )
-            for relative in (
-                "lib/src",
-                "runtime/src",
-                "runtime/include",
-                "python/yianc",
-            ):
-                if relative == "python/yianc":
-                    shutil.copytree(ROOT / relative, checkout / relative, ignore=shutil.ignore_patterns("__pycache__"))
-                else:
-                    shutil.copytree(ROOT / relative, checkout / relative)
-            (checkout / "bootstrap/yianc/build").mkdir(parents=True)
-            (checkout / "bootstrap/anx/build").mkdir(parents=True)
+            for relative in ("runtime/src", "runtime/include", "python/yianc"):
+                shutil.copytree(
+                    ROOT / relative,
+                    checkout / relative,
+                    ignore=shutil.ignore_patterns("__pycache__"),
+                )
 
+            for package in ("yianc", "anx"):
+                build = checkout / "bootstrap" / package / "build"
+                build.mkdir(parents=True)
+                (build / "app").write_text(f"stale {package} artifact\n", encoding="utf-8")
             old_yianc = checkout / "bootstrap/yianc/build/app"
             old_anx = checkout / "bootstrap/anx/build/app"
-            old_yianc.write_text("stale yianc artifact\n", encoding="utf-8")
-            old_anx.write_text("stale anx artifact\n", encoding="utf-8")
 
-            python_scripts = workspace / "python scripts"
-            python_scripts.mkdir()
             fake_python = workspace / "selected python" / "python"
             fake_python.parent.mkdir()
             fake_tools = workspace / "fake LLVM tools"
@@ -133,52 +98,58 @@ class NativeAnxBootstrapTests(unittest.TestCase):
                 executable = fake_tools / name
                 executable.write_text(f"#!/bin/sh\nprintf '%s' {json.dumps(output)}\n", encoding="utf-8")
                 executable.chmod(0o755)
-            seed_template = workspace / "seed anx template"
             call_log = workspace / "calls.jsonl"
-
-            seed_template.write_text(
-                "#!/usr/bin/env python3\n"
-                "import json, os, pathlib, subprocess, sys\n"
-                "args = sys.argv[1:]\n"
-                "event = {'kind': 'anx', 'argv': args, 'yianc': os.environ.get('YIANC'), "
-                "'root': os.environ.get('YIAN_ROOT'), 'lib': os.environ.get('YIAN_LIB')}\n"
-                "with open(os.environ['CALL_LOG'], 'a', encoding='utf-8') as stream:\n"
-                "    stream.write(json.dumps(event) + '\\n')\n"
-                "if len(args) < 2 or args[0] != 'build':\n"
-                "    raise SystemExit(2)\n"
-                "subprocess.run([os.environ['YIANC'], '--help'], check=True)\n"
-                "project = pathlib.Path(args[1])\n"
-                "if os.environ.get('FAIL_PACKAGE') == project.name:\n"
-                "    raise SystemExit(17)\n"
-                "output = project / 'build' / 'app'\n"
-                "output.write_text('#!/bin/sh\\nexit 0\\n# fresh ' + project.name + '\\n', encoding='utf-8')\n"
-                "output.chmod(0o755)\n",
-                encoding="utf-8",
-            )
             fake_python.write_text(
-                "#!/usr/bin/env python3\n"
-                "import json, os, pathlib, shutil, sys\n"
-                "args = sys.argv[1:]\n"
-                "def record(event):\n"
-                "    with open(os.environ['CALL_LOG'], 'a', encoding='utf-8') as stream:\n"
-                "        stream.write(json.dumps(event) + '\\n')\n"
-                "if args and args[0] == '-c':\n"
-                "    if 'sysconfig' in args[1]:\n"
-                "        print(os.environ['PYTHON_SCRIPTS_DIR'])\n"
-                "    raise SystemExit(0)\n"
-                "if args and args[0] == os.environ['CHECKOUT'] + '/scripts/_toolchain/cold.py':\n"
-                "    completed = __import__('subprocess').run([sys.executable, *args], check=False)\n"
-                "    raise SystemExit(completed.returncode)\n"
-                "if args and args[0] == os.environ['CHECKOUT'] + '/scripts/_toolchain/bootstrap_anx.py':\n"
-                "    record({'kind': 'bootstrap', 'argv': args[1:]})\n"
-                "    output = pathlib.Path(args[args.index('--output') + 1])\n"
-                "    shutil.copyfile(os.environ['SEED_TEMPLATE'], output)\n"
-                "    output.chmod(0o755)\n"
-                "    raise SystemExit(0)\n"
-                "if len(args) >= 2 and args[:2] == ['-m', 'yianc.main']:\n"
-                "    record({'kind': 'python-yianc', 'argv': args[2:]})\n"
-                "    raise SystemExit(0)\n"
-                "raise SystemExit(2)\n",
+                textwrap.dedent(
+                    """\
+    #!/usr/bin/env python3
+    import json, os, pathlib, subprocess, sys
+    args = sys.argv[1:]
+    def record(event):
+        with open(os.environ['CALL_LOG'], 'a', encoding='utf-8') as stream:
+            stream.write(json.dumps(event) + '\\n')
+    if args and args[0] == '-c':
+        raise SystemExit(0)
+    if args and args[0] == os.environ['CHECKOUT'] + '/scripts/_toolchain/cold.py':
+        completed = subprocess.run([sys.executable, *args], check=False)
+        raise SystemExit(completed.returncode)
+    if len(args) >= 2 and args[:2] == ['-m', 'yianc.main']:
+        compiler_args = args[2:]
+        package_map = pathlib.Path(compiler_args[compiler_args.index('--packages') + 1])
+        root_package = json.loads(package_map.read_text(encoding='utf-8'))['root']
+        output = pathlib.Path(compiler_args[compiler_args.index('-o') + 1])
+        record({
+            'kind': 'python-yianc',
+            'argv': compiler_args,
+            'root': root_package,
+            'yianc': os.environ.get('YIANC'),
+            'pythonpath': os.environ.get('PYTHONPATH'),
+        })
+        source = '\\n'.join([
+            '#!/usr/bin/env python3',
+            'import json, os, pathlib, sys',
+            'ROOT_PACKAGE = ' + repr(root_package),
+            'args = sys.argv[1:]',
+            "if args == ['--help']:",
+            "    print('usage: yianc')",
+            '    raise SystemExit(0)',
+            "package_map = pathlib.Path(args[args.index('--packages') + 1])",
+            "root = json.loads(package_map.read_text(encoding='utf-8'))['root']",
+            "event = {'kind': 'native-yianc', 'binary': sys.argv[0], 'argv': args, 'root': root, 'yianc': os.environ.get('YIANC')}",
+            "with open(os.environ['CALL_LOG'], 'a', encoding='utf-8') as stream:",
+            "    stream.write(json.dumps(event) + '\\\\n')",
+            "if os.environ.get('FAIL_PACKAGE') == root:",
+            '    raise SystemExit(17)',
+            "output = pathlib.Path(args[args.index('-o') + 1])",
+            "output.write_text('#!/bin/sh\\\\nexit 0\\\\n# fresh anx\\\\n', encoding='utf-8')",
+            "output.chmod(0o755)",
+        ]) + '\\n'
+        output.write_text(source, encoding='utf-8')
+        output.chmod(0o755)
+        raise SystemExit(0)
+    raise SystemExit(2)
+    """
+                ),
                 encoding="utf-8",
             )
             fake_python.chmod(0o755)
@@ -190,8 +161,6 @@ class NativeAnxBootstrapTests(unittest.TestCase):
                         "CALL_LOG": str(call_log),
                         "CHECKOUT": str(checkout),
                         "FAIL_PACKAGE": fail_package or "",
-                        "PYTHON_SCRIPTS_DIR": str(python_scripts),
-                        "SEED_TEMPLATE": str(seed_template),
                         "PATH": f"{fake_tools}{os.pathsep}{os.environ['PATH']}",
                     }
                 )
@@ -215,37 +184,63 @@ class NativeAnxBootstrapTests(unittest.TestCase):
             successful_prefix = workspace / "successful prefix"
             successful = run_install(successful_prefix)
             self.assertEqual(successful.returncode, 0, f"{successful.stdout}\n{successful.stderr}")
-            installed_yianc = successful_prefix / "bin" / "yianc"
-            installed_anx = successful_prefix / "bin" / "anx"
-            self.assertIn("fresh yianc", installed_yianc.read_text(encoding="utf-8"))
-            self.assertIn("fresh anx", installed_anx.read_text(encoding="utf-8"))
+            installed_yianc = successful_prefix / "bin/yianc"
+            installed_anx = successful_prefix / "bin/anx"
+            self.assertTrue(installed_yianc.is_file())
+            self.assertTrue(installed_anx.is_file())
             self.assertTrue((successful_prefix / "share/yian/lib/src").is_dir())
             self.assertEqual(old_yianc.read_text(encoding="utf-8"), "stale yianc artifact\n")
             self.assertEqual(old_anx.read_text(encoding="utf-8"), "stale anx artifact\n")
 
-            success_events = [json.loads(line) for line in call_log.read_text(encoding="utf-8").splitlines()]
-            bootstrap = [event for event in success_events if event["kind"] == "bootstrap"]
-            native_calls = [event for event in success_events if event["kind"] == "anx"]
-            python_calls = [event for event in success_events if event["kind"] == "python-yianc"]
-            self.assertEqual(len(bootstrap), 1)
-            self.assertEqual(len(native_calls), 2)
-            self.assertEqual(len(python_calls), 1)
+            events = [json.loads(line) for line in call_log.read_text(encoding="utf-8").splitlines()]
+            self.assertEqual([event["kind"] for event in events], ["python-yianc", "native-yianc"])
+            python_event, native_event = events
+            self.assertEqual(python_event["root"], "yianc")
+            self.assertEqual(native_event["root"], "anx")
+            self.assertIsNone(python_event["yianc"])
+            self.assertIsNone(native_event["yianc"])
+            self.assertEqual(python_event["pythonpath"], str(checkout / "python"))
+            self.assertEqual(native_event["binary"], python_event["argv"][python_event["argv"].index("-o") + 1])
             self.assertEqual(
-                [event["kind"] for event in success_events],
-                ["bootstrap", "anx", "python-yianc", "anx"],
+                Path(native_event["argv"][native_event["argv"].index("--packages") + 1]).name,
+                "anx.json",
             )
-            bootstrap_args = bootstrap[0]["argv"]
-            self.assertEqual(bootstrap_args[bootstrap_args.index("--python") + 1], str(fake_python))
-            self.assertTrue(Path(bootstrap_args[bootstrap_args.index("--output") + 1]).is_absolute())
-            python_compiler = Path(native_calls[0]["yianc"])
-            staged_yianc = Path(native_calls[1]["yianc"])
-            self.assertEqual(python_compiler.name, "yianc-python")
-            self.assertEqual(staged_yianc, python_compiler.parent.parent / "bundle" / "bin" / "yianc")
-            self.assertEqual(Path(native_calls[0]["argv"][1]).name, "yianc")
-            self.assertEqual(Path(native_calls[1]["argv"][1]).name, "anx")
-            self.assertEqual(native_calls[0]["root"], str(checkout))
-            self.assertEqual(native_calls[0]["lib"], str(checkout / "lib" / "src"))
-            self.assertEqual(python_calls[0]["argv"], ["--help"])
+            for event in events:
+                args = event["argv"]
+                self.assertIn("--raw-pointers", args)
+                self.assertIn("-O2", args)
+                self.assertEqual(args[args.index("-t") + 1], "exe")
+                source_files = [Path(value) for value in args if value.endswith(".an")]
+                self.assertTrue(source_files)
+                self.assertTrue(all(checkout in source.parents for source in source_files))
+            yianc_output = Path(python_event["argv"][python_event["argv"].index("-o") + 1])
+            anx_output = Path(native_event["argv"][native_event["argv"].index("-o") + 1])
+            self.assertEqual(yianc_output.name, "yianc")
+            self.assertEqual(anx_output.name, "anx")
+            self.assertEqual(yianc_output.parent.name, "bin")
+            self.assertEqual(anx_output.parent.name, "bin")
+
+            build_info = json.loads((successful_prefix / "share/yian/.build-info").read_text(encoding="utf-8"))
+            components = build_info["components"]
+            self.assertEqual(components["yianc"]["builder"], "python-recovery")
+            self.assertEqual(components["anx"]["builder"], "staged-yianc")
+            self.assertEqual(components["yianc"]["build_mode"], "raw")
+            self.assertEqual(components["anx"]["build_mode"], "raw")
+            self.assertEqual(components["yianc"]["optimization"], 2)
+            self.assertEqual(components["anx"]["optimization"], 2)
+            self.assertEqual(
+                components["yianc"]["builder_inputs"]["python_sha256"],
+                build_info["build_python"]["sha256"],
+            )
+            self.assertEqual(
+                components["anx"]["builder_inputs"]["yianc_sha256"],
+                file_sha256(installed_yianc),
+            )
+            self.assertNotIn("seed_anx_sha256", build_info)
+            marker = (successful_prefix / "share/yian/.native-install").read_text(encoding="utf-8")
+            self.assertIn("yianc_build_mode=raw\n", marker)
+            self.assertIn("anx_build_mode=raw\n", marker)
+            self.assertIn("pointer_mode=raw\n", marker)
 
             call_log.unlink()
             failing_prefix = workspace / "existing prefix"
@@ -253,7 +248,6 @@ class NativeAnxBootstrapTests(unittest.TestCase):
             old_data = failing_prefix / "share/yian"
             old_bin.mkdir(parents=True)
             old_data.mkdir(parents=True)
-            (old_data / ".native-install").write_text("yian-native-install-v1\n", encoding="utf-8")
             (old_data / "sentinel").write_text("old resources\n", encoding="utf-8")
             (old_bin / "yianc").write_text("old yianc\n", encoding="utf-8")
             (old_bin / "anx").write_text("old anx\n", encoding="utf-8")
@@ -266,17 +260,14 @@ class NativeAnxBootstrapTests(unittest.TestCase):
 
             failed = run_install(failing_prefix, fail_package="anx")
             self.assertNotEqual(failed.returncode, 0)
-            self.assertIn("build-anx failed", failed.stderr)
+            self.assertIn("build-anx-staged-yianc failed", failed.stderr)
             self.assertEqual((old_data / "sentinel").read_text(encoding="utf-8"), "old resources\n")
             self.assertEqual((old_bin / "yianc").read_text(encoding="utf-8"), "old yianc\n")
             self.assertEqual((old_bin / "anx").read_text(encoding="utf-8"), "old anx\n")
             self.assertEqual(old_yianc.read_text(encoding="utf-8"), "stale yianc artifact\n")
             self.assertEqual(old_anx.read_text(encoding="utf-8"), "stale anx artifact\n")
             failure_events = [json.loads(line) for line in call_log.read_text(encoding="utf-8").splitlines()]
-            self.assertEqual(
-                [event["kind"] for event in failure_events],
-                ["bootstrap", "anx", "python-yianc", "anx"],
-            )
+            self.assertEqual([event["kind"] for event in failure_events], ["python-yianc", "native-yianc"])
 
     def test_refresh_uses_staged_native_toolchain(self) -> None:
         with tempfile.TemporaryDirectory(prefix="native refresh with spaces ") as temporary:
@@ -405,7 +396,8 @@ class NativeAnxBootstrapTests(unittest.TestCase):
             self.assertIn(str(ROOT / "bootstrap/yianc"), events[0][3])
             self.assertIn(str(ROOT / "bootstrap/anx"), events[1][3])
             self.assertIn(str(ROOT / "lsp"), events[2][3])
-            self.assertIn("--raw-pointers", events[2][3])
+            for event in events:
+                self.assertIn("--raw-pointers", event[3])
             for project in (ROOT / "bootstrap/yianc", ROOT / "bootstrap/anx", ROOT / "lsp"):
                 if project in old_apps:
                     self.assertEqual((project / "build/app").read_bytes(), old_apps[project])
@@ -419,6 +411,8 @@ class NativeAnxBootstrapTests(unittest.TestCase):
                     build_info["components"][name]["artifact_sha256"],
                     file_sha256(installed / name),
                 )
+                self.assertEqual(build_info["components"][name]["build_mode"], "raw")
+                self.assertEqual(build_info["components"][name]["optimization"], 2)
             self.assertEqual(build_info["components"]["yian-lsp"]["build_mode"], "raw")
             self.assertEqual(build_info["components"]["yian-lsp"]["optimization"], 2)
             self.assertEqual((prefix / "share/yian-lsp/.native-install").read_text(encoding="utf-8").splitlines()[0], "yian-lsp-install-v1")
@@ -469,7 +463,11 @@ class NativeAnxBootstrapTests(unittest.TestCase):
                 "yian-native-install-v1\n"
                 f"yianc={file_sha256(staged_bin / 'yianc')}\n"
                 f"anx={file_sha256(staged_bin / 'anx')}\n"
-                f"resources={resource_hash}\n",
+                f"resources={resource_hash}\n"
+                "yianc_build_mode=raw\n"
+                "anx_build_mode=raw\n"
+                "optimization=2\n"
+                "pointer_mode=raw\n",
                 encoding="utf-8",
             )
 

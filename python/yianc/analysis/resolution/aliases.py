@@ -118,6 +118,7 @@ class AliasRegistry:
             actual = self.__types[argument]
             is_constant = isinstance(actual, (Type.ConstGenericType, Type.LiteralValueType))
             if isinstance(expected, Type.ConstGenericType):
+                # Substitute earlier type arguments before validating a dependent const annotation.
                 value_type = self.__types.instantiate(expected.value_type, substitutions)
                 if not isinstance(actual, (Type.ConstGenericType, Type.LiteralValueType)) \
                         or actual.value_type != value_type:

@@ -12,7 +12,7 @@ from anx.driver.build import compile_project, run_executable;
 from anx.driver.fmt import format_project;
 from anx.driver.new import scaffold;
 from anx.driver.support import load_project;
-from anx.driver.test import run as run_tests;
+from anx.driver.test import PointerMode, run as run_tests;
 from anx.project.graph import graph_json, graph_text;
 from anx.project.load import discover, load;
 from anx.project.model import LoadReport, Project;
@@ -108,7 +108,7 @@ fn build_parser(command: str) -> ArgumentParser {
     parser.add_argument("release").long("release").action(Action.StoreTrue)
     .help("Shorthand for -O3");
     parser.add_argument("raw-pointers").long("raw-pointers").action(Action.StoreTrue)
-    .help("Build with bare pointers (diagnostic mode)");
+    .help("Build with bare pointers; for anx test, this selects raw mode");
     parser
 }
 
@@ -185,6 +185,9 @@ fn test_command(argv: Vec<String>&) -> i32 {
     let parser = build_parser("test");
     defer parser.drop();
     parser.description("Run the root package's tests.");
+    parser.add_argument("pointer-mode").long("pointer-mode")
+    .choices(["both", "fat", "raw"].as_slice()).metavar("{both,fat,raw}")
+    .help("Pointer mode for package tests (default: both)");
     let views = argument_views(argv, 2u64, argv.len());
     defer views.drop();
     let outcome = match parser.parse_args(views.as_slice()) {
@@ -199,6 +202,25 @@ fn test_command(argv: Vec<String>&) -> i32 {
         },
         Parsed(matches) => {
             defer matches.drop();
+            let selected_mode = match matches.get_string("pointer-mode") {
+                Ok(Some("fat")) => Option<PointerMode>.Some(PointerMode.Fat),
+                Ok(Some("raw")) => Option<PointerMode>.Some(PointerMode.Raw),
+                Ok(Some(_)) => Option<PointerMode>.Some(PointerMode.Both),
+                _ => Option<PointerMode>.None,
+            };
+            let legacy_raw = argument_bool(&matches, "raw-pointers");
+            if legacy_raw && selected_mode.is_some() {
+                write_stderr("anx test: --raw-pointers cannot be combined with --pointer-mode\n");
+                return 2i32;
+            }
+            let pointer_mode = if legacy_raw {
+                PointerMode.Raw
+            } else {
+                match selected_mode {
+                    Some(value) => value,
+                    None => PointerMode.Both,
+                }
+            };
             let project_path = argument_string(&matches, "project", ".");
             defer project_path.drop();
             let project = match load_project(project_path.as_str()) {
@@ -206,7 +228,7 @@ fn test_command(argv: Vec<String>&) -> i32 {
                 None => return 1i32,
             };
             defer project.drop();
-            run_tests(&project, argument_bool(&matches, "raw-pointers"),
+            run_tests(&project, pointer_mode,
                 argument_level(&matches, "optimization"), argument_bool(&matches, "release"))
         },
     }

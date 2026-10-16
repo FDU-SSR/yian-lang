@@ -68,7 +68,7 @@ pub fn resolve_method(ctx: ResolutionContext&, unit: UnitId, parent: ScopeId, re
     bind_self(ctx, unit, scope, receiver)?;
     let own_generics = collect_generics(ctx, unit, scope, &syntax.data.generics)?;
     defer own_generics.drop();
-    annotations(ctx, unit, scope, &syntax.data.generics)?;
+    annotations(ctx, unit, scope, &syntax.data.generics, false)?;
     let generics = previous.clone();
     let accepted = false;
     defer {
@@ -232,7 +232,7 @@ fn resolve_impl(ctx: ResolutionContext&, unit: UnitId, item: Item&) -> Result<()
                     drop_conditions(&obligations);
                 }
             };
-            annotations(ctx, unit, scope, generics)?;
+            annotations(ctx, unit, scope, generics, false)?;
             let receiver = resolve_type(ctx, unit, scope, *target)?;
             bind_self(ctx, unit, scope, receiver)?;
             let trait_id = match trait_type {

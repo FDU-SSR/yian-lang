@@ -1,15 +1,12 @@
 #!/usr/bin/env python3
-"""Run the YIAN test suites.
+"""Run the YIAN test suites with the installed native compiler.
 
-The repository suites share one runner and run against both compiler
-implementations by default. Package and bootstrap cases use the same installed
-native ``anx`` for either compiler. The runner requires those tools to be
-installed already and never builds or refreshes the native toolchain:
+The runner requires native tools to be installed already and never builds or
+refreshes the toolchain:
 
-- ``basic``   — standalone compilation of one or more .an files, each run
-  twice: once with the default fat-pointer representation and once with
-  ``--raw-pointers``.
-- ``safety``  — the fat-pointer safety regressions.
+- ``basic``   — standalone compilation of one or more .an files in the chosen
+  fat, raw, or both pointer modes (default: both).
+- ``safety``  — fat-pointer safety regressions; raw results are explicitly N/A.
 - ``package`` — package-mode fixtures (a ``package.anx`` project directory),
   driven through ``anx build`` / ``anx check``.
 - ``bootstrap`` — existing package tests for the bootstrap compiler, JSON,
@@ -28,10 +25,11 @@ Test inputs are discovered from ``tests/input/<suite>``:
   - <name>.stdin → content piped to the executable's stdin
 
 Usage:
-    python scripts/run_tests.py                  # basic suite, Python + native
-    python scripts/run_tests.py --suite safety   # one suite, both implementations
-    python scripts/run_tests.py --all            # all suites, both implementations
-    python scripts/run_tests.py --implementation python --suite basic  # focused reference run
+    python scripts/run_tests.py                  # basic suite, fat + raw
+    python scripts/run_tests.py --suite safety   # fat checks; raw is N/A
+    python scripts/run_tests.py --pointer-mode raw --suite basic
+    python scripts/run_tests.py --all            # all suites
+    python scripts/run_tests.py --implementation native --suite basic
     python scripts/run_tests.py -v               # verbose: show failure details
     python scripts/run_tests.py -q               # quiet: only the summary line
     python scripts/run_tests.py -x               # include <suite>/experimental/
@@ -46,13 +44,14 @@ import os
 import shlex
 import subprocess
 import sys
-import tempfile
 import time
 from dataclasses import dataclass
 from dataclasses import field
 from dataclasses import replace
 from pathlib import Path
 from typing import TextIO, cast
+
+from _toolchain.native import NativeToolError, resolve_native
 
 ROOT_DIR = Path(__file__).resolve().parent.parent
 TESTS_DIR = ROOT_DIR / "tests"
@@ -142,6 +141,12 @@ class TestCase:
     compile_variants: list[CompileVariant] = field(default_factory=_empty_compile_variant_list)
     """Existing compiler-mode variants for this test."""
 
+    pointer_modes: tuple[str, ...] | None = None
+    """Modes allowed by a per-test configuration; None uses the suite default."""
+
+    raw_inapplicable_reason: str | None = None
+    """Reason raw mode is not selected for this test, when configured."""
+
     package_root: Path | None = None
     """For package-suite fixtures: the project directory driven through anx."""
 
@@ -150,6 +155,9 @@ class TestCase:
 
     anx_args: list[str] = field(default_factory=_empty_string_list)
     """For package fixtures: extra anx flags, e.g. --raw-pointers."""
+
+    not_applicable_reason: str | None = None
+    """Why this test does not run in one selected pointer mode, if applicable."""
 
 
 @dataclass
@@ -171,7 +179,12 @@ class TestResult:
     compile_only: bool = False
     """Whether this result came from ``--no-run`` analysis-only execution."""
 
+    not_applicable_reason: str | None = None
+    """Why this selected pointer mode does not run this test, if applicable."""
+
     def passed(self) -> bool:
+        if self.not_applicable_reason is not None:
+            return False
         if self.test.expect_error:
             if self.exit_code == 0:
                 return False
@@ -293,12 +306,63 @@ def __find_compile_config(test_rel: str) -> Path | None:
     return path if path.exists() else None
 
 
-def __parse_compile_variants(file_path: Path) -> list[CompileVariant]:
-    """Parse strict compiler-variant metadata from *file_path*."""
+def __parse_compile_config(
+    file_path: Path,
+) -> tuple[list[CompileVariant], tuple[str, ...] | None, str | None]:
+    """Parse compile variants and optional pointer-mode applicability metadata."""
     raw: object = json.loads(file_path.read_text())
-    if not isinstance(raw, list):
-        raise ValueError(f"{file_path}: top level must be an array")
-    entries = cast(list[object], raw)
+    pointer_modes: tuple[str, ...] | None = None
+    raw_reason: str | None = None
+    if isinstance(raw, list):
+        entries = cast(list[object], raw)
+    elif isinstance(raw, dict):
+        config = cast(dict[str, object], raw)
+        allowed_config = {"variants", "pointer_modes", "raw_inapplicable_reason"}
+        unknown_config = set(config) - allowed_config
+        if unknown_config:
+            names_text = ", ".join(sorted(str(name) for name in unknown_config))
+            raise ValueError(f"{file_path}: unknown configuration fields: {names_text}")
+        variants_value = config.get("variants", [])
+        if not isinstance(variants_value, list):
+            raise ValueError(f"{file_path}: variants must be an array")
+        entries = cast(list[object], variants_value)
+
+        modes_value = config.get("pointer_modes")
+        if "pointer_modes" in config:
+            if not isinstance(modes_value, list) or not modes_value:
+                raise ValueError(f"{file_path}: pointer_modes must be a non-empty array")
+            if not all(isinstance(mode, str) for mode in cast(list[object], modes_value)):
+                raise ValueError(f"{file_path}: pointer_modes must contain only strings")
+            modes = cast(list[str], modes_value)
+            if any(mode not in {"fat", "raw"} for mode in modes):
+                raise ValueError(f"{file_path}: pointer_modes entries must be fat or raw")
+            if len(set(modes)) != len(modes):
+                raise ValueError(f"{file_path}: pointer_modes entries must be unique")
+            if "fat" not in modes:
+                raise ValueError(f"{file_path}: pointer_modes must include fat")
+            pointer_modes = tuple(modes)
+
+        reason_value = config.get("raw_inapplicable_reason")
+        if "raw_inapplicable_reason" in config:
+            if not isinstance(reason_value, str) or not reason_value.strip():
+                raise ValueError(f"{file_path}: raw_inapplicable_reason must be non-empty text")
+            raw_reason = reason_value.strip()
+        if pointer_modes is None and raw_reason is not None:
+            raise ValueError(
+                f"{file_path}: raw_inapplicable_reason requires pointer_modes"
+            )
+        if pointer_modes is not None:
+            raw_allowed = "raw" in pointer_modes
+            if not raw_allowed and raw_reason is None:
+                raise ValueError(
+                    f"{file_path}: excluding raw requires raw_inapplicable_reason"
+                )
+            if raw_allowed and raw_reason is not None:
+                raise ValueError(
+                    f"{file_path}: raw_inapplicable_reason conflicts with allowing raw"
+                )
+    else:
+        raise ValueError(f"{file_path}: top level must be an array or object")
 
     variants: list[CompileVariant] = []
     names: set[str] = set()
@@ -360,7 +424,12 @@ def __parse_compile_variants(file_path: Path) -> list[CompileVariant]:
                 expected_exit_code=expected_exit_code,
             )
         )
-    return variants
+    return variants, pointer_modes, raw_reason
+
+
+def __parse_compile_variants(file_path: Path) -> list[CompileVariant]:
+    """Parse the compile variants, preserving the legacy array helper API."""
+    return __parse_compile_config(file_path)[0]
 
 
 def __find_orphaned_compile_configs() -> list[str]:
@@ -425,9 +494,10 @@ def discover_tests() -> list[TestCase]:
 
         cli_args, stdin = __find_input(name)
         config_path = __find_compile_config(name)
-        compile_variants = (
-            __parse_compile_variants(config_path) if config_path is not None else []
-        )
+        if config_path is not None:
+            compile_variants, pointer_modes, raw_reason = __parse_compile_config(config_path)
+        else:
+            compile_variants, pointer_modes, raw_reason = [], None, None
 
         tests.append(TestCase(
             name=name,
@@ -439,6 +509,8 @@ def discover_tests() -> list[TestCase]:
             cli_args=cli_args,
             stdin=stdin,
             compile_variants=compile_variants,
+            pointer_modes=pointer_modes,
+            raw_inapplicable_reason=raw_reason,
         ))
 
     # Report orphaned .ans files (no matching source).
@@ -810,9 +882,67 @@ def __package_mode_test(test: TestCase, mode: str) -> TestCase:
     if mode not in {"fat", "raw"}:
         raise ValueError(f"unsupported pointer mode: {mode}")
     anx_args = list(test.anx_args)
-    if mode == "raw" and "--raw-pointers" not in anx_args:
+    if test.anx_command == "test":
+        if "--raw-pointers" in anx_args:
+            raise ValueError(
+                f"{test.name}: package test fixtures must not set --raw-pointers; "
+                "the runner selects one explicit --pointer-mode"
+            )
+        anx_args.extend(("--pointer-mode", mode))
+    elif mode == "raw" and "--raw-pointers" not in anx_args:
         anx_args.append("--raw-pointers")
     return replace(test, name=f"{test.name}@{mode}", anx_args=anx_args)
+
+
+def __selected_modes(pointer_mode: str) -> tuple[str, ...]:
+    if pointer_mode == "both":
+        return ("fat", "raw")
+    if pointer_mode in {"fat", "raw"}:
+        return (pointer_mode,)
+    raise ValueError(f"unsupported pointer mode: {pointer_mode}")
+
+
+def __not_applicable_test(
+    test: TestCase, mode: str, reason: str
+) -> TestCase:
+    return replace(
+        test,
+        name=f"{test.name}@{mode}",
+        not_applicable_reason=reason,
+    )
+
+
+def __test_modes(
+    test: TestCase, pointer_mode: str, suite: str
+) -> tuple[tuple[str, bool, str | None], ...]:
+    selected = __selected_modes(pointer_mode)
+    allowed = test.pointer_modes
+    default_reason: str | None = None
+    if allowed is None:
+        if suite == "safety":
+            allowed = ("fat",)
+            default_reason = (
+                "this suite checks fat-pointer runtime safety; raw pointers do not "
+                "provide those checks"
+            )
+        else:
+            allowed = ("fat", "raw")
+
+    raw_reason = test.raw_inapplicable_reason or default_reason
+    if "raw" in allowed and test.raw_inapplicable_reason is not None:
+        raise ValueError(f"{test.name}: raw_inapplicable_reason conflicts with pointer_modes")
+    if "raw" not in allowed and raw_reason is None:
+        raise ValueError(f"{test.name}: excluding raw requires a reason")
+
+    modes: list[tuple[str, bool, str | None]] = []
+    for mode in selected:
+        if mode in allowed:
+            modes.append((mode, True, None))
+        elif mode == "raw":
+            modes.append((mode, False, raw_reason))
+        else:
+            raise ValueError(f"{test.name}: pointer mode {mode} is not available")
+    return tuple(modes)
 
 
 # ---------------------------------------------------------------------------
@@ -829,14 +959,23 @@ def print_summary(
 
     *show_detail* controls whether per-test failure details are printed.
     """
-    passed = [r for r in results if r.passed()]
-    failed = [r for r in results if not r.passed()]
+    not_applicable = [r for r in results if r.not_applicable_reason is not None]
+    passed = [
+        r for r in results
+        if r.not_applicable_reason is None and r.passed()
+    ]
+    failed = [
+        r for r in results
+        if r.not_applicable_reason is None and not r.passed()
+    ]
 
     if show_detail:
         for r in results:
+            if r.not_applicable_reason is not None:
+                out.write(f"  [N/A] {r.test.name}: {r.not_applicable_reason}\n")
+                continue
             if not r.passed():
-                status = "PASS" if r.passed() else "FAIL"
-                out.write(f"  [{status}] {r.test.name}  ({r.elapsed_ms:.0f} ms)\n")
+                out.write(f"  [FAIL] {r.test.name}  ({r.elapsed_ms:.0f} ms)\n")
                 __print_failure_detail(r, out)
 
     out.write("\n")
@@ -844,8 +983,12 @@ def print_summary(
     out.write(f"  Total: {len(results)}")
     out.write(f"  |  Passed: {len(passed)}")
     out.write(f"  |  Failed: {len(failed)}")
+    out.write(f"  |  N/A: {len(not_applicable)}")
     out.write(f"  |  Time: {total_elapsed_ms / 1000:.2f} s\n")
     out.write(f"{'=' * 60}\n")
+
+    for reason in sorted({r.not_applicable_reason for r in not_applicable if r.not_applicable_reason}):
+        out.write(f"  N/A reason: {reason}\n")
 
     if failed:
         out.write("\nFAILURES:\n")
@@ -901,7 +1044,7 @@ def __run_bootstrap_suite(args: argparse.Namespace, toolchain: Toolchain) -> int
     selected: list[TestCase] = []
     command = "check" if args.no_run else "test"
     for package in BOOTSTRAP_PACKAGES:
-        for mode in ("fat", "raw"):
+        for mode in __selected_modes(args.pointer_mode):
             name = f"{package}@{mode}"
             if args.filter_str and args.filter_str not in name:
                 continue
@@ -912,7 +1055,11 @@ def __run_bootstrap_suite(args: argparse.Namespace, toolchain: Toolchain) -> int
                 expected_substring="",
                 package_root=ROOT_DIR / package,
                 anx_command=command,
-                anx_args=["--raw-pointers"] if mode == "raw" else [],
+                anx_args=(
+                    ["--pointer-mode", mode]
+                    if command == "test"
+                    else (["--raw-pointers"] if mode == "raw" else [])
+                ),
             ))
 
     if not selected:
@@ -937,7 +1084,10 @@ def __run_bootstrap_suite(args: argparse.Namespace, toolchain: Toolchain) -> int
     total_elapsed = (time.monotonic() - total_start) * 1000.0
     show_detail = args.verbose and not args.quiet
     print_summary(results, total_elapsed, show_detail, sys.stdout)
-    failed = [result for result in results if not result.passed()]
+    failed = [
+        result for result in results
+        if result.not_applicable_reason is None and not result.passed()
+    ]
     if failed:
         log_path = ROOT_DIR / "build" / "test_failures_bootstrap" / f"{toolchain.name}.log"
         log_path.parent.mkdir(parents=True, exist_ok=True)
@@ -946,6 +1096,12 @@ def __run_bootstrap_suite(args: argparse.Namespace, toolchain: Toolchain) -> int
             print_summary(results, total_elapsed, show_detail=True, out=log)
         print(f"\nFailure details written to {log_path}")
 
+    applicable = [
+        result for result in results if result.not_applicable_reason is None
+    ]
+    if not applicable:
+        print(f"No tests are applicable in {args.pointer_mode} pointer mode.")
+        return 1
     return 0 if not failed else 1
 
 
@@ -967,26 +1123,40 @@ def run_suite(suite: str, args: argparse.Namespace, toolchain: Toolchain) -> int
     if not args.include_experimental:
         all_tests = [t for t in all_tests if not t.name.startswith("experimental/")]
 
-    if args.filter_str:
-        all_tests = [t for t in all_tests if args.filter_str in t.name]
-
     if suite == "basic":
         expanded_tests: list[TestCase] = []
         for test in all_tests:
-            expanded_tests.append(__mode_test(test, "fat"))
-            expanded_tests.append(__mode_test(test, "raw"))
+            for mode, applicable, reason in __test_modes(test, args.pointer_mode, suite):
+                if applicable:
+                    expanded_tests.append(__mode_test(test, mode))
+                else:
+                    assert reason is not None
+                    expanded_tests.append(__not_applicable_test(test, mode, reason))
+        all_tests = expanded_tests
+    elif suite == "safety":
+        expanded_tests = []
+        for test in all_tests:
+            for mode, applicable, reason in __test_modes(test, args.pointer_mode, suite):
+                if applicable:
+                    expanded_tests.append(__mode_test(test, mode))
+                else:
+                    assert reason is not None
+                    expanded_tests.append(__not_applicable_test(test, mode, reason))
         all_tests = expanded_tests
     elif suite == "package":
-        # Package fixtures also run under both pointer representations; the
-        # flag travels through the anx command line (A3). `graph` never
-        # compiles, so it keeps a single run.
+        # `anx test` receives one explicit mode so its default Both mode does
+        # not multiply these outer runs. Graph is mode-independent.
         package_tests: list[TestCase] = []
         for test in all_tests:
             if test.anx_command == "graph":
                 package_tests.append(test)
                 continue
-            package_tests.append(__package_mode_test(test, "fat"))
-            package_tests.append(__package_mode_test(test, "raw"))
+            for mode, applicable, reason in __test_modes(test, args.pointer_mode, suite):
+                if applicable:
+                    package_tests.append(__package_mode_test(test, mode))
+                else:
+                    assert reason is not None
+                    package_tests.append(__not_applicable_test(test, mode, reason))
         all_tests = package_tests
 
     if args.filter_str:
@@ -995,25 +1165,39 @@ def run_suite(suite: str, args: argparse.Namespace, toolchain: Toolchain) -> int
             print(f"No tests match filter '{args.filter_str}'.")
             return 1
 
-    print(f"Running {len(all_tests)} test(s) in suite '{suite}' [{toolchain.name}]…\n")
+    print(
+        f"Running {len(all_tests)} test(s) in suite '{suite}' "
+        f"[{toolchain.name}, pointer mode: {args.pointer_mode}]…\n"
+    )
 
     # Run.
     results: list[TestResult] = []
     total_start = time.monotonic()
 
     for i, test in enumerate(all_tests, 1):
-        result = run_test(
-            test,
-            toolchain,
-            dump=args.dump,
-            run=not args.no_run,
-            compile_only=args.no_run,
-        )
+        if test.not_applicable_reason is not None:
+            result = TestResult(
+                test=test,
+                exit_code=0,
+                elapsed_ms=0.0,
+                output="",
+                not_applicable_reason=test.not_applicable_reason,
+            )
+        else:
+            result = run_test(
+                test,
+                toolchain,
+                dump=args.dump,
+                run=not args.no_run,
+                compile_only=args.no_run,
+            )
         results.append(result)
 
         if not args.quiet:
-            tag = "✓" if result.passed() else "✗"
+            tag = "N/A" if result.not_applicable_reason is not None else ("✓" if result.passed() else "✗")
             print(f"  [{i:>{len(str(len(all_tests)))}}/{len(all_tests)}] {tag} {test.name}  ({result.elapsed_ms:.0f} ms)")
+            if result.not_applicable_reason is not None:
+                print(f"      {result.not_applicable_reason}")
 
     total_elapsed = (time.monotonic() - total_start) * 1000.0
 
@@ -1022,7 +1206,10 @@ def run_suite(suite: str, args: argparse.Namespace, toolchain: Toolchain) -> int
     print_summary(results, total_elapsed, show_detail, sys.stdout)
 
     # Write detailed failure log.
-    failed = [r for r in results if not r.passed()]
+    failed = [
+        r for r in results
+        if r.not_applicable_reason is None and not r.passed()
+    ]
     if failed:
         log_path = ROOT_DIR / "build" / f"test_failures_{suite}_{toolchain.name}.log"
         log_path.parent.mkdir(parents=True, exist_ok=True)
@@ -1031,6 +1218,10 @@ def run_suite(suite: str, args: argparse.Namespace, toolchain: Toolchain) -> int
             print_summary(results, total_elapsed, show_detail=True, out=log)
         print(f"\nFailure details written to {log_path}")
 
+    applicable = [r for r in results if r.not_applicable_reason is None]
+    if not applicable:
+        print(f"No tests are applicable in {args.pointer_mode} pointer mode.")
+        return 1
     return 0 if not failed else 1
 
 
@@ -1038,10 +1229,13 @@ def __require_native_anx(suites: tuple[str, ...] | list[str], anx_binary: Path) 
     """Require an existing native anx only for package-oriented suites."""
     if not any(suite in ("package", "bootstrap") for suite in suites):
         return True
-    if anx_binary.is_file() and os.access(anx_binary, os.X_OK):
+    try:
+        resolve_native(str(anx_binary))
         return True
+    except NativeToolError as error:
+        reason = str(error)
     print(
-        f"error: package/bootstrap suites require native anx at {anx_binary}; "
+        f"error: package/bootstrap suites require native anx at {anx_binary}: {reason}; "
         f"cold-install native tools with scripts/bootstrap_toolchain.sh --prefix {shlex.quote(str(anx_binary.parent.parent))}, "
         "or refresh an existing compatible native pair with scripts/refresh_toolchain.sh",
         file=sys.stderr,
@@ -1050,11 +1244,14 @@ def __require_native_anx(suites: tuple[str, ...] | list[str], anx_binary: Path) 
 
 
 def __require_native_yianc(yianc_binary: Path) -> bool:
-    """Require an existing native compiler when the native implementation is selected."""
-    if yianc_binary.is_file() and os.access(yianc_binary, os.X_OK):
+    """Require an existing executable ELF compiler; never fall back to Python."""
+    try:
+        resolve_native(str(yianc_binary))
         return True
+    except NativeToolError as error:
+        reason = str(error)
     print(
-        f"error: native compiler is missing or not executable at {yianc_binary}; "
+        f"error: native compiler is unavailable at {yianc_binary}: {reason}; "
         f"cold-install with scripts/bootstrap_toolchain.sh --prefix {shlex.quote(str(yianc_binary.parent.parent))} "
         "or refresh a compatible installed toolchain with scripts/refresh_toolchain.sh",
         file=sys.stderr,
@@ -1062,35 +1259,20 @@ def __require_native_yianc(yianc_binary: Path) -> bool:
     return False
 
 
-def __make_toolchain(name: str, native_bin: Path, reference_launcher: Path) -> Toolchain:
+def __make_toolchain(native_bin: Path, compiler: Path, anx: Path | None) -> Toolchain:
     environment = os.environ.copy()
     for variable in ("YIANC", "YIAN_ROOT", "YIAN_LIB"):
         environment.pop(variable, None)
 
-    # Give both implementations the same explicit source and trust roots.
+    # Give native anx the checkout's explicit source and trust roots.
     environment["YIAN_ROOT"] = str(ROOT_DIR)
     environment["YIAN_LIB"] = str(LIB_DIR)
-    anx = native_bin / "anx"
-
-    if name == "python":
-        # Package commands use native anx with the selected Python compiler.
-        environment["YIANC"] = str(reference_launcher)
-        environment["PATH"] = str(reference_launcher.parent) + os.pathsep + environment.get("PATH", "")
-        environment["PYTHONPATH"] = str(ROOT_DIR / "python") + os.pathsep + environment.get("PYTHONPATH", "")
-        return Toolchain(
-            name="python",
-            compiler=(sys.executable, "-m", "yianc.main"),
-            anx=(str(anx),),
-            environment=environment,
-        )
-
-    compiler = native_bin / "yianc"
     environment["YIANC"] = str(compiler)
     environment["PATH"] = str(native_bin) + os.pathsep + environment.get("PATH", "")
     return Toolchain(
         name="native",
         compiler=(str(compiler),),
-        anx=(str(anx),),
+        anx=(str(anx if anx is not None else native_bin / "anx"),),
         environment=environment,
     )
 
@@ -1150,9 +1332,15 @@ def main(argv: list[str] | None = None, *, suite: str = "basic") -> int:
     parser.add_argument(
         "--implementation",
         choices=("both", "python", "native"),
+        default="native",
+        help=("Only native is supported (default). The legacy python/both values are rejected; "
+              "prepare tools explicitly with scripts/bootstrap_toolchain.sh or scripts/refresh_toolchain.sh."),
+    )
+    parser.add_argument(
+        "--pointer-mode",
+        choices=("both", "fat", "raw"),
         default="both",
-        help=("Compiler implementation to test (default: both); package/bootstrap use native anx, "
-              "and selected native tools must already be installed."),
+        help="Compile selected targets with fat pointers, raw pointers, or both (default: both).",
     )
     parser.add_argument(
         "--prefix",
@@ -1162,6 +1350,12 @@ def main(argv: list[str] | None = None, *, suite: str = "basic") -> int:
     )
     args = parser.parse_args(argv)
 
+    if args.implementation != "native":
+        parser.error(
+            "python/both compiler modes are no longer supported; cold recovery is available through "
+            "scripts/bootstrap_toolchain.sh, then run with --implementation native"
+        )
+
     if args.run_all:
         suites = list(SUITES)
     elif args.suite is not None:
@@ -1169,29 +1363,26 @@ def main(argv: list[str] | None = None, *, suite: str = "basic") -> int:
     else:
         suites = [suite]
 
-    implementations = ("python", "native") if args.implementation == "both" else (args.implementation,)
     prefix = args.prefix.expanduser().resolve()
     native_bin = prefix / "bin"
-    if "native" in implementations and not __require_native_yianc(native_bin / "yianc"):
+    if not __require_native_yianc(native_bin / "yianc"):
         return 1
+    compiler = resolve_native(str(native_bin / "yianc"))
     if not __require_native_anx(suites, native_bin / "anx"):
         return 1
+    anx = (
+        resolve_native(str(native_bin / "anx"))
+        if any(suite in ("package", "bootstrap") for suite in suites)
+        else None
+    )
 
+    toolchain = __make_toolchain(native_bin, compiler, anx)
+    print(f"\n{'#' * 60}\n# implementation: native\n{'#' * 60}")
     exit_code = 0
-    with tempfile.TemporaryDirectory(prefix="yian-reference-compiler-") as temporary:
-        reference_launcher = Path(temporary) / "yianc"
-        reference_launcher.write_text(
-            '#!/bin/sh\nexec ' + shlex.quote(sys.executable) + ' -m yianc.main "$@"\n',
-            encoding="utf-8",
-        )
-        reference_launcher.chmod(0o755)
-        for implementation in implementations:
-            toolchain = __make_toolchain(implementation, native_bin, reference_launcher)
-            print(f"\n{'#' * 60}\n# implementation: {implementation}\n{'#' * 60}")
-            for suite_name in suites:
-                if len(suites) > 1:
-                    print(f"\n{'#' * 60}\n# suite: {suite_name}\n{'#' * 60}")
-                exit_code |= run_suite(suite_name, args, toolchain)
+    for suite_name in suites:
+        if len(suites) > 1:
+            print(f"\n{'#' * 60}\n# suite: {suite_name}\n{'#' * 60}")
+        exit_code |= run_suite(suite_name, args, toolchain)
     return exit_code
 
 

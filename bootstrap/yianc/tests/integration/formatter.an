@@ -1,0 +1,92 @@
+from yianc.format.api import format_text;
+from yianc.frontend.lex.lexer import Lexer;
+from yianc.frontend.lex.token import Token, TokenPayload, drop_tokens;
+from std.core.drop import Drop;
+from std.core.fs import read_to_string;
+from std.core.ops import Index;
+from std.core.vec import Vec;
+
+fn same_tokens(left: Vec<Token>&, right: Vec<Token>&) -> bool {
+    if left.len() != right.len() { return false; }
+    let index = 0u64;
+    while index < left.len() {
+        let right_kind = right[index].kind();
+        let same_kind = match left[index].kind() {
+            Keyword(_) => match right_kind { Keyword(_) => true, _ => false },
+            Identifier(_) => match right_kind { Identifier(_) => true, _ => false },
+            Punctuator(_) => match right_kind { Punctuator(_) => true, _ => false },
+            Integer(_, _) => match right_kind { Integer(_, _) => true, _ => false },
+            Float(_, _) => match right_kind { Float(_, _) => true, _ => false },
+            Character(_) => match right_kind { Character(_) => true, _ => false },
+            StringLiteral(_) => match right_kind { StringLiteral(_) => true, _ => false },
+            FStrStart => match right_kind { FStrStart => true, _ => false },
+            FStrLiteral(_) => match right_kind { FStrLiteral(_) => true, _ => false },
+            FStrExprBegin => match right_kind { FStrExprBegin => true, _ => false },
+            FStrExprEnd => match right_kind { FStrExprEnd => true, _ => false },
+            FStrEnd => match right_kind { FStrEnd => true, _ => false },
+            EndOfFile => match right_kind { EndOfFile => true, _ => false },
+        };
+        if !same_kind || left[index].raw.as_str() != right[index].raw.as_str() ||
+        left[index].value() != right[index].value() ||
+        left[index].suffix() != right[index].suffix() {
+            return false;
+        }
+        index += 1u64;
+    }
+    true
+}
+
+fn layout_is_clean(text: str) -> bool {
+    let bytes = text.as_slice();
+    if bytes.len() == 0u64 || bytes[bytes.len() - 1u64] != b'\n' { return false; }
+    if bytes.len() > 1u64 && bytes[bytes.len() - 2u64] == b'\n' { return false; }
+
+    let line_start = 0u64;
+    let index = 0u64;
+    while index < bytes.len() {
+        if bytes[index] == b'\n' {
+            if index > line_start {
+                if bytes[index - 1u64] == b' ' || bytes[index - 1u64] == b'\t' { return false; }
+                let cursor = line_start;
+                let indentation = 0u64;
+                while cursor < index && (bytes[cursor] == b' ' || bytes[cursor] == b'\t') {
+                    if bytes[cursor] == b'\t' { return false; }
+                    indentation += 1u64;
+                    cursor += 1u64;
+                }
+                if cursor < index && indentation % 4u64 != 0u64 { return false; }
+            }
+            line_start = index + 1u64;
+        }
+        index += 1u64;
+    }
+    true
+}
+
+fn main() {
+    let input_path = "../../../../tests/format/fixtures/comments/nested_generics.an";
+    let expected_path = "../../../../tests/format/fixtures/comments/nested_generics.expected.an";
+    let input = read_to_string(input_path).unwrap(); defer input.drop();
+    let expected = read_to_string(expected_path).unwrap(); defer expected.drop();
+    let formatted = format_text(input.as_str(), input_path).unwrap().unwrap(); defer formatted.drop();
+
+    assert formatted.as_str() == expected.as_str(): "native formatter matches the fixed fixture expectation";
+    assert formatted.as_str().contains("/* before let */") &&
+        formatted.as_str().contains("// pointer comment") &&
+        formatted.as_str().contains("// standalone comment"):
+        "block, trailing and standalone comments survive";
+    assert layout_is_clean(formatted.as_str()):
+        "formatted fixture has clean layout and exactly one final newline";
+    assert formatted.as_str().contains("Vec<Vec<i32>> = values") &&
+        formatted.as_str().contains("i32* = **raw") &&
+        formatted.as_str().contains("return [1, 2];"):
+        "generic, pointer and keyword operand spacing is canonical";
+
+    let formatted_again = format_text(formatted.as_str(), input_path).unwrap().unwrap();
+    assert formatted_again.as_str() == formatted.as_str(): "formatting is idempotent";
+    formatted_again.drop();
+
+    let before = Lexer.new(input.as_str()).run().unwrap(); defer drop_tokens(before);
+    let after = Lexer.new(formatted.as_str()).run().unwrap(); defer drop_tokens(after);
+    assert same_tokens(before, after): "formatting preserves token kind, spelling and order";
+}

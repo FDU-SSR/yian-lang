@@ -86,4 +86,6 @@ PATH="$HOME/.local/bin:$PATH" \
   conda run --no-capture-output -n yian-env python scripts/check_lsp.py --mode check
 ```
 
-`check_lsp.py` 是协议客户端和测量工具，只启动已安装的原生 `yian-lsp`。`--mode benchmark` 运行性能矩阵，`--mode profile` 保存原生阶段 trace，`--mode infrastructure` 要求完整工具链已安装后运行协议与资源检查，不安装或刷新工具。
+`check_lsp.py` 是协议客户端和测量工具，只启动已安装的原生 `yian-lsp`。`--mode benchmark` 运行性能矩阵，`--mode profile` 保存原生阶段 trace，`--mode infrastructure` 要求完整工具链及共享资源已安装后运行基础设施检查，不安装或刷新工具，也不运行协议场景。
+
+`--mode check` 默认运行 standalone、JSON project 和 compiler project 三种协议场景，并分别使用 fat/raw 两种模式，共六种组合。仓库验证应选择准确的场景和 pointer mode；完整矩阵需要明确授权。`--mode infrastructure` 还会运行 bootstrap package tests、全部 Python unit tests、formatter checks 以及 runtime 普通和 sanitizer checks；这是广泛验证入口，仓库任务执行前需先审查其间接范围并取得明确授权。

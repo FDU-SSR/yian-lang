@@ -5,9 +5,9 @@ from __future__ import annotations
 import json
 import os
 import select
-import shutil
 import signal
 import subprocess
+import sys
 import tempfile
 import threading
 import time
@@ -15,12 +15,28 @@ import unittest
 from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 from typing import TypeAlias, cast
+from unittest.mock import patch
 
 
 ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT / "scripts"))
+
+from _toolchain.native import NativeToolError, resolve_native
+
+
 JsonObject: TypeAlias = dict[str, "JsonValue"]
 JsonValue: TypeAlias = None | bool | int | float | str | list["JsonValue"] | JsonObject
 MessagePredicate = Callable[[JsonObject], bool]
+
+
+def native_lsp_path() -> Path:
+    program = os.environ.get("YIAN_LSP_BIN") or "yian-lsp"
+    try:
+        return resolve_native(program)
+    except NativeToolError as error:
+        raise FileNotFoundError(
+            f"native yian-lsp is unavailable: {error}; refresh with scripts/refresh_toolchain.sh"
+        ) from error
 
 
 class StdioClient:
@@ -34,12 +50,9 @@ class StdioClient:
         environment: Mapping[str, str] | None = None,
     ) -> None:
         if command is None:
-            executable = os.environ.get("YIAN_LSP_BIN") or shutil.which("yian-lsp")
-            if executable is None:
-                raise FileNotFoundError(
-                    "native yian-lsp is not installed; refresh the toolchain with scripts/refresh_toolchain.sh"
-                )
-            command = [executable, "--stdio", "--compiler-root", str(ROOT)]
+            command = [str(native_lsp_path()), "--stdio", "--compiler-root", str(ROOT)]
+        else:
+            command = [str(resolve_native(str(command[0]))), *command[1:]]
         self.command = list(command)
         child_environment = os.environ.copy()
         if environment is not None:
@@ -218,6 +231,21 @@ class LspProtocolTests(unittest.TestCase):
         client.until(lambda message: message.get("id") == 1)
         client.send({"jsonrpc": "2.0", "method": "initialized", "params": {}})
 
+    def test_configured_lsp_wrapper_is_rejected_without_execution(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="native lsp identity ") as temporary:
+            root = Path(temporary)
+            marker = root / "executed"
+            wrapper = root / "lsp-wrapper"
+            wrapper.write_text(
+                f"#!/bin/sh\nprintf called > {marker}\n",
+                encoding="utf-8",
+            )
+            wrapper.chmod(0o755)
+            with patch.dict(os.environ, {"YIAN_LSP_BIN": str(wrapper)}):
+                with self.assertRaisesRegex(FileNotFoundError, "not an ELF"):
+                    native_lsp_path()
+            self.assertFalse(marker.exists(), "configured LSP wrappers are rejected before execution")
+
     def test_manifest_diagnostic_clears_after_reload(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -365,11 +393,7 @@ class LspProtocolTests(unittest.TestCase):
             source = root / "main.an"
             invalid = "fn main() { let values = Vec<i32>::new(); }\n"
             source.write_text(invalid, encoding="utf-8")
-            executable = os.environ.get("YIAN_LSP_BIN") or shutil.which("yian-lsp")
-            self.assertIsNotNone(executable)
-            if executable is None:
-                return
-            command = [executable, "--stdio", "--compiler-root", str(ROOT)]
+            command = [str(native_lsp_path()), "--stdio", "--compiler-root", str(ROOT)]
             if raw:
                 command.append("--raw-pointers")
             client = StdioClient(command)
@@ -406,6 +430,7 @@ class LspProtocolTests(unittest.TestCase):
                 })
                 response = client.until(lambda message: message.get("id") == 2)
                 self.assertNotIn("error", response)
+
                 items = response.get("result", {}).get("items", [])
                 self.assertTrue(any(
                     item.get("label") == "Vec" and item.get("kind") == 22
@@ -568,8 +593,17 @@ class LspProtocolTests(unittest.TestCase):
                 response = client.until(lambda message: message.get("id") == 3)
                 edits = response.get("result")
                 self.assertIsInstance(edits, list)
-                self.assertTrue(edits)
-                self.assertIn("fn main()", edits[0]["newText"])
+                self.assertEqual(
+                    edits,
+                    [{
+                        "range": {
+                            "start": {"line": 0, "character": 0},
+                            "end": {"line": 1, "character": 0},
+                        },
+                        "newText": "fn main() {\n    let x: i32 = 1;\n    x;\n}\n",
+                    }],
+                    "formatting must use the unsaved document and return the exact native output",
+                )
             finally:
                 client.shutdown()
 
