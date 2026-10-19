@@ -26,7 +26,7 @@ This is a mandatory execution constraint for every task, including planning expe
 
 YIAN is a statically typed programming language with a Python recovery compiler, a compiler and package manager written in YIAN, a standard library, a C runtime, and editor tooling. The self-hosted compiler and package manager are in `yianc/` and `anx/`. The native compiler is the daily authority; the Python compiler is retained for the explicit cold recovery path and the compatibility it needs. The native source-to-executable pipeline is:
 
-`.an source → tokens → AST → desugared AST → HIR → CFG IR → LLVM IR → native executable`
+`.an source → tokens → AST → desugared AST → HIR → HIR address-storage normalization → CFG IR → LLVM IR → native executable`
 
 The Python recovery compiler is maintained for the explicit cold bootstrap inputs; its continued presence does not promise feature parity with the native compiler.
 
@@ -172,6 +172,8 @@ conda run --no-capture-output -n yian-env bash scripts/bootstrap_toolchain.sh --
 The native CLI supports `--frontend-json {tokens,ast,desugared}`, `--analyze`, `--format`, and compilation targets `none`, `exe`, `ll`, `bc`, `obj`, and `asm`. It also supports package maps, source-root configuration, raw-pointer mode, FFI permission, logging, profiling, stage dumps and native link options. The analysis JSON uses `format`, `ok`, `stage`, `summary`, and `diagnostics`. Successful analysis does not require `main`; a present entry is validated. Compilation targets that produce native artifacts require an entry.
 
 The native compiler locates runtime resources through `--compiler-root`, nonempty `YIAN_ROOT`, or resources associated with the installed executable. `YIAN_LIB` or `YIAN_ROOT` also selects the standard-library trust root. Standalone compilation still requires `lib/src` as a positional input; package mode receives standard-library sources through its package map. Pass `--compiler-root` for deterministic checkout-local builds. `-t none` performs semantic analysis and CFG lowering; `--analyze` stops after semantic analysis and HIR checks. Both pointer modes are target options to the compiler. The mode used to build the compiler binary is a separate configuration.
+
+After concrete procedure type and result-context conversion, native analysis normalizes data-address operands and implicit storage consumers into existing places or local place blocks before HIR verification, match coverage, and definite-assignment checks. CFG address lowering only accepts normalized storage; it does not create a fallback local for arbitrary right values. Function addresses and slice-based element addresses retain their dedicated paths.
 
 ### Pipeline and module boundaries
 

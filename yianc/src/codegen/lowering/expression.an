@@ -369,10 +369,7 @@ impl Lowering {
         match &node.kind {
             Block(value) => {
                 if node.is_place { return self.block_address(node, value); }
-                let value = self.expression(id)?;
-                let local = self.function.add_local(node.type_id);
-                self.effect(node.span, Operation.Store(local, value))?;
-                self.emit(node.span, reference, Operation.Address(local))
+                Result<ValueId, CodegenError>.Err(CodegenError.invalid("non-place block reached address lowering"))
             },
             Var(symbol) => {
                 match self.captured_places.get(symbol) {
@@ -384,7 +381,7 @@ impl Lowering {
             },
             Unary(value) => {
                 if value.op == UnaryOperator.Deref { return self.expression(value.operand); }
-                Result<ValueId, CodegenError>.Err(CodegenError.unsupported(node.span, "unary expression is not an address"))
+                Result<ValueId, CodegenError>.Err(CodegenError.invalid("non-dereference unary expression reached address lowering"))
             },
             FieldAccess(value) => {
                 let receiver = self.session.hir.require(value.receiver)?;
@@ -418,12 +415,7 @@ impl Lowering {
                 let length = self.emit(node.span, unsigned, Operation.Builtin(BuiltinKind.SliceGetLen, Vec<TypeId>.new(), lengths))?;
                 self.emit(node.span, pointer, Operation.IndexAddress(base, value.element_type, index, IndexBounds.Slice(length)))
             },
-            _ => {
-                let value = self.expression(id)?;
-                let local = self.function.add_local(node.type_id);
-                self.effect(node.span, Operation.Store(local, value))?;
-                self.emit(node.span, reference, Operation.Address(local))
-            },
+            _ => Result<ValueId, CodegenError>.Err(CodegenError.invalid("address lowering requires normalized storage")),
         }
     }
 

@@ -15,6 +15,7 @@ from yianc.analysis.ty.validation import validate_declarations;
 from yianc.analysis.passes.definite_assignment import check_assignment;
 from yianc.analysis.passes.coverage import check_coverage;
 from yianc.analysis.passes.verify_hir import verify_hir;
+from yianc.analysis.passes.address_storage import normalize_address_storage;
 from yianc.diagnostics.model import AnalysisError, AnalysisErrorKind, AnalysisStage;
 from yianc.diagnostics.order import order_diagnostics;
 from yianc.common.ids import TypeId;
@@ -84,13 +85,17 @@ impl AnalysisSession {
             Ok(value) => value,
             Err(problem) => return Result<AnalysisReport, AnalysisError>.Err(problem.with_stage(AnalysisStage.TypeCheck)),
         };
-        finish_stage(&options, AnalysisStage.TypeCheck, started);
         let accepted = false;
         defer {
             if !accepted {
                 output.drop();
             }
         };
+        match normalize_address_storage(&context, &output) {
+            Ok(_) => {},
+            Err(problem) => return Result<AnalysisReport, AnalysisError>.Err(problem.with_stage(AnalysisStage.TypeCheck)),
+        }
+        finish_stage(&options, AnalysisStage.TypeCheck, started);
         // A recovered callee failure leaves a partial call graph. It is never exported to the backend.
         if report.ok() && (!self.editor_recovery || !self.diagnostics.has_errors()) && options.verify_hir { verify_hir(&context, &output)?; }
         started = start_stage(&options, AnalysisStage.Coverage);

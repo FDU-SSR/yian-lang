@@ -1,10 +1,8 @@
 from yianc.analysis.lowering.checker import ExprChecker;
 from yianc.analysis.ty.method_lookup import lookup_method_args, lookup_method;
 from yianc.analysis.ty.relations import default_type;
-from yianc.analysis.hir.node import HirKind, Unary, Let, Block;
-from yianc.analysis.symbol.model import Symbol, SymbolKind;
-from yianc.common.ids import HirId, TypeId, SymbolId, DefId;
-from yianc.common.location import SourceSpan;
+from yianc.analysis.hir.node import HirKind, Unary, Block;
+from yianc.common.ids import HirId, TypeId;
 from yianc.frontend.ast.operator import BinaryOperator, UnaryOperator;
 from yianc.frontend.source import Span;
 from yianc.diagnostics.model import AnalysisError, AnalysisErrorKind, DiagnosticCode;
@@ -57,7 +55,7 @@ impl ExprChecker {
                 "bit_not"
             };
             let name = self.ctx.session.names.intern(spelling);
-            let receiver = self.receiver_place(span, value, &prefix)?;
+            let receiver = value;
             let required = self.ctx.intrinsic(if op == UnaryOperator.Neg {
                     "Neg"
                 } else {
@@ -108,25 +106,12 @@ impl ExprChecker {
                 return Result<Option<HirId>, AnalysisError>.Err(problem);
             },
         };
-        let receiver = self.receiver_place(span, value, prefix)?;
+        let receiver = value;
         let reference = self.ctx.session.types.reference(self.type_of(receiver));
         let borrowed = self.node(span, reference, false, HirKind.Unary(Unary(UnaryOperator.AddrOf, receiver)));
         let arguments = Vec<HirId>.new();
         defer arguments.drop();
         Result<Option<HirId>, AnalysisError>.Ok(Option<HirId>.Some(self.call_values(span, method, &arguments, Option<HirId>.Some(borrowed))?))
-    }
-
-    // A spill gives temporary receivers a place without evaluating their initializer twice.
-    pub fn receiver_place(span: Span, value: HirId, prefix: Vec<HirId>&) -> Result<HirId, AnalysisError> {
-        if self.ctx.session.hir.require(value)?.is_place {
-            return Result<HirId, AnalysisError>.Ok(value);
-        }
-
-        let name = self.ctx.session.names.intern("%receiver");
-        let symbol = self.ctx.session.symbols.add(Symbol(name, SymbolKind.Variable, self.type_of(value), self.unit,
-            Option<SourceSpan>.Some(self.ctx.span(self.unit, span)), false, false, false, Option<SymbolId>.None, Option<DefId>.None));
-        prefix.push(self.node(span, self.ctx.primitives.void, false, HirKind.Let(Let(Option<HirId>.Some(value), Option<SymbolId>.Some(symbol)))));
-        Result<HirId, AnalysisError>.Ok(self.node(span, self.type_of(value), true, HirKind.Var(symbol)))
     }
 
     pub fn overloaded_binary(span: Span, op: BinaryOperator, left: HirId, right: HirId) -> Result<HirId, AnalysisError> {
@@ -143,7 +128,7 @@ impl ExprChecker {
                 prefix.drop();
             }
         };
-        let receiver = self.receiver_place(span, left, &prefix)?;
+        let receiver = left;
         let name = self.ctx.session.names.intern(spelling);
         let reference = self.ctx.session.types.reference(self.type_of(receiver));
         let borrowed = self.node(span, reference, false, HirKind.Unary(Unary(UnaryOperator.AddrOf, receiver)));

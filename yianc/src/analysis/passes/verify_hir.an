@@ -29,6 +29,29 @@ fn invalid(span: SourceSpan, message: str) -> AnalysisError {
     AnalysisError.internal(message).with_location(span)
 }
 
+fn addressable_path(ctx: ResolutionContext&, id: HirId, active: HashSet<HirId>&) -> Result<bool, AnalysisError> {
+    if !active.insert(id) { return Result<bool, AnalysisError>.Ok(false); }
+    let node = ctx.session.hir.require(id)?;
+    let addressable = match &node.kind {
+        Var(_) => node.is_place,
+        Unary(value) => node.is_place && value.op == UnaryOperator.Deref,
+        FieldAccess(value) => node.is_place && addressable_path(ctx, value.receiver, active)?,
+        TupleAccess(value) => node.is_place && addressable_path(ctx, value.receiver, active)?,
+        ArrayAccess(value) => node.is_place && addressable_path(ctx, value.array, active)?,
+        SliceAccess(_) => true,
+        Block(value) => {
+            if !node.is_place || value.stmts.len() == 0 {
+                false
+            } else {
+                addressable_path(ctx, value.stmts[value.stmts.len() - 1u64], active)?
+            }
+        },
+        _ => false,
+    };
+    active.remove(&id);
+    Result<bool, AnalysisError>.Ok(addressable)
+}
+
 // IDs and stores remain borrowed. Traversal only reads edges and validates exported bodies.
 struct HirVerifier {
     ctx: ResolutionContext&,
@@ -98,6 +121,15 @@ impl HirVerifier {
         };
         if symbol.type_id != expected {
             return Result<(), AnalysisError>.Err(invalid(span, "exported HIR symbol has an inconsistent type"));
+        }
+        Result<(), AnalysisError>.Ok(())
+    }
+
+    fn require_addressable(id: HirId, span: SourceSpan) -> Result<(), AnalysisError> {
+        let active = HashSet<HirId>.new();
+        defer active.drop();
+        if !addressable_path(self.ctx, id, &active)? {
+            return Result<(), AnalysisError>.Err(invalid(span, "exported address consumer is not backed by a place"));
         }
         Result<(), AnalysisError>.Ok(())
     }
@@ -479,18 +511,86 @@ impl HirVerifier {
                 }
             },
             Binary(value) => {
-                if value.op == BinaryOperator.Assign && !self.node(value.left, node.span)?.is_place {
-                    return Result<(), AnalysisError>.Err(invalid(node.span, "exported assignment target is not a place"));
+                if value.op == BinaryOperator.Assign {
+                    self.require_addressable(value.left, node.span)?;
                 }
             },
             Unary(value) => {
                 if value.op == UnaryOperator.Deref && !node.is_place {
                     return Result<(), AnalysisError>.Err(invalid(node.span, "exported dereference is not a place"));
                 }
+                if value.op == UnaryOperator.AddrOf {
+                    let function_address = match self.ctx.session.types.require(node.type_id)? { FunctionPointer(_, _) => true, _ => false, };
+                    if function_address {
+                        let is_function = match &self.node(value.operand, node.span)?.kind { Ty => true, _ => false, };
+                        if !is_function {
+                            return Result<(), AnalysisError>.Err(invalid(node.span, "exported function address has a non-function operand"));
+                        }
+                    } else {
+                        self.require_addressable(value.operand, node.span)?;
+                    }
+                }
             },
             FieldAccess(value) => {
                 if value.field.type_id != node.type_id {
                     return Result<(), AnalysisError>.Err(invalid(node.span, "exported field type differs from its result"));
+                }
+                if node.is_place { self.require_addressable(value.receiver, node.span)?; }
+            },
+            TupleAccess(value) => {
+                if node.is_place { self.require_addressable(value.receiver, node.span)?; }
+            },
+            ArrayAccess(value) => {
+                self.require_addressable(value.array, node.span)?;
+            },
+            Invoke(value) => {
+                let callable_type = self.node(value.callable, node.span)?.type_id;
+                let is_closure = match self.ctx.session.types.require(callable_type)? { Closure(_, _, _, _, _, _) => true, _ => false, };
+                if is_closure { self.require_addressable(value.callable, node.span)?; }
+            },
+            Block(value) if node.is_place => {
+                if value.stmts.len() == 0 {
+                    return Result<(), AnalysisError>.Err(invalid(node.span, "exported place block has no final value"));
+                }
+                let last_id = value.stmts[value.stmts.len() - 1u64];
+                let last = self.node(last_id, node.span)?;
+                if last.type_id != node.type_id {
+                    return Result<(), AnalysisError>.Err(invalid(node.span, "exported place block type differs from its final value"));
+                }
+                self.require_addressable(last_id, node.span)?;
+                if value.stmts.len() == 2 {
+                    let binding = self.node(value.stmts[0], node.span)?;
+                    match &binding.kind {
+                        Let(value) => {
+                            let initializer = match &value.init {
+                                Some(value) => Option<HirId>.Some(*value),
+                                None => Option<HirId>.None,
+                            };
+                            let symbol_id = match &value.symbol_id {
+                                Some(value) => Option<SymbolId>.Some(*value),
+                                None => Option<SymbolId>.None,
+                            };
+                            match initializer {
+                                Some(initializer) => match symbol_id {
+                                    Some(symbol_id) => {
+                                        let same_variable = match &last.kind { Var(variable) => *variable == symbol_id, _ => false, };
+                                        if same_variable {
+                                            let symbol = match self.ctx.session.symbols.get(symbol_id) {
+                                                Some(value) => value,
+                                                None => return Result<(), AnalysisError>.Err(invalid(node.span, "exported address temporary has an invalid symbol")),
+                                            };
+                                            if symbol.type_id != node.type_id || self.node(initializer, node.span)?.type_id != node.type_id {
+                                                return Result<(), AnalysisError>.Err(invalid(node.span, "exported address temporary has an inconsistent type"));
+                                            }
+                                        }
+                                    },
+                                    None => {},
+                                },
+                                None => {},
+                            }
+                        },
+                        _ => {},
+                    }
                 }
             },
             Builtin(value) => {

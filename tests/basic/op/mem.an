@@ -1,14 +1,113 @@
-// Test memory operations: dereference and address-of
-//
-// Expected output: 0
+// Address-taking promotion and ordinary pointer aliasing.
+
+from std.core.ops import PartialEq;
+
+struct Box {
+    value: i32,
+}
+
+impl Box {
+    fn get() -> i32 {
+        return self.value;
+    }
+}
+
+struct Number {
+    value: i32,
+}
+
+impl PartialEq<Number> for Number {
+    fn eq(rhs: Number&) -> bool {
+        return self.value == (*rhs).value;
+    }
+}
+
+fn produce(counter: i32*) -> i32 {
+    *counter = *counter + 1;
+    return *counter;
+}
+
+fn positive(value: i32*) -> bool {
+    return *value > 0;
+}
+
+fn make_box(counter: i32*) -> Box {
+    *counter = *counter + 1;
+    return Box(value=*counter);
+}
+
+fn make_number(counter: i32*) -> Number {
+    *counter = *counter + 1;
+    return Number(value=*counter);
+}
+
+fn make_values() -> i32[3] {
+    return [11, 22, 33];
+}
+
+fn identity(value: i32) -> i32 {
+    return value;
+}
 
 fn main() {
     let a: i32 = 42;
-    let p: i32* = &a; // Address-of operator
+    let p: i32* = &a;
 
-    assert *p == 42: "Dereference failed"; // Dereference operator
+    assert *p == 42: "Dereference failed";
 
     *p = 100;
     assert a == 100: "Memory write via pointer failed";
 
+    // The expected type is applied before the temporary receives its local.
+    let wide: i64* = &1;
+    assert *wide == 1i64: "contextual address type failed";
+
+    // A temporary method receiver and a projected field each keep one evaluation.
+    let receiver_calls: i32 = 0;
+    let receiver_value: i32 = make_box(&receiver_calls).get();
+    assert receiver_value == 1: "temporary receiver result failed";
+    assert receiver_calls == 1: "temporary receiver evaluated more than once";
+
+    let projection_calls: i32 = 0;
+    let field_pointer: i32* = &make_box(&projection_calls).value;
+    assert *field_pointer == 1: "temporary field projection failed";
+    assert projection_calls == 1: "temporary field base evaluated more than once";
+
+    // Comparison borrows its right operand; both rvalues remain single-evaluation.
+    let comparison_calls: i32 = 0;
+    let equal: bool = Number(value=1) == make_number(&comparison_calls);
+    assert equal: "temporary comparison failed";
+    assert comparison_calls == 1: "comparison right operand evaluated more than once";
+
+    // Array reads and addresses require the returned array value to have storage.
+    assert make_values()[1] == 22: "temporary array read failed";
+    let array_pointer: i32* = &make_values()[2];
+    assert *array_pointer == 33: "temporary array element address failed";
+
+    // A closure call must address its environment even when the closure is temporary.
+    let direct_call: i32 = (|| () -> i32 { 19 })();
+    assert direct_call == 19: "temporary closure call failed";
+
+    // Function addresses keep their dedicated function-pointer path.
+    let function: fn(i32) -> i32 = &identity;
+    assert function(7) == 7: "function address call failed";
+
+    // Promotion stays inside the selected short-circuit branch.
+    let short_calls: i32 = 0;
+    let skipped: bool = false && positive(&produce(&short_calls));
+    assert !skipped: "short-circuit result failed";
+    assert short_calls == 0: "unselected branch initialized a temporary";
+    let selected: bool = true && positive(&produce(&short_calls));
+    assert selected: "selected branch result failed";
+    assert short_calls == 1: "selected branch evaluated more than once";
+
+    // A loop reinitializes one static local on each iteration.
+    let loop_calls: i32 = 0;
+    let round: i32 = 0;
+    while round < 3 {
+        let current: i32* = &produce(&loop_calls);
+        assert *current == round + 1: "loop temporary value failed";
+        round += 1;
+    }
+    assert loop_calls == 3: "loop temporary initialization count failed";
 }

@@ -1,0 +1,218 @@
+from yianc.analysis.resolution.context import ResolutionContext;
+from yianc.analysis.session.output import AnalysisOutput;
+from yianc.analysis.hir.node import HirNode, HirKind, Block as HirBlock, Let as HirLet;
+from yianc.analysis.hir.pattern import PatternNode;
+from yianc.analysis.hir.traversal import HirVisitor, walk_expr;
+from yianc.analysis.symbol.model import Symbol, SymbolKind;
+from yianc.common.ids import HirId, PatternId, UnitId, SymbolId, TypeId, DefId;
+from yianc.common.location import SourceSpan;
+from yianc.common.traversal import WalkControl;
+from yianc.diagnostics.model import AnalysisError;
+from yianc.frontend.ast.operator import UnaryOperator;
+from std.collections.hash_set import HashSet;
+from std.core.drop import Drop;
+from std.core.option import Option;
+from std.core.result import Result;
+from std.core.vec import Vec;
+
+fn invalid(span: SourceSpan, message: str) -> AnalysisError {
+    AnalysisError.internal(message).with_location(span)
+}
+
+// Collection is read-only; normalization edits edges only after the walk completes.
+struct AddressUseCollector {
+    uses: Vec<HirId>,
+    active: HashSet<HirId>,
+    active_patterns: HashSet<PatternId>,
+}
+
+impl AddressUseCollector {
+    static fn new() -> Self {
+        Self(Vec<HirId>.new(), HashSet<HirId>.new(), HashSet<PatternId>.new())
+    }
+}
+
+impl Drop for AddressUseCollector {
+    pub fn drop() {
+        self.uses.drop();
+        self.active.drop();
+        self.active_patterns.drop();
+    }
+}
+
+impl HirVisitor for AddressUseCollector {
+    pub fn enter_expr(id: HirId, node: HirNode&) -> Result<WalkControl, AnalysisError> {
+        if !self.active.insert(id) {
+            return Result<WalkControl, AnalysisError>.Err(invalid(node.span, "HIR address normalization found an expression cycle"));
+        }
+        Result<WalkControl, AnalysisError>.Ok(WalkControl.Continue)
+    }
+
+    pub fn leave_expr(id: HirId, node: HirNode&) -> Result<(), AnalysisError> {
+        self.active.remove(&id);
+        let uses_address = match &node.kind {
+            Unary(value) => value.op == UnaryOperator.AddrOf,
+            ArrayAccess(_) => true,
+            FieldAccess(_) | TupleAccess(_) => node.is_place,
+            Invoke(_) => true,
+            _ => false,
+        };
+        if uses_address { self.uses.push(id); }
+        Result<(), AnalysisError>.Ok(())
+    }
+
+    pub fn enter_pattern(id: PatternId, node: PatternNode&) -> Result<WalkControl, AnalysisError> {
+        if !self.active_patterns.insert(id) {
+            return Result<WalkControl, AnalysisError>.Err(invalid(node.span, "HIR address normalization found a pattern cycle"));
+        }
+        Result<WalkControl, AnalysisError>.Ok(WalkControl.Continue)
+    }
+
+    pub fn leave_pattern(id: PatternId, node: PatternNode&) -> Result<(), AnalysisError> {
+        self.active_patterns.remove(&id);
+        Result<(), AnalysisError>.Ok(())
+    }
+}
+
+fn spill(ctx: ResolutionContext&, unit: UnitId, value: HirId, type_id: TypeId, span: SourceSpan) -> HirId {
+    let name = ctx.session.names.intern("%address_temp");
+    let symbol = ctx.session.symbols.add(Symbol(name, SymbolKind.Variable, type_id, unit,
+        Option<SourceSpan>.Some(span), false, false, false, Option<SymbolId>.None, Option<DefId>.None));
+    let init = ctx.session.hir.add(HirNode(span, ctx.primitives.void, false,
+        HirKind.Let(HirLet(Option<HirId>.Some(value), Option<SymbolId>.Some(symbol)))));
+    let variable = ctx.session.hir.add(HirNode(span, type_id, true, HirKind.Var(symbol)));
+    let statements = Vec<HirId>.new();
+    statements.push(init);
+    statements.push(variable);
+    ctx.session.hir.add(HirNode(span, type_id, true, HirKind.Block(HirBlock(statements))))
+}
+
+fn ensure_place(ctx: ResolutionContext&, unit: UnitId, id: HirId) -> Result<HirId, AnalysisError> {
+    let node = ctx.session.hir.require(id)?;
+    let type_id = node.type_id;
+    let span = node.span;
+    let kind = match &node.kind {
+        Var(_) => 1u8,
+        Unary(value) if value.op == UnaryOperator.Deref => 2u8,
+        FieldAccess(_) => 3u8,
+        TupleAccess(_) => 4u8,
+        ArrayAccess(_) => 5u8,
+        SliceAccess(_) => 6u8,
+        Block(value) if node.is_place && value.stmts.len() != 0 => 7u8,
+        _ => 0u8,
+    };
+
+    match kind {
+        1u8 | 2u8 | 6u8 => {
+            ctx.session.hir.require(id)?.is_place = true;
+            Result<HirId, AnalysisError>.Ok(id)
+        },
+        3u8 => {
+            let receiver_id = match &ctx.session.hir.require(id)?.kind { FieldAccess(value) => value.receiver, _ => return Result<HirId, AnalysisError>.Err(invalid(span, "field place changed during normalization")), };
+            let place_receiver = ensure_place(ctx, unit, receiver_id)?;
+            let node = ctx.session.hir.require(id)?;
+            match &node.kind { FieldAccess(value) => value.receiver = place_receiver, _ => return Result<HirId, AnalysisError>.Err(invalid(span, "field place changed during normalization")), }
+            node.is_place = true;
+            Result<HirId, AnalysisError>.Ok(id)
+        },
+        4u8 => {
+            let receiver_id = match &ctx.session.hir.require(id)?.kind { TupleAccess(value) => value.receiver, _ => return Result<HirId, AnalysisError>.Err(invalid(span, "tuple place changed during normalization")), };
+            let place_receiver = ensure_place(ctx, unit, receiver_id)?;
+            let node = ctx.session.hir.require(id)?;
+            match &node.kind { TupleAccess(value) => value.receiver = place_receiver, _ => return Result<HirId, AnalysisError>.Err(invalid(span, "tuple place changed during normalization")), }
+            node.is_place = true;
+            Result<HirId, AnalysisError>.Ok(id)
+        },
+        5u8 => {
+            let array_id = match &ctx.session.hir.require(id)?.kind { ArrayAccess(value) => value.array, _ => return Result<HirId, AnalysisError>.Err(invalid(span, "array place changed during normalization")), };
+            let place_array = ensure_place(ctx, unit, array_id)?;
+            let node = ctx.session.hir.require(id)?;
+            match &node.kind { ArrayAccess(value) => value.array = place_array, _ => return Result<HirId, AnalysisError>.Err(invalid(span, "array place changed during normalization")), }
+            node.is_place = true;
+            Result<HirId, AnalysisError>.Ok(id)
+        },
+        7u8 => {
+            let (last_id, index) = match &ctx.session.hir.require(id)?.kind {
+                Block(value) if value.stmts.len() != 0 => (value.stmts[value.stmts.len() - 1u64], value.stmts.len() - 1u64),
+                _ => return Result<HirId, AnalysisError>.Err(invalid(span, "place block changed during normalization")),
+            };
+            let place_last = ensure_place(ctx, unit, last_id)?;
+            let node = ctx.session.hir.require(id)?;
+            match &node.kind { Block(value) => value.stmts[index] = place_last, _ => return Result<HirId, AnalysisError>.Err(invalid(span, "place block changed during normalization")), }
+            Result<HirId, AnalysisError>.Ok(id)
+        },
+        _ => Result<HirId, AnalysisError>.Ok(spill(ctx, unit, id, type_id, span)),
+    }
+}
+
+fn normalize_use(ctx: ResolutionContext&, unit: UnitId, id: HirId) -> Result<(), AnalysisError> {
+    let node = ctx.session.hir.require(id)?;
+    let span = node.span;
+    let type_id = node.type_id;
+    let address_operand = match &node.kind {
+        Unary(value) if value.op == UnaryOperator.AddrOf => Option<HirId>.Some(value.operand),
+        _ => Option<HirId>.None,
+    };
+    match address_operand {
+        Some(operand) => {
+            let function_address = match ctx.session.types.require(type_id)? { FunctionPointer(_, _) => true, _ => false, };
+            if function_address {
+                let is_function = match &ctx.session.hir.require(operand)?.kind { Ty => true, _ => false, };
+                if !is_function {
+                    return Result<(), AnalysisError>.Err(invalid(span, "function address operand is not a function type"));
+                }
+                return Result<(), AnalysisError>.Ok(());
+            }
+            let operand = ensure_place(ctx, unit, operand)?;
+            let node = ctx.session.hir.require(id)?;
+            match &node.kind { Unary(value) => value.operand = operand, _ => return Result<(), AnalysisError>.Err(invalid(span, "address expression changed during normalization")), }
+            return Result<(), AnalysisError>.Ok(());
+        },
+        None => {},
+    }
+
+    let array_access = match &node.kind { ArrayAccess(value) => Option<HirId>.Some(value.array), _ => Option<HirId>.None };
+    match array_access {
+        Some(_) => { ensure_place(ctx, unit, id)?; return Result<(), AnalysisError>.Ok(()); },
+        None => {},
+    }
+
+    let projected_place = match &node.kind {
+        FieldAccess(_) | TupleAccess(_) if node.is_place => true,
+        _ => false,
+    };
+    if projected_place {
+        ensure_place(ctx, unit, id)?;
+        return Result<(), AnalysisError>.Ok(());
+    }
+
+    let callable = match &node.kind { Invoke(value) => Option<HirId>.Some(value.callable), _ => Option<HirId>.None };
+    match callable {
+        Some(callable) => {
+            let callable_type = ctx.session.hir.require(callable)?.type_id;
+            let is_closure = match ctx.session.types.require(callable_type)? { Closure(_, _, _, _, _, _) => true, _ => false, };
+            if is_closure {
+                let callable = ensure_place(ctx, unit, callable)?;
+                let node = ctx.session.hir.require(id)?;
+                match &node.kind { Invoke(value) => value.callable = callable, _ => return Result<(), AnalysisError>.Err(invalid(span, "closure invocation changed during normalization")), }
+            }
+        },
+        None => {},
+    }
+
+    Result<(), AnalysisError>.Ok(())
+}
+
+pub fn normalize_address_storage(ctx: ResolutionContext&, output: AnalysisOutput&) -> Result<(), AnalysisError> {
+    for procedure in output.procedures {
+        let collector = AddressUseCollector.new();
+        defer collector.drop();
+        walk_expr(&ctx.session.hir, procedure.root, &collector)?;
+        let index = 0u64;
+        while index < collector.uses.len() {
+            normalize_use(ctx, procedure.unit, collector.uses[index])?;
+            index += 1u64;
+        }
+    }
+    Result<(), AnalysisError>.Ok(())
+}

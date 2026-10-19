@@ -232,7 +232,6 @@ impl ExprChecker {
             return Result<HirId, AnalysisError>.Err(self.error(span, message.as_str()));
         }
 
-        receiver_id = self.receiver_place(span, receiver_id, &prefix)?;
         let reference = self.ctx.session.types.reference(receiver_type);
         let borrowed = self.node(span, reference, false, HirKind.Unary(Unary(UnaryOperator.AddrOf, receiver_id)));
         let call = self.call_values(span, method_type, &values, Option<HirId>.Some(borrowed))?;

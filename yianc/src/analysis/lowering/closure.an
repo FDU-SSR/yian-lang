@@ -94,6 +94,6 @@ impl ExprChecker {
         types_moved = true;
         let type_id = self.ctx.session.types.closure(descriptions, parameter_types, result, location, Option<TypeId>.Some(environment), Option<TypeId>.Some(call_type));
         values_moved = true;
-        Result<HirId, AnalysisError>.Ok(self.node(span, type_id, true, HirKind.Closure(Closure(values))))
+        Result<HirId, AnalysisError>.Ok(self.node(span, type_id, false, HirKind.Closure(Closure(values))))
     }
 }

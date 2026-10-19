@@ -7,7 +7,6 @@ from yianc.analysis.hir.node import HirKind, TraitObjectCoerce, TraitObjectMetho
 from yianc.common.ids import TypeId, HirId, NameId;
 from yianc.common.location import SourceSpan;
 from yianc.frontend.source import Span;
-from yianc.frontend.ast.operator import UnaryOperator;
 from yianc.diagnostics.model import AnalysisError, DiagnosticCode;
 from std.core.drop import Drop;
 from std.core.iter import Iterator, IntoIterator;
@@ -24,15 +23,6 @@ impl ExprChecker {
             Reference(inner) => *inner,
             _ => return Result<HirId, AnalysisError>.Err(self.error(node.span.span, "trait object requires a concrete pointer or reference")),
         };
-
-        match &node.kind {
-            Unary(value) => {
-                if value.op == UnaryOperator.AddrOf && !self.ctx.session.hir.require(value.operand)?.is_place {
-                    return Result<HirId, AnalysisError>.Err(self.error(node.span.span, "cannot create a trait object from a temporary value"));
-                }
-            },
-            _ => {},
-        }
 
         let required = object_methods(self.ctx, trait_id)?;
         defer required.drop();
