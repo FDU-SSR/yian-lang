@@ -4,7 +4,6 @@ from yianc.analysis.ty.callable import signature;
 from yianc.analysis.ty.method_lookup import lookup_method_with_generics;
 from yianc.analysis.hir.node import HirKind, Unary, Block;
 from yianc.common.ids import HirId, TypeId, NameId;
-from yianc.analysis.editor_facts import EditorMemberKind;
 from yianc.frontend.ast.node import Expr, TypeSyntax, Argument;
 from yianc.frontend.ast.operator import UnaryOperator;
 from yianc.frontend.source import Span;
@@ -20,25 +19,10 @@ from yianc.analysis.ty.display import type_text;
 from std.core.string import String;
 from std.core.convert import From;
 
-fn record_method_reference(checker: ExprChecker&, method_type: TypeId, name: NameId,
-    name_span: Span) -> Result<(), AnalysisError> {
-    let definition = match checker.ctx.session.types.require(method_type)? {
-        Nominal(id, _) => *id,
-        _ => return Result<(), AnalysisError>.Err(AnalysisError.internal("resolved method is not nominal")),
-    };
-
-    match checker.ctx.session.editor_facts.method_declaration(definition) {
-        Some(target) => checker.ctx.session.editor_facts.record_member_reference(
-            EditorMemberKind.Method, name, checker.ctx.span(checker.unit, name_span), target, method_type),
-        None => {},
-    };
-
-    Result<(), AnalysisError>.Ok(())
-}
-
 impl ExprChecker {
-    pub fn method(span: Span, name_span: Span, receiver: Expr&, spelling: str,
+    pub fn method(span: Span, name_span: Option<Span>, receiver: Expr&, spelling: str,
         generics: Vec<TypeSyntax&>&, args: Vec<Argument&>&) -> Result<HirId, AnalysisError> {
+        let error_span = match name_span { Some(value) => value, None => span };
         let receiver_id = self.expression(receiver)?;
         let receiver_type = self.type_of(receiver_id);
         let static_call = match &self.ctx.session.hir.require(receiver_id)?.kind {
@@ -141,19 +125,14 @@ impl ExprChecker {
                         return Result<HirId, AnalysisError>.Err(self.error(span, "dynamic method cannot have generic arguments"));
                     }
 
-                    let methods = match self.ctx.session.types.require(*trait_id)? {
+                    match self.ctx.session.types.require(*trait_id)? {
                         Nominal(definition, _) => match self.ctx.session.types.complete_definition(*definition)? {
-                            Trait(methods) => methods,
+                            Trait(methods) => {},
                             _ => return Result<HirId, AnalysisError>.Err(AnalysisError.internal("trait object has a non-trait type")),
                         },
                         _ => return Result<HirId, AnalysisError>.Err(AnalysisError.internal("trait object identity is not nominal")),
                     };
-                    match methods.get(&name) {
-                        Some(method_type) => { record_method_reference(self, *method_type, name, name_span)?; },
-                        None => {},
-                    };
-
-                    let result = self.dynamic_method(span, receiver_id, *trait_id, name, &values)?;
+                    let result = self.dynamic_method(span, name_span, receiver_id, *trait_id, name, &values)?;
 
                     if prefix.len() == 0 {
                         return Result<HirId, AnalysisError>.Ok(result);
@@ -166,7 +145,7 @@ impl ExprChecker {
                 _ => {},
             }
 
-            match lookup_method_with_generics(self.ctx, receiver_type, name, required, Option<Vec<TypeId>&>.Some(&types), provided, self.ctx.span(self.unit, span)) {
+            match lookup_method_with_generics(self.ctx, receiver_type, name, required, Option<Vec<TypeId>&>.Some(&types), provided, self.ctx.span(self.unit, error_span)) {
                 Ok(value) => {
                     method_id = Option<TypeId>.Some(value);
                     break;
@@ -212,12 +191,11 @@ impl ExprChecker {
         }
 
         let method_type = *method_id.unwrap();
-        record_method_reference(self, method_type, name, name_span)?;
         let callable = signature(self.ctx, method_type)?;
         defer callable.drop();
 
         if callable.is_static {
-            return self.call_values(span, method_type, &values, Option<HirId>.None);
+            return self.call_values(span, method_type, &values, Option<HirId>.None, name_span);
         }
 
         if static_call {
@@ -234,7 +212,7 @@ impl ExprChecker {
 
         let reference = self.ctx.session.types.reference(receiver_type);
         let borrowed = self.node(span, reference, false, HirKind.Unary(Unary(UnaryOperator.AddrOf, receiver_id)));
-        let call = self.call_values(span, method_type, &values, Option<HirId>.Some(borrowed))?;
+        let call = self.call_values(span, method_type, &values, Option<HirId>.Some(borrowed), name_span)?;
 
         if prefix.len() == 0 {
             return Result<HirId, AnalysisError>.Ok(call);

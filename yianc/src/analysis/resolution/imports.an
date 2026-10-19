@@ -155,12 +155,7 @@ pub fn resolve_imports(ctx: ResolutionContext&) -> Result<(), AnalysisError> {
                     Import(paths, target, alias, _) => {
                         let destination = match target_unit(ctx, unit, paths, item.span) {
                             Ok(value) => value,
-                            Err(error) => {
-                                if !ctx.session.editor_recovery || error.kind == AnalysisErrorKind.Internal { return Result<(), AnalysisError>.Err(error); }
-                                error.diagnostic.stage = Option<AnalysisStage>.Some(AnalysisStage.Resolve);
-                                ctx.session.diagnostics.push_unique(error.diagnostic);
-                                continue;
-                            },
+                            Err(error) => return Result<(), AnalysisError>.Err(error),
                         };
                         let alias_name = match alias {
                             Some(value) => value.data.name.as_str(),
@@ -169,21 +164,13 @@ pub fn resolve_imports(ctx: ResolutionContext&) -> Result<(), AnalysisError> {
 
                         let bound = match bind_import(ctx, unit, destination, target.data.name.as_str(), alias_name, target.span) {
                             Ok(value) => value,
-                            Err(error) => {
-                                if !ctx.session.editor_recovery || error.kind == AnalysisErrorKind.Internal { return Result<(), AnalysisError>.Err(error); }
-                                error.diagnostic.stage = Option<AnalysisStage>.Some(AnalysisStage.Resolve);
-                                ctx.session.diagnostics.push_unique(error.diagnostic);
-                                continue;
-                            },
+                            Err(error) => return Result<(), AnalysisError>.Err(error),
                         };
                         if !bound {
                             if round == ctx.session.len() {
                                 let error = AnalysisError.named(DiagnosticCode.ImportNotFound,
                                     Option<SourceSpan>.Some(ctx.span(unit, target.span)), "Symbol '", target.data.name.as_str(), "' is not found in the imported unit");
-                                if !ctx.session.editor_recovery { return Result<(), AnalysisError>.Err(error); }
-                                error.diagnostic.stage = Option<AnalysisStage>.Some(AnalysisStage.Resolve);
-                                ctx.session.diagnostics.push_unique(error.diagnostic);
-                                continue;
+                                return Result<(), AnalysisError>.Err(error);
                             }
 
                             missing = true;

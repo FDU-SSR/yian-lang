@@ -51,12 +51,7 @@ pub fn check_restricted(session: AnalysisSession&) -> Result<(), AnalysisError> 
             let visitor = RestrictedVisitor(unit.source);
             match try_walk_program<AnalysisError>(unit.prepared.tree.unwrap().root, &visitor) {
                 Ok(_) => {},
-                Err(error) => {
-                    if !session.editor_recovery || error.kind == AnalysisErrorKind.Internal {
-                        return Result<(), AnalysisError>.Err(error);
-                    }
-                    session.diagnostics.push_unique(error.with_stage(AnalysisStage.Restricted).diagnostic);
-                },
+                Err(error) => return Result<(), AnalysisError>.Err(error.with_stage(AnalysisStage.Restricted)),
             }
         }
 

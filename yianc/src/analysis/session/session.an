@@ -1,7 +1,6 @@
 from yianc.common.ids import SourceId, UnitId, TypeId;
 from yianc.analysis.definition.registry import DefinitionRegistry;
 from yianc.analysis.definition.worklist import DefinitionWorklist;
-from yianc.analysis.editor_facts import EditorFacts;
 from yianc.analysis.hir.store import HirStore;
 from yianc.analysis.names import NameInterner;
 from yianc.analysis.symbol.scope import SymbolStore;
@@ -49,14 +48,12 @@ pub struct AnalysisSession {
     pub symbols: SymbolStore,
     pub hir: HirStore,
     pub definitions: DefinitionRegistry,
-    pub editor_facts: EditorFacts,
     pub worklist: DefinitionWorklist,
     pub impls: ImplRegistry,
     pub diagnostics: DiagnosticSink,
     packages: Option<PackageMap>,
     trust: SourceTrust,
     pub raw_pointers: bool,
-    pub editor_recovery: bool,
     phase: AnalysisPhase,
 }
 
@@ -64,8 +61,8 @@ impl AnalysisSession {
     // Package metadata and source trust transfer into this owner at construction.
     static pub fn new(trust: SourceTrust, packages: Option<PackageMap>, raw_pointers: bool) -> Self {
         Self(SourceManager.new(), NameInterner.new(), Arena<CompilationUnit>.new(), TypeStore.new(),
-            SymbolStore.new(), HirStore.new(), DefinitionRegistry.new(), EditorFacts.new(), DefinitionWorklist.new(),
-            ImplRegistry.new(), DiagnosticSink.new(), packages, trust, raw_pointers, false, AnalysisPhase.Prepared)
+            SymbolStore.new(), HirStore.new(), DefinitionRegistry.new(), DefinitionWorklist.new(),
+            ImplRegistry.new(), DiagnosticSink.new(), packages, trust, raw_pointers, AnalysisPhase.Prepared)
     }
 
     // A lexed file transfers here; later preparation stages mutate the session-owned payload.
@@ -99,7 +96,7 @@ impl AnalysisSession {
         }
     }
 
-    // Intrinsic identity lives in the session, so editor queries need no resolver.
+    // Intrinsic identity lives in the session, so later passes need no resolver.
     pub fn intrinsic_type(name: str) -> Option<TypeId> {
         let index = 0u64;
         while index < self.symbols.symbol_count() {
@@ -125,7 +122,6 @@ impl Drop for AnalysisSession {
         self.diagnostics.drop();
         self.worklist.drop();
         self.definitions.drop();
-        self.editor_facts.drop();
         self.impls.drop();
         self.hir.drop();
         self.symbols.drop();

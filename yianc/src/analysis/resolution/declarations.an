@@ -161,16 +161,7 @@ pub fn collect_declarations(ctx: ResolutionContext&) -> Result<(), AnalysisError
         let root = prepared.prepared.tree.unwrap().root;
 
         for item in root.data.items {
-            match collect_item(ctx, unit, *item, &empty) {
-                Ok(_) => {},
-                Err(error) => {
-                    if !ctx.session.editor_recovery || error.kind == AnalysisErrorKind.Internal {
-                        return Result<(), AnalysisError>.Err(error);
-                    }
-                    error.diagnostic.stage = Option<AnalysisStage>.Some(AnalysisStage.Resolve);
-                    ctx.session.diagnostics.push_unique(error.diagnostic);
-                },
-            }
+            collect_item(ctx, unit, *item, &empty)?;
         }
 
         unit_index += 1;

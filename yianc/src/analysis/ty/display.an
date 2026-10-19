@@ -143,7 +143,7 @@ pub fn type_text(ctx: ResolutionContext&, id: TypeId) -> String {
     text
 }
 
-// This overload lets editor queries render a checked type without retaining a resolution context.
+// This overload renders a stored type without requiring a resolution context.
 pub fn stored_type_text(types: TypeStore&, names: NameInterner&, id: TypeId) -> String {
     let text = String.new();
     append(types, names, id, &text, 0);

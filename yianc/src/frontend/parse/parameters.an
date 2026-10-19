@@ -41,14 +41,8 @@ pub fn parse_parameters(parser: Parser&) -> Option<Vec<Parameter>> {
     defer values.drop();
 
     while !parser.at_punct(PunctuatorKind.RParen) {
-        if parser.editor && (parser.at_end() || parser.declaration_boundary() || parser.at_punct(PunctuatorKind.LBrace)) { break; }
-        match parse_parameter(parser) {
-            Some(value) => values.push(value),
-            None => {
-                if !parser.editor { return Option<Vec<Parameter>>.None; }
-                parser.synchronize_list(PunctuatorKind.RParen);
-            },
-        }
+        let value = parse_parameter(parser)?;
+        values.push(value);
         if !parser.at_punct(PunctuatorKind.Comma) {
             break;
         }

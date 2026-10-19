@@ -9,7 +9,6 @@ from yianc.analysis.hir.node import HirKind, Match as HirMatch, MatchArm, Patter
 from yianc.analysis.constant.evaluate import ConstantEvaluator;
 from yianc.analysis.constant.interval import Boundary, scalar_key;
 from yianc.common.ids import PatternId, TypeId, HirId, ScopeId, SymbolId, NameId, DefId;
-from yianc.analysis.editor_facts import EditorMemberKind;
 from yianc.common.location import SourceSpan;
 from yianc.frontend.ast.node import Pattern, PatternArguments, PatternLet as SyntaxPatternLet, Literal;
 from yianc.frontend.source import Span;
@@ -220,13 +219,7 @@ impl ExprChecker {
                             Enum(body) => {
                                 for variant in body.variants {
                                     if variant.name == interned {
-                                        match &variant.span {
-                                            Some(target) => self.ctx.session.editor_facts.record_member_reference(
-                                                EditorMemberKind.Variant, interned, self.ctx.span(self.unit, name.span),
-                                                *target, expected),
-                                            None => {},
-                                        };
-                                        return Result<PatternId, AnalysisError>.Ok(self.pattern_node(span, expected, PatternKind.EnumPattern(EnumPattern(*variant, Option<Vec<(u64, PatternId)>>.None))));
+                                        return Result<PatternId, AnalysisError>.Ok(self.pattern_node(span, expected, PatternKind.EnumPattern(EnumPattern(*variant, Option<Vec<(u64, PatternId)>>.None, Option<SourceSpan>.Some(self.ctx.span(self.unit, name.span)), Option<Vec<Option<SourceSpan>>>.None))));
                                     }
                                 }
                             },
@@ -333,13 +326,6 @@ impl ExprChecker {
                                 continue;
                             }
 
-                            match &variant.span {
-                                Some(target) => self.ctx.session.editor_facts.record_member_reference(
-                                    EditorMemberKind.Variant, interned, self.ctx.span(self.unit, name.span),
-                                    *target, expected),
-                                None => {},
-                            };
-
                             let types = Vec<TypeId>.new();
                             defer types.drop();
                             let descriptors = payload_fields(self.ctx, variant.payload)?;
@@ -350,10 +336,12 @@ impl ExprChecker {
                             }
 
                             let fields = Vec<(u64, PatternId)>.new();
+                            let field_spans = Vec<Option<SourceSpan>>.new();
                             let accepted = false;
                             defer {
                                 if !accepted {
                                     fields.drop();
+                                    field_spans.drop();
                                 }
                             };
 
@@ -367,6 +355,7 @@ impl ExprChecker {
 
                                     while index < values.len() {
                                         fields.push((index, self.pattern(values[index], types[index], borrowed)?));
+                                        field_spans.push(Option<SourceSpan>.None);
                                         index += 1;
                                     }
                                 },
@@ -388,14 +377,8 @@ impl ExprChecker {
                                                     }
                                                 }
 
-                                                match &field.span {
-                                                    Some(target) => self.ctx.session.editor_facts.record_member_reference(
-                                                        EditorMemberKind.Field, field.name,
-                                                        self.ctx.span(self.unit, value.data.name.span), *target, field.type_id),
-                                                    None => {},
-                                                };
-
                                                 fields.push((field.index, self.pattern(value.data.pattern, types[field.index], borrowed)?));
+                                                field_spans.push(Option<SourceSpan>.Some(self.ctx.span(self.unit, value.data.name.span)));
                                                 found = true;
                                             }
                                         }
@@ -412,7 +395,7 @@ impl ExprChecker {
                             }
 
                             accepted = true;
-                            selected = Option<PatternId>.Some(self.pattern_node(span, expected, PatternKind.EnumPattern(EnumPattern(*variant, Option<Vec<(u64, PatternId)>>.Some(fields)))));
+                            selected = Option<PatternId>.Some(self.pattern_node(span, expected, PatternKind.EnumPattern(EnumPattern(*variant, Option<Vec<(u64, PatternId)>>.Some(fields), Option<SourceSpan>.Some(self.ctx.span(self.unit, name.span)), Option<Vec<Option<SourceSpan>>>.Some(field_spans)))));
                         }
 
                         match selected {
@@ -427,10 +410,12 @@ impl ExprChecker {
                         }
 
                         let fields = Vec<(u64, PatternId)>.new();
+                        let field_spans = Vec<Option<SourceSpan>>.new();
                         let accepted = false;
                         defer {
                             if !accepted {
                                 fields.drop();
+                                field_spans.drop();
                             }
                         };
 
@@ -450,13 +435,8 @@ impl ExprChecker {
 
                                             self.check_field_access(expected, *field, value.data.name.span)?;
                                             let type_id = substitute(&self.ctx.session.types, field.type_id, &substitutions)?;
-                                            match &field.span {
-                                                Some(target) => self.ctx.session.editor_facts.record_member_reference(
-                                                    EditorMemberKind.Field, field.name,
-                                                    self.ctx.span(self.unit, value.data.name.span), *target, type_id),
-                                                None => {},
-                                            };
                                             fields.push((field.index, self.pattern(value.data.pattern, type_id, borrowed)?));
+                                            field_spans.push(Option<SourceSpan>.Some(self.ctx.span(self.unit, value.data.name.span)));
                                             found = true;
                                         }
                                     }
@@ -480,6 +460,7 @@ impl ExprChecker {
                                 while index < values.len() {
                                     let type_id = substitute(&self.ctx.session.types, body.fields[index].type_id, &substitutions)?;
                                     fields.push((index, self.pattern(values[index], type_id, borrowed)?));
+                                    field_spans.push(Option<SourceSpan>.None);
                                     index += 1;
                                 }
                             },
@@ -491,7 +472,7 @@ impl ExprChecker {
                         }
 
                         accepted = true;
-                        PatternKind.StructPattern(StructPattern(fields))
+                        PatternKind.StructPattern(StructPattern(fields, field_spans))
                     },
                     _ => return Result<PatternId, AnalysisError>.Err(self.error(span, "pattern type is not an aggregate")),
                 }

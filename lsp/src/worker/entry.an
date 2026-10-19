@@ -261,26 +261,6 @@ fn handle_message(output: Stdout&, message: Message, state: WorkerState&, config
                         },
                     }
                 },
-                "worker/syntax" => {
-                    method.drop();
-                    let revision = trace_revision(&params);
-                    let trace_method = Option<String>.None;
-                    let started_ns = trace_start(config, "syntax", &trace_method, revision);
-                    match state.syntax(params) {
-                        Ok(value) => {
-                            trace_finish(config, "syntax", &trace_method,
-                                revision, started_ns, -1i32, false);
-                            response(output, id, value)
-                        },
-                        Err(problem) => {
-                            trace_finish(config, "syntax", &trace_method,
-                                revision, started_ns, -1i32, false);
-                            let sent = request_failed(output, id, -32603i64, problem.as_str());
-                            problem.drop();
-                            sent
-                        },
-                    }
-                },
                 "worker/query" => {
                     method.drop();
                     let revision = trace_revision(&params);
@@ -295,29 +275,6 @@ fn handle_message(output: Stdout&, message: Message, state: WorkerState&, config
                         },
                         Err(problem) => {
                             trace_finish(config, "query", &trace_method,
-                                revision, started_ns, 0i32, false);
-                            let code = problem.code;
-                            let text = problem.message.as_str();
-                            let sent = request_failed(output, id, code, text);
-                            problem.drop();
-                            sent
-                        },
-                    }
-                },
-                "worker/format" => {
-                    method.drop();
-                    let revision = trace_revision(&params);
-                    let trace_method = trace_method(&params);
-                    defer { match &trace_method { Some(value) => value.drop(), None => {}, } };
-                    let started_ns = trace_start(config, "format", &trace_method, revision);
-                    match state.format(params) {
-                        Ok(value) => {
-                            trace_finish(config, "format", &trace_method,
-                                revision, started_ns, 0i32, false);
-                            response(output, id, value)
-                        },
-                        Err(problem) => {
-                            trace_finish(config, "format", &trace_method,
                                 revision, started_ns, 0i32, false);
                             let code = problem.code;
                             let text = problem.message.as_str();

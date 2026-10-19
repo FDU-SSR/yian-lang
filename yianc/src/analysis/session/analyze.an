@@ -55,7 +55,7 @@ impl AnalysisSession {
         };
 
         let started = start_stage(&options, AnalysisStage.Restricted);
-        editor_stage(self, check_restricted(self), AnalysisStage.Restricted, &options, started)?;
+        at_stage(check_restricted(self), AnalysisStage.Restricted, &options, started)?;
         let context = ResolutionContext.new(self)?;
         defer context.drop();
         context.sizes = options.sizes;
@@ -68,15 +68,15 @@ impl AnalysisSession {
         started = start_stage(&options, AnalysisStage.Resolve);
         at_stage(resolve_impls(&context), AnalysisStage.Resolve, &options, started)?;
         started = start_stage(&options, AnalysisStage.Resolve);
-        editor_stage(self, register_automatic(&context), AnalysisStage.Resolve, &options, started)?;
+        at_stage(register_automatic(&context), AnalysisStage.Resolve, &options, started)?;
         started = start_stage(&options, AnalysisStage.Resolve);
-        editor_stage(self, evaluate_constants(&context, options.sizes), AnalysisStage.Resolve, &options, started)?;
+        at_stage(evaluate_constants(&context, options.sizes), AnalysisStage.Resolve, &options, started)?;
         started = start_stage(&options, AnalysisStage.Finalize);
-        editor_stage(self, finalize_types(&context), AnalysisStage.Finalize, &options, started)?;
+        at_stage(finalize_types(&context), AnalysisStage.Finalize, &options, started)?;
         started = start_stage(&options, AnalysisStage.Resolve);
-        editor_stage(self, check_impls(&context), AnalysisStage.Resolve, &options, started)?;
+        at_stage(check_impls(&context), AnalysisStage.Resolve, &options, started)?;
         started = start_stage(&options, AnalysisStage.Resolve);
-        editor_stage(self, validate_declarations(&context), AnalysisStage.Resolve, &options, started)?;
+        at_stage(validate_declarations(&context), AnalysisStage.Resolve, &options, started)?;
         let report = AnalysisReport.new();
         let report_transferred = false;
         defer { if !report_transferred { report.drop(); } };
@@ -96,8 +96,8 @@ impl AnalysisSession {
             Err(problem) => return Result<AnalysisReport, AnalysisError>.Err(problem.with_stage(AnalysisStage.TypeCheck)),
         }
         finish_stage(&options, AnalysisStage.TypeCheck, started);
-        // A recovered callee failure leaves a partial call graph. It is never exported to the backend.
-        if report.ok() && (!self.editor_recovery || !self.diagnostics.has_errors()) && options.verify_hir { verify_hir(&context, &output)?; }
+        // A callee failure leaves a partial call graph. It is never exported to the backend.
+        if report.ok() && options.verify_hir { verify_hir(&context, &output)?; }
         started = start_stage(&options, AnalysisStage.Coverage);
         at_stage(check_coverage(&context, &output, options.recover, &report.diagnostics), AnalysisStage.Coverage, &options, started)?;
         for warning in output.warnings { report.diagnostics.push(*warning); }
@@ -116,26 +116,13 @@ impl AnalysisSession {
         }
 
         order_diagnostics(&report.diagnostics, self.source_manager());
-        completed = report.ok() && (!self.editor_recovery || !self.diagnostics.has_errors());
+        completed = report.ok();
         if completed {
             accepted = true;
             report.output = Option<AnalysisOutput>.Some(output);
         }
         report_transferred = true;
         Result<AnalysisReport, AnalysisError>.Ok(report)
-    }
-}
-
-// Stage recovery retains independent declarations without converting internal failures into diagnostics.
-fn editor_stage(session: AnalysisSession&, result: Result<(), AnalysisError>, stage: AnalysisStage,
-    options: AnalysisOptions&, started: u64) -> Result<(), AnalysisError> {
-    match at_stage(result, stage, options, started) {
-        Ok(_) => Result<(), AnalysisError>.Ok(()),
-        Err(error) => {
-            if !session.editor_recovery || error.kind == AnalysisErrorKind.Internal { return Result<(), AnalysisError>.Err(error); }
-            if error.kind == AnalysisErrorKind.EditorIncomplete { error.drop(); } else { session.diagnostics.push_unique(error.diagnostic); }
-            Result<(), AnalysisError>.Ok(())
-        },
     }
 }
 

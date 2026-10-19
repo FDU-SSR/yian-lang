@@ -486,13 +486,3 @@ fn match_trait(store: TypeStore&, pattern: TypeId, required: TypeId, substitutio
         _ => false,
     }
 }
-
-// Editor enumeration uses the same isolated constraint solver as method calls.
-pub fn impl_conditions(session: AnalysisSession&, id: ImplId, substitutions: HashMap<TypeId, TypeId>&,
-    span: SourceSpan) -> Result<bool, AnalysisError> {
-    let record = session.impls.get(id).unwrap();
-    let active = Vec<TraitQuery>.new();
-    defer active.drop();
-    let budget = query_budget(session, record.target, record.target)?;
-    conditions(session, id, substitutions, 0, budget, &active, span)
-}

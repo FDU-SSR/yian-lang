@@ -123,35 +123,18 @@ fn program(parser: Parser&) -> Option<Program&> {
     defer items.drop();
 
     while !parser.at_end() {
-        let mark = parser.mark();
-        let attrs = match attributes(parser) {
-            Some(value) => value,
-            None => {
-                if !parser.editor { return Option<Program&>.None; }
-                recover_item(parser, mark);
-                continue;
-            },
-        };
+        let attrs = attributes(parser)?;
         defer attrs.drop();
         if parser.at_keyword(KeywordKind.Import) || parser.at_keyword(KeywordKind.From) {
             if attrs.len() != 0 {
                 parser.error("Attributes are not allowed on import statements", attrs[0u64].span);
                 return Option<Program&>.None;
             }
-            if imports(parser, &items).is_none() {
-                if !parser.editor { return Option<Program&>.None; }
-                recover_item(parser, mark);
-            }
+            imports(parser, &items)?;
             continue;
         }
 
-        match declaration(parser, &attrs) {
-            Some(item) => items.push(item),
-            None => {
-                if !parser.editor { return Option<Program&>.None; }
-                recover_item(parser, mark);
-            },
-        }
+        items.push(declaration(parser, &attrs)?);
     }
 
     let span = parser.peek().span;
@@ -166,12 +149,6 @@ fn program(parser: Parser&) -> Option<Program&> {
     }
 
     Option<Program&>.Some(val=parser.arena.alloc_program(ProgramData(items=items.take()), span))
-}
-
-fn recover_item(parser: Parser&, mark: u64) {
-    parser.synchronize();
-    if !parser.at_end() && !parser.declaration_boundary() { parser.advance(); }
-    if parser.mark() == mark && !parser.at_end() { parser.advance(); }
 }
 
 // Finish declaration parsing and transfer node ownership or the first error from the parser to the caller.
@@ -256,7 +233,6 @@ fn opaque_item(parser: Parser&, attrs: Vec<Attr&>&) -> Option<Item&> {
 }
 
 fn extern_function(parser: Parser&) -> Option<ExternFuncDecl&> {
-    let problems = parser.problems.len();
     parser.take_keyword(KeywordKind.Fn);
     parser.ready()?;
 
@@ -269,7 +245,6 @@ fn extern_function(parser: Parser&) -> Option<ExternFuncDecl&> {
     parser.ready()?;
 
     let declaration = parser.arena.alloc_extern_func_decl(ExternFuncDeclData(name=name, params=params.take(), ret_type=ret), name.span);
-    declaration.signature_recovered = parser.problems.len() != problems;
     Option<ExternFuncDecl&>.Some(declaration)
 }
 
@@ -399,7 +374,6 @@ fn enum_item(parser: Parser&, attrs: Vec<Attr&>&) -> Option<Item&> {
 }
 
 fn method_decl(parser: Parser&) -> Option<MethodDecl&> {
-    let problems = parser.problems.len();
     let attrs = attributes(parser)?;
     defer attrs.drop();
     parser.take_keyword(KeywordKind.Fn);
@@ -414,7 +388,6 @@ fn method_decl(parser: Parser&) -> Option<MethodDecl&> {
     parser.ready()?;
 
     let declaration = parser.arena.alloc_method_decl(MethodDeclData(attrs=attrs.take(), name=name, generics=generics.take(), params=params.take(), ret_type=ret), name.span);
-    declaration.signature_recovered = parser.problems.len() != problems;
     Option<MethodDecl&>.Some(declaration)
 }
 

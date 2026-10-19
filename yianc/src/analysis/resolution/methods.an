@@ -9,7 +9,6 @@ from yianc.analysis.ty.impl_registry import ImplRecord, ImplCondition;
 from yianc.analysis.ty.validation import contains_ffi;
 from yianc.common.ids import UnitId, ScopeId, TypeId, DefId, NameId, SymbolId;
 from yianc.common.location import SourceSpan;
-from yianc.analysis.editor_facts import EditorMemberKind;
 from yianc.frontend.ast.node import Item, MethodDecl, Block;
 from yianc.frontend.ast.atoms import AttrKind;
 from yianc.diagnostics.model import DiagnosticCode, AnalysisError, AnalysisErrorKind, AnalysisStage;
@@ -38,11 +37,6 @@ fn bind_self(ctx: ResolutionContext&, unit: UnitId, scope: ScopeId, type_id: Typ
 }
 
 pub fn resolve_method(ctx: ResolutionContext&, unit: UnitId, parent: ScopeId, receiver: TypeId, previous: Vec<TypeId>&, syntax: MethodDecl&, body: Option<Block&>, trait_member: bool) -> Result<TypeId, AnalysisError> {
-    if syntax.signature_recovered {
-        let error = ctx.error(unit, syntax.span, DiagnosticCode.Syntax, "unfinished method signature");
-        error.kind = AnalysisErrorKind.EditorIncomplete;
-        return Result<TypeId, AnalysisError>.Err(error);
-    }
     let seen = Vec<AttrKind>.new();
     defer seen.drop();
 
@@ -126,9 +120,6 @@ pub fn resolve_method(ctx: ResolutionContext&, unit: UnitId, parent: ScopeId, re
     ctx.session.types.finish_definition(definition, DefinitionBody.Method(CallableDefinition(params, result, Option<TypeId>.Some(receiver),
         has_attr(&syntax.data.attrs, AttrKind.Static), body.is_none(), has_attr(&syntax.data.attrs, AttrKind.Ffi), false, has_attr(&syntax.data.attrs, AttrKind.PubFfi), trait_member || has_attr(&syntax.data.attrs, AttrKind.Pub), previous.len())))?;
 
-    ctx.session.editor_facts.record_method_declaration(
-        definition, name, ctx.span(unit, syntax.data.name.span), type_id);
-
     match body {
         Some(value) => {
             ctx.session.definitions.register(Procedure(definition, type_id, unit, value, DefinitionKind.Method))?;
@@ -199,16 +190,7 @@ pub fn resolve_impls(ctx: ResolutionContext&) -> Result<(), AnalysisError> {
         let root = ctx.session.unit(unit).unwrap().prepared.tree.unwrap().root;
 
         for item in root.data.items {
-            match resolve_impl(ctx, unit, *item) {
-                Ok(_) => {},
-                Err(error) => {
-                    if !ctx.session.editor_recovery || error.kind == AnalysisErrorKind.Internal { return Result<(), AnalysisError>.Err(error); }
-                    if error.kind == AnalysisErrorKind.EditorIncomplete { error.drop(); } else {
-                        error.diagnostic.stage = Option<AnalysisStage>.Some(AnalysisStage.Resolve);
-                        ctx.session.diagnostics.push_unique(error.diagnostic);
-                    }
-                },
-            }
+            resolve_impl(ctx, unit, *item)?;
         }
 
         index += 1;

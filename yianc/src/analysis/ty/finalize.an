@@ -56,7 +56,6 @@ fn check_value(ctx: ResolutionContext&, type_id: TypeId, active_types: HashSet<T
         match ctx.session.types.require(current)? {
             Nominal(id, _) => {
                 let definition = *ctx.session.types.definition(*id).unwrap();
-                if ctx.session.editor_recovery && !definition.is_complete() { continue; }
                 let recursive = if expand {
                     active_types.contains(&current)
                 } else {

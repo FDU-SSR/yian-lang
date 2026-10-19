@@ -16,7 +16,7 @@ from lsp_protocol.sync import DidOpenParams, DidChangeParams, DidSaveParams, Did
 from lsp_protocol.sync import DidChangeWatchedFilesParams, FileChangeType;
 from lsp_protocol.uri import uri_to_path;
 
-enum PendingKind { Initialize, Syntax, Synchronize, ClientRequest }
+enum PendingKind { Initialize, Synchronize, ClientRequest }
 
 struct PendingRequest {
     internal_id: u64,
@@ -30,7 +30,6 @@ struct DeferredRequest {
     method: String,
     params: Option<Value>,
     revision: u64,
-    format: bool,
 }
 
 impl Drop for DeferredRequest {
@@ -65,8 +64,6 @@ struct ServerState {
     published_diagnostics: Vec<String>,
     revision: u64,
     analysis_revision: Option<u64>,
-    pending_syntax_uri: Option<String>,
-    syntax_deadline_ns: Option<i64>,
     full_deadline_ns: Option<i64>,
     topology_revision: u64,
     next_internal_id: u64,
@@ -227,8 +224,6 @@ impl ServerState {
             published_diagnostics=Vec<String>.new(),
             revision=0u64,
             analysis_revision=Option<u64>.None,
-            pending_syntax_uri=Option<String>.None,
-            syntax_deadline_ns=Option<i64>.None,
             full_deadline_ns=Option<i64>.None,
             topology_revision=0u64,
             next_internal_id=1u64,
@@ -500,26 +495,11 @@ impl ServerState {
         self.queue_internal("worker/sync", Value.Object(payload), PendingKind.Synchronize, self.revision)
     }
 
-    fn queue_syntax(uri: str) -> Result<(), IoError> {
-        let payload = Object.new();
-        put(&payload, "revision", Value.Number(Number.Unsigned(self.revision)));
-        put(&payload, "topology_revision", Value.Number(Number.Unsigned(self.topology_revision)));
-        put(&payload, "syntax_uri", Value.String(String.from(&uri)));
-        put(&payload, "documents", self.documents.to_json());
-        self.queue_internal("worker/syntax", Value.Object(payload), PendingKind.Syntax, self.revision)
-    }
-
     fn queue_current_sync() -> Result<(), IoError> {
-        if self.pending_syntax_uri.is_some() {
-            return Result<(), IoError>.Ok(());
-        }
         self.queue_sync()
     }
 
-    fn clear_pending_syntax() {
-        match &self.pending_syntax_uri { Some(uri) => uri.drop(), None => {}, }
-        self.pending_syntax_uri = Option<String>.None;
-        self.syntax_deadline_ns = Option<i64>.None;
+    fn clear_pending_analysis() {
         self.full_deadline_ns = Option<i64>.None;
     }
 
@@ -532,56 +512,33 @@ impl ServerState {
 
     fn schedule_due_work() -> Result<(), IoError> {
         if !self.worker_initialized { return Result<(), IoError>.Ok(()); }
-
         let now = monotonic_now()?.nanoseconds();
-        let syntax_due = match self.syntax_deadline_ns {
+        let due = match self.full_deadline_ns {
             Some(deadline) => now >= deadline,
             None => false,
         };
-        if syntax_due {
-            self.syntax_deadline_ns = Option<i64>.None;
-            if let Some(uri) = &self.pending_syntax_uri {
-                self.queue_syntax(uri.as_str())?;
-            }
-        }
-
-        let full_due = match self.full_deadline_ns {
-            Some(deadline) => now >= deadline,
-            None => false,
-        };
-        if full_due {
-            self.clear_pending_syntax();
+        if due {
+            self.full_deadline_ns = Option<i64>.None;
             self.queue_sync()?;
         }
-
         Result<(), IoError>.Ok(())
     }
 
     fn next_wait_milliseconds() -> Result<u64, IoError> {
         let wait = 100u64;
         let now = monotonic_now()?.nanoseconds();
-        match self.syntax_deadline_ns {
-            Some(deadline) if deadline > now => {
-                let remaining = u64(deadline - now) / 1000000u64;
-                if remaining < wait { wait = remaining; }
-            },
-            Some(_) => return Result<u64, IoError>.Ok(0u64),
-            None => {},
-            _ => {},
-        }
         match self.full_deadline_ns {
             Some(deadline) if deadline > now => {
                 let remaining = u64(deadline - now) / 1000000u64;
                 if remaining < wait { wait = remaining; }
             },
             Some(_) => return Result<u64, IoError>.Ok(0u64),
-            None => {},
             _ => {},
         }
         Result<u64, IoError>.Ok(wait)
     }
 
-    fn queue_query(id: RequestId, method: String, params: Option<Value>, format: bool)
+    fn queue_query(id: RequestId, method: String, params: Option<Value>)
     -> Result<(), IoError> {
         let payload = Object.new();
         put(&payload, "method", Value.String(method));
@@ -590,14 +547,13 @@ impl ServerState {
             None => put(&payload, "params", Value.Null),
         }
         let kind = PendingKind.ClientRequest;
-        self.queue_internal(if format { "worker/format" } else { "worker/query" },
-            Value.Object(payload), kind, self.revision)?;
+        self.queue_internal("worker/query", Value.Object(payload), kind, self.revision)?;
         let index = self.pending.len() - 1u64;
         self.pending[index].client_id = Option<RequestId>.Some(id);
         Result<(), IoError>.Ok(())
     }
 
-    fn defer_query(id: RequestId, method: String, params: Option<Value>, format: bool)
+    fn defer_query(id: RequestId, method: String, params: Option<Value>)
     -> Result<(), IoError> {
         if self.pending.len() + self.deferred.len() >= 128u64 {
             return self.error(id, -32803i64, "too many pending requests");
@@ -607,7 +563,6 @@ impl ServerState {
             method=method,
             params=params,
             revision=self.revision,
-            format=format,
             ));
         Result<(), IoError>.Ok(())
     }
@@ -624,7 +579,7 @@ impl ServerState {
                 request.method.drop();
                 match request.params { Some(value) => value.drop(), None => {}, }
             } else {
-                self.queue_query(request.id, request.method, request.params, request.format)?;
+                self.queue_query(request.id, request.method, request.params)?;
             }
         }
         Result<(), IoError>.Ok(())
@@ -643,33 +598,6 @@ impl ServerState {
         put(&capabilities, "documentSymbolProvider", Value.Boolean(true));
         put(&capabilities, "referencesProvider", Value.Boolean(true));
         put(&capabilities, "documentHighlightProvider", Value.Boolean(true));
-        put(&capabilities, "renameProvider", Value.Boolean(true));
-        let code_action = Object.new();
-        let code_action_kinds = Vec<Value>.new();
-        code_action_kinds.push(Value.String(String.from(&"quickfix")));
-        put(&code_action, "codeActionKinds", Value.Array(code_action_kinds));
-        put(&capabilities, "codeActionProvider", Value.Object(code_action));
-        put(&capabilities, "documentFormattingProvider", Value.Boolean(true));
-        let commands = Vec<Value>.new();
-        let execute_command = Object.new();
-        put(&execute_command, "commands", Value.Array(commands));
-        put(&capabilities, "executeCommandProvider", Value.Object(execute_command));
-
-        let completion = Object.new();
-        let completion_triggers = Vec<Value>.new();
-        completion_triggers.push(Value.String(String.from(&".")));
-        completion_triggers.push(Value.String(String.from(&":")));
-        completion_triggers.push(Value.String(String.from(&"<")));
-        put(&completion, "triggerCharacters", Value.Array(completion_triggers));
-        put(&capabilities, "completionProvider", Value.Object(completion));
-
-        let signature = Object.new();
-        let signature_triggers = Vec<Value>.new();
-        signature_triggers.push(Value.String(String.from(&"(")));
-        signature_triggers.push(Value.String(String.from(&",")));
-        put(&signature, "triggerCharacters", Value.Array(signature_triggers));
-        put(&capabilities, "signatureHelpProvider", Value.Object(signature));
-
         let legend = Object.new();
         let token_types = Vec<Value>.new();
         for token_type in ["type", "struct", "enum", "interface", "typeParameter", "function", "method", "property", "enumMember", "variable", "parameter"] {
@@ -703,18 +631,14 @@ impl ServerState {
         Value.Object(result)
     }
 
-    fn update_revision(topology: bool, syntax_uri: Option<String>) -> Result<(), IoError> {
+    fn update_revision(topology: bool, debounce: bool) -> Result<(), IoError> {
         self.revision += 1u64;
         if topology { self.topology_revision += 1u64; }
         self.analysis_revision = Option<u64>.None;
 
-        self.clear_pending_syntax();
-        if let Some(uri) = syntax_uri {
-            let now = monotonic_now()?.nanoseconds();
-            self.pending_syntax_uri = Option<String>.Some(uri);
-            self.syntax_deadline_ns = Option<i64>.Some(now + 200000000i64);
-            self.full_deadline_ns = Option<i64>.Some(now + 600000000i64);
-        }
+        self.clear_pending_analysis();
+        let now = monotonic_now()?.nanoseconds();
+        self.full_deadline_ns = Option<i64>.Some(now + if debounce { 600000000i64 } else { 0i64 });
 
         while self.deferred.len() != 0u64 {
             let request = self.deferred.remove(0u64);
@@ -731,7 +655,6 @@ impl ServerState {
             }
         }
 
-        if self.worker_initialized && self.pending_syntax_uri.is_none() { self.queue_sync()?; }
         Result<(), IoError>.Ok(())
     }
 
@@ -748,7 +671,7 @@ impl ServerState {
         let document = decoded.text_document;
         self.documents.set(document.uri.as_str(), document.text.as_str(), Option<i64>.Some(document.version));
         document.drop();
-        self.update_revision(false, Option<String>.None)
+        self.update_revision(false, false)
     }
 
     fn process_did_change(params: Option<Value>) -> Result<(), IoError> {
@@ -771,11 +694,10 @@ impl ServerState {
             String.from(&decoded.content_changes[decoded.content_changes.len() - 1u64].text.as_str())
         };
         self.documents.set(uri.as_str(), text.as_str(), Option<i64>.Some(decoded.text_document.version));
-        let syntax_uri = Option<String>.Some(uri.clone());
         uri.drop();
         text.drop();
         decoded.drop();
-        self.update_revision(false, syntax_uri)
+        self.update_revision(false, true)
     }
 
     fn process_did_close(params: Option<Value>) -> Result<(), IoError> {
@@ -797,7 +719,7 @@ impl ServerState {
         self.notification("textDocument/publishDiagnostics", Value.Object(clear))?;
         self.remove_published_diagnostic(uri.as_str());
         uri.drop();
-        self.update_revision(false, Option<String>.None)
+        self.update_revision(false, false)
     }
 
     fn remove_published_diagnostic(uri: str) {
@@ -833,7 +755,7 @@ impl ServerState {
         }
         let refresh_topology = Self.manifest_uri(uri);
         decoded.drop();
-        self.update_revision(refresh_topology, Option<String>.None)
+        self.update_revision(refresh_topology, false)
     }
 
     fn process_watched_files(params: Option<Value>) -> Result<(), IoError> {
@@ -862,7 +784,7 @@ impl ServerState {
         }
         decoded.drop();
         if !relevant { return Result<(), IoError>.Ok(()); }
-        self.update_revision(refresh_topology, Option<String>.None)
+        self.update_revision(refresh_topology, false)
     }
 
     fn handle_cancel(params: Option<Value>) -> Result<(), IoError> {
@@ -926,28 +848,16 @@ impl ServerState {
                 self.success(id, Value.Null)
             },
             "textDocument/definition" | "textDocument/hover" | "textDocument/documentSymbol" |
-            "textDocument/semanticTokens/full" | "textDocument/completion" | "textDocument/signatureHelp" |
-            "textDocument/references" | "textDocument/documentHighlight" | "textDocument/prepareRename" |
-            "textDocument/rename" | "textDocument/codeAction" => {
+            "textDocument/semanticTokens/full" | "textDocument/references" |
+            "textDocument/documentHighlight" => {
                 if !self.initialized { return self.error(id, -32002i64, "server is not initialized"); }
                 if self.pending.len() + self.deferred.len() >= 128u64 {
                     return self.error(id, -32803i64, "too many pending requests");
                 }
                 if self.has_current_analysis() {
-                    self.queue_query(id, method, params, false)
+                    self.queue_query(id, method, params)
                 } else {
-                    self.defer_query(id, method, params, false)
-                }
-            },
-            "textDocument/formatting" => {
-                if !self.initialized { return self.error(id, -32002i64, "server is not initialized"); }
-                if self.pending.len() + self.deferred.len() >= 128u64 {
-                    return self.error(id, -32803i64, "too many pending requests");
-                }
-                if self.has_current_analysis() {
-                    self.queue_query(id, method, params, true)
-                } else {
-                    self.defer_query(id, method, params, true)
+                    self.defer_query(id, method, params)
                 }
             },
             _ => {
@@ -991,7 +901,7 @@ impl ServerState {
         }
     }
 
-    fn publish_sync_result(result: Value, syntax_only: bool) -> Result<(), IoError> {
+    fn publish_sync_result(result: Value) -> Result<(), IoError> {
         defer result.drop();
         let diagnostics = match result.as_object() {
             Some(object) => match object.get("diagnostics") {
@@ -1007,29 +917,9 @@ impl ServerState {
                 release_strings(&next_published);
             }
         };
-        if syntax_only {
-            for previous in self.published_diagnostics {
-                next_published.push(String.from(&previous.as_str()));
-            }
-        }
-        let syntax_uri = if syntax_only {
-            match result.as_object() {
-                Some(object) => match object.get("syntax_document") {
-                    Some(value) => match value.as_string() {
-                        Some(uri) => uri,
-                        None => return Result<(), IoError>.Err(process_error("syntax result URI is invalid")),
-                    },
-                    None => return Result<(), IoError>.Err(process_error("syntax result omitted its document URI")),
-                },
-                None => return Result<(), IoError>.Err(process_error("syntax result is not an object")),
-            }
-        } else {
-            ""
-        };
         if let Some(map) = diagnostics {
             let iterator = map.iter();
             while let Some((uri, values)) = iterator.next() {
-                if syntax_only && uri != syntax_uri { continue; }
                 let payload = Object.new();
                 put(&payload, "uri", Value.String(String.from(&uri)));
                 put(&payload, "diagnostics", values.clone());
@@ -1047,18 +937,16 @@ impl ServerState {
                 }
                 if !already_published { next_published.push(String.from(&uri)); }
             }
-            if !syntax_only {
-                for previous in self.published_diagnostics {
-                    if map.get(previous.as_str()).is_none() {
-                        let payload = Object.new();
-                        put(&payload, "uri", Value.String(String.from(&previous.as_str())));
-                        put(&payload, "diagnostics", empty_array());
-                        self.notification("textDocument/publishDiagnostics", Value.Object(payload))?;
-                    }
+            for previous in self.published_diagnostics {
+                if map.get(previous.as_str()).is_none() {
+                    let payload = Object.new();
+                    put(&payload, "uri", Value.String(String.from(&previous.as_str())));
+                    put(&payload, "diagnostics", empty_array());
+                    self.notification("textDocument/publishDiagnostics", Value.Object(payload))?;
                 }
             }
         }
-        if !syntax_only { self.send_semantic_refresh()?; }
+        self.send_semantic_refresh()?;
         for uri in self.published_diagnostics { uri.drop(); }
         self.published_diagnostics.drop();
         self.published_diagnostics = next_published;
@@ -1096,16 +984,9 @@ impl ServerState {
                         self.worker_initialized = true;
                         if self.initialized { self.queue_current_sync()?; }
                     },
-                    Syntax => {
-                        if pending.revision == self.revision {
-                            self.publish_sync_result(result, true)?;
-                        } else {
-                            result.drop();
-                        }
-                    },
                     Synchronize => {
                         if pending.revision == self.revision {
-                            self.publish_sync_result(result, false)?;
+                            self.publish_sync_result(result)?;
                             self.analysis_revision = Option<u64>.Some(self.revision);
                             self.flush_deferred(true)?;
                         } else { result.drop(); }
@@ -1137,7 +1018,6 @@ impl ServerState {
                         self.worker_initialized = false;
                         self.flush_deferred(false)?;
                     },
-                    Syntax => {},
                     Synchronize => {
                         if pending.revision == self.revision { self.flush_deferred(false)?; }
                     },
@@ -1474,7 +1354,6 @@ impl Drop for ServerState {
         self.published_diagnostics.drop();
         self.poller.drop();
         match &self.workspace_root { Some(value) => value.drop(), None => {}, }
-        match &self.pending_syntax_uri { Some(value) => value.drop(), None => {}, }
         self.child.drop();
     }
 }

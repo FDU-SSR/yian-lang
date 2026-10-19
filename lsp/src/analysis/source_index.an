@@ -1,0 +1,1307 @@
+from yianc.analysis.names import NameInterner;
+from yianc.analysis.session.session import AnalysisSession;
+from yianc.common.ids import NameId, SourceId, TypeId, UnitId;
+from yianc.common.location import SourceSpan;
+from yianc.common.traversal import WalkControl;
+from yianc.frontend.ast.arena import AstTree;
+from yianc.frontend.ast.node import Argument, Block, CaptureItem, Condition, ConstExpr, ConstGenericParam;
+from yianc.frontend.ast.node import Expr, FieldPattern, Identifier, ImplCondition, Item, Literal;
+from yianc.frontend.ast.node import MatchArm, MethodDecl, MethodDef, ExternFuncDecl, Pattern, PatternLet;
+from yianc.frontend.ast.node import GenericParam, Program, TraitMember, TypeGenericParam, TypeSyntax, VarInfo, VariantInfo;
+from yianc.frontend.ast.walk import TryAstVisitor, try_walk_program;
+from yianc.frontend.lex.lexer import Lexer;
+from yianc.frontend.lex.token import KeywordKind, Token, TokenPayload, drop_tokens;
+from yianc.frontend.parse.items import parse_program;
+from yianc.frontend.parse.state import Parser;
+from yianc.frontend.source import Position, SourceDocument, Span;
+from std.collections.hash_map import HashMap;
+from std.core.drop import Drop;
+from std.core.fs import canonicalize;
+from std.core.hash import Hash, Murmur3Hasher;
+from std.core.iter import Iterator, IntoIterator;
+from std.core.ops import Index, PartialEq;
+from std.core.option import Option;
+from std.core.path import Path, PathBuf;
+from std.core.result import Result;
+from std.core.string import String;
+from std.core.vec import Vec;
+
+pub enum DeclKind {
+    Module,
+    Type,
+    Struct,
+    Enum,
+    Trait,
+    TypeParameter,
+    Function,
+    Method,
+    Field,
+    Variant,
+    Variable,
+    Parameter,
+    Alias,
+    Constant,
+}
+
+impl DeclKind {
+    pub fn code() -> u32 {
+        match self {
+            Module => 0u32, Type => 1u32, Struct => 2u32, Enum => 3u32, Trait => 4u32,
+            TypeParameter => 5u32, Function => 6u32, Method => 7u32, Field => 8u32,
+            Variant => 9u32, Variable => 10u32, Parameter => 11u32, Alias => 12u32,
+            Constant => 13u32,
+        }
+    }
+
+    pub fn label() -> str {
+        match self {
+            Module => "module", Type => "type", Struct => "struct", Enum => "enum", Trait => "trait",
+            TypeParameter => "type parameter", Function => "fn", Method => "fn", Field => "field",
+            Variant => "variant", Variable => "let", Parameter => "parameter", Alias => "type",
+            Constant => "const",
+        }
+    }
+}
+
+struct SpanKey {
+    source: u64,
+    start_row: u64,
+    start_column: u64,
+    end_row: u64,
+    end_column: u64,
+}
+
+impl PartialEq<SpanKey> for SpanKey {
+    pub fn eq(other: SpanKey&) -> bool {
+        self.source == other.source && self.start_row == other.start_row &&
+        self.start_column == other.start_column && self.end_row == other.end_row &&
+        self.end_column == other.end_column
+    }
+}
+
+impl Hash<Murmur3Hasher> for SpanKey {
+    pub fn hash(hasher: Murmur3Hasher&) {
+        self.source.hash(hasher);
+        self.start_row.hash(hasher);
+        self.start_column.hash(hasher);
+        self.end_row.hash(hasher);
+        self.end_column.hash(hasher);
+    }
+}
+
+struct DeclKey {
+    span: SpanKey,
+    kind: u32,
+}
+
+impl PartialEq<DeclKey> for DeclKey {
+    pub fn eq(other: DeclKey&) -> bool { self.span == other.span && self.kind == other.kind }
+}
+
+impl Hash<Murmur3Hasher> for DeclKey {
+    pub fn hash(hasher: Murmur3Hasher&) {
+        self.span.hash(hasher);
+        self.kind.hash(hasher);
+    }
+}
+
+struct OccurrenceKey {
+    span: SpanKey,
+    target: u64,
+    context: u64,
+}
+
+impl PartialEq<OccurrenceKey> for OccurrenceKey {
+    pub fn eq(other: OccurrenceKey&) -> bool {
+        self.span == other.span && self.target == other.target && self.context == other.context
+    }
+}
+
+impl Hash<Murmur3Hasher> for OccurrenceKey {
+    pub fn hash(hasher: Murmur3Hasher&) {
+        self.span.hash(hasher);
+        self.target.hash(hasher);
+        self.context.hash(hasher);
+    }
+}
+
+pub struct DeclInfo {
+    pub source: SourceId,
+    pub span: SourceSpan,
+    pub kind: DeclKind,
+    pub name: String,
+    pub owner: Option<SourceSpan>,
+    pub type_text: Option<String>,
+    pub detail: Option<String>,
+}
+
+impl Drop for DeclInfo {
+    pub fn drop() {
+        self.name.drop();
+        match &self.type_text { Some(value) => value.drop(), None => {}, }
+        match &self.detail { Some(value) => value.drop(), None => {}, }
+    }
+}
+
+pub struct Occurrence {
+    pub source: SourceId,
+    pub span: SourceSpan,
+    pub target: Option<u64>,
+    pub kind: DeclKind,
+    pub is_declaration: bool,
+    pub context: Option<TypeId>,
+    pub type_text: Option<String>,
+    pub signature: Option<String>,
+    pub lexical: bool,
+}
+
+impl Drop for Occurrence {
+    pub fn drop() {
+        match &self.type_text { Some(value) => value.drop(), None => {}, }
+        match &self.signature { Some(value) => value.drop(), None => {}, }
+    }
+}
+
+pub struct SourceIndex {
+    pub decls: Vec<DeclInfo>,
+    pub occurrences: Vec<Occurrence>,
+    paths: Vec<String>,
+    asts: Vec<Option<AstTree>>,
+    tokens: Vec<Vec<Token>>,
+    stdlib: Vec<bool>,
+    module_names: Vec<HashMap<NameId, u64>>,
+    decl_keys: HashMap<DeclKey, u64>,
+    decl_spans: HashMap<SpanKey, bool>,
+    occurrence_keys: HashMap<OccurrenceKey, bool>,
+    covered_values: HashMap<SpanKey, bool>,
+    std_root: String,
+    package_roots: Vec<(String, String)>,
+}
+
+fn span_key(source: SourceId, span: SourceSpan) -> SpanKey {
+    SpanKey(source.index, span.span.start.row, span.span.start.column,
+        span.span.end.row, span.span.end.column)
+}
+
+fn position_span(source: SourceId, row: u64, column: u64) -> SourceSpan {
+    let point = Position(row=row, column=column);
+    SourceSpan(source, Span(point, point))
+}
+
+fn before(left_row: u64, left_column: u64, right_row: u64, right_column: u64) -> bool {
+    left_row < right_row || (left_row == right_row && left_column < right_column)
+}
+
+fn span_contains(span: SourceSpan, row: u64, column: u64) -> bool {
+    !before(row, column, span.span.start.row, span.span.start.column) &&
+    !before(span.span.end.row, span.span.end.column, row, column)
+}
+
+fn module_stem(path: str) -> String {
+    let file = Path.new(path);
+    match file.file_name() {
+        Some(value) => {
+            let stem = String.from(&value);
+            if stem.as_slice().len() >= 3u64 {
+                let _ = stem.pop();
+                let _ = stem.pop();
+                let _ = stem.pop();
+            }
+            stem
+        },
+        None => String.new(),
+    }
+}
+
+struct ScopeFrame {
+    types: HashMap<NameId, u64>,
+    values: HashMap<NameId, u64>,
+}
+
+impl ScopeFrame {
+    static fn new() -> Self { Self(HashMap<NameId, u64>.new(), HashMap<NameId, u64>.new()) }
+}
+
+impl Drop for ScopeFrame {
+    pub fn drop() {
+        self.types.drop();
+        self.values.drop();
+    }
+}
+
+// Raw syntax binding owns only declaration identities; semantic targets come from HIR.
+struct Binder {
+    index: SourceIndex&,
+    names: NameInterner&,
+    source: SourceId,
+    scopes: Vec<ScopeFrame>,
+    skip: HashMap<SpanKey, bool>,
+    pending_patterns: Vec<(NameId, u64)>,
+    deferred_patterns: u64,
+    type_depth: u64,
+    const_depth: u64,
+    binding_params: u64,
+    item_scopes: Vec<bool>,
+    method_def_pending: u64,
+    method_modes: Vec<bool>,
+    pattern_marks: Vec<u64>,
+}
+
+impl Binder {
+    fn push_scope() { self.scopes.push(ScopeFrame.new()); }
+
+    fn pop_scope() {
+        match self.scopes.pop() {
+            Some(value) => value.drop(),
+            None => {},
+        }
+    }
+
+    fn bind_type(name: NameId, target: u64) {
+        if self.scopes.len() != 0u64 {
+            self.scopes[self.scopes.len() - 1u64].types.insert(name, target);
+        }
+    }
+
+    fn bind_value(name: NameId, target: u64) {
+        if self.scopes.len() != 0u64 {
+            self.scopes[self.scopes.len() - 1u64].values.insert(name, target);
+        }
+    }
+
+    fn resolve_type(name: NameId) -> Option<u64> {
+        let index = self.scopes.len();
+        while index != 0u64 {
+            index -= 1u64;
+            match self.scopes[index].types.get(&name) {
+                Some(value) => return Option<u64>.Some(*value),
+                None => {},
+            }
+        }
+        Option<u64>.None
+    }
+
+    fn resolve_value(name: NameId) -> Option<u64> {
+        let index = self.scopes.len();
+        while index != 0u64 {
+            index -= 1u64;
+            match self.scopes[index].values.get(&name) {
+                Some(value) => return Option<u64>.Some(*value),
+                None => {},
+            }
+        }
+        Option<u64>.None
+    }
+
+    fn skip_identifier(span: Span) {
+        self.skip.insert(span_key(self.source, SourceSpan(self.source, span)), true);
+    }
+
+    fn ensure_decl(span: Span, kind: DeclKind, name: str) -> u64 {
+        self.index.add_decl(self.source, SourceSpan(self.source, span), kind, name,
+            Option<SourceSpan>.None)
+    }
+
+    fn bind_pattern_name(name: Identifier&, kind: DeclKind) {
+        let target = self.ensure_decl(name.span, kind, name.data.name.as_str());
+        let interned = self.names.intern(name.data.name.as_str());
+        if self.deferred_patterns != 0u64 {
+            self.pending_patterns.push((interned, target));
+        } else {
+            self.bind_value(interned, target);
+        }
+    }
+
+    fn flush_from(mark: u64) {
+        while self.pending_patterns.len() > mark {
+            let entry = self.pending_patterns.pop().unwrap();
+            self.bind_value(entry[0], entry[1]);
+        }
+    }
+
+    fn bind_generic(name: Identifier&) {
+        let target = self.ensure_decl(name.span, DeclKind.TypeParameter, name.data.name.as_str());
+        let interned = self.names.intern(name.data.name.as_str());
+        self.bind_type(interned, target);
+    }
+
+    fn record_type_reference(name: Identifier&) {
+        let interned = self.names.intern(name.data.name.as_str());
+        match self.resolve_type(interned) {
+            Some(target) => {
+                let kind = self.index.decls[target].kind;
+                self.index.add_occurrence(self.source, SourceSpan(self.source, name.span), Option<u64>.Some(target),
+                    kind, false, Option<TypeId>.None, Option<String>.None, Option<String>.None, true);
+            },
+            None => {},
+        }
+    }
+
+    fn record_value_reference(name: Identifier&) {
+        let span = SourceSpan(self.source, name.span);
+        if self.index.value_is_covered(span) { return; }
+        let interned = self.names.intern(name.data.name.as_str());
+        match self.resolve_value(interned) {
+            Some(target) => {
+                let kind = self.index.decls[target].kind;
+                if kind == DeclKind.Type || kind == DeclKind.Struct || kind == DeclKind.Enum ||
+                kind == DeclKind.Trait || kind == DeclKind.Alias {
+                    return;
+                }
+                self.index.add_occurrence(self.source, span, Option<u64>.Some(target), kind, false,
+                    Option<TypeId>.None, Option<String>.None, Option<String>.None, true);
+            },
+            None => {},
+        }
+    }
+}
+
+impl Drop for Binder {
+    pub fn drop() {
+        for frame in self.scopes { frame.drop(); }
+        self.scopes.drop();
+        self.skip.drop();
+        self.pending_patterns.drop();
+        self.item_scopes.drop();
+        self.method_modes.drop();
+        self.pattern_marks.drop();
+    }
+}
+
+impl TryAstVisitor<String> for Binder {
+    pub fn enter_identifier(node: Identifier&) -> Result<WalkControl, String> {
+        let span = SourceSpan(self.source, node.span);
+        if self.index.is_declaration_span(span) { return Result<WalkControl, String>.Ok(WalkControl.Continue); }
+        if self.skip.contains(&span_key(self.source, span)) { return Result<WalkControl, String>.Ok(WalkControl.Continue); }
+        if self.type_depth != 0u64 || self.const_depth != 0u64 {
+            self.record_type_reference(node);
+        } else {
+            self.record_value_reference(node);
+        }
+        Result<WalkControl, String>.Ok(WalkControl.Continue)
+    }
+
+    pub fn enter_type_syntax(node: TypeSyntax&) -> Result<WalkControl, String> {
+        self.type_depth += 1u64;
+        Result<WalkControl, String>.Ok(WalkControl.Continue)
+    }
+
+    pub fn leave_type_syntax(node: TypeSyntax&) -> Result<(), String> {
+        if self.type_depth != 0u64 { self.type_depth -= 1u64; }
+        Result<(), String>.Ok(())
+    }
+
+    pub fn enter_const_expr(node: ConstExpr&) -> Result<WalkControl, String> {
+        self.const_depth += 1u64;
+        Result<WalkControl, String>.Ok(WalkControl.Continue)
+    }
+
+    pub fn leave_const_expr(node: ConstExpr&) -> Result<(), String> {
+        if self.const_depth != 0u64 { self.const_depth -= 1u64; }
+        Result<(), String>.Ok(())
+    }
+
+    pub fn enter_type_generic_param(node: TypeGenericParam&) -> Result<WalkControl, String> {
+        self.bind_generic(node.data.name);
+        Result<WalkControl, String>.Ok(WalkControl.Continue)
+    }
+
+    pub fn enter_const_generic_param(node: ConstGenericParam&) -> Result<WalkControl, String> {
+        let target = self.ensure_decl(node.data.name.span, DeclKind.TypeParameter, node.data.name.data.name.as_str());
+        let interned = self.names.intern(node.data.name.data.name.as_str());
+        self.bind_type(interned, target);
+        self.bind_value(interned, target);
+        Result<WalkControl, String>.Ok(WalkControl.Continue)
+    }
+
+    pub fn enter_var_info(node: VarInfo&) -> Result<WalkControl, String> {
+        if self.binding_params != 0u64 {
+            let target = self.ensure_decl(node.data.name.span, DeclKind.Parameter, node.data.name.data.name.as_str());
+            let interned = self.names.intern(node.data.name.data.name.as_str());
+            self.bind_value(interned, target);
+        }
+        Result<WalkControl, String>.Ok(WalkControl.Continue)
+    }
+
+    pub fn enter_impl_condition(node: ImplCondition&) -> Result<WalkControl, String> {
+        self.bind_generic(node.data.name);
+        Result<WalkControl, String>.Ok(WalkControl.Continue)
+    }
+
+    pub fn enter_capture_item(node: CaptureItem&) -> Result<WalkControl, String> {
+        let target = self.ensure_decl(node.data.name.span, DeclKind.Parameter, node.data.name.data.name.as_str());
+        let interned = self.names.intern(node.data.name.data.name.as_str());
+        self.bind_value(interned, target);
+        Result<WalkControl, String>.Ok(WalkControl.Continue)
+    }
+
+    pub fn enter_field_pattern(node: FieldPattern&) -> Result<WalkControl, String> {
+        self.skip_identifier(node.data.name.span);
+        Result<WalkControl, String>.Ok(WalkControl.Continue)
+    }
+
+    pub fn enter_pattern(node: Pattern&) -> Result<WalkControl, String> {
+        match &node.data {
+            NamePattern(name) => {
+                let kind = if self.binding_params != 0u64 { DeclKind.Parameter } else { DeclKind.Variable };
+                self.bind_pattern_name(*name, kind);
+            },
+            BindPattern(name, inner) => {
+                let kind = if self.binding_params != 0u64 { DeclKind.Parameter } else { DeclKind.Variable };
+                self.bind_pattern_name(*name, kind);
+            },
+            ConstructPattern(name, qualifier, arguments, rest) => {
+                self.skip_identifier(name.span);
+            },
+            _ => {},
+        }
+        Result<WalkControl, String>.Ok(WalkControl.Continue)
+    }
+
+    pub fn enter_match_arm(node: MatchArm&) -> Result<WalkControl, String> {
+        self.push_scope();
+        Result<WalkControl, String>.Ok(WalkControl.Continue)
+    }
+
+    pub fn leave_match_arm(node: MatchArm&) -> Result<(), String> {
+        self.pop_scope();
+        Result<(), String>.Ok(())
+    }
+
+    pub fn enter_item(node: Item&) -> Result<WalkControl, String> {
+        match &node.data {
+            Import(paths, target, alias, end) => {
+                for path in *paths { self.skip_identifier(path.span); }
+                self.skip_identifier(target.span);
+                match alias { Some(value) => self.skip_identifier(value.span), None => {}, }
+                self.item_scopes.push(false);
+            },
+            Alias(_, _, _, _) | StructDef(_, _, _, _) | EnumDef(_, _, _, _) | TraitDef(_, _, _, _) | Impl(_, _, _, _, _) => {
+                self.push_scope();
+                self.item_scopes.push(true);
+            },
+            FuncDef(_, _, _, _, _, _) => {
+                self.push_scope();
+                self.binding_params += 1u64;
+                self.item_scopes.push(true);
+            },
+            _ => self.item_scopes.push(false),
+        }
+        Result<WalkControl, String>.Ok(WalkControl.Continue)
+    }
+
+    pub fn leave_item(node: Item&) -> Result<(), String> {
+        match self.item_scopes.pop() {
+            Some(true) => {
+                self.pop_scope();
+                match &node.data {
+                    FuncDef(_, _, _, _, _, _) => { self.binding_params -= 1u64; },
+                    _ => {},
+                }
+            },
+            _ => {},
+        }
+        Result<(), String>.Ok(())
+    }
+
+    pub fn enter_method_def(node: MethodDef&) -> Result<WalkControl, String> {
+        self.method_def_pending += 1u64;
+        Result<WalkControl, String>.Ok(WalkControl.Continue)
+    }
+
+    pub fn leave_method_def(node: MethodDef&) -> Result<(), String> {
+        self.pop_scope();
+        self.binding_params -= 1u64;
+        if self.method_def_pending != 0u64 { self.method_def_pending -= 1u64; }
+        self.method_modes.pop();
+        Result<(), String>.Ok(())
+    }
+
+    pub fn enter_method_decl(node: MethodDecl&) -> Result<WalkControl, String> {
+        self.push_scope();
+        self.binding_params += 1u64;
+        self.method_modes.push(self.method_def_pending != 0u64);
+        Result<WalkControl, String>.Ok(WalkControl.Continue)
+    }
+
+    pub fn leave_method_decl(node: MethodDecl&) -> Result<(), String> {
+        let keep = if self.method_modes.len() != 0u64 {
+            self.method_modes[self.method_modes.len() - 1u64]
+        } else {
+            false
+        };
+        if !keep {
+            self.pop_scope();
+            self.binding_params -= 1u64;
+            self.method_modes.pop();
+        }
+        Result<(), String>.Ok(())
+    }
+
+    pub fn enter_extern_func_decl(node: ExternFuncDecl&) -> Result<WalkControl, String> {
+        self.push_scope();
+        self.binding_params += 1u64;
+        Result<WalkControl, String>.Ok(WalkControl.Continue)
+    }
+
+    pub fn leave_extern_func_decl(node: ExternFuncDecl&) -> Result<(), String> {
+        self.pop_scope();
+        self.binding_params -= 1u64;
+        Result<(), String>.Ok(())
+    }
+
+    pub fn enter_expr(node: Expr&) -> Result<WalkControl, String> {
+        match &node.data {
+            Block(_) => self.push_scope(),
+            VarDecl(name, _, _) => {
+                self.ensure_decl(name.span, DeclKind.Variable, name.data.name.as_str());
+            },
+            PatternLet(_) => {
+                self.pattern_marks.push(self.pending_patterns.len());
+                self.deferred_patterns += 1u64;
+            },
+            For(_, _, _) => self.push_scope(),
+            ClosureExpr(_, _, _, _) => self.push_scope(),
+            MethodCall(_, name, _, _) => self.skip_identifier(name.span),
+            FieldAccess(_, name) => self.skip_identifier(name.span),
+            TypeItem(name, _) => self.skip_identifier(name.span),
+            TraitCall(_, _, _, name, _) => self.skip_identifier(name.span),
+            If(condition, _, _, _) => match condition {
+                Let(_) => self.push_scope(),
+                _ => {},
+            },
+            While(condition, _) => match condition {
+                Let(_) => self.push_scope(),
+                _ => {},
+            },
+            _ => {},
+        }
+        Result<WalkControl, String>.Ok(WalkControl.Continue)
+    }
+
+    pub fn leave_expr(node: Expr&) -> Result<(), String> {
+        match &node.data {
+            Block(_) => self.pop_scope(),
+            VarDecl(name, _, _) => {
+                let target = self.ensure_decl(name.span, DeclKind.Variable, name.data.name.as_str());
+                let interned = self.names.intern(name.data.name.as_str());
+                self.bind_value(interned, target);
+            },
+            PatternLet(_) => {
+                if self.deferred_patterns != 0u64 { self.deferred_patterns -= 1u64; }
+                let mark = match self.pattern_marks.pop() {
+                    Some(value) => value,
+                    None => 0u64,
+                };
+                self.flush_from(mark);
+            },
+            For(_, _, _) => self.pop_scope(),
+            ClosureExpr(_, _, _, _) => self.pop_scope(),
+            If(condition, _, _, _) => match condition {
+                Let(_) => self.pop_scope(),
+                _ => {},
+            },
+            While(condition, _) => match condition {
+                Let(_) => self.pop_scope(),
+                _ => {},
+            },
+            _ => {},
+        }
+        Result<(), String>.Ok(())
+    }
+
+    pub fn enter_argument(node: Argument&) -> Result<WalkControl, String> {
+        match &node.data.name { Some(name) => self.skip_identifier(name.span), None => {}, }
+        Result<WalkControl, String>.Ok(WalkControl.Continue)
+    }
+}
+
+impl SourceIndex {
+    static pub fn build(documents: Vec<SourceDocument>&, session: AnalysisSession&, std_root: str)
+    -> Result<Self, String> {
+        let index = Self(
+            decls=Vec<DeclInfo>.new(),
+            occurrences=Vec<Occurrence>.new(),
+            paths=Vec<String>.new(),
+            asts=Vec<Option<AstTree>>.new(),
+            tokens=Vec<Vec<Token>>.new(),
+            stdlib=Vec<bool>.new(),
+            module_names=Vec<HashMap<NameId, u64>>.new(),
+            decl_keys=HashMap<DeclKey, u64>.new(),
+            decl_spans=HashMap<SpanKey, bool>.new(),
+            occurrence_keys=HashMap<OccurrenceKey, bool>.new(),
+            covered_values=HashMap<SpanKey, bool>.new(),
+            std_root=String.from(&std_root),
+            package_roots=Vec<(String, String)>.new(),
+        );
+        let completed = false;
+        defer { if !completed { index.drop(); } };
+
+        match session.package_map() {
+            Some(packages) => {
+                let package_index = 0u64;
+                while package_index < packages.len() {
+                    match packages.at(package_index) {
+                        Some(spec) => index.package_roots.push((String.from(&spec.name.as_str()),
+                            String.from(&spec.source_root.as_str()))),
+                        None => {},
+                    }
+                    package_index += 1u64;
+                }
+            },
+            None => {},
+        }
+
+        let source_index = 0u64;
+        while source_index < documents.len() {
+            let source = SourceId(source_index);
+            let path = String.from(&documents[source_index].path.as_str());
+            let is_stdlib = match session.source(source) {
+                Some(file) => {
+                    let found = false;
+                    let unit_index = 0u64;
+                    while unit_index < session.len() {
+                        match session.unit(UnitId(unit_index)) {
+                            Some(unit) if session.source(unit.source).unwrap().canonical_path() == file.canonical_path() => {
+                                found = unit.is_stdlib;
+                            },
+                            _ => {},
+                        }
+                        unit_index += 1u64;
+                    }
+                    found
+                },
+                None => false,
+            };
+            let scanned = match Lexer.new(documents[source_index].text.as_str()).run() {
+                Ok(value) => value,
+                Err(error) => {
+                    defer error.drop();
+                    path.drop();
+                    return Result<Self, String>.Err(String.from(&"could not lex an analyzed source"));
+                },
+            };
+            let parser = Parser.new(&scanned);
+            let tree = match parse_program(&parser) {
+                Ok(value) => value,
+                Err(error) => {
+                    defer error.drop();
+                    drop_tokens(&scanned);
+                    path.drop();
+                    return Result<Self, String>.Err(String.from(&"could not parse an analyzed source"));
+                },
+            };
+            index.paths.push(path);
+            index.tokens.push(scanned);
+            index.asts.push(Option<AstTree>.Some(tree));
+            index.stdlib.push(is_stdlib);
+            index.module_names.push(HashMap<NameId, u64>.new());
+            source_index += 1u64;
+        }
+
+        source_index = 0u64;
+        while source_index < documents.len() {
+            index.add_module(SourceId(source_index));
+            source_index += 1u64;
+        }
+        source_index = 0u64;
+        while source_index < documents.len() {
+            index.collect_source(SourceId(source_index), &session.names);
+            source_index += 1u64;
+        }
+        index.resolve_imports(&session.names);
+        index.bind_prelude(&session.names);
+        index.add_module_occurrences();
+        index.add_import_occurrences(&session.names);
+
+        source_index = 0u64;
+        while source_index < documents.len() {
+            match index.walk_source(SourceId(source_index), &session.names) {
+                Ok(_) => {},
+                Err(message) => return Result<Self, String>.Err(message),
+            }
+            source_index += 1u64;
+        }
+
+        completed = true;
+        Result<Self, String>.Ok(index)
+    }
+
+    fn add_module(source: SourceId) {
+        let span = position_span(source, 0u64, 0u64);
+        let stem = module_stem(self.paths[source.index].as_str());
+        self.add_decl(source, span, DeclKind.Module, stem.as_str(), Option<SourceSpan>.None);
+        stem.drop();
+    }
+
+    fn collect_source(source: SourceId, names: NameInterner&) {
+        match &self.asts[source.index] {
+            Some(tree) => {
+                for item in tree.root.data.items {
+                    self.collect_item(source, *item, names);
+                }
+            },
+            None => {},
+        }
+    }
+
+    fn collect_generics(source: SourceId, generics: Vec<GenericParam>&) {
+        for generic in *generics {
+            match generic {
+                Type(value) => { self.add_decl(source, SourceSpan(source, value.data.name.span),
+                    DeclKind.TypeParameter, value.data.name.data.name.as_str(), Option<SourceSpan>.None); },
+                Constant(value) => { self.add_decl(source, SourceSpan(source, value.data.name.span),
+                    DeclKind.TypeParameter, value.data.name.data.name.as_str(), Option<SourceSpan>.None); },
+            }
+        }
+    }
+
+    fn collect_method(source: SourceId, decl: MethodDecl&, owner: Option<SourceSpan>) {
+        self.add_decl(source, SourceSpan(source, decl.data.name.span), DeclKind.Method,
+            decl.data.name.data.name.as_str(), owner);
+        self.collect_generics(source, &decl.data.generics);
+    }
+
+    fn collect_item(source: SourceId, item: Item&, names: NameInterner&) {
+        match &item.data {
+            Alias(_, name, generics, _) => {
+                let id = self.add_decl(source, SourceSpan(source, name.span), DeclKind.Alias,
+                    name.data.name.as_str(), Option<SourceSpan>.None);
+                self.collect_generics(source, generics);
+                self.module_names[source.index].insert(names.intern(name.data.name.as_str()), id);
+            },
+            StructDef(_, name, generics, fields) => {
+                let struct_id = self.add_decl(source, SourceSpan(source, name.span), DeclKind.Struct,
+                    name.data.name.as_str(), Option<SourceSpan>.None);
+                self.collect_generics(source, generics);
+                let owner = Option<SourceSpan>.Some(SourceSpan(source, name.span));
+                for field in *fields {
+                    self.add_decl(source, SourceSpan(source, field.data.name.span), DeclKind.Field,
+                        field.data.name.data.name.as_str(), owner);
+                }
+                self.module_names[source.index].insert(names.intern(name.data.name.as_str()), struct_id);
+            },
+            EnumDef(_, name, generics, variants) => {
+                let enum_id = self.add_decl(source, SourceSpan(source, name.span), DeclKind.Enum,
+                    name.data.name.as_str(), Option<SourceSpan>.None);
+                self.collect_generics(source, generics);
+                for variant in *variants {
+                    let owner = Option<SourceSpan>.Some(SourceSpan(source, name.span));
+                    self.add_decl(source, SourceSpan(source, variant.data.name.span), DeclKind.Variant,
+                        variant.data.name.data.name.as_str(), owner);
+                    let payload_owner = Option<SourceSpan>.Some(SourceSpan(source, variant.data.name.span));
+                    for field in variant.data.fields {
+                        self.add_decl(source, SourceSpan(source, field.data.name.span), DeclKind.Field,
+                            field.data.name.data.name.as_str(), payload_owner);
+                    }
+                }
+                self.module_names[source.index].insert(names.intern(name.data.name.as_str()), enum_id);
+            },
+            TraitDef(_, name, generics, members) => {
+                let trait_id = self.add_decl(source, SourceSpan(source, name.span), DeclKind.Trait,
+                    name.data.name.as_str(), Option<SourceSpan>.None);
+                self.collect_generics(source, generics);
+                let owner = Option<SourceSpan>.Some(SourceSpan(source, name.span));
+                for member in *members {
+                    match member {
+                        Declaration(value) => self.collect_method(source, *value, owner),
+                        Definition(value) => self.collect_method(source, value.data.decl, owner),
+                    }
+                }
+                self.module_names[source.index].insert(names.intern(name.data.name.as_str()), trait_id);
+            },
+            FuncDef(_, name, generics, _, _, _) => {
+                let function_id = self.add_decl(source, SourceSpan(source, name.span), DeclKind.Function,
+                    name.data.name.as_str(), Option<SourceSpan>.None);
+                self.collect_generics(source, generics);
+                self.module_names[source.index].insert(names.intern(name.data.name.as_str()), function_id);
+            },
+            ConstDef(_, name, _, _) => {
+                let constant_id = self.add_decl(source, SourceSpan(source, name.span), DeclKind.Constant,
+                    name.data.name.as_str(), Option<SourceSpan>.None);
+                self.module_names[source.index].insert(names.intern(name.data.name.as_str()), constant_id);
+            },
+            OpaqueTypeDef(_, name) => {
+                let opaque_id = self.add_decl(source, SourceSpan(source, name.span), DeclKind.Type,
+                    name.data.name.as_str(), Option<SourceSpan>.None);
+                self.module_names[source.index].insert(names.intern(name.data.name.as_str()), opaque_id);
+            },
+            ExternBlock(_, _, functions) => {
+                for function in *functions {
+                    let extern_id = self.add_decl(source, SourceSpan(source, function.data.name.span), DeclKind.Function,
+                        function.data.name.data.name.as_str(), Option<SourceSpan>.None);
+                    self.module_names[source.index].insert(names.intern(function.data.name.data.name.as_str()), extern_id);
+                }
+            },
+            Impl(_, _, _, methods, _) => {
+                for method in *methods {
+                    self.collect_method(source, method.data.decl, Option<SourceSpan>.None);
+                }
+            },
+            Import(_, _, _, _) => {},
+        }
+    }
+
+    fn resolve_imports(names: NameInterner&) {
+        let rounds = self.paths.len() + 2u64;
+        let round = 0u64;
+        while round < rounds {
+            let changed = false;
+            let source = 0u64;
+            while source < self.paths.len() {
+                match &self.asts[source] {
+                    Some(tree) => {
+                        for item in tree.root.data.items {
+                            match &item.data {
+                                Import(paths, target, alias, _) => {
+                                    match self.module_source(SourceId(source), paths) {
+                                        Some(provider) => {
+                                            let name_id = names.intern(target.data.name.as_str());
+                                            match self.module_names[provider.index].get(&name_id) {
+                                                Some(found) => {
+                                                    let binding_name = match alias {
+                                                        Some(value) => value.data.name.as_str(),
+                                                        None => target.data.name.as_str(),
+                                                    };
+                                                    let binding_id = names.intern(binding_name);
+                                                    if self.module_names[source].get(&binding_id).is_none() {
+                                                        self.module_names[source].insert(binding_id, *found);
+                                                        changed = true;
+                                                    }
+                                                },
+                                                None => {},
+                                            }
+                                        },
+                                        None => {},
+                                    }
+                                },
+                                _ => {},
+                            }
+                        }
+                    },
+                    None => {},
+                }
+                source += 1u64;
+            }
+            if !changed { break; }
+            round += 1u64;
+        }
+    }
+
+    fn bind_prelude(names: NameInterner&) {
+        let entries = [("core/option", "Option"), ("core/result", "Result"), ("core/vec", "Vec"),
+            ("core/string", "String"), ("core/range", "Range"), ("core/ops", "Ordering"),
+            ("core/clone", "Clone"), ("core/builtin_types", "Ptr"), ("core/builtin_types", "Slice"),
+            ("core/builtin_types", "Array"), ("core/builtin_types", "Never")];
+        let source = 0u64;
+        while source < self.paths.len() {
+            if !self.stdlib[source] {
+                for entry in entries {
+                    let name_id = names.intern(entry[1]);
+                    if self.module_names[source].get(&name_id).is_some() { continue; }
+                    let relative = String.from(&entry[0]);
+                    defer relative.drop();
+                    relative.push_str(".an");
+                    let path = Path.new(self.std_root.as_str()).join(relative.as_str());
+                    defer path.drop();
+                    match canonicalize(path.as_str()) {
+                        Ok(canonical) => {
+                            let found = self.source_for_path(canonical.as_str());
+                            canonical.drop();
+                            match found {
+                                Some(provider) => match self.module_names[provider.index].get(&name_id) {
+                                    Some(decl) => { self.module_names[source].insert(name_id, *decl); },
+                                    None => {},
+                                },
+                                None => {},
+                            }
+                        },
+                        Err(problem) => problem.drop(),
+                    }
+                }
+            }
+            source += 1u64;
+        }
+    }
+
+    fn add_module_occurrences() {
+        let source = 0u64;
+        while source < self.paths.len() {
+            match &self.asts[source] {
+                Some(tree) => {
+                    for item in tree.root.data.items {
+                        match &item.data {
+                            Import(paths, _, _, _) => {
+                                let prefix = 0u64;
+                                while prefix < paths.len() {
+                                    let count = prefix + 1u64;
+                                    match self.module_source_n(SourceId(source), paths, count) {
+                                        Some(provider) => {
+                                            let target = self.find_decl_exact(provider,
+                                                position_span(provider, 0u64, 0u64), DeclKind.Module);
+                                            match target {
+                                                Some(id) => self.add_occurrence(SourceId(source),
+                                                    SourceSpan(SourceId(source), paths[prefix].span), Option<u64>.Some(id),
+                                                    DeclKind.Module, false, Option<TypeId>.None,
+                                                    Option<String>.None, Option<String>.None, false),
+                                                None => {},
+                                            }
+                                        },
+                                        None => {},
+                                    }
+                                    prefix += 1u64;
+                                }
+                            },
+                            _ => {},
+                        }
+                    }
+                },
+                None => {},
+            }
+            source += 1u64;
+        }
+    }
+
+    fn add_import_occurrences(names: NameInterner&) {
+        let source = 0u64;
+        while source < self.paths.len() {
+            match &self.asts[source] {
+                Some(tree) => {
+                    for item in tree.root.data.items {
+                        match &item.data {
+                            Import(paths, target, alias, _) => {
+                                match self.module_source(SourceId(source), paths) {
+                                    Some(provider) => {
+                                        let name_id = names.intern(target.data.name.as_str());
+                                        match self.module_names[provider.index].get(&name_id) {
+                                            Some(found) => {
+                                                let target_id = *found;
+                                                self.add_occurrence(SourceId(source),
+                                                    SourceSpan(SourceId(source), target.span), Option<u64>.Some(target_id),
+                                                    self.decls[target_id].kind, false, Option<TypeId>.None,
+                                                    Option<String>.None, Option<String>.None, false);
+                                                match alias {
+                                                    Some(value) => self.add_occurrence(SourceId(source),
+                                                        SourceSpan(SourceId(source), value.span), Option<u64>.Some(target_id),
+                                                        self.decls[target_id].kind, false, Option<TypeId>.None,
+                                                        Option<String>.None, Option<String>.None, false),
+                                                    None => {},
+                                                }
+                                            },
+                                            None => {},
+                                        }
+                                    },
+                                    None => {},
+                                }
+                            },
+                            _ => {},
+                        }
+                    }
+                },
+                None => {},
+            }
+            source += 1u64;
+        }
+    }
+
+    fn walk_source(source: SourceId, names: NameInterner&) -> Result<(), String> {
+        let root = match &self.asts[source.index] {
+            Some(tree) => tree.root,
+            None => return Result<(), String>.Ok(()),
+        };
+        let binder = Binder(
+            index=self, names=names, source=source, scopes=Vec<ScopeFrame>.new(),
+            skip=HashMap<SpanKey, bool>.new(), pending_patterns=Vec<(NameId, u64)>.new(),
+            deferred_patterns=0u64, type_depth=0u64, const_depth=0u64, binding_params=0u64,
+            item_scopes=Vec<bool>.new(), method_def_pending=0u64, method_modes=Vec<bool>.new(),
+            pattern_marks=Vec<u64>.new());
+        binder.push_scope();
+        for entry in self.module_names[source.index].entries() {
+            let name = *entry[0];
+            let target = *entry[1];
+            match self.decls[target].kind {
+                Module | Type | Struct | Enum | Trait | Alias | TypeParameter => binder.bind_type(name, target),
+                _ => binder.bind_value(name, target),
+            }
+            match self.decls[target].kind {
+                Function | Constant | Variable | Parameter | Method => binder.bind_value(name, target),
+                _ => {},
+            }
+        }
+        match try_walk_program<String>(root, &binder) {
+            Ok(_) => {},
+            Err(message) => { binder.pop_scope(); return Result<(), String>.Err(message); },
+        }
+        binder.pop_scope();
+        Result<(), String>.Ok(())
+    }
+
+    fn add_decl(source: SourceId, span: SourceSpan, kind: DeclKind, name: str,
+        owner: Option<SourceSpan>) -> u64 {
+        let key = DeclKey(span=span_key(source, span), kind=kind.code());
+        if let Some(existing) = self.decl_keys.get(&key) {
+            return *existing;
+        }
+        let id = self.decls.len();
+        let owner_copy = match &owner {
+            Some(value) => Option<SourceSpan>.Some(*value),
+            None => Option<SourceSpan>.None,
+        };
+        self.decls.push(DeclInfo(source=source, span=span, kind=kind, name=String.from(&name),
+            owner=owner_copy, type_text=Option<String>.None, detail=Option<String>.None));
+        self.decl_keys.insert(key, id);
+        self.decl_spans.insert(span_key(source, span), true);
+        self.add_occurrence(source, span, Option<u64>.Some(id), kind, true,
+            Option<TypeId>.None, Option<String>.None, Option<String>.None, false);
+        id
+    }
+
+    pub fn add_occurrence(source: SourceId, span: SourceSpan, target: Option<u64>, kind: DeclKind,
+        is_declaration: bool, context: Option<TypeId>, type_text: Option<String>,
+        signature: Option<String>, lexical: bool) {
+        let target_key = match &target {
+            Some(value) => *value,
+            None => 0xFFFFFFFFFFFFFFFFu64,
+        };
+        let context_key = match &context {
+            Some(value) => value.index + 1u64,
+            None => 0u64,
+        };
+        let key = OccurrenceKey(span=span_key(source, span), target=target_key, context=context_key);
+        if self.occurrence_keys.contains(&key) {
+            match &type_text { Some(value) => value.drop(), None => {}, }
+            match &signature { Some(value) => value.drop(), None => {}, }
+            return;
+        }
+        let type_copy = match &type_text {
+            Some(value) => Option<String>.Some(String.from(&value.as_str())),
+            None => Option<String>.None,
+        };
+        let signature_copy = match &signature {
+            Some(value) => Option<String>.Some(String.from(&value.as_str())),
+            None => Option<String>.None,
+        };
+        self.occurrences.push(Occurrence(source=source, span=span, target=target, kind=kind,
+            is_declaration=is_declaration, context=context, type_text=type_copy,
+            signature=signature_copy, lexical=lexical));
+        self.occurrence_keys.insert(key, true);
+        match &type_text { Some(value) => value.drop(), None => {}, }
+        match &signature { Some(value) => value.drop(), None => {}, }
+    }
+
+    pub fn is_declaration_span(span: SourceSpan) -> bool {
+        self.decl_spans.contains(&span_key(span.source, span))
+    }
+
+    pub fn value_is_covered(span: SourceSpan) -> bool {
+        self.covered_values.contains(&span_key(span.source, span))
+    }
+
+    pub fn mark_value_covered(span: SourceSpan) {
+        self.covered_values.insert(span_key(span.source, span), true);
+    }
+
+    pub fn remove_covered_lexical() {
+        let index = self.occurrences.len();
+        while index != 0u64 {
+            index -= 1u64;
+            let occurrence = &self.occurrences[index];
+            if occurrence.lexical && self.covered_values.contains(&span_key(occurrence.source, occurrence.span)) {
+                let removed = self.occurrences.remove(index);
+                removed.drop();
+            }
+        }
+    }
+
+    pub fn find_decl_at_span(source: SourceId, span: SourceSpan) -> Option<u64> {
+        let index = 0u64;
+        while index < self.decls.len() {
+            let decl = &self.decls[index];
+            if decl.source == source && decl.span.span.start.row == span.span.start.row &&
+            decl.span.span.start.column == span.span.start.column &&
+            decl.span.span.end.row == span.span.end.row && decl.span.span.end.column == span.span.end.column {
+                return Option<u64>.Some(index);
+            }
+            index += 1u64;
+        }
+        Option<u64>.None
+    }
+
+    pub fn find_decl_exact(source: SourceId, span: SourceSpan, kind: DeclKind) -> Option<u64> {
+        let key = DeclKey(span=span_key(source, span), kind=kind.code());
+        match self.decl_keys.get(&key) {
+            Some(value) => Option<u64>.Some(*value),
+            None => Option<u64>.None,
+        }
+    }
+
+    pub fn source_for_path(path: str) -> Option<SourceId> {
+        let index = 0u64;
+        while index < self.paths.len() {
+            if self.paths[index].as_str() == path { return Option<SourceId>.Some(SourceId(index)); }
+            index += 1u64;
+        }
+        Option<SourceId>.None
+    }
+
+    fn package_root(name: str) -> Option<String> {
+        let index = 0u64;
+        while index < self.package_roots.len() {
+            if self.package_roots[index][0].as_str() == name {
+                return Option<String>.Some(String.from(&self.package_roots[index][1].as_str()));
+            }
+            index += 1u64;
+        }
+        Option<String>.None
+    }
+
+    fn module_source(source: SourceId, paths: Vec<Identifier&>&) -> Option<SourceId> {
+        self.module_source_n(source, paths, paths.len())
+    }
+
+    fn module_source_n(source: SourceId, paths: Vec<Identifier&>&, count: u64) -> Option<SourceId> {
+        if paths.len() == 0u64 || count == 0u64 { return Option<SourceId>.None; }
+        let first = paths[0].data.name.as_str();
+        let root = String.new();
+        let start = 0u64;
+        if first == "std" {
+            root.push_str(self.std_root.as_str());
+            start = 1u64;
+        } else {
+            match self.package_root(first) {
+                Some(value) => { root.push_str(value.as_str()); value.drop(); start = 1u64; },
+                None => {
+                    let parent = Path.new(self.paths[source.index].as_str()).parent();
+                    match parent {
+                        Some(value) => { root.push_str(value.as_str()); },
+                        None => { root.drop(); return Option<SourceId>.None; },
+                    }
+                },
+            }
+        }
+        let index = start;
+        while index < count && index < paths.len() {
+            root.push('/');
+            root.push_str(paths[index].data.name.as_str());
+            index += 1u64;
+        }
+        root.push_str(".an");
+        let result = match canonicalize(root.as_str()) {
+            Ok(value) => {
+                let found = self.source_for_path(value.as_str());
+                value.drop();
+                found
+            },
+            Err(problem) => { problem.drop(); Option<SourceId>.None },
+        };
+        root.drop();
+        result
+    }
+
+    pub fn path(source: SourceId) -> Option<str> {
+        if source.index < self.paths.len() {
+            return Option<str>.Some(self.paths[source.index].as_str());
+        }
+        Option<str>.None
+    }
+
+    pub fn text(source: SourceId, documents: Vec<SourceDocument>&) -> Option<str> {
+        let index = 0u64;
+        while index < documents.len() {
+            if index == source.index { return Option<str>.Some(documents[index].text.as_str()); }
+            index += 1u64;
+        }
+        Option<str>.None
+    }
+
+    pub fn is_stdlib_source(source: SourceId) -> bool {
+        if source.index < self.stdlib.len() { return self.stdlib[source.index]; }
+        false
+    }
+
+    pub fn tokens_of(source: SourceId) -> Option<Vec<Token>&> {
+        if source.index < self.tokens.len() { return Option<Vec<Token>&>.Some(&self.tokens[source.index]); }
+        Option<Vec<Token>&>.None
+    }
+
+    pub fn declaration_at(source: SourceId, row: u64, column: u64) -> Option<u64> {
+        let best = Option<u64>.None;
+        let index = 0u64;
+        while index < self.decls.len() {
+            let decl = &self.decls[index];
+            if decl.source == source && decl.kind != DeclKind.Module && span_contains(decl.span, row, column) {
+                match &best {
+                    Some(current) => {
+                        let current_span = self.decls[*current].span;
+                        if span_contains(current_span, row, column) &&
+                        decl.span.span.start.row == row && decl.span.span.start.column <= column {
+                            let current_length = current_span.span.end.column - current_span.span.start.column;
+                            let candidate_length = decl.span.span.end.column - decl.span.span.start.column;
+                            if candidate_length <= current_length { best = Option<u64>.Some(index); }
+                        }
+                    },
+                    None => { best = Option<u64>.Some(index); },
+                }
+            }
+            index += 1u64;
+        }
+        best
+    }
+
+    pub fn occurrences_at(source: SourceId, row: u64, column: u64) -> Vec<u64> {
+        let result = Vec<u64>.new();
+        let index = 0u64;
+        while index < self.occurrences.len() {
+            let occurrence = &self.occurrences[index];
+            if occurrence.source == source && span_contains(occurrence.span, row, column) {
+                result.push(index);
+            }
+            index += 1u64;
+        }
+        result
+    }
+
+    pub fn occurrences_of(target: u64) -> Vec<u64> {
+        let result = Vec<u64>.new();
+        let index = 0u64;
+        while index < self.occurrences.len() {
+            match self.occurrences[index].target {
+                Some(value) if value == target => result.push(index),
+                _ => {},
+            }
+            index += 1u64;
+        }
+        result
+    }
+
+    pub fn decl_name(id: u64) -> str { self.decls[id].name.as_str() }
+}
+
+impl Drop for SourceIndex {
+    pub fn drop() {
+        for occurrence in self.occurrences { occurrence.drop(); }
+        self.occurrences.drop();
+        for decl in self.decls { decl.drop(); }
+        self.decls.drop();
+        for path in self.paths { path.drop(); }
+        self.paths.drop();
+        for tree in self.asts {
+            match tree { Some(value) => value.drop(), None => {}, }
+        }
+        self.asts.drop();
+        for tokens in self.tokens { drop_tokens(tokens); }
+        self.tokens.drop();
+        for names in self.module_names { names.drop(); }
+        self.module_names.drop();
+        self.decl_keys.drop();
+        self.decl_spans.drop();
+        self.occurrence_keys.drop();
+        self.covered_values.drop();
+        self.std_root.drop();
+        for entry in self.package_roots {
+            entry[0].drop();
+            entry[1].drop();
+        }
+        self.package_roots.drop();
+    }
+}

@@ -120,7 +120,6 @@ impl AnalysisStage {
 }
 
 pub enum AnalysisErrorKind {
-    EditorIncomplete,
     User,
     NotConstant,
     NoCandidate,

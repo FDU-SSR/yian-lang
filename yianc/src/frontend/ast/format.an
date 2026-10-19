@@ -1056,18 +1056,6 @@ impl AstFormatter {
 
                 self.node_end();
             },
-            Recovery(children, bindings) => {
-                self.node_start("Recovery", node.span);
-                self.field("children");
-                self.output.begin_array();
-                for child in *children { self.append_expr(*child); }
-                self.output.end_array();
-                self.field("bindings");
-                self.output.begin_array();
-                for binding in *bindings { self.append_identifier(*binding); }
-                self.output.end_array();
-                self.node_end();
-            },
         }
     }
 

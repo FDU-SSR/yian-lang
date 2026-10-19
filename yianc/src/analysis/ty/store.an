@@ -32,6 +32,10 @@ impl TypeStore {
         self.values.len()
     }
 
+    pub fn definition_count() -> u64 {
+        self.definitions.len()
+    }
+
     // References survive allocation. Treat interned records as immutable, including their buffers.
     pub fn get(id: TypeId) -> Option<TypeData&> {
         self.values.get(id.index)

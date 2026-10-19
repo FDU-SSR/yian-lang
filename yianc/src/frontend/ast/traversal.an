@@ -936,18 +936,6 @@ pub fn rewrite_expr_children(node: Expr&, rewriter: AstRewriter&) {
         },
         CompileConfig(name) => {
         },
-        Recovery(children, bindings) => {
-            let index = 0u64;
-            while index < children.len() {
-                children[index] = rewriter.rewrite_expr(children[index]);
-                index += 1;
-            }
-            index = 0u64;
-            while index < bindings.len() {
-                bindings[index] = rewriter.rewrite_identifier(bindings[index]);
-                index += 1;
-            }
-        },
     };
 }
 

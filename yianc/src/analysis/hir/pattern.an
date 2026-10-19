@@ -10,11 +10,18 @@ from std.core.vec import Vec;
 pub struct EnumPattern {
     pub variant: EnumVariant,
     pub fields: Option<Vec<(u64, PatternId)>>,
+    // The variant name token and each named field token; positional fields have no name.
+    pub variant_span: Option<SourceSpan>,
+    pub field_spans: Option<Vec<Option<SourceSpan>>>,
 }
 
 impl Drop for EnumPattern {
     pub fn drop() {
         match &self.fields {
+            Some(value) => value.drop(),
+            None => {}
+        };
+        match &self.field_spans {
             Some(value) => value.drop(),
             None => {}
         };
@@ -53,11 +60,13 @@ impl Drop for OrPattern {
 
 pub struct StructPattern {
     pub fields: Vec<(u64, PatternId)>,
+    pub field_spans: Vec<Option<SourceSpan>>,
 }
 
 impl Drop for StructPattern {
     pub fn drop() {
         self.fields.drop();
+        self.field_spans.drop();
     }
 }
 

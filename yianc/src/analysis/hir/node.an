@@ -62,6 +62,8 @@ pub struct Unary {
 pub struct Call {
     pub func: TypeId,
     pub args: Vec<HirId>,
+    // The callee name token when the source spells one; synthetic calls have none.
+    pub name_span: Option<SourceSpan>,
 }
 
 impl Drop for Call {
@@ -73,11 +75,15 @@ impl Drop for Call {
 pub struct StructConstruct {
     pub struct_id: TypeId,
     pub field_values: Vec<(NameId, HirId)>,
+    // Type name token and per-field name tokens in source order; missing entries are synthetic.
+    pub name_span: Option<SourceSpan>,
+    pub field_spans: Vec<Option<SourceSpan>>,
 }
 
 impl Drop for StructConstruct {
     pub fn drop() {
         self.field_values.drop();
+        self.field_spans.drop();
     }
 }
 
@@ -119,6 +125,7 @@ pub struct MethodCall {
     pub receiver: HirId,
     pub method_id: TypeId,
     pub args: Vec<HirId>,
+    pub name_span: Option<SourceSpan>,
 }
 
 impl Drop for MethodCall {
@@ -133,6 +140,7 @@ pub struct TraitObjectMethodCall {
     pub method_id: TypeId,
     pub slot_index: u64,
     pub args: Vec<HirId>,
+    pub name_span: Option<SourceSpan>,
 }
 
 impl Drop for TraitObjectMethodCall {
@@ -145,6 +153,8 @@ pub struct VariantConstruct {
     pub enum_id: TypeId,
     pub variant: EnumVariant,
     pub args: Option<Vec<(NameId, HirId)>>,
+    pub name_span: Option<SourceSpan>,
+    pub field_spans: Vec<Option<SourceSpan>>,
 }
 
 impl Drop for VariantConstruct {
@@ -153,12 +163,14 @@ impl Drop for VariantConstruct {
             Some(value) => value.drop(),
             None => {}
         };
+        self.field_spans.drop();
     }
 }
 
 pub struct FieldAccess {
     pub receiver: HirId,
     pub field: StructField,
+    pub name_span: Option<SourceSpan>,
 }
 
 pub struct TupleAccess {

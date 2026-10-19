@@ -1,0 +1,541 @@
+from yianc.analysis.hir.node import HirKind, HirNode;
+from yianc.analysis.hir.pattern import PatternKind, PatternNode;
+from yianc.analysis.hir.store import HirStore;
+from yianc.analysis.hir.traversal import HirVisitor, walk_expr;
+from yianc.analysis.session.session import AnalysisSession;
+from yianc.analysis.ty.model import CallableDefinition;
+from lsp.analysis.compiler import CompilerAnalysis;
+from yianc.analysis.ty.callable import store_signature;
+from yianc.analysis.ty.display import stored_type_text;
+from yianc.analysis.ty.model import DefinitionBody, NominalKind, StructField, EnumVariant;
+from yianc.analysis.ty.store import TypeStore;
+from yianc.common.ids import DefId, HirId, NameId, PatternId, SourceId, SymbolId, TypeId, UnitId;
+from yianc.common.location import SourceSpan;
+from yianc.common.traversal import WalkControl;
+from yianc.diagnostics.model import AnalysisError;
+from yianc.frontend.ast.node import Identifier;
+from std.core.drop import Drop;
+from std.core.option import Option;
+from std.core.result import Result;
+from std.core.string import String;
+from std.core.vec import Vec;
+from lsp.analysis.source_index import DeclKind, DeclInfo, Occurrence, SourceIndex;
+
+// The semantic pass only adds links backed by compiler records; it never re-runs inference.
+pub struct SemanticIndex {
+    pub procedure_count: u64,
+    pub reference_count: u64,
+}
+
+impl Drop for SemanticIndex {
+    pub fn drop() {}
+}
+
+fn unit_source(session: AnalysisSession&, unit: UnitId) -> Option<SourceId> {
+    match session.unit(unit) {
+        Some(value) => Option<SourceId>.Some(value.source),
+        None => Option<SourceId>.None,
+    }
+}
+
+fn declaration_kind(kind: NominalKind) -> DeclKind {
+    match kind {
+        Struct => DeclKind.Struct,
+        Enum => DeclKind.Enum,
+        Trait => DeclKind.Trait,
+        Function => DeclKind.Function,
+        Method => DeclKind.Method,
+    }
+}
+
+fn definition_target(session: AnalysisSession&, index: SourceIndex&, type_id: TypeId) -> Option<u64> {
+    let definition = match session.types.get(type_id) {
+        Some(Nominal(value, _)) => *value,
+        _ => return Option<u64>.None,
+    };
+    let record = match session.types.definition(definition) {
+        Some(value) => value,
+        None => return Option<u64>.None,
+    };
+    let header = record.header();
+    let source = match unit_source(session, header.unit) {
+        Some(value) => value,
+        None => return Option<u64>.None,
+    };
+    index.find_decl_exact(source, header.span, declaration_kind(header.kind))
+}
+
+fn signature_text(session: AnalysisSession&, type_id: TypeId) -> Option<String> {
+    let signature = match store_signature(&session.types, type_id) {
+        Ok(value) => value,
+        Err(problem) => { problem.drop(); return Option<String>.None; },
+    };
+    defer signature.drop();
+    let header = match session.types.definition(signature.definition) {
+        Some(value) => value.header(),
+        None => return Option<String>.None,
+    };
+    let text = String.new();
+    text.push_str("fn ");
+    text.push_str(session.names.text(header.name));
+    text.push('(');
+    let index = 0u64;
+    for parameter in signature.parameters {
+        if index != 0u64 { text.push_str(", "); }
+        text.push_str(session.names.text(parameter.name));
+        text.push_str(": ");
+        let rendered = stored_type_text(&session.types, &session.names, parameter.type_id);
+        text.push_str(rendered.as_str());
+        rendered.drop();
+        index += 1u64;
+    }
+    text.push(')');
+    let rendered = stored_type_text(&session.types, &session.names, signature.result);
+    if rendered.as_str() != "void" {
+        text.push_str(" -> ");
+        text.push_str(rendered.as_str());
+    }
+    rendered.drop();
+    Option<String>.Some(text)
+}
+
+fn callable_text(session: AnalysisSession&, name: str, body: CallableDefinition&) -> String {
+    let text = String.new();
+    text.push_str("fn ");
+    text.push_str(name);
+    text.push('(');
+    let index = 0u64;
+    for parameter in body.parameters {
+        if index != 0u64 { text.push_str(", "); }
+        text.push_str(session.names.text(parameter.name));
+        text.push_str(": ");
+        let rendered = stored_type_text(&session.types, &session.names, parameter.type_id);
+        text.push_str(rendered.as_str());
+        rendered.drop();
+        index += 1u64;
+    }
+    text.push(')');
+    let rendered = stored_type_text(&session.types, &session.names, body.result);
+    if rendered.as_str() != "void" {
+        text.push_str(" -> ");
+        text.push_str(rendered.as_str());
+    }
+    rendered.drop();
+    text
+}
+
+fn assign_detail(index: SourceIndex&, decl: u64, text: String) {
+    index.decls[decl].detail = Option<String>.Some(text);
+}
+
+fn assign_type_text(index: SourceIndex&, decl: u64, text: String) {
+    index.decls[decl].type_text = Option<String>.Some(text);
+}
+
+fn member_decl(index: SourceIndex&, span: SourceSpan, kind: DeclKind) -> Option<u64> {
+    index.find_decl_exact(span.source, span, kind)
+}
+
+fn enrich_definitions(session: AnalysisSession&, index: SourceIndex&) {
+    let count = session.types.definition_count();
+    let cursor = 0u64;
+    while cursor < count {
+        let record = match session.types.definition(DefId(cursor)) {
+            Some(value) => value,
+            None => { cursor += 1u64; continue; },
+        };
+        let header = record.header();
+        let source = match unit_source(session, header.unit) {
+            Some(value) => value,
+            None => { cursor += 1u64; continue; },
+        };
+        let target = index.find_decl_exact(source, header.span, declaration_kind(header.kind));
+        match record.body() {
+            Ok(Struct(body)) => {
+                match &target { Some(decl) => assign_detail(index, *decl, format_kind("struct", session.names.text(header.name))), None => {}, }
+                for field in body.fields {
+                    match &field.span {
+                        Some(span) => match member_decl(index, *span, DeclKind.Field) {
+                            Some(decl) => {
+                                let rendered = stored_type_text(&session.types, &session.names, field.type_id);
+                                assign_type_text(index, decl, rendered);
+                            },
+                            None => {},
+                        },
+                        None => {},
+                    }
+                }
+            },
+            Ok(Enum(body)) => {
+                match &target { Some(decl) => assign_detail(index, *decl, format_kind("enum", session.names.text(header.name))), None => {}, }
+                for variant in body.variants {
+                    match &variant.span {
+                        Some(span) => match member_decl(index, *span, DeclKind.Variant) {
+                            Some(decl) => assign_detail(index, decl, format_kind("variant", session.names.text(variant.name))),
+                            None => {},
+                        },
+                        None => {},
+                    }
+                    match &variant.payload {
+                        Some(payload) => match session.types.get(*payload) {
+                            Some(Nominal(def, _)) => match session.types.definition(*def) {
+                                Some(payload_record) => match payload_record.body() {
+                                    Ok(Struct(payload_body)) => {
+                                        for field in payload_body.fields {
+                                            match &field.span {
+                                                Some(span) => match member_decl(index, *span, DeclKind.Field) {
+                                                    Some(decl) => {
+                                                        let rendered = stored_type_text(&session.types, &session.names, field.type_id);
+                                                        assign_type_text(index, decl, rendered);
+                                                    },
+                                                    None => {},
+                                                },
+                                                None => {},
+                                            }
+                                        }
+                                    },
+                                    _ => {},
+                                },
+                                None => {},
+                            },
+                            _ => {},
+                        },
+                        None => {},
+                    }
+                }
+            },
+            Ok(Trait(_)) => {
+                match &target { Some(decl) => assign_detail(index, *decl, format_kind("trait", session.names.text(header.name))), None => {}, }
+            },
+            Ok(Function(body)) => {
+                match &target { Some(decl) => assign_detail(index, *decl,
+                    callable_text(session, session.names.text(header.name), body)), None => {}, }
+            },
+            Ok(Method(body)) => {
+                match &target { Some(decl) => assign_detail(index, *decl,
+                    callable_text(session, session.names.text(header.name), body)), None => {}, }
+            },
+            Err(problem) => problem.drop(),
+        }
+        cursor += 1u64;
+    }
+}
+
+fn format_kind(kind: str, name: str) -> String {
+    let text = String.from(&kind);
+    text.push(' ');
+    text.push_str(name);
+    text
+}
+
+fn enrich_symbols(session: AnalysisSession&, index: SourceIndex&) {
+    let cursor = 0u64;
+    while cursor < session.symbols.symbol_count() {
+        let symbol = match session.symbols.symbol_at(cursor) {
+            Some(value) => value,
+            None => { cursor += 1u64; continue; },
+        };
+        cursor += 1u64;
+        if symbol.span.is_none() { continue; }
+        let span = *symbol.span.unwrap();
+        if index.find_decl_at_span(span.source, span).is_none() { continue; }
+        let target = *index.find_decl_at_span(span.source, span).unwrap();
+        match symbol.kind {
+            Function => {
+                match signature_text(session, symbol.type_id) {
+                    Some(text) => {
+                        if index.decls[target].detail.is_none() { assign_detail(index, target, text); } else { text.drop(); }
+                    },
+                    None => {},
+                }
+            },
+            Alias | Constant | Variable | Parameter => {
+                if index.decls[target].type_text.is_none() {
+                    let rendered = stored_type_text(&session.types, &session.names, symbol.type_id);
+                    assign_type_text(index, target, rendered);
+                }
+            },
+            _ => {},
+        }
+    }
+}
+
+fn nominal_definition(types: TypeStore&, type_id: TypeId) -> Option<DefId> {
+    match types.get(type_id) {
+        Some(Nominal(value, _)) => Option<DefId>.Some(*value),
+        Some(Reference(inner)) | Some(Pointer(inner)) | Some(TraitObject(inner)) => nominal_definition(types, *inner),
+        _ => Option<DefId>.None,
+    }
+}
+
+struct SemanticCollector {
+    session: AnalysisSession&,
+    index: SourceIndex&,
+    semantic: SemanticIndex&,
+}
+
+impl SemanticCollector {
+    fn symbol_target(symbol_id: SymbolId) -> Option<u64> {
+        let symbol = match self.session.symbols.get(symbol_id) {
+            Some(value) => value,
+            None => return Option<u64>.None,
+        };
+        match &symbol.span {
+            Some(span) => self.index.find_decl_at_span(span.source, *span),
+            None => Option<u64>.None,
+        }
+    }
+
+    fn add(target: Option<u64>, span: SourceSpan, type_id: Option<TypeId>, signature: Option<String>,
+        declaration: bool) {
+        if target.is_none() { return; }
+        let id = *target.unwrap();
+        let kind = self.index.decls[id].kind;
+        let type_text = match type_id {
+            Some(value) => Option<String>.Some(stored_type_text(&self.session.types, &self.session.names, value)),
+            None => Option<String>.None,
+        };
+        self.index.add_occurrence(span.source, span, Option<u64>.Some(id), kind, declaration,
+            type_id, type_text, signature, false);
+        self.semantic.reference_count += 1u64;
+        self.index.mark_value_covered(span);
+    }
+
+    fn add_member_use(use_span: SourceSpan, declaration: SourceSpan, kind: DeclKind,
+        type_id: Option<TypeId>, signature: Option<String>) {
+        let target = self.index.find_decl_exact(declaration.source, declaration, kind);
+        self.add(target, use_span, type_id, signature, false);
+    }
+
+    fn field_declaration(type_id: TypeId, name: NameId) -> Option<SourceSpan> {
+        let definition = match nominal_definition(&self.session.types, type_id) {
+            Some(value) => value,
+            None => return Option<SourceSpan>.None,
+        };
+        match self.session.types.complete_definition(definition) {
+            Ok(Struct(body)) => {
+                for field in body.fields {
+                    if field.name == name {
+                        return match &field.span { Some(value) => Option<SourceSpan>.Some(*value), None => Option<SourceSpan>.None };
+                    }
+                }
+                Option<SourceSpan>.None
+            },
+            _ => Option<SourceSpan>.None,
+        }
+    }
+
+    fn field_declaration_at(type_id: TypeId, index: u64) -> Option<SourceSpan> {
+        let definition = match nominal_definition(&self.session.types, type_id) {
+            Some(value) => value,
+            None => return Option<SourceSpan>.None,
+        };
+        match self.session.types.complete_definition(definition) {
+            Ok(Struct(body)) => {
+                for field in body.fields {
+                    if field.index == index {
+                        return match &field.span { Some(value) => Option<SourceSpan>.Some(*value), None => Option<SourceSpan>.None };
+                    }
+                }
+                Option<SourceSpan>.None
+            },
+            _ => Option<SourceSpan>.None,
+        }
+    }
+
+    fn expr(node: HirNode&) {
+        match &node.kind {
+            Var(symbol_id) => {
+                let target = self.symbol_target(*symbol_id);
+                let signature = Option<String>.None;
+                self.add(target, node.span, Option<TypeId>.Some(node.type_id), signature, false);
+            },
+            Call(value) => {
+                let target = definition_target(self.session, self.index, value.func);
+                let signature = signature_text(self.session, value.func);
+                match &value.name_span {
+                    Some(span) => self.add(target, *span, Option<TypeId>.Some(node.type_id), signature, false),
+                    None => { match &signature { Some(text) => text.drop(), None => {}, } },
+                }
+            },
+            StructConstruct(value) => {
+                let target = definition_target(self.session, self.index, value.struct_id);
+                match &value.name_span {
+                    Some(span) => {
+                        let signature = Option<String>.None;
+                        self.add(target, *span, Option<TypeId>.Some(node.type_id), signature, false);
+                    },
+                    None => {},
+                }
+                let field_index = 0u64;
+                while field_index < value.field_values.len() {
+                    match value.field_spans[field_index] {
+                        Some(span) => match self.field_declaration(value.struct_id, value.field_values[field_index][0]) {
+                            Some(declaration) => self.add_member_use(span, declaration, DeclKind.Field,
+                                self.fill_field_type(value.struct_id, value.field_values[field_index][0]),
+                                Option<String>.None),
+                            None => {},
+                        },
+                        None => {},
+                    }
+                    field_index += 1u64;
+                }
+            },
+            MethodCall(value) => {
+                let target = definition_target(self.session, self.index, value.method_id);
+                let signature = signature_text(self.session, value.method_id);
+                match &value.name_span {
+                    Some(span) => self.add(target, *span, Option<TypeId>.Some(node.type_id), signature, false),
+                    None => { match &signature { Some(text) => text.drop(), None => {}, } },
+                }
+            },
+            TraitObjectMethodCall(value) => {
+                let target = definition_target(self.session, self.index, value.method_id);
+                let signature = signature_text(self.session, value.method_id);
+                match &value.name_span {
+                    Some(span) => self.add(target, *span, Option<TypeId>.Some(node.type_id), signature, false),
+                    None => { match &signature { Some(text) => text.drop(), None => {}, } },
+                }
+            },
+            FieldAccess(value) => {
+                match &value.name_span {
+                    Some(use_span) => match &value.field.span {
+                        Some(declaration) => self.add_member_use(*use_span, *declaration, DeclKind.Field,
+                            Option<TypeId>.Some(node.type_id), Option<String>.None),
+                        None => {},
+                    },
+                    None => {},
+                }
+            },
+            VariantConstruct(value) => {
+                match &value.name_span {
+                    Some(use_span) => match &value.variant.span {
+                        Some(declaration) => self.add_member_use(*use_span, *declaration, DeclKind.Variant,
+                            Option<TypeId>.Some(node.type_id), Option<String>.None),
+                        None => {},
+                    },
+                    None => {},
+                }
+                let field_index = 0u64;
+                while field_index < value.field_spans.len() {
+                    match value.field_spans[field_index] {
+                        Some(use_span) => match &value.variant.payload {
+                            Some(payload) => match &value.args {
+                                Some(arguments) => match self.field_declaration(*payload, arguments[field_index][0]) {
+                                    Some(declaration) => self.add_member_use(use_span, declaration, DeclKind.Field,
+                                        Option<TypeId>.None, Option<String>.None),
+                                    None => {},
+                                },
+                                None => {},
+                            },
+                            None => {},
+                        },
+                        None => {},
+                    }
+                    field_index += 1u64;
+                }
+            },
+            _ => {},
+        }
+    }
+
+    fn fill_field_type(struct_id: TypeId, name: NameId) -> Option<TypeId> {
+        let definition = match nominal_definition(&self.session.types, struct_id) {
+            Some(value) => value,
+            None => return Option<TypeId>.None,
+        };
+        match self.session.types.complete_definition(definition) {
+            Ok(Struct(body)) => {
+                for field in body.fields {
+                    if field.name == name { return Option<TypeId>.Some(field.type_id); }
+                }
+                Option<TypeId>.None
+            },
+            _ => Option<TypeId>.None,
+        }
+    }
+
+    fn pattern(node: PatternNode&) {
+        match &node.kind {
+            EnumPattern(value) => {
+                match &value.variant_span {
+                    Some(use_span) => match &value.variant.span {
+                        Some(declaration) => self.add_member_use(*use_span, *declaration, DeclKind.Variant,
+                            Option<TypeId>.None, Option<String>.None),
+                        None => {},
+                    },
+                    None => {},
+                }
+                match &value.field_spans {
+                    Some(spans) => {
+                        let field_index = 0u64;
+                        while field_index < spans.len() {
+                            match spans[field_index] {
+                                Some(use_span) => match &value.variant.payload {
+                                    Some(payload) => match &value.fields {
+                                        Some(entries) => match self.field_declaration_at(*payload, entries[field_index][0]) {
+                                            Some(declaration) => self.add_member_use(use_span, declaration,
+                                                DeclKind.Field, Option<TypeId>.None, Option<String>.None),
+                                            None => {},
+                                        },
+                                        None => {},
+                                    },
+                                    None => {},
+                                },
+                                None => {},
+                            }
+                            field_index += 1u64;
+                        }
+                    },
+                    None => {},
+                }
+            },
+            StructPattern(value) => {
+                let field_index = 0u64;
+                while field_index < value.field_spans.len() {
+                    match value.field_spans[field_index] {
+                        Some(use_span) => match self.field_declaration_at(node.type_id, value.fields[field_index][0]) {
+                            Some(declaration) => self.add_member_use(use_span, declaration, DeclKind.Field,
+                                Option<TypeId>.None, Option<String>.None),
+                            None => {},
+                        },
+                        None => {},
+                    }
+                    field_index += 1u64;
+                }
+            },
+            _ => {},
+        }
+    }
+}
+
+impl HirVisitor for SemanticCollector {
+    pub fn enter_expr(id: HirId, node: HirNode&) -> Result<WalkControl, AnalysisError> {
+        self.expr(node);
+        Result<WalkControl, AnalysisError>.Ok(WalkControl.Continue)
+    }
+
+    pub fn enter_pattern(id: PatternId, node: PatternNode&) -> Result<WalkControl, AnalysisError> {
+        self.pattern(node);
+        Result<WalkControl, AnalysisError>.Ok(WalkControl.Continue)
+    }
+}
+
+// One successful session and its output are read once; the result adds links to the source index.
+pub fn build(index: SourceIndex&, analysis: CompilerAnalysis&) -> Result<SemanticIndex, String> {
+    let semantic = SemanticIndex(procedure_count=analysis.output.procedures.len(), reference_count=0u64);
+    enrich_definitions(&analysis.session, index);
+    enrich_symbols(&analysis.session, index);
+    let collector = SemanticCollector(session=&analysis.session, index=index, semantic=&semantic);
+    for procedure in analysis.output.procedures {
+        match walk_expr(&analysis.session.hir, procedure.root, &collector) {
+            Ok(_) => {},
+            Err(problem) => {
+                problem.drop();
+                return Result<SemanticIndex, String>.Err(String.from(&"could not traverse checked procedure HIR"));
+            },
+        }
+    }
+    index.remove_covered_lexical();
+    Result<SemanticIndex, String>.Ok(semantic)
+}

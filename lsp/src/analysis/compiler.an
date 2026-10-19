@@ -1,0 +1,113 @@
+from yianc.analysis.session.session import AnalysisSession;
+from yianc.analysis.session.prepare import PreparationObserver;
+from yianc.analysis.session.output import AnalysisOptions, AnalysisOutput;
+from yianc.codegen.session import BackendOptions, BackendSession;
+from yianc.analysis.constant.evaluate import TypeSizeProvider;
+from yianc.common.location import SourceSpan;
+from yianc.diagnostics.model import AnalysisError, Diagnostic, DiagnosticCode, Severity;
+from yianc.diagnostics.render import detach;
+from yianc.frontend.source import SourceDocument;
+from yianc.package.model import PackageMap;
+from yianc.package.provenance import SourceTrust;
+from std.core.drop import Drop;
+from std.core.option import Option;
+from std.core.result import Result;
+from std.core.vec import Vec;
+
+// The session owns every semantic identity; the output borrows procedure records from it.
+pub struct CompilerAnalysis {
+    pub session: AnalysisSession,
+    pub output: AnalysisOutput,
+}
+
+impl Drop for CompilerAnalysis {
+    pub fn drop() {
+        self.output.drop();
+        self.session.drop();
+    }
+}
+
+// Failure diagnostics are detached from the released session before this value is returned.
+pub struct CompilerFailure {
+    diagnostics: Option<Vec<Diagnostic>>,
+}
+
+impl CompilerFailure {
+    static fn single(diagnostic: Diagnostic) -> Self {
+        let diagnostics = Vec<Diagnostic>.new();
+        diagnostics.push(diagnostic);
+        Self(Option<Vec<Diagnostic>>.Some(diagnostics))
+    }
+
+    pub fn take_diagnostics() -> Vec<Diagnostic> {
+        match self.diagnostics.take() {
+            Some(value) => value,
+            None => Vec<Diagnostic>.new(),
+        }
+    }
+}
+
+impl Drop for CompilerFailure {
+    pub fn drop() {
+        match self.diagnostics.take() {
+            Some(diagnostics) => {
+                for diagnostic in diagnostics { diagnostic.drop(); }
+                diagnostics.drop();
+            },
+            None => {},
+        }
+    }
+}
+
+fn failure_from_error(error: AnalysisError, session: Option<AnalysisSession&>) -> CompilerFailure {
+    let copied = error.diagnostic.copy();
+    error.drop();
+    match session {
+        Some(value) => match detach(&copied, value.source_manager()) {
+            Ok(_) => CompilerFailure.single(copied),
+            Err(problem) => { problem.drop(); copied.drop(); CompilerFailure.single(Diagnostic.new(
+                DiagnosticCode.Internal, Severity.Error, Option<SourceSpan>.None,
+                "could not detach the analysis diagnostic")) },
+        },
+        None => CompilerFailure.single(copied),
+    }
+}
+
+// Strict analysis runs once at its normal semantic boundary and never enters CFG or LLVM emission.
+pub fn analyze(documents: Vec<SourceDocument>&, trust: SourceTrust, packages: Option<PackageMap>,
+    raw_pointers: bool, allow_ffi: bool) -> Result<CompilerAnalysis, CompilerFailure> {
+    let session = match AnalysisSession.prepare_documents(documents, trust, packages, raw_pointers,
+        allow_ffi, Option<PreparationObserver&>.None) {
+        Ok(value) => value,
+        Err(error) => return Result<CompilerAnalysis, CompilerFailure>.Err(
+            failure_from_error(error, Option<AnalysisSession&>.None)),
+    };
+    let transferred = false;
+    defer { if !transferred { session.drop(); } };
+
+    let backend = match BackendSession.new(&session, BackendOptions(raw_pointers, 0u8)) {
+        Ok(value) => value,
+        Err(error) => {
+            error.drop();
+            return Result<CompilerAnalysis, CompilerFailure>.Err(CompilerFailure.single(Diagnostic.new(
+                DiagnosticCode.Internal, Severity.Error, Option<SourceSpan>.None,
+                "could not create the target layout provider")));
+        },
+    };
+    defer backend.drop();
+
+    let options = AnalysisOptions.new();
+    options.require_entry = false;
+    options.entry_optional = true;
+    options.recover = false;
+    options.verify_hir = true;
+    options.sizes = Option<TypeSizeProvider&>.Some(backend.size_provider());
+    match session.analyze(options) {
+        Ok(output) => {
+            transferred = true;
+            Result<CompilerAnalysis, CompilerFailure>.Ok(CompilerAnalysis(session, output))
+        },
+        Err(error) => Result<CompilerAnalysis, CompilerFailure>.Err(
+            failure_from_error(error, Option<AnalysisSession&>.Some(&session))),
+    }
+}

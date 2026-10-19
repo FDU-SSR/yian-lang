@@ -29,7 +29,7 @@ impl ExprChecker {
         }
     }
 
-    pub fn trait_call(span: Span, trait_expr: Expr&, self_source: TypeSource&, trait_sources: Vec<Option<TypeSource>>&, method_name: str, args: Vec<Argument&>&) -> Result<HirId, AnalysisError> {
+    pub fn trait_call(span: Span, trait_expr: Expr&, self_source: TypeSource&, trait_sources: Vec<Option<TypeSource>>&, name_span: Option<Span>, method_name: str, args: Vec<Argument&>&) -> Result<HirId, AnalysisError> {
         let trait_value = self.expression(trait_expr)?;
         let trait_id = self.type_of(trait_value);
         let definition = match self.ctx.session.types.require(trait_id)? {
@@ -97,6 +97,6 @@ impl ExprChecker {
             return Result<HirId, AnalysisError>.Err(self.error(span, "qualified trait call requires a static method"));
         }
 
-        self.call_values(span, method, &values, Option<HirId>.None)
+        self.call_values(span, method, &values, Option<HirId>.None, name_span)
     }
 }

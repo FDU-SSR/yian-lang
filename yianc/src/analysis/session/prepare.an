@@ -2,12 +2,9 @@ from yianc.common.ids import SourceId;
 from yianc.common.location import SourceSpan;
 from yianc.analysis.session.session import AnalysisSession, SourcePermissions;
 from yianc.config import FrontendPhase;
-from yianc.diagnostics.model import DiagnosticCode, Diagnostic, Severity, AnalysisError, AnalysisStage;
+from yianc.diagnostics.model import DiagnosticCode, AnalysisError, AnalysisStage;
 from yianc.diagnostics.render import detach;
 from yianc.frontend.prepare import PreparedFile, prepare_file, PreparationError, PreparationStage;
-from yianc.frontend.lex.lexer import Lexer;
-from yianc.frontend.diagnostics import lex_code;
-from yianc.frontend.ast.arena import AstTree;
 from yianc.frontend.source import collect_sources, SourceDocument;
 from yianc.package.model import PackageMap;
 from yianc.package.provenance import SourceTrust;
@@ -56,7 +53,7 @@ impl AnalysisSession {
         Result<Self, AnalysisError>.Ok(session)
     }
 
-    // Source order is supplied by the editor snapshot; each buffer is copied into this session.
+    // Source order is supplied by the caller; each buffer is copied into this session.
     static pub fn prepare_documents(documents: Vec<SourceDocument>&, trust: SourceTrust,
         packages: Option<PackageMap>, raw_pointers: bool, allow_ffi: bool,
         observer: Option<PreparationObserver&>) -> Result<Self, AnalysisError> {
@@ -70,111 +67,6 @@ impl AnalysisSession {
         session.finish_loaded_sources(allow_ffi, observer)?;
         transferred = true;
         Result<Self, AnalysisError>.Ok(session)
-    }
-
-    // Editor preparation retains valid units and records recoverable frontend failures in the session.
-    static pub fn prepare_documents_editor(documents: Vec<SourceDocument>&, trust: SourceTrust,
-        packages: Option<PackageMap>, raw_pointers: bool, allow_ffi: bool) -> Result<Self, AnalysisError> {
-        let session = Self.new(trust, packages, raw_pointers);
-        let transferred = false;
-        defer { if !transferred { session.drop(); } };
-
-        for document in *documents {
-            session.load_text(document.path.as_str(), document.text.as_str())?;
-        }
-
-        let prepared = Vec<Option<PreparedFile>>.new();
-        let valid = Vec<bool>.new();
-        defer {
-            release_prepared(&prepared);
-            valid.drop();
-        };
-
-        let source_index = 0u64;
-        while source_index < session.sources.len() {
-            let source = SourceId(source_index);
-            let file = session.sources.file(source_index);
-            let scanned = Lexer.new(file.text()).run_editor();
-            defer scanned.drop();
-            match scanned.error.take() {
-                Some(error) => {
-                    defer error.drop();
-                    session.record_editor_preparation_error(source, PreparationError(
-                        PreparationStage.Lex, lex_code(error.message()), String.from(&error.message()), error.span()));
-                },
-                None => {},
-            }
-            prepared.push(Option<PreparedFile>.Some(PreparedFile(source, scanned.take_tokens(), Option<AstTree>.None)));
-            valid.push(true);
-            source_index += 1u64;
-        }
-
-        let index = 0u64;
-        while index < prepared.len() {
-            match prepared[index].unwrap().parse_editor() {
-                Ok(errors) => {
-                    let source = prepared[index].unwrap().source;
-                    for error in errors { session.record_editor_preparation_error(source, *error); }
-                    errors.drop();
-                },
-                Err(error) => {
-                    valid[index] = false;
-                    let source = prepared[index].unwrap().source;
-                    session.record_editor_preparation_error(source, error);
-                },
-            }
-            index += 1u64;
-        }
-
-        index = 0u64;
-        while index < prepared.len() {
-            if valid[index] {
-                let source = prepared[index].unwrap().source;
-                let file = session.sources.file(source.index);
-                match prepared[index].unwrap().desugar(file.path()) {
-                    Ok(_) => {},
-                    Err(error) => {
-                        valid[index] = false;
-                        session.record_editor_preparation_error(source, error);
-                    },
-                }
-            }
-            index += 1u64;
-        }
-
-        index = 0u64;
-        while index < prepared.len() {
-            let source = prepared[index].unwrap().source;
-            let item = match prepared[index].take() {
-                Some(value) => value,
-                None => @panic("editor preparation entry was already transferred"),
-            };
-            if valid[index] {
-                let file = session.sources.file(source.index);
-                let permissions = session.classify(file.canonical_path(), allow_ffi);
-                session.accept(item, permissions);
-            } else {
-                item.drop();
-            }
-            index += 1u64;
-        }
-
-        transferred = true;
-        Result<Self, AnalysisError>.Ok(session)
-    }
-
-    fn record_editor_preparation_error(source: SourceId, error: PreparationError) {
-        let stage = match error.stage {
-            Lex => AnalysisStage.Lex,
-            Parse => AnalysisStage.Parse,
-            Desugar => AnalysisStage.Desugar,
-        };
-        let diagnostic = Diagnostic.new(error.code, Severity.Error,
-            Option<SourceSpan>.Some(SourceSpan(source, error.span)), error.message.as_str());
-        diagnostic.stage = Option<AnalysisStage>.Some(stage);
-        diagnostic.recovered = true;
-        self.diagnostics.push(diagnostic);
-        error.drop();
     }
 
     fn finish_loaded_sources(allow_ffi: bool, observer: Option<PreparationObserver&>) -> Result<(), AnalysisError> {
@@ -285,16 +177,6 @@ impl AnalysisSession {
 
         SourcePermissions(stdlib, restricted, ffi)
     }
-}
-
-fn release_prepared(prepared: Vec<Option<PreparedFile>>&) {
-    for item in *prepared {
-        match item {
-            Some(value) => value.drop(),
-            None => {},
-        }
-    }
-    prepared.drop();
 }
 
 fn release_paths(paths: Vec<String>&) {

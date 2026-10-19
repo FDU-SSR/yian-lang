@@ -346,15 +346,20 @@ def __make_scenario(name: str, parent: Path) -> Scenario:
         )
         return Scenario(name, root, source, text, True)
     if name == "compiler-project":
+        shutil.copytree(
+            ROOT / "yianc",
+            root / "yianc",
+            ignore=shutil.ignore_patterns("build", "__pycache__", ".pytest_cache"),
+        )
         package_parent = root / "bootstrap"
         package_parent.mkdir()
-        for package in ("yianc", "json", "llvm", "ffi"):
+        for package in ("json", "llvm", "ffi"):
             shutil.copytree(
                 ROOT / "bootstrap" / package,
                 package_parent / package,
                 ignore=shutil.ignore_patterns("build", "__pycache__", ".pytest_cache"),
             )
-        project_root = package_parent / "yianc"
+        project_root = root / "yianc"
         source = project_root / "src" / "lsp_probe.an"
         text = __sample_source()
         source.write_text(text, encoding="utf-8", newline="")
@@ -425,14 +430,6 @@ def __observe(client: StdioSession, scenario: Scenario) -> dict[str, Json]:
     result["semantic_tokens"] = client.request(
         "textDocument/semanticTokens/full", {"textDocument": document}
     )
-    result["completion"] = client.request("textDocument/completion", {
-        "textDocument": document,
-        "position": {"line": 6, "character": len(source.splitlines()[6])},
-    })
-    result["signature_help"] = client.request("textDocument/signatureHelp", {
-        "textDocument": document,
-        "position": {"line": 5, "character": signature_position},
-    })
     result["references"] = client.request("textDocument/references", {
         "textDocument": document,
         "position": {"line": 6, "character": local_use},
@@ -442,23 +439,41 @@ def __observe(client: StdioSession, scenario: Scenario) -> dict[str, Json]:
         "textDocument": document,
         "position": {"line": 6, "character": local_use},
     })
-    result["prepare_rename"] = client.request("textDocument/prepareRename", {
-        "textDocument": document,
-        "position": {"line": 6, "character": local_use},
-    })
-    result["rename"] = client.request("textDocument/rename", {
-        "textDocument": document,
-        "position": {"line": 6, "character": local_use},
-        "newName": "renamed_local",
-    })
-    result["code_action"] = client.request("textDocument/codeAction", {
-        "textDocument": document,
-        "range": {
-            "start": {"line": 6, "character": local_use},
-            "end": {"line": 6, "character": local_use + len("local")},
-        },
-        "context": {"diagnostics": []},
-    })
+    closed_methods = {
+        "completion": ("textDocument/completion", {
+            "textDocument": document,
+            "position": {"line": 6, "character": len(source.splitlines()[6])},
+        }),
+        "signature_help": ("textDocument/signatureHelp", {
+            "textDocument": document,
+            "position": {"line": 5, "character": signature_position},
+        }),
+        "prepare_rename": ("textDocument/prepareRename", {
+            "textDocument": document,
+            "position": {"line": 6, "character": local_use},
+        }),
+        "rename": ("textDocument/rename", {
+            "textDocument": document,
+            "position": {"line": 6, "character": local_use},
+            "newName": "renamed_local",
+        }),
+        "code_action": ("textDocument/codeAction", {
+            "textDocument": document,
+            "range": {
+                "start": {"line": 6, "character": local_use},
+                "end": {"line": 6, "character": local_use + len("local")},
+            },
+            "context": {"diagnostics": []},
+        }),
+        "formatting": ("textDocument/formatting", {
+            "textDocument": document,
+            "options": {"tabSize": 4, "insertSpaces": True},
+        }),
+    }
+    result["closed_methods"] = {
+        name: client.request_message(method, params).get("error")
+        for name, (method, params) in closed_methods.items()
+    }
 
     del identity_use, local_declaration
     unsaved = "fn main(){ let formatted:i32=1; formatted; }\n"
@@ -468,10 +483,6 @@ def __observe(client: StdioSession, scenario: Scenario) -> dict[str, Json]:
     })
     client.wait_diagnostics(uri, 2)
     client.request("textDocument/documentSymbol", {"textDocument": document})
-    result["formatting"] = client.request("textDocument/formatting", {
-        "textDocument": document,
-        "options": {"tabSize": 4, "insertSpaces": True},
-    })
     invalid = "fn main() { let value = ; }\n"
     client.notify("textDocument/didChange", {
         "textDocument": {"uri": uri, "version": 3},
@@ -531,40 +542,14 @@ def __query_specs(scenario: Scenario) -> dict[str, QuerySpec]:
     def reference_case(method: str, position: Json) -> QueryCase:
         return position_case(method, position, {"context": {"includeDeclaration": True}})
 
-    def edit_case(position: dict[str, Json], new_name: str) -> QueryCase:
-        return position_case("textDocument/rename", position, {"newName": new_name})
-
-    def code_action_case(position: dict[str, Json]) -> QueryCase:
-        end: dict[str, Json] = {
-            "line": position["line"],
-            "character": position["character"] + 1
-            if isinstance(position["character"], int) else position["character"],
-        }
-        params: Json = {
-            "textDocument": document,
-            "range": {"start": position, "end": end},
-            "context": {"diagnostics": []},
-        }
-        return QueryCase("textDocument/codeAction", params)
-
     local_ref_positions = tuple(position_case("textDocument/definition", p) for p in local_positions)
     identity_ref_positions = tuple(position_case("textDocument/definition", p) for p in identity_positions)
     refs_positions = tuple(reference_case("textDocument/references", p) for p in local_positions)
     refs_identity = tuple(reference_case("textDocument/references", p) for p in identity_positions)
     highlight_positions = tuple(position_case("textDocument/documentHighlight", p) for p in local_positions)
     highlight_identity = tuple(position_case("textDocument/documentHighlight", p) for p in identity_positions)
-    rename_local = tuple(edit_case(p, "renamed_local") for p in local_positions)
-    rename_identity = tuple(edit_case(p, "renamed_identity") for p in identity_positions)
-    completion_local = tuple(position_case("textDocument/completion", p) for p in local_positions)
-    completion_identity = tuple(position_case("textDocument/completion", p) for p in identity_positions)
-    signature_cases = tuple(position_case("textDocument/signatureHelp", p) for p in argument_positions)
-
     symbols = QueryCase("textDocument/documentSymbol", {"textDocument": document})
     semantic_tokens = QueryCase("textDocument/semanticTokens/full", {"textDocument": document})
-    formatting = QueryCase("textDocument/formatting", {
-        "textDocument": document,
-        "options": {"tabSize": 4, "insertSpaces": True},
-    })
 
     return {
         "definition": QuerySpec(
@@ -579,13 +564,6 @@ def __query_specs(scenario: Scenario) -> dict[str, QuerySpec]:
         ),
         "document_symbols": QuerySpec(symbols),
         "semantic_tokens": QuerySpec(semantic_tokens),
-        "completion": QuerySpec(
-            completion_local[0], completion_local[1:] + completion_identity,
-        ),
-        "signature_help": QuerySpec(
-            signature_cases[0], signature_cases[1:],
-            position_case("textDocument/signatureHelp", empty_position),
-        ),
         "references": QuerySpec(
             refs_positions[0], refs_positions[1:] + refs_identity,
             reference_case("textDocument/references", empty_position),
@@ -594,20 +572,6 @@ def __query_specs(scenario: Scenario) -> dict[str, QuerySpec]:
             highlight_positions[0], highlight_positions[1:] + highlight_identity,
             position_case("textDocument/documentHighlight", empty_position),
         ),
-        "prepare_rename": QuerySpec(
-            position_case("textDocument/prepareRename", local_use),
-            tuple(position_case("textDocument/prepareRename", p) for p in local_positions[1:] + identity_positions),
-            position_case("textDocument/prepareRename", empty_position),
-        ),
-        "rename": QuerySpec(
-            edit_case(local_use, "renamed_local"), rename_local[1:] + rename_identity,
-        ),
-        "code_action": QuerySpec(
-            code_action_case(local_use),
-            tuple(code_action_case(p) for p in local_positions[1:] + identity_positions),
-            code_action_case({"line": 3, "character": 0}),
-        ),
-        "formatting": QuerySpec(formatting),
     }
 
 
@@ -693,8 +657,8 @@ def __source_fingerprint() -> dict[str, Json]:
         ROOT / "bootstrap" / "jsonrpc" / "package.anx",
         ROOT / "bootstrap" / "lsp_protocol" / "package.anx",
         ROOT / "scripts" / "check_lsp.py",
+        ROOT / "scripts" / "probe_lsp_navigation.py",
         *sorted((ROOT / "tests" / "unit").glob("test_lsp_*.py")),
-        ROOT / "tests" / "unit" / "test_shared_analysis.py",
     ]
     digest = hashlib.sha256()
     relative_paths: list[Json] = []

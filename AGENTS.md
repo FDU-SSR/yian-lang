@@ -155,7 +155,7 @@ lex
 
 Ordinary `sizeof` expressions retain the queried type identity through HIR and CFG; LLVM lowering supplies the size constant. Immediate compile-time size queries use `python/yianc/target_layout.py` to provide the emitted target's layout. Do not substitute the Python host's object sizes or infer aggregate layout in semantic passes.
 
-`python/yianc/analysis/session.py` serves recovery compiler builds and analysis-only runs. The native language server consumes its native editor-analysis interface in `yianc/`. The recovery compiler retains in-memory document overlays and semantic query APIs in its own implementation; daily editor behavior is provided by native `yianc` and `yian-lsp`, and Python feature parity is not required. Native compilation uses strict failure and distinguishes all checked definitions from definitions selected for code generation.
+`python/yianc/analysis/session.py` serves recovery compiler builds and analysis-only runs. The native language server builds its own source and semantic indexes from one strict native analysis; native `yianc` exposes no editor facts or query API. The recovery compiler retains in-memory document overlays and semantic query APIs in its own implementation; daily editor behavior is provided by native `yianc` and `yian-lsp`, and Python feature parity is not required. Native compilation uses strict failure and distinguishes all checked definitions from definitions selected for code generation.
 
 ## Native compiler
 
@@ -284,7 +284,7 @@ For compiler changes, validate native `yianc` with minimal relevant cases. Check
 - `anx/` is the native package manager, with manifest loading, project graph and paths, build/test/format drivers, and diagnostics. It uses the standard-library process API to invoke the selected compiler and native tools.
 - `bootstrap/ffi/` and `bootstrap/llvm/` are FFI consumer packages; the LLVM package uses LLVM 22 C API bindings and declares its C shim and link components through `[native.llvm]`.
 - `runtime/src/{alloc,runtime,io}.c` provide allocation, runtime failures and synchronous Linux I/O. `runtime/include/` declares the ABI; `python/yianc/runtime_lib.py` is the recovery backend's runtime-object/archive builder.
-- `lsp/` is the native YIAN LSP package. It owns stdio JSON-RPC, document/workspace coordination, diagnostics, semantic tokens, formatting, completion, navigation and refactoring. It depends on `yianc/`, `anx/`, the JSON/RPC packages and shared standard-library resources. stdout belongs to the protocol; logs go to stderr or the configured file.
+- `lsp/` is the native YIAN LSP package. It owns stdio JSON-RPC, document/workspace coordination, strict-analysis snapshots, its own source/semantic navigation indexes, diagnostics, semantic tokens, definition, hover, references, highlights and document symbols. It declares no completion, signature help, rename, code action or formatting capability. It depends on `yianc/`, `anx/`, the JSON/RPC packages and shared standard-library resources. stdout belongs to the protocol; logs go to stderr or the configured file.
 - `ide-support/` contains the VS Code extension. `bench/` contains benchmark sources, specifications, runners and result data. Check algorithmic equivalence before comparing C/raw/fat timings; retain the environment and commit context of recorded results.
 - `docs/grammar/`, `docs/manual/`, and `docs/anx/` contain language and tooling documentation; `mkdocs_cn.yml` configures the documentation site. `licenses/` contains license texts.
 

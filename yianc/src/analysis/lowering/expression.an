@@ -19,6 +19,7 @@ from std.core.option import Option;
 from std.core.result import Result;
 from std.core.vec import Vec;
 from yianc.common.location import SourceSpan;
+from yianc.frontend.source import Span;
 from std.core.string import String;
 from std.core.convert import From;
 
@@ -34,46 +35,8 @@ impl ExprChecker {
     }
 
     pub fn expression(expr: Expr&) -> Result<HirId, AnalysisError> {
-        if self.ctx.session.editor_recovery && expr.syntax_recovered {
-            match &expr.data {
-                Call(callee, arguments) => {
-                    self.expression(*callee)?;
-                    for argument in *arguments { self.expression(argument.data.value)?; }
-                },
-                MethodCall(receiver, _, _, arguments) => {
-                    self.expression(*receiver)?;
-                    for argument in *arguments { self.expression(argument.data.value)?; }
-                },
-                Binary(_, left, right) => { self.expression(*left)?; self.expression(*right)?; },
-                Array(elements) | Tuple(elements) | Recovery(elements, _) => { for element in *elements { self.expression(*element)?; } },
-                ArrayRepeat(element, count) => { self.expression(*element)?; self.expression(*count)?; },
-                _ => {},
-            }
-            let error = self.error(expr.span, "Incomplete editor expression");
-            error.kind = AnalysisErrorKind.EditorIncomplete;
-            return Result<HirId, AnalysisError>.Err(error);
-        }
         match self.lower_expression(expr) {
-            Ok(value) => {
-                if self.ctx.session.editor_recovery {
-                    match self.ctx.session.types.require(self.type_of(value))? {
-                        Nominal(id, _) if !self.ctx.session.types.definition(*id).unwrap().is_complete() => {
-                            let error = self.error(expr.span, "Unresolved editor declaration");
-                            error.kind = AnalysisErrorKind.EditorIncomplete;
-                            return Result<HirId, AnalysisError>.Err(error);
-                        },
-                        _ => {},
-                    }
-                }
-                if self.ctx.session.editor_recovery && expr.syntax_span.is_some() {
-                    let node = self.ctx.session.hir.require(value)?;
-                    let span = match expr.syntax_span { Some(extent) => extent, None => expr.span };
-                    let is_static = match &node.kind { Ty => true, _ => false };
-                    self.ctx.session.editor_facts.record_expression(self.ctx.span(self.unit, span),
-                        node.type_id, node.is_place, is_static);
-                }
-                Result<HirId, AnalysisError>.Ok(value)
-            },
+            Ok(value) => Result<HirId, AnalysisError>.Ok(value),
             Err(problem) => Result<HirId, AnalysisError>.Err(problem.with_location(self.ctx.span(self.unit, expr.span))),
         }
     }
@@ -82,12 +45,6 @@ impl ExprChecker {
         let span = expr.span;
 
         match &expr.data {
-            Recovery(children, bindings) => {
-                for child in *children { self.expression(*child)?; }
-                let error = self.error(span, "Incomplete editor expression");
-                error.kind = AnalysisErrorKind.EditorIncomplete;
-                Result<HirId, AnalysisError>.Err(error)
-            },
             Literal(value) => self.literal(span, value),
             Tuple(elements) => self.tuple(span, elements),
             Array(elements) => self.array(span, elements),
@@ -130,9 +87,6 @@ impl ExprChecker {
                 }
 
                 let type_id = apply_arguments(self.ctx, self.unit, self.scope, symbol, generics, span)?;
-                if !name.data.synthetic {
-                    self.ctx.session.editor_facts.record(symbol, self.ctx.span(self.unit, name.span), type_id);
-                }
                 Result<HirId, AnalysisError>.Ok(self.node(span, type_id, false, HirKind.Ty))
             },
             CompileConfig(name) => {
@@ -198,10 +152,10 @@ impl ExprChecker {
             Unary(op, operand) => self.unary(span, *op, *operand),
             Binary(op, left, right) => self.binary(span, *op, *left, *right),
             Call(callee, args) => self.call(span, *callee, args),
-            TraitCall(trait_expr, self_type, trait_args, method_name, args) => self.trait_call(span, *trait_expr, self_type, trait_args, method_name.data.name.as_str(), args),
+            TraitCall(trait_expr, self_type, trait_args, method_name, args) => self.trait_call(span, *trait_expr, self_type, trait_args, if method_name.data.synthetic { Option<Span>.None } else { Option<Span>.Some(method_name.span) }, method_name.data.name.as_str(), args),
             FieldAccess(receiver, name) => {
                 let value = self.expression(*receiver)?;
-                self.field(span, name.span, value, name.data.name.as_str())
+                self.field(span, if name.data.synthetic { Option<Span>.None } else { Option<Span>.Some(name.span) }, value, name.data.name.as_str())
             },
             PatternLet(binding) => self.pattern_binding(*binding),
             Match(value, arms) => {
@@ -240,7 +194,6 @@ impl ExprChecker {
 
                 for arm in *arms {
                     self.scope = self.ctx.session.symbols.create_scope(Option<ScopeId>.Some(previous))?;
-                    self.ctx.session.editor_facts.record_scope(self.ctx.span(self.unit, arm.span), self.scope);
                     let pattern = self.test_pattern(arm.data.pattern, target_type)?;
                     let guard = match &arm.data.guard {
                         Some(condition) => {
@@ -276,7 +229,8 @@ impl ExprChecker {
                 Result<HirId, AnalysisError>.Ok(self.node(span, result_type, false, HirKind.Match(HirMatch(target, values, by_ref))))
             },
             MethodCall(receiver, method_name, generics, args) => self.method(
-                span, method_name.span, *receiver, method_name.data.name.as_str(), generics, args),
+                span, if method_name.data.synthetic { Option<Span>.None } else { Option<Span>.Some(method_name.span) },
+                *receiver, method_name.data.name.as_str(), generics, args),
             Return(value) => {
                 if self.deferred != 0 {
                     return Result<HirId, AnalysisError>.Err(self.error(span, "'return' is not allowed inside a deferred action"));

@@ -931,10 +931,6 @@ pub fn try_walk_expr<E>(node: Expr&, visitor: TryAstVisitor<E>&) -> Result<(), E
             try_walk_block(*body, visitor)?;
         },
         CompileConfig(name) => {},
-        Recovery(children, bindings) => {
-            for child in *children { try_walk_expr(*child, visitor)?; }
-            for name in *bindings { try_walk_identifier(*name, visitor)?; }
-        },
     };
 
     visitor.leave_expr(node)?;

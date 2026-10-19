@@ -73,11 +73,10 @@ pub struct SourceFile {
     canonical: PathBuf,
 }
 
-// An editor input owns its path and text until a preparation call copies both into its session.
+// An in-memory input owns its path and text until a preparation call copies both into its session.
 pub struct SourceDocument {
     pub path: String,
     pub text: String,
-    pub version: Option<i64>,
 }
 
 impl Drop for SourceDocument {
@@ -136,7 +135,7 @@ impl SourceManager {
         Result<u64, IoError>.Ok(val=id)
     }
 
-    // Editor buffers may refer to paths that do not exist on disk; resolve still canonicalizes their existing prefixes.
+    // In-memory buffers may refer to paths that do not exist on disk; resolve still canonicalizes their existing prefixes.
     pub fn load_text(path: str, text: str) -> Result<u64, IoError> {
         let canonical = resolve(path)?;
         let canonical_text = canonical.as_str();

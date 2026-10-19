@@ -1,0 +1,178 @@
+from lsp.analysis.compiler import CompilerAnalysis, CompilerFailure, analyze as compiler_analyze;
+from lsp.analysis.semantic_index import SemanticIndex, build as build_semantic;
+from lsp.analysis.source_index import SourceIndex;
+from yianc.common.ids import SourceId;
+from yianc.diagnostics.model import Diagnostic;
+from yianc.frontend.source import SourceDocument;
+from yianc.package.model import PackageMap;
+from yianc.package.provenance import SourceTrust;
+from std.core.drop import Drop;
+from std.core.option import Option;
+from std.core.result import Result;
+from std.core.string import String;
+from std.core.vec import Vec;
+
+pub enum SnapshotState {
+    Failed { diagnostics: Vec<Diagnostic> },
+    Ready { analysis: CompilerAnalysis, source: SourceIndex, semantic: SemanticIndex },
+}
+
+// A snapshot fixes the input text, the configuration identity and the successful result lifetime.
+pub struct Snapshot {
+    pub revision: u64,
+    pub topology_revision: u64,
+    pub configuration_identity: String,
+    documents: Vec<SourceDocument>,
+    state: SnapshotState,
+}
+
+fn release_documents(documents: Vec<SourceDocument>&) {
+    for document in *documents { document.drop(); }
+    documents.drop();
+}
+
+fn copy_documents(documents: Vec<SourceDocument>&) -> Vec<SourceDocument> {
+    let result = Vec<SourceDocument>.with_capacity(documents.len());
+    for document in *documents {
+        result.push(SourceDocument(path=String.from(&document.path.as_str()),
+            text=String.from(&document.text.as_str())));
+    }
+    result
+}
+
+impl Snapshot {
+    static pub fn analyze(revision: u64, topology_revision: u64, configuration_identity: str,
+        documents: Vec<SourceDocument>&, trust: SourceTrust, packages: Option<PackageMap>,
+        raw_pointers: bool, allow_ffi: bool, std_root: str) -> Result<Self, String> {
+        let owned = copy_documents(documents);
+        let accepted = false;
+        defer { if !accepted { release_documents(&owned); } };
+
+        match compiler_analyze(documents, trust, packages, raw_pointers, allow_ffi) {
+            Err(failure) => {
+                let diagnostics = failure.take_diagnostics();
+                let snapshot = Self(revision=revision, topology_revision=topology_revision,
+                    configuration_identity=String.from(&configuration_identity),
+                    documents=owned, state=SnapshotState.Failed(diagnostics=diagnostics));
+                accepted = true;
+                return Result<Self, String>.Ok(snapshot);
+            },
+            Ok(analysis) => {
+                let index = match SourceIndex.build(&owned, &analysis.session, std_root) {
+                    Ok(value) => value,
+                    Err(message) => {
+                        analysis.drop();
+                        return Result<Self, String>.Err(message);
+                    },
+                };
+                let semantic = match build_semantic(&index, &analysis) {
+                    Ok(value) => value,
+                    Err(message) => {
+                        index.drop();
+                        analysis.drop();
+                        return Result<Self, String>.Err(message);
+                    },
+                };
+                let snapshot = Self(revision=revision, topology_revision=topology_revision,
+                    configuration_identity=String.from(&configuration_identity),
+                    documents=owned, state=SnapshotState.Ready(
+                        analysis=analysis, source=index, semantic=semantic));
+                accepted = true;
+                Result<Self, String>.Ok(snapshot)
+            },
+        }
+    }
+
+    pub fn ready() -> bool {
+        match &self.state { Ready(_, _, _) => true, _ => false }
+    }
+
+    pub fn failed() -> bool {
+        match &self.state { Failed(_) => true, _ => false }
+    }
+
+    pub fn failure_count() -> u64 {
+        match &self.state {
+            Failed(diagnostics) => diagnostics.len(),
+            _ => 0u64,
+        }
+    }
+
+    pub fn failure_diagnostic(index: u64) -> Option<Diagnostic&> {
+        match &self.state {
+            Failed(diagnostics) => match diagnostics.as_slice().get(index) {
+                Some(value) => Option<Diagnostic&>.Some(value),
+                None => Option<Diagnostic&>.None,
+            },
+            _ => Option<Diagnostic&>.None,
+        }
+    }
+
+    pub fn analysis() -> Option<CompilerAnalysis&> {
+        match &self.state {
+            Ready(analysis, _, _) => Option<CompilerAnalysis&>.Some(analysis),
+            _ => Option<CompilerAnalysis&>.None,
+        }
+    }
+
+    pub fn source() -> Option<SourceIndex&> {
+        match &self.state {
+            Ready(_, source, _) => Option<SourceIndex&>.Some(source),
+            _ => Option<SourceIndex&>.None,
+        }
+    }
+
+    pub fn semantic() -> Option<SemanticIndex&> {
+        match &self.state {
+            Ready(_, _, semantic) => Option<SemanticIndex&>.Some(semantic),
+            _ => Option<SemanticIndex&>.None,
+        }
+    }
+
+    pub fn text(source: SourceId) -> Option<str> {
+        let index = u64(source.index);
+        if index < self.documents.len() {
+            return Option<str>.Some(self.documents[index].text.as_str());
+        }
+        Option<str>.None
+    }
+
+    pub fn text_for_path(path: str) -> Option<str> {
+        let index = 0u64;
+        while index < self.documents.len() {
+            if self.documents[index].path.as_str() == path {
+                return Option<str>.Some(self.documents[index].text.as_str());
+            }
+            index += 1u64;
+        }
+        Option<str>.None
+    }
+
+    pub fn path(source: SourceId) -> Option<str> {
+        let index = u64(source.index);
+        if index < self.documents.len() {
+            return Option<str>.Some(self.documents[index].path.as_str());
+        }
+        Option<str>.None
+    }
+
+}
+
+impl Drop for Snapshot {
+    pub fn drop() {
+        match &self.state {
+            Ready(analysis, source, semantic) => {
+                semantic.drop();
+                source.drop();
+                analysis.drop();
+            },
+            Failed(diagnostics) => {
+                for diagnostic in diagnostics { diagnostic.drop(); }
+                diagnostics.drop();
+            },
+        }
+        for document in self.documents { document.drop(); }
+        self.documents.drop();
+        self.configuration_identity.drop();
+    }
+}

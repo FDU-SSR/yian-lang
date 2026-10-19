@@ -1,18 +1,16 @@
 from yianc.analysis.resolution.context import ResolutionContext;
 from yianc.analysis.ty.relations import compatible;
 from yianc.analysis.resolution.types import resolve_type;
-from yianc.analysis.ty.model import TypeData, NominalKind;
+from yianc.analysis.ty.model import TypeData;
 from yianc.analysis.ty.display import type_text;
 from yianc.analysis.symbol.model import Symbol, SymbolKind;
-from yianc.analysis.symbol.scope import Scope;
 from yianc.analysis.hir.node import HirNode, HirKind, Block as HirBlock, Cast;
 from yianc.analysis.constant.evaluate import TypeSizeProvider;
 from yianc.common.ids import UnitId, ScopeId, HirId, SymbolId, TypeId, DefId;
 from yianc.common.location import SourceSpan;
-from yianc.frontend.ast.node import Block, Literal, Pattern, Identifier, TypeSyntax;
-from yianc.frontend.ast.traversal import AstVisitor, walk_pattern;
+from yianc.frontend.ast.node import Block, Literal;
 from yianc.frontend.source import Span;
-from yianc.diagnostics.model import DiagnosticCode, AnalysisError, AnalysisErrorKind, AnalysisStage;
+from yianc.diagnostics.model import DiagnosticCode, AnalysisError;
 from std.core.drop import Drop;
 from std.core.clone import Clone;
 from std.core.iter import Iterator, IntoIterator;
@@ -21,24 +19,6 @@ from std.core.result import Result;
 from std.core.vec import Vec;
 from std.core.string import String;
 from std.core.convert import From;
-
-// This visitor records only binding syntax; it never allocates a placeholder symbol or type.
-struct UnavailableBindings { checker: ExprChecker& }
-
-impl AstVisitor for UnavailableBindings {
-    pub fn enter_pattern(pattern: Pattern&) -> bool {
-        match &pattern.data {
-            NamePattern(name) | BindPattern(name, _) => {
-                let checker = self.checker;
-                let interned = checker.ctx.session.names.intern(name.data.name.as_str());
-                checker.ctx.session.symbols.block_unavailable(checker.scope, interned,
-                    checker.ctx.span(checker.unit, name.span));
-            },
-            _ => {},
-        }
-        true
-    }
-}
 
 // The checker owns no session data. Lexical state is restored by defer on every error path.
 pub struct ExprChecker {
@@ -212,46 +192,9 @@ impl ExprChecker {
         Result<SymbolId, AnalysisError>.Ok(symbol)
     }
 
-    // An explicit, resolved annotation survives initializer failure; it creates no assignment or exportable body.
-    fn recover_binding(name: Identifier&, syntax: TypeSyntax&) -> Result<bool, AnalysisError> {
-        match &syntax.data { DeducedType => return Result<bool, AnalysisError>.Ok(false), _ => {}, }
-        let type_id = match resolve_type(self.ctx, self.unit, self.scope, syntax) {
-            Ok(value) => value,
-            Err(error) => {
-                if error.kind == AnalysisErrorKind.Internal { return Result<bool, AnalysisError>.Err(error); }
-                error.drop();
-                return Result<bool, AnalysisError>.Ok(false);
-            },
-        };
-        match self.ctx.session.types.require(type_id)? {
-            TypeData.Error => return Result<bool, AnalysisError>.Ok(false),
-            Nominal(id, _) => {
-                let definition = self.ctx.session.types.definition(*id).unwrap();
-                if !definition.is_complete() || definition.header().kind == NominalKind.Trait {
-                    return Result<bool, AnalysisError>.Ok(false);
-                }
-            },
-            _ => {},
-        }
-        match self.bind(name.data.name.as_str(), type_id, name.span, SymbolKind.Variable) {
-            Ok(_) => Result<bool, AnalysisError>.Ok(true),
-            Err(error) => {
-                if error.kind == AnalysisErrorKind.Internal { return Result<bool, AnalysisError>.Err(error); }
-                error.drop();
-                Result<bool, AnalysisError>.Ok(false)
-            },
-        }
-    }
-
     pub fn block(block: Block&) -> Result<HirId, AnalysisError> {
         let previous = self.scope;
         self.scope = self.ctx.session.symbols.create_scope(Option<ScopeId>.Some(previous))?;
-        let scope_span = block.span;
-        match block.data.end {
-            Some(end) => { scope_span.end = end; },
-            None => {},
-        }
-        self.ctx.session.editor_facts.record_scope(self.ctx.span(self.unit, scope_span), self.scope);
         defer self.scope = previous;
         let statements = Vec<HirId>.new();
         let accepted = false;
@@ -267,71 +210,9 @@ impl ExprChecker {
 
         let result = self.ctx.primitives.void;
         let terminated = false;
-        let first_error = Option<AnalysisError>.None;
-        defer { match &first_error { Some(error) => error.drop(), None => {}, } };
 
         for statement in block.data.stmts {
-            let loop_counts = Vec<u64>.new();
-            defer loop_counts.drop();
-            if self.ctx.session.editor_recovery {
-                for context in self.loops { loop_counts.push(context.breaks.len()); }
-            }
-            let checkpoint = if self.ctx.session.editor_recovery {
-                Option<Scope>.Some(self.ctx.session.symbols.checkpoint(self.scope)?)
-            } else { Option<Scope>.None };
-            let lowered = match self.expression(*statement) {
-                Ok(value) => {
-                    if let Some(saved) = checkpoint.take() { saved.drop(); }
-                    value
-                },
-                Err(error) => {
-                    if let Some(saved) = checkpoint.take() {
-                        self.ctx.session.symbols.restore(self.scope, saved);
-                    }
-                    let loop_index = 0u64;
-                    while loop_index < loop_counts.len() && loop_index < self.loops.len() {
-                        self.loops[loop_index].breaks.truncate(loop_counts[loop_index]);
-                        loop_index += 1;
-                    }
-                    if !self.ctx.session.editor_recovery || error.kind == AnalysisErrorKind.Internal {
-                        return Result<HirId, AnalysisError>.Err(error);
-                    }
-                    let failed_statement = match &statement.data { Semi(inner) => *inner, _ => *statement };
-                    match &failed_statement.data {
-                        VarDecl(name, syntax, _) => {
-                            let available = match self.recover_binding(*name, *syntax) {
-                                Ok(value) => value,
-                                Err(recovery_error) => {
-                                    error.drop();
-                                    return Result<HirId, AnalysisError>.Err(recovery_error);
-                                },
-                            };
-                            if !available {
-                                let interned = self.ctx.session.names.intern(name.data.name.as_str());
-                                self.ctx.session.symbols.block_unavailable(self.scope, interned, self.ctx.span(self.unit, name.span));
-                            }
-                        },
-                        PatternLet(binding) => {
-                            let visitor = UnavailableBindings(self);
-                            walk_pattern(binding.data.pattern, &visitor);
-                        },
-                        Recovery(_, bindings) => {
-                            for name in *bindings {
-                                let interned = self.ctx.session.names.intern(name.data.name.as_str());
-                                self.ctx.session.symbols.block_unavailable(self.scope, interned, self.ctx.span(self.unit, name.span));
-                            }
-                        },
-                        _ => {},
-                    }
-                    if error.kind != AnalysisErrorKind.EditorIncomplete {
-                        let diagnostic = error.diagnostic.copy();
-                        diagnostic.stage = Option<AnalysisStage>.Some(AnalysisStage.TypeCheck);
-                        self.ctx.session.diagnostics.push_unique(diagnostic);
-                    }
-                    if first_error.is_none() { first_error = Option<AnalysisError>.Some(error); } else { error.drop(); }
-                    continue;
-                },
-            };
+            let lowered = self.expression(*statement)?;
             statements.push(lowered);
 
             if !terminated {
@@ -340,7 +221,6 @@ impl ExprChecker {
             }
         }
 
-        if let Some(error) = first_error.take() { return Result<HirId, AnalysisError>.Err(error); }
         accepted = true;
         Result<HirId, AnalysisError>.Ok(self.node(block.span, result, false, HirKind.Block(HirBlock(statements))))
     }

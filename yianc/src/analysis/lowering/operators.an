@@ -66,7 +66,7 @@ impl ExprChecker {
             let borrowed = self.node(span, reference, false, HirKind.Unary(Unary(UnaryOperator.AddrOf, receiver)));
             let arguments = Vec<HirId>.new();
             defer arguments.drop();
-            self.call_values(span, method, &arguments, Option<HirId>.Some(borrowed))?
+            self.call_values(span, method, &arguments, Option<HirId>.Some(borrowed), Option<Span>.None)?
         };
 
         if op == UnaryOperator.Deref {
@@ -111,7 +111,7 @@ impl ExprChecker {
         let borrowed = self.node(span, reference, false, HirKind.Unary(Unary(UnaryOperator.AddrOf, receiver)));
         let arguments = Vec<HirId>.new();
         defer arguments.drop();
-        Result<Option<HirId>, AnalysisError>.Ok(Option<HirId>.Some(self.call_values(span, method, &arguments, Option<HirId>.Some(borrowed))?))
+        Result<Option<HirId>, AnalysisError>.Ok(Option<HirId>.Some(self.call_values(span, method, &arguments, Option<HirId>.Some(borrowed), Option<Span>.None)?))
     }
 
     pub fn overloaded_binary(span: Span, op: BinaryOperator, left: HirId, right: HirId) -> Result<HirId, AnalysisError> {
@@ -146,7 +146,7 @@ impl ExprChecker {
         types.push(self.type_of(argument));
         let required = self.ctx.intrinsic(operator_trait(op));
         let method = lookup_method_args(self.ctx, self.type_of(receiver), name, required, Option<Vec<TypeId>&>.Some(&types), self.ctx.span(self.unit, span))?;
-        let result = self.call_values(span, method, &arguments, Option<HirId>.Some(borrowed))?;
+        let result = self.call_values(span, method, &arguments, Option<HirId>.Some(borrowed), Option<Span>.None)?;
 
         if op == BinaryOperator.Index {
             match self.ctx.session.types.require(self.type_of(result))? {

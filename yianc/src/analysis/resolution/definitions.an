@@ -7,7 +7,6 @@ from yianc.analysis.ty.model import DefinitionBody, DefinitionHeader, NominalKin
 from yianc.analysis.ty.validation import contains_ffi;
 from yianc.common.ids import TypeId, NameId, UnitId, ScopeId;
 from yianc.common.location import SourceSpan;
-from yianc.analysis.editor_facts import EditorMemberKind;
 from yianc.frontend.ast.node import Parameter as SyntaxParameter, GenericParam;
 from yianc.frontend.ast.atoms import AttrKind;
 from yianc.diagnostics.model import DiagnosticCode, AnalysisError, AnalysisErrorKind, AnalysisStage;
@@ -93,80 +92,18 @@ pub fn resolve_definitions(ctx: ResolutionContext&) -> Result<(), AnalysisError>
     while index < ctx.len() {
         let declaration = ctx.declaration(index);
 
-        match resolve_annotations(ctx, index) {
-            Ok(_) => {},
-            Err(error) => {
-                if !ctx.session.editor_recovery || error.kind == AnalysisErrorKind.Internal { return Result<(), AnalysisError>.Err(error); }
-                declaration.state = DeclarationState.Failed;
-                if error.kind == AnalysisErrorKind.EditorIncomplete { error.drop(); } else {
-                    error.diagnostic.stage = Option<AnalysisStage>.Some(AnalysisStage.Resolve);
-                    ctx.session.diagnostics.push_unique(error.diagnostic);
-                }
-            },
-        }
-
+        resolve_annotations(ctx, index)?;
         index += 1;
     }
 
     index = 0;
     while index < ctx.len() {
-        if ctx.declaration(index).state == DeclarationState.Failed { index += 1; continue; }
-        if ctx.session.editor_recovery {
-            let declaration = ctx.declaration(index);
-            match &declaration.item.data {
-                FuncDef(_, name, _, _, _, body) => {
-                    if !signature_available(ctx, declaration.unit, name.span, body.span) {
-                        declaration.state = DeclarationState.Failed;
-                        index += 1;
-                        continue;
-                    }
-                },
-                _ => {},
-            }
-        }
-        match resolve_one_definition(ctx, index) {
-            Ok(_) => { ctx.declaration(index).state = DeclarationState.Complete; },
-            Err(error) => {
-                if !ctx.session.editor_recovery || error.kind == AnalysisErrorKind.Internal {
-                    return Result<(), AnalysisError>.Err(error);
-                }
-                ctx.declaration(index).state = DeclarationState.Failed;
-                if error.kind == AnalysisErrorKind.EditorIncomplete { error.drop(); } else {
-                    error.diagnostic.stage = Option<AnalysisStage>.Some(AnalysisStage.Resolve);
-                    ctx.session.diagnostics.push_unique(error.diagnostic);
-                }
-            },
-        }
+        resolve_one_definition(ctx, index)?;
+        ctx.declaration(index).state = DeclarationState.Complete;
         index += 1;
     }
 
     Result<(), AnalysisError>.Ok(())
-}
-
-// Parameter-list recovery preserves declaration identity but cannot complete its signature.
-fn signature_available(ctx: ResolutionContext&, unit: UnitId, start: Span, end: Span) -> bool {
-    let source = ctx.session.unit(unit).unwrap().source;
-    let index = 0u64;
-    while index < ctx.session.diagnostics.len() {
-        let diagnostic = ctx.session.diagnostics.get(index).unwrap();
-        index += 1u64;
-        match diagnostic.stage {
-            Some(AnalysisStage.Parse) => {},
-            _ => { continue; },
-        }
-        match &diagnostic.location {
-            Some(Source(location)) if location.source == source => {
-                let position = location.span.start;
-                let after_start = position.row > start.start.row ||
-                (position.row == start.start.row && position.column >= start.start.column);
-                let before_body = position.row < end.start.row ||
-                (position.row == end.start.row && position.column <= end.start.column);
-                if after_start && before_body { return false; }
-            },
-            _ => {},
-        }
-    }
-    true
 }
 
 // Each definition transfers its payload only after its complete signature is known.
@@ -190,11 +127,6 @@ fn resolve_one_definition(ctx: ResolutionContext&, index: u64) -> Result<(), Ana
             ctx.session.types.finish_definition(definition, DefinitionBody.Function(CallableDefinition(params, result, Option<TypeId>.None,
                 false, false, has_attr(attrs, AttrKind.Ffi), false, has_attr(attrs, AttrKind.PubFfi), has_attr(attrs, AttrKind.Pub), 0)))?;
             ctx.session.definitions.register(Procedure(definition, type_id, unit, *body, DefinitionKind.Function))?;
-            if ctx.session.editor_recovery {
-                let extent = declaration.item.span;
-                match body.data.end { Some(end) => { extent.end = end; }, None => {}, }
-                ctx.session.editor_facts.record_scope(ctx.span(unit, extent), scope);
-            }
         },
         StructDef(attrs, _, _, fields) => {
             let values = Vec<StructField>.new();
@@ -229,10 +161,7 @@ fn resolve_one_definition(ctx: ResolutionContext&, index: u64) -> Result<(), Ana
                     return Result<(), AnalysisError>.Err(ctx.error(unit, field.span, DiagnosticCode.Access, "public structure field cannot expose a C ABI type"));
                 }
 
-                values.push(StructField(name, type_id, access, values.len(), Option<SourceSpan>.Some(ctx.span(unit, field.span))));
-                ctx.session.editor_facts.record_member_declaration(
-                    EditorMemberKind.Field, name, ctx.span(unit, field.data.name.span),
-                    ctx.span(unit, field.span), type_id);
+                values.push(StructField(name, type_id, access, values.len(), Option<SourceSpan>.Some(ctx.span(unit, field.data.name.span))));
             }
 
             accepted = true;
@@ -279,10 +208,7 @@ fn resolve_one_definition(ctx: ResolutionContext&, index: u64) -> Result<(), Ana
                         return Result<(), AnalysisError>.Err(ctx.error(unit, field.span, DiagnosticCode.Access, "public enum payload cannot expose a C ABI type"));
                     }
 
-                    payloads.push(StructField(field_name, type_id, AccessMode.Public, payloads.len(), Option<SourceSpan>.Some(ctx.span(unit, field.span))));
-                    ctx.session.editor_facts.record_member_declaration(
-                        EditorMemberKind.Field, field_name, ctx.span(unit, field.data.name.span),
-                        ctx.span(unit, field.span), type_id);
+                    payloads.push(StructField(field_name, type_id, AccessMode.Public, payloads.len(), Option<SourceSpan>.Some(ctx.span(unit, field.data.name.span))));
                 }
 
                 let payload = Option<TypeId>.None;
@@ -304,11 +230,7 @@ fn resolve_one_definition(ctx: ResolutionContext&, index: u64) -> Result<(), Ana
                     payload = Option<TypeId>.Some(ctx.session.types.instance(identity, &arguments)?);
                 }
 
-                values.push(EnumVariant(name, payload, values.len(), Option<SourceSpan>.Some(ctx.span(unit, variant.span))));
-                let owner_type = ctx.session.symbols.get(declaration.symbol).unwrap().type_id;
-                ctx.session.editor_facts.record_member_declaration(
-                    EditorMemberKind.Variant, name, ctx.span(unit, variant.data.name.span),
-                    ctx.span(unit, variant.span), owner_type);
+                values.push(EnumVariant(name, payload, values.len(), Option<SourceSpan>.Some(ctx.span(unit, variant.data.name.span))));
             }
 
             accepted = true;
@@ -327,11 +249,6 @@ fn resolve_one_definition(ctx: ResolutionContext&, index: u64) -> Result<(), Ana
 
             for function in *functions {
                 if ctx.session.names.intern(function.data.name.data.name.as_str()) == symbol.name {
-                    if function.signature_recovered {
-                        let error = ctx.error(unit, function.span, DiagnosticCode.Syntax, "unfinished external signature");
-                        error.kind = AnalysisErrorKind.EditorIncomplete;
-                        return Result<(), AnalysisError>.Err(error);
-                    }
                     let values = Vec<Parameter>.new();
                     let accepted = false;
                     defer {
