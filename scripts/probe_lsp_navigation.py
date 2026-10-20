@@ -57,6 +57,9 @@ fn marker() { let text: str = "😀"; let value: Imported = 1; }
 """
 
 TYPED_MAIN = """\
+struct Widget { value: i32 }
+impl Widget { static pub fn make() -> Widget { Widget(1) } }
+
 fn pair() -> (i32, i32) { (1, 2) }
 
 fn typed_bindings() {
@@ -64,6 +67,7 @@ fn typed_bindings() {
     let flag = true;
     let letter = 'A';
     let text = "yian";
+    let widget = Widget.make();
     let annotated: i32 = 2;
     let (first, second) = pair();
     let items: i32[2] = [1, 2];
@@ -76,7 +80,7 @@ fn typed_bindings() {
     if let Some(found) = opt { found; }
     let bias: i32 = 10;
     let closure = |captured = bias| (value: i32) -> i32 { captured + value };
-    inferred; flag; letter; text; annotated; first; second; closure;
+    inferred; flag; letter; text; widget; annotated; first; second; closure;
 }
 """
 
@@ -472,6 +476,7 @@ def run_probe(lsp: Path, compiler_root: Path, timeout: float) -> dict[str, Any]:
             flag_line = line_of("let flag")
             letter_line = line_of("let letter")
             text_line = line_of("let text")
+            widget_line = line_of("let widget")
             pair_line = line_of("let (first, second)")
             for_line = line_of("for item in")
             match_line = line_of("Some(payload)")
@@ -482,6 +487,7 @@ def run_probe(lsp: Path, compiler_root: Path, timeout: float) -> dict[str, Any]:
                 (hint_position(flag_line, "flag"), ": bool"),
                 (hint_position(letter_line, "letter"), ": char"),
                 (hint_position(text_line, "text"), ": str"),
+                (hint_position(widget_line, "widget"), ": Widget"),
                 (hint_position(pair_line, "first"), ": i32"),
                 (hint_position(pair_line, "second"), ": i32"),
                 (hint_position(for_line, "item"), ": i32&"),
@@ -516,6 +522,33 @@ def run_probe(lsp: Path, compiler_root: Path, timeout: float) -> dict[str, Any]:
                 "inlay hints must be Type hints without text edits",
             )
             report["inlay_hints"] = len(actual)
+
+            # A static call spells its owner type as the callee; hover and definition resolve
+            # that type item rather than the dispatched method.
+            widget_character = typed_lines[widget_line].index("Widget") + 1
+            widget_hover = client.request("textDocument/hover", {
+                "textDocument": typed_document,
+                "position": {"line": widget_line, "character": widget_character},
+            })
+            widget_text = (
+                widget_hover.get("contents", {}).get("value", "")
+                if isinstance(widget_hover, dict) and isinstance(widget_hover.get("contents"), dict)
+                else ""
+            )
+            require("struct Widget" in widget_text,
+                    f"static call receiver hover failed: {widget_hover!r}")
+            widget_definition = client.request("textDocument/definition", {
+                "textDocument": typed_document,
+                "position": {"line": widget_line, "character": widget_character},
+            })
+            struct_line = line_of("struct Widget")
+            struct_column = typed_lines[struct_line].index("Widget")
+            require(
+                same_location(location_of(widget_definition), typed_uri, struct_line, struct_column,
+                              struct_column + len("Widget")),
+                f"static call receiver definition failed: {widget_definition!r}",
+            )
+            report["static_receiver_navigation"] = True
 
             inferred_line_range = {
                 "start": {"line": inferred_line, "character": 0},

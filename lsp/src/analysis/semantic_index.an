@@ -48,6 +48,31 @@ fn declaration_kind(kind: NominalKind) -> DeclKind {
     }
 }
 
+// The definition header records the whole item span, while the source index declares the name.
+// The defining symbol carries the name span, so use it first and keep the header as a fallback.
+fn definition_symbol_span(session: AnalysisSession&, definition: DefId) -> Option<SourceSpan> {
+    let cursor = 0u64;
+    while cursor < session.symbols.symbol_count() {
+        let symbol = match session.symbols.symbol_at(cursor) {
+            Some(value) => value,
+            None => { cursor += 1u64; continue; },
+        };
+        cursor += 1u64;
+        match &symbol.alias {
+            Some(value) => {
+                if *value == definition {
+                    match &symbol.span {
+                        Some(span) => return Option<SourceSpan>.Some(*span),
+                        None => {},
+                    }
+                }
+            },
+            None => {},
+        }
+    }
+    Option<SourceSpan>.None
+}
+
 fn definition_target(session: AnalysisSession&, index: SourceIndex&, type_id: TypeId) -> Option<u64> {
     let definition = match session.types.get(type_id) {
         Some(Nominal(value, _)) => *value,
@@ -58,6 +83,13 @@ fn definition_target(session: AnalysisSession&, index: SourceIndex&, type_id: Ty
         None => return Option<u64>.None,
     };
     let header = record.header();
+    match definition_symbol_span(session, definition) {
+        Some(span) => match index.find_decl_at_span(span.source, span) {
+            Some(value) => return Option<u64>.Some(value),
+            None => {},
+        },
+        None => {},
+    }
     let source = match unit_source(session, header.unit) {
         Some(value) => value,
         None => return Option<u64>.None,
@@ -421,6 +453,21 @@ impl SemanticCollector {
         }
     }
 
+    // A static method call spells the owner type as its callee, so the recorded name span points
+    // at the type item. Resolve that receiver type instead of the method it dispatches to.
+    fn static_receiver_type(func: TypeId) -> Option<TypeId> {
+        let signature = match store_signature(&self.session.types, func) {
+            Ok(value) => value,
+            Err(problem) => { problem.drop(); return Option<TypeId>.None; },
+        };
+        defer signature.drop();
+        if !signature.is_static { return Option<TypeId>.None; }
+        match &signature.receiver {
+            Some(value) => Option<TypeId>.Some(*value),
+            None => Option<TypeId>.None,
+        }
+    }
+
     fn expr(node: HirNode&) {
         match &node.kind {
             Var(symbol_id) => {
@@ -428,11 +475,30 @@ impl SemanticCollector {
                 let signature = Option<String>.None;
                 self.add(target, node.span, Option<TypeId>.Some(node.type_id), signature, false);
             },
+            Ty => {
+                // A type item in value position lowers to a Ty node with the nominal type but no
+                // symbol identity, so resolve the definition from the type.
+                let target = definition_target(self.session, self.index, node.type_id);
+                let signature = Option<String>.None;
+                self.add(target, node.span, Option<TypeId>.Some(node.type_id), signature, false);
+            },
             Call(value) => {
                 let target = definition_target(self.session, self.index, value.func);
                 let signature = signature_text(self.session, value.func);
                 match &value.name_span {
-                    Some(span) => self.add(target, *span, Option<TypeId>.Some(node.type_id), signature, false),
+                    Some(span) => {
+                        self.add(target, *span, Option<TypeId>.Some(node.type_id), signature, false);
+                        // A static call keeps the method name in name_span and records the owner
+                        // type item as the call span, so add a second occurrence for the type.
+                        match self.static_receiver_type(value.func) {
+                            Some(receiver_type) => {
+                                let receiver_target = definition_target(self.session, self.index, receiver_type);
+                                self.add(receiver_target, node.span, Option<TypeId>.Some(receiver_type),
+                                    Option<String>.None, false);
+                            },
+                            None => {},
+                        }
+                    },
                     None => { match &signature { Some(text) => text.drop(), None => {}, } },
                 }
             },
