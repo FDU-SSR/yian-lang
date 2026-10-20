@@ -53,6 +53,26 @@ impl DeclKind {
         }
     }
 
+    static pub fn from_code(code: u32) -> Option<DeclKind> {
+        match code {
+            0u32 => Option<DeclKind>.Some(DeclKind.Module),
+            1u32 => Option<DeclKind>.Some(DeclKind.Type),
+            2u32 => Option<DeclKind>.Some(DeclKind.Struct),
+            3u32 => Option<DeclKind>.Some(DeclKind.Enum),
+            4u32 => Option<DeclKind>.Some(DeclKind.Trait),
+            5u32 => Option<DeclKind>.Some(DeclKind.TypeParameter),
+            6u32 => Option<DeclKind>.Some(DeclKind.Function),
+            7u32 => Option<DeclKind>.Some(DeclKind.Method),
+            8u32 => Option<DeclKind>.Some(DeclKind.Field),
+            9u32 => Option<DeclKind>.Some(DeclKind.Variant),
+            10u32 => Option<DeclKind>.Some(DeclKind.Variable),
+            11u32 => Option<DeclKind>.Some(DeclKind.Parameter),
+            12u32 => Option<DeclKind>.Some(DeclKind.Alias),
+            13u32 => Option<DeclKind>.Some(DeclKind.Constant),
+            _ => Option<DeclKind>.None,
+        }
+    }
+
     pub fn label() -> str {
         match self {
             Module => "module", Type => "type", Struct => "struct", Enum => "enum", Trait => "trait",

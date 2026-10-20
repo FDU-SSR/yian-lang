@@ -269,6 +269,7 @@ lsp_version="$("$staged_lsp" --version 2>&1)" || die 'staged yian-lsp failed its
 [[ "$lsp_version" == yian-lsp\ * ]] || die "unexpected yian-lsp version output: $lsp_version"
 
 cp -a -- "$ROOT_DIR/lib/src" "$BUNDLE/share/yian/lib/src"
+cp -a -- "$ROOT_DIR/lib/package.anx" "$BUNDLE/share/yian/lib/package.anx"
 cp -a -- "$ROOT_DIR/runtime/src" "$BUNDLE/share/yian/runtime/src"
 cp -a -- "$ROOT_DIR/runtime/include" "$BUNDLE/share/yian/runtime/include"
 

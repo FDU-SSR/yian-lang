@@ -17,6 +17,7 @@ COMPONENT_ROOTS = {
 }
 SOURCE_SUFFIXES = {".an", ".c", ".h"}
 RESOURCE_ROOTS = ("lib/src", "runtime/src", "runtime/include")
+RESOURCE_FILES = ("lib/package.anx",)
 
 
 class IdentityError(Exception):
@@ -107,6 +108,11 @@ def resource_files(root: Path) -> tuple[Path, ...]:
         if not directory.is_dir():
             raise IdentityError(f"installed resource source is missing: {directory}")
         files.extend(path.resolve() for path in directory.rglob("*") if path.is_file())
+    for relative in RESOURCE_FILES:
+        path = root / relative
+        if not path.is_file():
+            raise IdentityError(f"installed resource source is missing: {path}")
+        files.append(path.resolve())
     return tuple(files)
 
 

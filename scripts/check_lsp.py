@@ -170,7 +170,10 @@ class StdioSession:
             "rootUri": None if root is None else root.as_uri(),
             "capabilities": {
                 "workspace": {
-                    "didChangeWatchedFiles": {"dynamicRegistration": True},
+                    "didChangeWatchedFiles": {
+                        "dynamicRegistration": True,
+                        "relativePatternSupport": True,
+                    },
                     "semanticTokens": {"refreshSupport": True},
                 }
             },

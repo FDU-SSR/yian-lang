@@ -1,0 +1,839 @@
+from lsp.analysis.compiler import CompilerAnalysis;
+from lsp.analysis.source_index import DeclKind, SourceIndex;
+from yianc.common.ids import SourceId;
+from yianc.diagnostics.model import Diagnostic;
+from yianc.diagnostics.render import detach;
+from yianc.frontend.lex.token import KeywordKind, TokenPayload;
+from yianc.frontend.source import SourceDocument, Span;
+from std.collections.hash_map import HashMap;
+from std.core.drop import Drop;
+from std.core.option import Option;
+from std.core.path import Path;
+from std.core.result import Result;
+from std.core.string import String;
+from std.core.text import LineIndex;
+from std.core.vec import Vec;
+
+// Query records are owned copies of one successful analysis. Every identifier in
+// this module is a local table index; compiler source, definition and type IDs
+// never escape extraction.
+pub struct QueryDecl {
+    pub file: u64,
+    pub span: Span,
+    pub kind: DeclKind,
+    pub name: String,
+    pub owner: Option<Span>,
+    pub type_text: Option<String>,
+    pub detail: Option<String>,
+}
+
+impl Drop for QueryDecl {
+    pub fn drop() {
+        self.name.drop();
+        match &self.type_text { Some(value) => value.drop(), None => {}, }
+        match &self.detail { Some(value) => value.drop(), None => {}, }
+    }
+}
+
+pub struct QueryOccurrence {
+    pub file: u64,
+    pub span: Span,
+    pub target: Option<u64>,
+    pub kind: DeclKind,
+    pub is_declaration: bool,
+    pub type_text: Option<String>,
+    pub signature: Option<String>,
+}
+
+impl Drop for QueryOccurrence {
+    pub fn drop() {
+        match &self.type_text { Some(value) => value.drop(), None => {}, }
+        match &self.signature { Some(value) => value.drop(), None => {}, }
+    }
+}
+
+struct PositionKey {
+    row: u64,
+    column: u64,
+}
+
+fn start_key(span: Span) -> PositionKey {
+    PositionKey(row=span.start.row, column=span.start.column)
+}
+
+fn end_key(span: Span) -> PositionKey {
+    PositionKey(row=span.end.row, column=span.end.column)
+}
+
+fn before(left: PositionKey, right: PositionKey) -> bool {
+    left.row < right.row || (left.row == right.row && left.column < right.column)
+}
+
+fn contains(start: PositionKey, end: PositionKey, point: PositionKey) -> bool {
+    !before(point, start) && !before(end, point)
+}
+
+// The LineIndex borrows the text buffer owned by this record. Drop it first.
+pub struct QueryFile {
+    pub path: String,
+    pub text: String,
+    lines: LineIndex,
+    pub stdlib: bool,
+    pub module_name: Option<String>,
+    decl_ids: Vec<u64>,
+    decl_order: Vec<u64>,
+    decl_max_end: Vec<PositionKey>,
+    occurrence_ids: Vec<u64>,
+    occurrence_order: Vec<u64>,
+    occurrence_max_end: Vec<PositionKey>,
+    token_data: Vec<u64>,
+}
+
+impl QueryFile {
+    static fn new(path: String, text: String, stdlib: bool, module_name: Option<String>) -> Self {
+        let lines = LineIndex.new(text.as_str());
+        Self(path=path, text=text, lines=lines, stdlib=stdlib, module_name=module_name,
+            decl_ids=Vec<u64>.new(), decl_order=Vec<u64>.new(),
+            decl_max_end=Vec<PositionKey>.new(), occurrence_ids=Vec<u64>.new(),
+            occurrence_order=Vec<u64>.new(), occurrence_max_end=Vec<PositionKey>.new(),
+            token_data=Vec<u64>.new())
+    }
+
+    pub fn utf16_column(row: u64, column: u64) -> u64 {
+        self.lines.utf16_column(row, column)
+    }
+
+    pub fn scalar_column(row: u64, utf16_column: u64) -> u64 {
+        self.lines.scalar_column(row, utf16_column)
+    }
+
+    pub fn tokens() -> Vec<u64>& { &self.token_data }
+
+    pub fn module_name() -> Option<str> {
+        match &self.module_name { Some(value) => Option<str>.Some(value.as_str()), None => Option<str>.None }
+    }
+
+    pub fn declarations() -> Vec<u64>& { &self.decl_ids }
+}
+
+impl Drop for QueryFile {
+    pub fn drop() {
+        self.lines.drop();
+        self.path.drop();
+        self.text.drop();
+        match &self.module_name { Some(value) => value.drop(), None => {}, }
+        self.decl_ids.drop();
+        self.decl_order.drop();
+        self.decl_max_end.drop();
+        self.occurrence_ids.drop();
+        self.occurrence_order.drop();
+        self.occurrence_max_end.drop();
+        self.token_data.drop();
+    }
+}
+
+fn release_files(files: Vec<QueryFile>&) {
+    for file in *files { file.drop(); }
+    files.drop();
+}
+
+fn release_specs(specs: Vec<QueryFileSpec>&) {
+    for spec in *specs {
+        spec.path.drop();
+        spec.text.drop();
+        match &spec.module_name { Some(value) => value.drop(), None => {}, }
+        spec.tokens.drop();
+    }
+    specs.drop();
+}
+
+fn release_decls(decls: Vec<QueryDecl>&) {
+    for value in *decls { value.drop(); }
+    decls.drop();
+}
+
+fn release_occurrences(occurrences: Vec<QueryOccurrence>&) {
+    for value in *occurrences { value.drop(); }
+    occurrences.drop();
+}
+
+fn release_warnings(warnings: Vec<Diagnostic>&) {
+    for value in *warnings { value.drop(); }
+    warnings.drop();
+}
+
+fn release_file_map(map: HashMap<String, u64>&) {
+    for entry in map.entries() { entry[0].drop(); }
+    map.drop();
+}
+
+fn module_name_for_path(analysis: CompilerAnalysis&, path: str) -> Option<String> {
+    let package_name = Option<String>.None;
+    let package_root = Option<String>.None;
+    match analysis.session.package_map() {
+        Some(packages) => match packages.package_of(path) {
+            Some(package) => {
+                package_name = Option<String>.Some(String.from(&package.name.as_str()));
+                package_root = Option<String>.Some(String.from(&package.source_root.as_str()));
+            },
+            None => {},
+        },
+        None => {},
+    }
+
+    let file_path = Path.new(path);
+    let file_name = match file_path.file_name() {
+        Some(value) => value,
+        None => {
+            match package_name { Some(value) => value.drop(), None => {}, }
+            match package_root { Some(value) => value.drop(), None => {}, }
+            return Option<String>.None;
+        },
+    };
+    if !file_name.ends_with(".an") {
+        match package_name { Some(value) => value.drop(), None => {}, }
+        match package_root { Some(value) => value.drop(), None => {}, }
+        return Option<String>.None;
+    }
+    let stem = String.from(&file_name);
+    let _ = stem.pop();
+    let _ = stem.pop();
+    let _ = stem.pop();
+
+    let result = String.new();
+    match &package_name { Some(name) => { result.push_str(name.as_str()); result.push('.'); }, None => {}, }
+
+    let directories = Vec<String>.new();
+    match &package_root {
+        Some(root) => {
+            let parent = file_path.parent();
+            while parent.is_some() {
+                let directory = *parent.unwrap();
+                if directory.as_str() == root.as_str() { break; }
+                match directory.file_name() {
+                    Some(name) => directories.push(String.from(&name)),
+                    None => { break; },
+                }
+                parent = directory.parent();
+            }
+        },
+        None => {},
+    }
+
+    let directory_index = directories.len();
+    while directory_index != 0u64 {
+        directory_index -= 1u64;
+        result.push_str(directories[directory_index].as_str());
+        result.push('.');
+    }
+    for directory in directories { directory.drop(); }
+    directories.drop();
+    result.push_str(stem.as_str());
+    stem.drop();
+    match package_name { Some(value) => value.drop(), None => {}, }
+    match package_root { Some(value) => value.drop(), None => {}, }
+    Option<String>.Some(result)
+}
+
+fn sort_decl_order(order: Vec<u64>&, decls: Vec<QueryDecl>&) {
+    let cursor = 1u64;
+    while cursor < order.len() {
+        let current = order[cursor];
+        let insertion = cursor;
+        while insertion != 0u64 &&
+            before(start_key(decls[current].span), start_key(decls[order[insertion - 1u64]].span)) {
+            order[insertion] = order[insertion - 1u64];
+            insertion -= 1u64;
+        }
+        order[insertion] = current;
+        cursor += 1u64;
+    }
+}
+
+fn sort_occurrence_order(order: Vec<u64>&, occurrences: Vec<QueryOccurrence>&) {
+    let cursor = 1u64;
+    while cursor < order.len() {
+        let current = order[cursor];
+        let insertion = cursor;
+        while insertion != 0u64 &&
+            before(start_key(occurrences[current].span),
+                start_key(occurrences[order[insertion - 1u64]].span)) {
+            order[insertion] = order[insertion - 1u64];
+            insertion -= 1u64;
+        }
+        order[insertion] = current;
+        cursor += 1u64;
+    }
+}
+
+fn sort_ids(values: Vec<u64>&) {
+    let cursor = 1u64;
+    while cursor < values.len() {
+        let current = values[cursor];
+        let insertion = cursor;
+        while insertion != 0u64 && current < values[insertion - 1u64] {
+            values[insertion] = values[insertion - 1u64];
+            insertion -= 1u64;
+        }
+        values[insertion] = current;
+        cursor += 1u64;
+    }
+}
+
+fn push_max_end(values: Vec<PositionKey>&, end: PositionKey) {
+    let maximum = if values.len() == 0u64 {
+        end
+    } else {
+        let previous = values[values.len() - 1u64];
+        if before(previous, end) { end } else { previous }
+    };
+    values.push(maximum);
+}
+
+fn build_decl_index(file: QueryFile&, decls: Vec<QueryDecl>&) {
+    let cursor = 0u64;
+    while cursor < file.decl_ids.len() {
+        file.decl_order.push(file.decl_ids[cursor]);
+        cursor += 1u64;
+    }
+    sort_decl_order(&file.decl_order, decls);
+    cursor = 0u64;
+    while cursor < file.decl_order.len() {
+        push_max_end(&file.decl_max_end, end_key(decls[file.decl_order[cursor]].span));
+        cursor += 1u64;
+    }
+}
+
+fn build_occurrence_index(file: QueryFile&, occurrences: Vec<QueryOccurrence>&) {
+    let cursor = 0u64;
+    while cursor < file.occurrence_ids.len() {
+        file.occurrence_order.push(file.occurrence_ids[cursor]);
+        cursor += 1u64;
+    }
+    sort_occurrence_order(&file.occurrence_order, occurrences);
+    cursor = 0u64;
+    while cursor < file.occurrence_order.len() {
+        push_max_end(&file.occurrence_max_end, end_key(occurrences[file.occurrence_order[cursor]].span));
+        cursor += 1u64;
+    }
+}
+
+fn semantic_kind_index(kind: DeclKind) -> u64 {
+    match kind {
+        Struct => 1u64,
+        Enum => 2u64,
+        Trait => 3u64,
+        TypeParameter => 4u64,
+        Function => 5u64,
+        Method => 6u64,
+        Field => 7u64,
+        Variant => 8u64,
+        Variable => 9u64,
+        Parameter => 10u64,
+        _ => 0u64,
+    }
+}
+
+fn append_token_data(file_id: u64, file: QueryFile&, index: SourceIndex&,
+    occurrences: Vec<QueryOccurrence>&, decls: Vec<QueryDecl>&, files: Vec<QueryFile>&) {
+    let tokens = match index.tokens_of(SourceId(file_id)) {
+        Some(value) => value,
+        None => { return; },
+    };
+    let declaration_by_start = HashMap<u64, u64>.new();
+    defer declaration_by_start.drop();
+    let occurrence_cursor = 0u64;
+    while occurrence_cursor < file.occurrence_ids.len() {
+        let occurrence = &occurrences[file.occurrence_ids[occurrence_cursor]];
+        let key = occurrence.span.start.row * 1000000u64 + occurrence.span.start.column;
+        match occurrence.target {
+            Some(_target) => {
+                if occurrence.is_declaration {
+                    declaration_by_start.insert(key, file.occurrence_ids[occurrence_cursor]);
+                } elif declaration_by_start.get(&key).is_none() {
+                    declaration_by_start.insert(key, file.occurrence_ids[occurrence_cursor]);
+                }
+            },
+            None => {},
+        }
+        occurrence_cursor += 1u64;
+    }
+
+    let previous_line = 0u64;
+    let previous_start = 0u64;
+    let token_cursor = 0u64;
+    while token_cursor < tokens.len() {
+        let token = &tokens[token_cursor];
+        token_cursor += 1u64;
+        let span = token.span;
+        let kind = match token.kind() {
+            Identifier(_) => {
+                let key = span.start.row * 1000000u64 + span.start.column;
+                match declaration_by_start.get(&key) {
+                    Some(occurrence_id) => {
+                        let occurrence = &occurrences[*occurrence_id];
+                        match occurrence.target {
+                            Some(target) => {
+                                let target_kind = decls[target].kind;
+                                match target_kind {
+                                    Module | Constant | TypeParameter => { continue; },
+                                    _ => {},
+                                }
+                                Option<DeclKind>.Some(target_kind)
+                            },
+                            None => Option<DeclKind>.None,
+                        }
+                    },
+                    None => Option<DeclKind>.None,
+                }
+            },
+            Keyword(keyword) => {
+                let primitive = match keyword {
+                    Void | Bool | Char | Str | I8 | I16 | I32 | I64 | U8 | U16 | U32 | U64 |
+                    F16 | F32 | F64 | Int | Uint | Float => true,
+                    _ => false,
+                };
+                if primitive { Option<DeclKind>.Some(DeclKind.Type) } else { Option<DeclKind>.None }
+            },
+            _ => Option<DeclKind>.None,
+        };
+        let resolved = match kind { Some(value) => value, None => continue };
+        if span.start.row != span.end.row { continue; }
+        let start = file.utf16_column(span.start.row, span.start.column);
+        let end = file.utf16_column(span.end.row, span.end.column);
+        let delta_line = span.start.row - previous_line;
+        let delta_start = if delta_line == 0u64 { start - previous_start } else { start };
+        let declaration = false;
+        let default_library = false;
+        if let Some(occurrence_id) = declaration_by_start.get(&(span.start.row * 1000000u64 + span.start.column)) {
+            let occurrence = &occurrences[*occurrence_id];
+            declaration = occurrence.is_declaration;
+            match occurrence.target {
+                Some(target) => default_library = files[decls[target].file].stdlib,
+                None => {},
+            }
+        }
+        let modifiers = (if declaration { 1u64 } else { 0u64 }) | (if default_library { 2u64 } else { 0u64 });
+        file.token_data.push(delta_line);
+        file.token_data.push(delta_start);
+        file.token_data.push(end - start);
+        file.token_data.push(semantic_kind_index(resolved));
+        file.token_data.push(modifiers);
+        previous_line = span.start.row;
+        previous_start = start;
+    }
+}
+
+pub struct QuerySnapshot {
+    files: Vec<QueryFile>,
+    files_by_path: HashMap<String, u64>,
+    decls: Vec<QueryDecl>,
+    occurrences: Vec<QueryOccurrence>,
+    references: Vec<Vec<u64>>,
+    warnings: Vec<Diagnostic>,
+}
+
+// Cache loading supplies owned file text and precomputed semantic token data.
+// QueryFileSpec deliberately has no Drop: restore consumes every field.
+pub struct QueryFileSpec {
+    pub path: String,
+    pub text: String,
+    pub stdlib: bool,
+    pub module_name: Option<String>,
+    pub tokens: Vec<u64>,
+}
+
+impl QuerySnapshot {
+    static pub fn restore(file_specs: Vec<QueryFileSpec>, decls: Vec<QueryDecl>,
+        occurrences: Vec<QueryOccurrence>, warnings: Vec<Diagnostic>) -> Result<Self, String> {
+        let file_cursor = 0u64;
+        while file_cursor < file_specs.len() {
+            let spec = &file_specs[file_cursor];
+            if spec.tokens.len() % 5u64 != 0u64 {
+                release_specs(&file_specs);
+                release_decls(&decls);
+                release_occurrences(&occurrences);
+                release_warnings(&warnings);
+                return Result<Self, String>.Err(String.from(&"cached token data is malformed"));
+            }
+            file_cursor += 1u64;
+        }
+        let decl_cursor = 0u64;
+        while decl_cursor < decls.len() {
+            if decls[decl_cursor].file >= file_specs.len() {
+                release_specs(&file_specs);
+                release_decls(&decls);
+                release_occurrences(&occurrences);
+                release_warnings(&warnings);
+                return Result<Self, String>.Err(String.from(&"cached declaration file is invalid"));
+            }
+            decl_cursor += 1u64;
+        }
+        let occurrence_cursor = 0u64;
+        while occurrence_cursor < occurrences.len() {
+            if occurrences[occurrence_cursor].file >= file_specs.len() {
+                release_specs(&file_specs);
+                release_decls(&decls);
+                release_occurrences(&occurrences);
+                release_warnings(&warnings);
+                return Result<Self, String>.Err(String.from(&"cached occurrence file is invalid"));
+            }
+            match occurrences[occurrence_cursor].target {
+                Some(target) => {
+                    if target >= decls.len() {
+                        release_specs(&file_specs);
+                        release_decls(&decls);
+                        release_occurrences(&occurrences);
+                        release_warnings(&warnings);
+                        return Result<Self, String>.Err(String.from(&"cached occurrence target is invalid"));
+                    }
+                },
+                None => {},
+            }
+            occurrence_cursor += 1u64;
+        }
+
+        let files = Vec<QueryFile>.new();
+        let files_by_path = HashMap<String, u64>.new();
+        for spec in file_specs {
+            let file = QueryFile.new(spec.path, spec.text, spec.stdlib, spec.module_name);
+            file.token_data = spec.tokens;
+            files_by_path.insert(String.from(&file.path.as_str()), files.len());
+            files.push(file);
+        }
+
+        let cursor = 0u64;
+        while cursor < decls.len() {
+            let file = decls[cursor].file;
+            files[file].decl_ids.push(cursor);
+            cursor += 1u64;
+        }
+        let references = Vec<Vec<u64>>.new();
+        cursor = 0u64;
+        while cursor < decls.len() { references.push(Vec<u64>.new()); cursor += 1u64; }
+        cursor = 0u64;
+        while cursor < occurrences.len() {
+            let file = occurrences[cursor].file;
+            files[file].occurrence_ids.push(cursor);
+            match occurrences[cursor].target {
+                Some(target) => references[target].push(cursor),
+                None => {},
+            }
+            cursor += 1u64;
+        }
+        cursor = 0u64;
+        while cursor < files.len() {
+            build_decl_index(&files[cursor], &decls);
+            build_occurrence_index(&files[cursor], &occurrences);
+            cursor += 1u64;
+        }
+        Result<Self, String>.Ok(Self(files=files, files_by_path=files_by_path,
+            decls=decls, occurrences=occurrences, references=references, warnings=warnings))
+    }
+}
+
+impl QuerySnapshot {
+    // Extraction copies every value the protocol needs, detaches warning
+    // locations and rebuilds position tables. The caller releases the compiler
+    // session, output, source index and semantic index after this returns.
+    static pub fn extract(documents: Vec<SourceDocument>&, index: SourceIndex&,
+        analysis: CompilerAnalysis&) -> Result<Self, String> {
+        let files = Vec<QueryFile>.new();
+        let accepted = false;
+        defer { if !accepted { release_files(&files); } };
+
+        let document_cursor = 0u64;
+        while document_cursor < documents.len() {
+            let document = &documents[document_cursor];
+            let path = String.from(&document.path.as_str());
+            let module = module_name_for_path(analysis, document.path.as_str());
+            let file = QueryFile.new(path, String.from(&document.text.as_str()),
+                index.is_stdlib_source(SourceId(document_cursor)), module);
+            files.push(file);
+            document_cursor += 1u64;
+        }
+
+        let files_by_path = HashMap<String, u64>.new();
+        let cursor = 0u64;
+        while cursor < files.len() {
+            files_by_path.insert(String.from(&files[cursor].path.as_str()), cursor);
+            cursor += 1u64;
+        }
+
+        let decls = Vec<QueryDecl>.new();
+        let decl_cursor = 0u64;
+        while decl_cursor < index.decls.len() {
+            let source = &index.decls[decl_cursor];
+            let file = u64(source.source.index);
+            let owner = match &source.owner {
+                Some(value) => Option<Span>.Some(value.span),
+                None => Option<Span>.None,
+            };
+            let type_text = match &source.type_text {
+                Some(value) => Option<String>.Some(String.from(&value.as_str())),
+                None => Option<String>.None,
+            };
+            let detail = match &source.detail {
+                Some(value) => Option<String>.Some(String.from(&value.as_str())),
+                None => Option<String>.None,
+            };
+            decls.push(QueryDecl(file=file, span=source.span.span, kind=source.kind,
+                name=String.from(&source.name.as_str()), owner=owner,
+                type_text=type_text, detail=detail));
+            files[file].decl_ids.push(decl_cursor);
+            decl_cursor += 1u64;
+        }
+
+        let references = Vec<Vec<u64>>.new();
+        let reference_cursor = 0u64;
+        while reference_cursor < decls.len() {
+            references.push(Vec<u64>.new());
+            reference_cursor += 1u64;
+        }
+
+        let occurrences = Vec<QueryOccurrence>.new();
+        let occurrence_cursor = 0u64;
+        while occurrence_cursor < index.occurrences.len() {
+            let source = &index.occurrences[occurrence_cursor];
+            let file = u64(source.source.index);
+            let target = match &source.target {
+                Some(value) => Option<u64>.Some(*value),
+                None => Option<u64>.None,
+            };
+            let type_text = match &source.type_text {
+                Some(value) => Option<String>.Some(String.from(&value.as_str())),
+                None => Option<String>.None,
+            };
+            let signature = match &source.signature {
+                Some(value) => Option<String>.Some(String.from(&value.as_str())),
+                None => Option<String>.None,
+            };
+            occurrences.push(QueryOccurrence(file=file, span=source.span.span, target=target,
+                kind=source.kind, is_declaration=source.is_declaration,
+                type_text=type_text, signature=signature));
+            files[file].occurrence_ids.push(occurrence_cursor);
+            match target {
+                Some(declaration) => references[declaration].push(occurrence_cursor),
+                None => {},
+            }
+            occurrence_cursor += 1u64;
+        }
+
+        let file_cursor = 0u64;
+        while file_cursor < files.len() {
+            build_decl_index(&files[file_cursor], &decls);
+            build_occurrence_index(&files[file_cursor], &occurrences);
+            file_cursor += 1u64;
+        }
+        file_cursor = 0u64;
+        while file_cursor < files.len() {
+            append_token_data(file_cursor, &files[file_cursor], index,
+                &occurrences, &decls, &files);
+            file_cursor += 1u64;
+        }
+
+        let warnings = Vec<Diagnostic>.new();
+        let warning_cursor = 0u64;
+        while warning_cursor < analysis.output.warnings.len() {
+            let warning = &analysis.output.warnings[warning_cursor];
+            let copied = warning.copy();
+            match detach(&copied, analysis.session.source_manager()) {
+                Ok(_) => warnings.push(copied),
+                Err(problem) => {
+                    problem.drop();
+                    copied.drop();
+                    for value in warnings { value.drop(); }
+                    warnings.drop();
+                    for reference in references { reference.drop(); }
+                    references.drop();
+                    for occurrence in occurrences { occurrence.drop(); }
+                    occurrences.drop();
+                    for declaration in decls { declaration.drop(); }
+                    decls.drop();
+                    release_file_map(&files_by_path);
+                    return Result<Self, String>.Err(
+                        String.from(&"could not detach an analysis warning"));
+                },
+            }
+            warning_cursor += 1u64;
+        }
+
+        accepted = true;
+        Result<Self, String>.Ok(Self(files=files, files_by_path=files_by_path, decls=decls,
+            occurrences=occurrences, references=references, warnings=warnings))
+    }
+
+    pub fn file(id: u64) -> Option<QueryFile&> { self.files.as_slice().get(id) }
+
+    pub fn file_for_path(path: str) -> Option<u64> {
+        let key = String.from(&path);
+        defer key.drop();
+        match self.files_by_path.get(&key) {
+            Some(value) => Option<u64>.Some(*value),
+            None => Option<u64>.None,
+        }
+    }
+
+    pub fn text_for_path(path: str) -> Option<str> {
+        match self.file_for_path(path) {
+            Some(file) => Option<str>.Some(self.files[file].text.as_str()),
+            None => Option<str>.None,
+        }
+    }
+
+    pub fn decl_count() -> u64 { self.decls.len() }
+
+    pub fn decl(id: u64) -> Option<QueryDecl&> { self.decls.as_slice().get(id) }
+
+    pub fn occurrence_count() -> u64 { self.occurrences.len() }
+
+    pub fn occurrence(id: u64) -> Option<QueryOccurrence&> {
+        self.occurrences.as_slice().get(id)
+    }
+
+    pub fn declaration_at(file: u64, row: u64, column: u64) -> Option<u64> {
+        let candidates = self.decl_candidates(file, row, column);
+        defer candidates.drop();
+        let point = PositionKey(row=row, column=column);
+        let best = Option<u64>.None;
+        for candidate in candidates {
+            let declaration = &self.decls[*candidate];
+            if declaration.kind == DeclKind.Module { continue; }
+            match &best {
+                Some(current) => {
+                    let current_span = self.decls[*current].span;
+                    if contains(start_key(current_span), end_key(current_span), point) &&
+                        declaration.span.start.row == row &&
+                        declaration.span.start.column <= column {
+                        let current_length = current_span.end.column - current_span.start.column;
+                        let candidate_length = declaration.span.end.column - declaration.span.start.column;
+                        if candidate_length <= current_length {
+                            best = Option<u64>.Some(*candidate);
+                        }
+                    }
+                },
+                None => { best = Option<u64>.Some(*candidate); },
+            }
+        }
+        best
+    }
+
+    pub fn occurrences_at(file: u64, row: u64, column: u64) -> Vec<u64> {
+        self.occurrence_candidates(file, row, column)
+    }
+
+    pub fn occurrences_of(target: u64) -> Vec<u64> {
+        let result = Vec<u64>.new();
+        if target >= self.references.len() { return result; }
+        for occurrence in self.references[target] { result.push(*occurrence); }
+        result
+    }
+
+    fn decl_candidates(file: u64, row: u64, column: u64) -> Vec<u64> {
+        let result = Vec<u64>.new();
+        let source = match self.file(file) {
+            Some(value) => value,
+            None => return result,
+        };
+        let point = PositionKey(row=row, column=column);
+        let cursor = upper_bound_decls(source, &self.decls, row, column);
+        while cursor != 0u64 {
+            cursor -= 1u64;
+            let maximum = source.decl_max_end[cursor];
+            if before(maximum, point) { break; }
+            let declaration = &self.decls[source.decl_order[cursor]];
+            if contains(start_key(declaration.span), end_key(declaration.span), point) {
+                result.push(source.decl_order[cursor]);
+            }
+        }
+        sort_ids(&result);
+        result
+    }
+
+    fn occurrence_candidates(file: u64, row: u64, column: u64) -> Vec<u64> {
+        let result = Vec<u64>.new();
+        let source = match self.file(file) {
+            Some(value) => value,
+            None => return result,
+        };
+        let point = PositionKey(row=row, column=column);
+        let cursor = upper_bound_occurrences(source, &self.occurrences, row, column);
+        while cursor != 0u64 {
+            cursor -= 1u64;
+            let maximum = source.occurrence_max_end[cursor];
+            if before(maximum, point) { break; }
+            let occurrence = &self.occurrences[source.occurrence_order[cursor]];
+            if contains(start_key(occurrence.span), end_key(occurrence.span), point) {
+                result.push(source.occurrence_order[cursor]);
+            }
+        }
+        sort_ids(&result);
+        result
+    }
+
+    pub fn warnings_len() -> u64 { self.warnings.len() }
+
+    pub fn warning(index: u64) -> Option<Diagnostic&> { self.warnings.as_slice().get(index) }
+
+    pub fn same_documents(documents: Vec<SourceDocument>&) -> bool {
+        if documents.len() != self.files.len() { return false; }
+        let cursor = 0u64;
+        while cursor < documents.len() {
+            if documents[cursor].path.as_str() != self.files[cursor].path.as_str() ||
+                documents[cursor].text.as_str() != self.files[cursor].text.as_str() {
+                return false;
+            }
+            cursor += 1u64;
+        }
+        true
+    }
+}
+
+fn upper_bound_decls(file: QueryFile&, decls: Vec<QueryDecl>&, row: u64, column: u64) -> u64 {
+    let point = PositionKey(row=row, column=column);
+    let low = 0u64;
+    let high = file.decl_order.len();
+    while low < high {
+        let middle = low + (high - low) / 2u64;
+        let start = start_key(decls[file.decl_order[middle]].span);
+        if before(start, point) || (start.row == point.row && start.column == point.column) {
+            low = middle + 1u64;
+        } else {
+            high = middle;
+        }
+    }
+    low
+}
+
+fn upper_bound_occurrences(file: QueryFile&, occurrences: Vec<QueryOccurrence>&,
+    row: u64, column: u64) -> u64 {
+    let point = PositionKey(row=row, column=column);
+    let low = 0u64;
+    let high = file.occurrence_order.len();
+    while low < high {
+        let middle = low + (high - low) / 2u64;
+        let start = start_key(occurrences[file.occurrence_order[middle]].span);
+        if before(start, point) || (start.row == point.row && start.column == point.column) {
+            low = middle + 1u64;
+        } else {
+            high = middle;
+        }
+    }
+    low
+}
+
+impl Drop for QuerySnapshot {
+    pub fn drop() {
+        for file in self.files { file.drop(); }
+        self.files.drop();
+        release_file_map(&self.files_by_path);
+        for declaration in self.decls { declaration.drop(); }
+        self.decls.drop();
+        for occurrence in self.occurrences { occurrence.drop(); }
+        self.occurrences.drop();
+        for reference in self.references { reference.drop(); }
+        self.references.drop();
+        for warning in self.warnings { warning.drop(); }
+        self.warnings.drop();
+    }
+}

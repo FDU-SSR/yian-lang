@@ -80,6 +80,7 @@ extern "C" {
     fn LLVMPositionBuilderAtEnd(builder: cptr<LLVMOpaqueBuilder>, block: cptr<LLVMOpaqueBasicBlock>);
     fn LLVMGetInsertBlock(builder: cptr<LLVMOpaqueBuilder>) -> cptr<LLVMOpaqueBasicBlock>;
     fn LLVMPrintModuleToString(module: cptr<LLVMOpaqueModule>) -> cptr<c_char>;
+    fn LLVMGetDataLayoutStr(module: cptr<LLVMOpaqueModule>) -> cptr<c_char>;
     fn LLVMDisposeMessage(message: cptr<c_char>);
     fn LLVMVerifyModule(module: cptr<LLVMOpaqueModule>, action: c_int, message: cptr<cptr<c_char>>) -> c_int;
 
@@ -366,6 +367,18 @@ pub(ffi) ffi fn session_target(session: IrSession&) -> Vec<u8> {
     let bytes = bytes_parts[0];
     let truncated = bytes_parts[1];
     if truncated { bytes.drop(); return error_bytes("invalid LLVM target triple"); }
+    bytes
+}
+
+// The module data layout is copied; LLVM retains ownership of the returned string.
+pub(ffi) ffi fn session_data_layout(session: IrSession&) -> Vec<u8> {
+    checked_session(session);
+    let native = LLVMGetDataLayoutStr(session.module);
+    if native == @ffi_null<c_char>() { return error_bytes("invalid LLVM data layout"); }
+    let bytes_parts = copy_c_string(native, 4096u64);
+    let bytes = bytes_parts[0];
+    let truncated = bytes_parts[1];
+    if truncated { bytes.drop(); return error_bytes("invalid LLVM data layout"); }
     bytes
 }
 

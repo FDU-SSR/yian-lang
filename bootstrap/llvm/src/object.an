@@ -2,7 +2,7 @@ from std.core.result import Result;
 from std.core.vec import Vec;
 from llvm.ir import IrSession, IrType, IrValue, IrBlock;
 from llvm.ir import IntCompare, RealCompare, BinaryOp, CastOp;
-from llvm.ir import new_session, try_new_session, close_session, session_target, abi_size_of, abi_alignment_of;
+from llvm.ir import new_session, try_new_session, close_session, session_target, session_data_layout, abi_size_of, abi_alignment_of;
 from llvm.ir import void_type, int_type, half_type, float_type, double_type, pointer_type;
 from llvm.ir import array_type, struct_type, named_struct_type, set_struct_body, function_type;
 from llvm.ir import const_int, const_signed_int, const_int_words, const_real, const_null;
@@ -64,6 +64,8 @@ impl Module {
     }
 
     pub ffi fn target_triple() -> Vec<u8> { session_target(&self.session) }
+
+    pub ffi fn data_layout() -> Vec<u8> { session_data_layout(&self.session) }
 
     pub ffi fn abi_size(ty: IrType) -> u64 {
         return abi_size_of(&self.session, ty);

@@ -1,5 +1,5 @@
 from std.core.drop import Drop;
-from std.core.io import File, OpenMode, IoError, IoErrorKind, io_status;
+from std.core.io import File, OpenMode, OpenOptions, IoError, IoErrorKind, io_status;
 from std.core.option import Option;
 from std.core.ops import Index;
 from std.core.range import Range;
@@ -7,6 +7,7 @@ from std.core.result import Result;
 from std.core.string import String;
 from std.core.vec import Vec;
 from std.core.path import Path, PathBuf;
+from std.core.time import monotonic_now;
 from std.ffi.c_string import c_string_bytes;
 
 opaque type DirHandle;
@@ -215,6 +216,109 @@ fn write_mode(path: str, data: u8[], mode: OpenMode) -> Result<(), IoError> {
     }
 }
 pub fn write(path: str, data: u8[]) -> Result<(), IoError> { write_mode(path, data, OpenMode.Write) }
+
+// A successful atomic write either leaves the old file intact or replaces it with all bytes.
+// The caller creates the parent directory; the temporary file is created in that directory so
+// rename cannot cross filesystems.
+pub fn write_atomic(path: str, data: u8[]) -> Result<(), IoError> {
+    let attempt = 0u64;
+    while attempt < 8u64 {
+        let temporary = match atomic_temporary_path(path, attempt) {
+            Ok(value) => value,
+            Err(error) => return Result<(), IoError>.Err(msg=error),
+        };
+        match create_atomic_temporary(temporary.as_str(), data) {
+            Ok(_) => {
+                match rename(temporary.as_str(), path) {
+                    Ok(_) => { temporary.drop(); return Result<(), IoError>.Ok(val= ()); },
+                    Err(error) => {
+                        match remove_file(temporary.as_str()) { Ok(_) => {}, Err(problem) => problem.drop(), }
+                        temporary.drop();
+                        return Result<(), IoError>.Err(msg=error);
+                    },
+                }
+            },
+            Err(error) => {
+                if error.kind() == IoErrorKind.AlreadyExists {
+                    error.drop();
+                    temporary.drop();
+                    attempt += 1u64;
+                    continue;
+                }
+                let result = error.with_path(temporary.as_str());
+                error.drop();
+                temporary.drop();
+                return Result<(), IoError>.Err(msg=result);
+            },
+        }
+    }
+    Result<(), IoError>.Err(msg=IoError.new(IoErrorKind.AlreadyExists,
+        "atomic write could not create a unique temporary file"))
+}
+
+fn atomic_temporary_path(path: str, attempt: u64) -> Result<PathBuf, IoError> {
+    let name = match Path.new(path).file_name() {
+        Some(value) => value,
+        None => return Result<PathBuf, IoError>.Err(msg=IoError.new(IoErrorKind.InvalidInput,
+            "atomic write target has no file name")),
+    };
+    let now = match monotonic_now() {
+        Ok(value) => value,
+        Err(error) => return Result<PathBuf, IoError>.Err(msg=error),
+    };
+    let parent = match Path.new(path).parent() {
+        Some(value) => value,
+        None => Path.new("."),
+    };
+    let temporary_name = String.new();
+    defer temporary_name.drop();
+    temporary_name.push('.');
+    temporary_name.push_str(name);
+    temporary_name.push_str(".tmp-");
+    let stamp = u64(now.nanoseconds()).to_string_radix(10u64);
+    defer stamp.drop();
+    temporary_name.push_str(stamp.as_str());
+    temporary_name.push('-');
+    let suffix = attempt.to_string_radix(10u64);
+    defer suffix.drop();
+    temporary_name.push_str(suffix.as_str());
+    Result<PathBuf, IoError>.Ok(val=parent.join(temporary_name.as_str()))
+}
+
+fn create_atomic_temporary(path: str, data: u8[]) -> Result<(), IoError> {
+    let options = OpenOptions.new();
+    options.write(true);
+    options.create_new(true);
+    let file = match options.open(path) {
+        Ok(value) => value,
+        Err(error) => return Result<(), IoError>.Err(msg=error),
+    };
+    let complete = false;
+    defer {
+        if !complete {
+            file.drop();
+            match remove_file(path) { Ok(_) => {}, Err(problem) => problem.drop(), }
+        }
+    };
+    match file.write_all(data) {
+        Ok(_) => {},
+        Err(error) => {
+            let result = error.with_path(path);
+            error.drop();
+            return Result<(), IoError>.Err(msg=result);
+        },
+    }
+    match file.close() {
+        Ok(_) => {},
+        Err(error) => {
+            let result = error.with_path(path);
+            error.drop();
+            return Result<(), IoError>.Err(msg=result);
+        },
+    }
+    complete = true;
+    Result<(), IoError>.Ok(val= ())
+}
 pub fn write_string(path: str, data: str) -> Result<(), IoError> { write(path, data.as_slice()) }
 pub fn append(path: str, data: u8[]) -> Result<(), IoError> { write_mode(path, data, OpenMode.Append) }
 

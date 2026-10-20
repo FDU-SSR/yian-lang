@@ -1,0 +1,358 @@
+from std.core.drop import Drop;
+from std.core.fs import resolve;
+from std.core.option import Option;
+from std.core.string import String;
+from std.core.vec import Vec;
+from lsp_protocol.uri import uri_to_path;
+
+fn release_strings(values: Vec<String>&) {
+    for value in *values { value.drop(); }
+    values.drop();
+}
+
+fn normalize(path: str) -> String {
+    match resolve(path) {
+        Ok(value) => {
+            let normalized = String.from(&value.as_str());
+            value.drop();
+            normalized
+        },
+        Err(problem) => { problem.drop(); String.from(&path) },
+    }
+}
+
+fn within(path: str, root: str) -> bool {
+    if path == root { return true; }
+    let prefix = String.from(&root);
+    if !prefix.as_str().ends_with("/") { prefix.push('/'); }
+    let matches = path.starts_with(prefix.as_str());
+    prefix.drop();
+    matches
+}
+
+pub struct WorkspaceUnits {
+    primary_files: Vec<String>,
+    primary_roots: Vec<String>,
+    primary_manifests: Vec<String>,
+    standard_library_root: Option<String>,
+    routes_known: bool,
+}
+
+impl WorkspaceUnits {
+    static pub fn new() -> Self {
+        Self(primary_files=Vec<String>.new(), primary_roots=Vec<String>.new(),
+            primary_manifests=Vec<String>.new(),
+            standard_library_root=Option<String>.None, routes_known=false)
+    }
+
+    pub fn set_primary_files(files: Vec<String>) {
+        release_strings(&self.primary_files);
+        self.primary_files = files;
+    }
+
+    pub fn set_primary_manifests(manifests: Vec<String>) {
+        release_strings(&self.primary_manifests);
+        self.primary_manifests = manifests;
+    }
+
+    pub fn set_primary_roots(roots: Vec<String>) {
+        release_strings(&self.primary_roots);
+        self.primary_roots = roots;
+    }
+
+    pub fn set_standard_library_root(root: str) {
+        match self.standard_library_root.take() { Some(value) => value.drop(), None => {}, }
+        self.standard_library_root = Option<String>.Some(normalize(root));
+    }
+
+    pub fn primary_file_paths() -> Vec<String> {
+        let result = Vec<String>.with_capacity(self.primary_files.len());
+        for path in self.primary_files { result.push(String.from(&path.as_str())); }
+        result
+    }
+
+    pub fn primary_source_roots() -> Vec<String> {
+        let result = Vec<String>.with_capacity(self.primary_roots.len());
+        for path in self.primary_roots { result.push(String.from(&path.as_str())); }
+        result
+    }
+
+    pub fn primary_manifest_paths() -> Vec<String> {
+        let result = Vec<String>.with_capacity(self.primary_manifests.len());
+        for path in self.primary_manifests { result.push(String.from(&path.as_str())); }
+        result
+    }
+
+    pub fn standard_library_path() -> String {
+        match &self.standard_library_root {
+            Some(root) => String.from(&root.as_str()),
+            None => String.new(),
+        }
+    }
+
+    pub fn routes_known() -> bool { self.routes_known }
+
+    pub fn set_routes_known() { self.routes_known = true; }
+
+    pub fn is_primary_path(path: str) -> bool {
+        let candidate = normalize(path);
+        defer candidate.drop();
+        for item in self.primary_files {
+            if item.as_str() == candidate.as_str() { return true; }
+        }
+        for item in self.primary_manifests {
+            if item.as_str() == candidate.as_str() { return true; }
+        }
+        for root in self.primary_roots {
+            if within(candidate.as_str(), root.as_str()) { return true; }
+        }
+        false
+    }
+
+    pub fn is_primary_file_uri(uri: str) -> bool {
+        match uri_to_path(uri) {
+            Ok(path) => {
+                let candidate = normalize(path.as_str());
+                path.drop();
+                defer candidate.drop();
+                for item in self.primary_files {
+                    if item.as_str() == candidate.as_str() { return true; }
+                }
+                false
+            },
+            Err(problem) => { let _ = problem.kind; false },
+        }
+    }
+
+    pub fn is_primary_uri(uri: str) -> bool {
+        match uri_to_path(uri) {
+            Ok(path) => {
+                let result = self.is_primary_path(path.as_str());
+                path.drop();
+                result
+            },
+            Err(problem) => { let _ = problem.kind; false },
+        }
+    }
+
+    pub fn is_standard_library_path(path: str) -> bool {
+        match &self.standard_library_root {
+            Some(root) => {
+                let candidate = normalize(path);
+                defer candidate.drop();
+                within(candidate.as_str(), root.as_str())
+            },
+            None => false,
+        }
+    }
+
+    pub fn is_standard_library_uri(uri: str) -> bool {
+        match uri_to_path(uri) {
+            Ok(path) => {
+                let result = self.is_standard_library_path(path.as_str());
+                path.drop();
+                result
+            },
+            Err(problem) => { let _ = problem.kind; false },
+        }
+    }
+
+    pub fn key_for_path(path: str) -> String {
+        let candidate = normalize(path);
+        if self.is_primary_path(candidate.as_str()) {
+            candidate.drop();
+            return String.from(&"primary");
+        }
+        let key = String.from(&"file:");
+        key.push_str(candidate.as_str());
+        candidate.drop();
+        key
+    }
+
+    pub fn key_for_uri(uri: str) -> String {
+        match uri_to_path(uri) {
+            Ok(path) => {
+                let key = self.key_for_path(path.as_str());
+                path.drop();
+                key
+            },
+            Err(problem) => {
+                let _ = problem.kind;
+                let key = String.from(&"uri:");
+                key.push_str(uri);
+                key
+            },
+        }
+    }
+
+    pub fn key_for_file_uri(uri: str) -> String {
+        match uri_to_path(uri) {
+            Ok(path) => {
+                let normalized = normalize(path.as_str());
+                path.drop();
+                let key = String.from(&"file:");
+                key.push_str(normalized.as_str());
+                normalized.drop();
+                key
+            },
+            Err(problem) => {
+                let _ = problem.kind;
+                let key = String.from(&"file:");
+                key.push_str(uri);
+                key
+            },
+        }
+    }
+}
+
+impl Drop for WorkspaceUnits {
+    pub fn drop() {
+        release_strings(&self.primary_files);
+        release_strings(&self.primary_roots);
+        release_strings(&self.primary_manifests);
+        match self.standard_library_root.take() { Some(value) => value.drop(), None => {}, }
+    }
+}
+
+struct UnitRevision {
+    key: String,
+    revision: u64,
+    analyzed_revision: Option<u64>,
+    deadline_ns: Option<i64>,
+}
+
+impl Drop for UnitRevision {
+    pub fn drop() {
+        self.key.drop();
+    }
+}
+
+pub struct UnitRevisions {
+    entries: Vec<UnitRevision>,
+    schedule_cursor: u64,
+}
+
+impl UnitRevisions {
+    static pub fn new() -> Self {
+        Self(entries=Vec<UnitRevision>.new(), schedule_cursor=0u64)
+    }
+
+    fn find(key: str) -> Option<u64> {
+        let index = 0u64;
+        while index < self.entries.len() {
+            if self.entries[index].key.as_str() == key { return Option<u64>.Some(index); }
+            index += 1u64;
+        }
+        Option<u64>.None
+    }
+
+    pub fn ensure(key: str) {
+        if self.find(key).is_some() { return; }
+        self.entries.push(UnitRevision(key=String.from(&key), revision=0u64,
+            analyzed_revision=Option<u64>.None, deadline_ns=Option<i64>.None));
+    }
+
+    pub fn revision(key: str) -> u64 {
+        match self.find(key) {
+            Some(index) => self.entries[index].revision,
+            None => 0u64,
+        }
+    }
+
+    pub fn is_current(key: str) -> bool {
+        match self.find(key) {
+            Some(index) => match self.entries[index].analyzed_revision {
+                Some(revision) => revision == self.entries[index].revision,
+                None => false,
+            },
+            None => false,
+        }
+    }
+
+    pub fn mark_changed(key: str, deadline_ns: i64) -> u64 {
+        self.ensure(key);
+        let index = *self.find(key).unwrap();
+        self.entries[index].revision += 1u64;
+        self.entries[index].analyzed_revision = Option<u64>.None;
+        self.entries[index].deadline_ns = Option<i64>.Some(deadline_ns);
+        self.entries[index].revision
+    }
+
+    pub fn mark_analyzed(key: str, revision: u64) -> bool {
+        self.ensure(key);
+        let index = *self.find(key).unwrap();
+        if self.entries[index].revision != revision { return false; }
+        self.entries[index].analyzed_revision = Option<u64>.Some(revision);
+        true
+    }
+
+    pub fn set_deadline(key: str, deadline_ns: Option<i64>) {
+        self.ensure(key);
+        let index = *self.find(key).unwrap();
+        self.entries[index].deadline_ns = deadline_ns;
+    }
+
+    pub fn remove(key: str) {
+        match self.find(key) {
+            Some(index) => {
+                let removed = self.entries.remove(index);
+                removed.drop();
+                if self.entries.len() == 0u64 {
+                    self.schedule_cursor = 0u64;
+                } elif self.schedule_cursor > index {
+                    self.schedule_cursor -= 1u64;
+                } elif self.schedule_cursor >= self.entries.len() {
+                    self.schedule_cursor = 0u64;
+                }
+            },
+            None => {},
+        }
+    }
+
+    pub fn count() -> u64 { self.entries.len() }
+
+    pub fn key_at(index: u64) -> str { self.entries[index].key.as_str() }
+
+    pub fn revision_at(index: u64) -> u64 { self.entries[index].revision }
+
+    pub fn take_due(now_ns: i64) -> Option<String> {
+        if self.entries.len() == 0u64 { return Option<String>.None; }
+        let inspected = 0u64;
+        while inspected < self.entries.len() {
+            let index = (self.schedule_cursor + inspected) % self.entries.len();
+            let due = match self.entries[index].deadline_ns {
+                Some(deadline) => now_ns >= deadline,
+                None => false,
+            };
+            if due {
+                self.entries[index].deadline_ns = Option<i64>.None;
+                self.schedule_cursor = (index + 1u64) % self.entries.len();
+                return Option<String>.Some(String.from(&self.entries[index].key.as_str()));
+            }
+            inspected += 1u64;
+        }
+        Option<String>.None
+    }
+
+    pub fn wait_milliseconds(now_ns: i64, maximum: u64) -> u64 {
+        let wait = maximum;
+        for entry in self.entries {
+            match entry.deadline_ns {
+                Some(deadline) => {
+                    if deadline <= now_ns { return 0u64; }
+                    let remaining = u64(deadline - now_ns) / 1000000u64;
+                    if remaining < wait { wait = remaining; }
+                },
+                None => {},
+            }
+        }
+        wait
+    }
+}
+
+impl Drop for UnitRevisions {
+    pub fn drop() {
+        for entry in self.entries { entry.drop(); }
+        self.entries.drop();
+    }
+}

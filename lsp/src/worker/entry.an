@@ -62,6 +62,27 @@ fn drop_params(params: Option<Value>) {
     if let Some(value) = params { value.drop(); }
 }
 
+fn trace_field_string(object: Object&, key: str) -> Option<str> {
+    match object.get(key) {
+        Some(value) => value.as_string(),
+        None => Option<str>.None,
+    }
+}
+
+fn trace_field_u64(object: Object&, key: str) -> Option<u64> {
+    match object.get(key) {
+        Some(value) => match value {
+            Number(number) => match number {
+                Unsigned(number) => Option<u64>.Some(*number),
+                Signed(number) if *number >= 0i64 => Option<u64>.Some(u64(*number)),
+                _ => Option<u64>.None,
+            },
+            _ => Option<u64>.None,
+        },
+        None => Option<u64>.None,
+    }
+}
+
 fn trace_revision(params: Option<Value>&) -> u64 {
     match params {
         Some(value) => match value.as_object() {
@@ -100,7 +121,11 @@ fn trace_method(params: Option<Value>&) -> Option<String> {
 
 fn write_trace(config: Config&, event: str, operation: str, method: Option<String>&,
     revision: u64, timestamp_ns: i64, elapsed_ns: Option<i64>, cache_hit: i32,
-    full_analysis: bool, phase_timings: Option<Object&>) {
+    full_analysis: bool, phase_timings: Option<Object&>, unit_key: Option<str>,
+    reuse_kind: Option<str>, analysis_ready: Option<bool>, strict_count: Option<u64>,
+    source_index_count: Option<u64>, semantic_index_count: Option<u64>,
+    query_index_count: Option<u64>, cache_state: Option<str>,
+    session_released: Option<bool>) {
     let path = match &config.trace_file {
         Some(value) => value.as_str(),
         None => { return; },
@@ -111,6 +136,42 @@ fn write_trace(config: Config&, event: str, operation: str, method: Option<Strin
     fields.insert("operation", Value.String(String.from(&operation)));
     fields.insert("monotonic_ns", Value.Number(Number.Signed(timestamp_ns)));
     fields.insert("revision", Value.Number(Number.Unsigned(revision)));
+    match unit_key {
+        Some(value) => { fields.insert("unit_key", Value.String(String.from(&value))); },
+        None => {},
+    }
+    match reuse_kind {
+        Some(value) => { fields.insert("reuse_kind", Value.String(String.from(&value))); },
+        None => {},
+    }
+    match analysis_ready {
+        Some(value) => { fields.insert("analysis_ready", Value.Boolean(value)); },
+        None => {},
+    }
+    match strict_count {
+        Some(value) => { fields.insert("strict_analysis_count", Value.Number(Number.Unsigned(value))); },
+        None => {},
+    }
+    match source_index_count {
+        Some(value) => { fields.insert("source_index_build_count", Value.Number(Number.Unsigned(value))); },
+        None => {},
+    }
+    match semantic_index_count {
+        Some(value) => { fields.insert("semantic_index_build_count", Value.Number(Number.Unsigned(value))); },
+        None => {},
+    }
+    match query_index_count {
+        Some(value) => { fields.insert("query_index_build_count", Value.Number(Number.Unsigned(value))); },
+        None => {},
+    }
+    match cache_state {
+        Some(value) => { fields.insert("cache_state", Value.String(String.from(&value))); },
+        None => {},
+    }
+    match session_released {
+        Some(value) => { fields.insert("session_released", Value.Boolean(value)); },
+        None => {},
+    }
     if let Some(value) = method {
         fields.insert("method", Value.String(value.clone()));
     }
@@ -173,7 +234,10 @@ fn trace_start(config: Config&, operation: str, method: Option<String>&,
         Err(problem) => { problem.drop(); return -1i64; },
     };
     write_trace(config, "worker_operation_started", operation, method,
-        revision, now, Option<i64>.None, -1i32, false, Option<Object&>.None);
+        revision, now, Option<i64>.None, -1i32, false, Option<Object&>.None,
+        Option<str>.None, Option<str>.None, Option<bool>.None,
+        Option<u64>.None, Option<u64>.None, Option<u64>.None, Option<u64>.None, Option<str>.None,
+        Option<bool>.None);
     now
 }
 
@@ -193,10 +257,91 @@ fn trace_finish_with_timings(config: Config&, operation: str, method: Option<Str
     };
     let elapsed = now - started_ns;
     write_trace(config, "worker_operation_finished", operation, method,
-        revision, now, Option<i64>.Some(elapsed), cache_hit, false, Option<Object&>.None);
+        revision, now, Option<i64>.Some(elapsed), cache_hit, false, Option<Object&>.None,
+        Option<str>.None, Option<str>.None, Option<bool>.None,
+        Option<u64>.None, Option<u64>.None, Option<u64>.None, Option<u64>.None, Option<str>.None,
+        Option<bool>.None);
     if full_analysis {
         write_trace(config, "analysis_completed", operation, method,
-            revision, now, Option<i64>.Some(elapsed), -1i32, true, phase_timings);
+            revision, now, Option<i64>.Some(elapsed), -1i32, true, phase_timings,
+            Option<str>.None, Option<str>.None, Option<bool>.None,
+            Option<u64>.None, Option<u64>.None, Option<u64>.None, Option<u64>.None, Option<str>.None,
+            Option<bool>.None);
+    }
+}
+
+fn trace_unit_results(config: Config&, result: Value&) {
+    let object = match result.as_object() {
+        Some(value) => value,
+        None => { return; },
+    };
+    let results = match object.get("unit_results") {
+        Some(value) => value.as_array(),
+        None => Option<Vec<Value>&>.None,
+    };
+    if let Some(items) = results {
+        for item in *items {
+            let fields = match item.as_object() {
+                Some(value) => value,
+                None => continue,
+            };
+            let key = match trace_field_string(fields, "key") {
+                Some(value) => value,
+                None => continue,
+            };
+            let revision = match trace_field_u64(fields, "revision") {
+                Some(value) => value,
+                None => continue,
+            };
+            let reuse = match trace_field_string(fields, "reuse_kind") {
+                Some(value) => value,
+                None => "unknown",
+            };
+            let full = match fields.get("full_analysis") {
+                Some(Value.Boolean(value)) => *value,
+                _ => false,
+            };
+            let ready = match fields.get("analysis_ready") {
+                Some(Value.Boolean(value)) => Option<bool>.Some(*value),
+                _ => Option<bool>.None,
+            };
+            let strict_count = trace_field_u64(fields, "strict_analysis_count");
+            let source_index_count = trace_field_u64(fields, "source_index_build_count");
+            let semantic_index_count = trace_field_u64(fields, "semantic_index_build_count");
+            let query_index_count = trace_field_u64(fields, "query_index_build_count");
+            let cache_state = trace_field_string(fields, "cache_state");
+            let session_released = match fields.get("session_released") {
+                Some(Value.Boolean(value)) => Option<bool>.Some(*value),
+                _ => Option<bool>.None,
+            };
+            let cache_hit = match cache_state {
+                Some(value) => if value == "disk" { 1i32 } else { 0i32 },
+                None => -1i32,
+            };
+            let phase_timings = match fields.get("analysis_timings") {
+                Some(value) => value.as_object(),
+                None => Option<Object&>.None,
+            };
+            let now = match monotonic_now() {
+                Ok(value) => value.nanoseconds(),
+                Err(problem) => { problem.drop(); continue; },
+            };
+            let method = Option<String>.None;
+            write_trace(config, "unit_sync_completed", "analysis", &method,
+                revision, now, Option<i64>.None, cache_hit, false, Option<Object&>.None,
+                Option<str>.Some(key), Option<str>.Some(reuse), ready, strict_count,
+                source_index_count, semantic_index_count, query_index_count,
+                match cache_state { Some(value) => Option<str>.Some(value), None => Option<str>.None },
+                session_released);
+            if full {
+                write_trace(config, "analysis_completed", "analysis", &method,
+                    revision, now, Option<i64>.None, cache_hit, true, phase_timings,
+                    Option<str>.Some(key), Option<str>.Some(reuse), ready, strict_count,
+                    source_index_count, semantic_index_count, query_index_count,
+                    match cache_state { Some(value) => Option<str>.Some(value), None => Option<str>.None },
+                    session_released);
+            }
+        }
     }
 }
 
@@ -248,7 +393,8 @@ fn handle_message(output: Stdout&, message: Message, state: WorkerState&, config
                     match state.synchronize(params) {
                         Ok(value) => {
                             trace_finish_with_timings(config, "analysis", &trace_method,
-                                revision, started_ns, -1i32, true, response_timings(&value));
+                                revision, started_ns, -1i32, false, response_timings(&value));
+                            trace_unit_results(config, &value);
                             response(output, id, value)
                         },
                         Err(problem) => {

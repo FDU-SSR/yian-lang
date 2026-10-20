@@ -1,0 +1,147 @@
+from std.core.string import String;
+from std.core.vec import Vec;
+
+fn rotate_right(value: u32, amount: u32) -> u32 {
+    (value >> amount) | (value << (32u32 - amount))
+}
+
+fn choose(x: u32, y: u32, z: u32) -> u32 {
+    (x & y) ^ ((x ^ 0xffffffffu32) & z)
+}
+
+fn majority(x: u32, y: u32, z: u32) -> u32 {
+    (x & y) ^ (x & z) ^ (y & z)
+}
+
+fn small_sigma_zero(value: u32) -> u32 {
+    rotate_right(value, 7u32) ^ rotate_right(value, 18u32) ^ (value >> 3u32)
+}
+
+fn small_sigma_one(value: u32) -> u32 {
+    rotate_right(value, 17u32) ^ rotate_right(value, 19u32) ^ (value >> 10u32)
+}
+
+fn large_sigma_zero(value: u32) -> u32 {
+    rotate_right(value, 2u32) ^ rotate_right(value, 13u32) ^ rotate_right(value, 22u32)
+}
+
+fn large_sigma_one(value: u32) -> u32 {
+    rotate_right(value, 6u32) ^ rotate_right(value, 11u32) ^ rotate_right(value, 25u32)
+}
+
+pub fn sha256(data: u8[]) -> String {
+    let constants = [
+        0x428a2f98u32, 0x71374491u32, 0xb5c0fbcfu32, 0xe9b5dba5u32,
+        0x3956c25bu32, 0x59f111f1u32, 0x923f82a4u32, 0xab1c5ed5u32,
+        0xd807aa98u32, 0x12835b01u32, 0x243185beu32, 0x550c7dc3u32,
+        0x72be5d74u32, 0x80deb1feu32, 0x9bdc06a7u32, 0xc19bf174u32,
+        0xe49b69c1u32, 0xefbe4786u32, 0x0fc19dc6u32, 0x240ca1ccu32,
+        0x2de92c6fu32, 0x4a7484aau32, 0x5cb0a9dcu32, 0x76f988dau32,
+        0x983e5152u32, 0xa831c66du32, 0xb00327c8u32, 0xbf597fc7u32,
+        0xc6e00bf3u32, 0xd5a79147u32, 0x06ca6351u32, 0x14292967u32,
+        0x27b70a85u32, 0x2e1b2138u32, 0x4d2c6dfcu32, 0x53380d13u32,
+        0x650a7354u32, 0x766a0abbu32, 0x81c2c92eu32, 0x92722c85u32,
+        0xa2bfe8a1u32, 0xa81a664bu32, 0xc24b8b70u32, 0xc76c51a3u32,
+        0xd192e819u32, 0xd6990624u32, 0xf40e3585u32, 0x106aa070u32,
+        0x19a4c116u32, 0x1e376c08u32, 0x2748774cu32, 0x34b0bcb5u32,
+        0x391c0cb3u32, 0x4ed8aa4au32, 0x5b9cca4fu32, 0x682e6ff3u32,
+        0x748f82eeu32, 0x78a5636fu32, 0x84c87814u32, 0x8cc70208u32,
+        0x90befffau32, 0xa4506cebu32, 0xbef9a3f7u32, 0xc67178f2u32,
+    ];
+    let state = Vec<u32>.new();
+    state.push(0x6a09e667u32);
+    state.push(0xbb67ae85u32);
+    state.push(0x3c6ef372u32);
+    state.push(0xa54ff53au32);
+    state.push(0x510e527fu32);
+    state.push(0x9b05688cu32);
+    state.push(0x1f83d9abu32);
+    state.push(0x5be0cd19u32);
+    defer state.drop();
+
+    let message = Vec<u8>.with_capacity(data.len() + 72u64);
+    message.extend_from_slice(data);
+    message.push(0x80u8);
+    while message.len() % 64u64 != 56u64 { message.push(0u8); }
+    let bit_length = u64(data.len()) * 8u64;
+    for index in 0u64..8u64 {
+        let shift = (7u64 - index) * 8u64;
+        message.push(u8(bit_length >> shift));
+    }
+    defer message.drop();
+
+    let offset = 0u64;
+    while offset < message.len() {
+        let words = Vec<u32>.with_capacity(64u64);
+        for _ in 0u64..64u64 { words.push(0u32); }
+        let index = 0u64;
+        while index < 16u64 {
+            let start = offset + index * 4u64;
+            words[index] = (u32(message[start]) << 24u32) |
+                (u32(message[start + 1u64]) << 16u32) |
+                (u32(message[start + 2u64]) << 8u32) |
+                u32(message[start + 3u64]);
+            index += 1u64;
+        }
+        while index < 64u64 {
+            let first = small_sigma_one(words[index - 2u64]);
+            let second = small_sigma_zero(words[index - 15u64]);
+            words[index] = words[index - 16u64] + second +
+                words[index - 7u64] + first;
+            index += 1u64;
+        }
+
+        let a = state[0u64];
+        let b = state[1u64];
+        let c = state[2u64];
+        let d = state[3u64];
+        let e = state[4u64];
+        let f = state[5u64];
+        let g = state[6u64];
+        let h = state[7u64];
+        let aa = a;
+        let bb = b;
+        let cc = c;
+        let dd = d;
+        let ee = e;
+        let ff = f;
+        let gg = g;
+        let hh = h;
+        let round = 0u64;
+        while round < 64u64 {
+            let temp_one = hh + large_sigma_one(ee) + choose(ee, ff, gg) +
+                constants[round] + words[round];
+            let temp_two = large_sigma_zero(aa) + majority(aa, bb, cc);
+            hh = gg;
+            gg = ff;
+            ff = ee;
+            ee = dd + temp_one;
+            dd = cc;
+            cc = bb;
+            bb = aa;
+            aa = temp_one + temp_two;
+            round += 1u64;
+        }
+        state[0u64] += aa;
+        state[1u64] += bb;
+        state[2u64] += cc;
+        state[3u64] += dd;
+        state[4u64] += ee;
+        state[5u64] += ff;
+        state[6u64] += gg;
+        state[7u64] += hh;
+        words.drop();
+        offset += 64u64;
+    }
+
+    let digits = "0123456789abcdef";
+    let hex = String.new();
+    for word in state {
+        for nibble in 0u64..8u64 {
+            let shift = u32((7u64 - nibble) * 4u64);
+            let index = u64((*word >> shift) & 15u32);
+            hex.push(char(u32(digits.as_slice()[index])));
+        }
+    }
+    hex
+}

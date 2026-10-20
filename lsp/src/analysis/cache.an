@@ -1,0 +1,569 @@
+from lsp.analysis.fingerprint import sha256;
+from lsp.analysis.query_index import QueryDecl, QueryFileSpec, QueryOccurrence, QuerySnapshot;
+from lsp.analysis.source_index import DeclKind;
+from yianc.codegen.session import TargetIdentity, target_identity;
+from yianc.diagnostics.model import AnalysisStage, Diagnostic, DiagnosticCode, DiagnosticLocation, RelatedLocation, Severity;
+from yianc.frontend.source import Position, SourceDocument, Span;
+from json.value import Object, Number, Value;
+from json.write import stringify;
+from json.parse import parse;
+from std.core.drop import Drop;
+from std.core.fs import create_dir_all, read, read_to_string, write_atomic;
+from std.core.option import Option;
+from std.core.path import Path;
+from std.core.result import Result;
+from std.core.string import String;
+from std.core.vec import Vec;
+
+const CACHE_VERSION: u64 = 1u64;
+
+// Process and target identity is captured once per server process. The executable
+// digest covers the running binary bytes rather than a replaceable path.
+pub struct CacheIdentity {
+    executable: String,
+    target_triple: String,
+    data_layout: String,
+    llvm_version: String,
+    raw_pointers: bool,
+}
+
+impl Drop for CacheIdentity {
+    pub fn drop() {
+        self.executable.drop();
+        self.target_triple.drop();
+        self.data_layout.drop();
+        self.llvm_version.drop();
+    }
+}
+
+fn version_text(major: u32, minor: u32, patch: u32) -> String {
+    let result = u64(major).to_string_radix(10u64);
+    defer result.drop();
+    result.push('.');
+    let minor_text = u64(minor).to_string_radix(10u64);
+    defer minor_text.drop();
+    result.push_str(minor_text.as_str());
+    result.push('.');
+    let patch_text = u64(patch).to_string_radix(10u64);
+    defer patch_text.drop();
+    result.push_str(patch_text.as_str());
+    String.from(&result.as_str())
+}
+
+pub fn gather_identity(raw_pointers: bool) -> Result<CacheIdentity, String> {
+    let executable = match read("/proc/self/exe") {
+        Ok(value) => value,
+        Err(error) => { error.drop(); return Result<CacheIdentity, String>.Err(String.from(&"could not read the server executable")); },
+    };
+    defer executable.drop();
+    let digest = sha256(executable.as_slice());
+    let target = match target_identity() {
+        Ok(value) => value,
+        Err(message) => { digest.drop(); return Result<CacheIdentity, String>.Err(message); },
+    };
+    defer target.drop();
+    let (major, minor, patch) = target.llvm_version();
+    Result<CacheIdentity, String>.Ok(val=CacheIdentity(
+        executable=digest,
+        target_triple=String.from(&target.target_triple()),
+        data_layout=String.from(&target.data_layout()),
+        llvm_version=version_text(major, minor, patch),
+        raw_pointers=raw_pointers,
+    ))
+}
+
+// The cache lives inside the root package's build directory. It is never an
+// analysis input and is excluded by the workspace's cache-path filter.
+pub fn cache_path(project_root: str) -> Result<String, String> {
+    let build = Path.new(project_root).join("build");
+    defer build.drop();
+    let lsp = build.as_path().join("lsp");
+    defer lsp.drop();
+    let path = lsp.as_path().join("analysis-v1.json");
+    let result = String.from(&path.as_str());
+    path.drop();
+    Result<String, String>.Ok(val=result)
+}
+
+fn field_value(object: Object&, key: str) -> Option<Value&> {
+    match object.get(key) { Some(value) => Option<Value&>.Some(value), None => Option<Value&>.None }
+}
+
+fn field_string(object: Object&, key: str) -> Option<str> {
+    match object.get(key) { Some(value) => value.as_string(), None => Option<str>.None }
+}
+
+fn field_u64(object: Object&, key: str) -> Option<u64> {
+    match object.get(key) {
+        Some(value) => match value {
+            Number(number) => match number {
+                Unsigned(value) => Option<u64>.Some(*value),
+                Signed(value) if *value >= 0i64 => Option<u64>.Some(u64(*value)),
+                _ => Option<u64>.None,
+            },
+            _ => Option<u64>.None,
+        },
+        None => Option<u64>.None,
+    }
+}
+
+fn field_bool(object: Object&, key: str) -> Option<bool> {
+    match object.get(key) {
+        Some(value) => match value { Boolean(item) => Option<bool>.Some(*item), _ => Option<bool>.None },
+        None => Option<bool>.None,
+    }
+}
+
+fn field_position(object: Object&, key: str) -> Option<Position> {
+    let values = match object.get(key) {
+        Some(value) => match value.as_array() { Some(items) => items, None => return Option<Position>.None },
+        None => return Option<Position>.None,
+    };
+    if values.len() != 2u64 { return Option<Position>.None; }
+    let row = match &values[0] { Number(Unsigned(value)) => *value, Number(Signed(value)) if *value >= 0i64 => u64(*value), _ => return Option<Position>.None };
+    let column = match &values[1] { Number(Unsigned(value)) => *value, Number(Signed(value)) if *value >= 0i64 => u64(*value), _ => return Option<Position>.None };
+    Option<Position>.Some(Position(row=row, column=column))
+}
+
+fn field_span(object: Object&, key: str) -> Option<Span> {
+    let span = match object.get(key) {
+        Some(value) => match value.as_object() { Some(items) => items, None => return Option<Span>.None },
+        None => return Option<Span>.None,
+    };
+    Option<Span>.Some(Span(start=field_position(span, "start")?, end=field_position(span, "end")?))
+}
+
+fn append_position(array: Vec<Value>&, value: Position) {
+    let point = Vec<Value>.new();
+    point.push(Value.Number(Number.Unsigned(value.row)));
+    point.push(Value.Number(Number.Unsigned(value.column)));
+    array.push(Value.Array(point));
+}
+
+fn append_span(object: Object&, span: Span) {
+    let start = Vec<Value>.new();
+    start.push(Value.Number(Number.Unsigned(span.start.row)));
+    start.push(Value.Number(Number.Unsigned(span.start.column)));
+    let end = Vec<Value>.new();
+    end.push(Value.Number(Number.Unsigned(span.end.row)));
+    end.push(Value.Number(Number.Unsigned(span.end.column)));
+    object.insert("start", Value.Array(start));
+    object.insert("end", Value.Array(end));
+}
+
+fn field_u64_array(object: Object&, key: str) -> Option<Vec<u64>> {
+    let values = match object.get(key) {
+        Some(value) => match value.as_array() { Some(items) => items, None => return Option<Vec<u64>>.None },
+        None => return Option<Vec<u64>>.None,
+    };
+    let result = Vec<u64>.new();
+    for value in *values {
+        match value {
+            Number(number) => match number {
+                Unsigned(item) => result.push(*item),
+                Signed(item) if *item >= 0i64 => result.push(u64(*item)),
+                _ => { result.drop(); return Option<Vec<u64>>.None; },
+            },
+            _ => { result.drop(); return Option<Vec<u64>>.None; },
+        }
+    }
+    Option<Vec<u64>>.Some(result)
+}
+
+fn append_u64_array(object: Object&, key: str, values: Vec<u64>&) {
+    let array = Vec<Value>.new();
+    for value in *values { array.push(Value.Number(Number.Unsigned(*value))); }
+    object.insert(key, Value.Array(array));
+}
+
+fn append_string_array(object: Object&, key: str, document_paths: Vec<SourceDocument>&) {
+    let array = Vec<Value>.new();
+    for document in *document_paths { array.push(Value.String(String.from(&document.path.as_str()))); }
+    object.insert(key, Value.Array(array));
+}
+
+fn option_string_value(value: Option<String>&) -> Value {
+    match value { Some(text) => Value.String(String.from(&text.as_str())), None => Value.Null }
+}
+
+fn cache_matches_identity(document: Object&, identity: CacheIdentity&) -> bool {
+    match field_u64(document, "version") { Some(value) => if value != CACHE_VERSION { return false; }, None => return false, }
+    let tool = match field_value(document, "tool") {
+        Some(value) => match value.as_object() { Some(items) => items, None => return false },
+        None => return false,
+    };
+    if !same_string(field_string(tool, "executable"), identity.executable.as_str()) { return false; }
+    if !same_string(field_string(tool, "target_triple"), identity.target_triple.as_str()) { return false; }
+    if !same_string(field_string(tool, "data_layout"), identity.data_layout.as_str()) { return false; }
+    if !same_string(field_string(tool, "llvm_version"), identity.llvm_version.as_str()) { return false; }
+    match field_bool(tool, "raw_pointers") { Some(value) => if value != identity.raw_pointers { return false; }, None => return false, }
+    true
+}
+
+fn document_digest(document: SourceDocument&) -> String {
+    sha256(document.text.as_str().as_slice())
+}
+
+fn same_string(value: Option<str>, expected: str) -> bool {
+    match value { Some(text) => text == expected, None => false }
+}
+
+fn cache_matches_config(document: Object&, config_sha256: str) -> bool {
+    same_string(field_string(document, "config_sha256"), config_sha256)
+}
+
+fn cache_matches_inputs(document: Object&, documents: Vec<SourceDocument>&) -> bool {
+    let inputs = match field_value(document, "inputs") {
+        Some(value) => match value.as_array() { Some(items) => items, None => return false },
+        None => return false,
+    };
+    if inputs.len() != documents.len() { return false; }
+    let cursor = 0u64;
+    while cursor < documents.len() {
+        let record = match inputs[cursor].as_object() { Some(value) => value, None => return false };
+        if !same_string(field_string(record, "path"), documents[cursor].path.as_str()) { return false; }
+        let digest = document_digest(&documents[cursor]);
+        let matches = same_string(field_string(record, "sha256"), digest.as_str());
+        digest.drop();
+        if !matches { return false; }
+        cursor += 1u64;
+    }
+    true
+}
+
+fn release_decls(decls: Vec<QueryDecl>&) {
+    for value in *decls { value.drop(); }
+    decls.drop();
+}
+
+fn release_occurrences(occurrences: Vec<QueryOccurrence>&) {
+    for value in *occurrences { value.drop(); }
+    occurrences.drop();
+}
+
+fn release_warnings(warnings: Vec<Diagnostic>&) {
+    for value in *warnings { value.drop(); }
+    warnings.drop();
+}
+
+fn parse_decls(document: Object&) -> Result<Vec<QueryDecl>, String> {
+    let values = match field_value(document, "decls") {
+        Some(value) => match value.as_array() { Some(items) => items, None => return Result<Vec<QueryDecl>, String>.Err(String.from(&"cached declarations are malformed")) },
+        None => return Result<Vec<QueryDecl>, String>.Err(String.from(&"cached declarations are missing")),
+    };
+    let decls = Vec<QueryDecl>.new();
+    let accepted = false;
+    defer { if !accepted { release_decls(&decls); } };
+    for value in *values {
+        let record = match value.as_object() { Some(items) => items, None => return Result<Vec<QueryDecl>, String>.Err(String.from(&"cached declaration is malformed")) };
+        let file = match field_u64(record, "file") { Some(item) => item, None => return Result<Vec<QueryDecl>, String>.Err(String.from(&"cached declaration file is missing")) };
+        let start = match field_position(record, "start") { Some(item) => item, None => return Result<Vec<QueryDecl>, String>.Err(String.from(&"cached declaration span is invalid")) };
+        let end = match field_position(record, "end") { Some(item) => item, None => return Result<Vec<QueryDecl>, String>.Err(String.from(&"cached declaration span is invalid")) };
+        let span = Span(start=start, end=end);
+        let kind_code = match field_u64(record, "kind") { Some(item) => item, None => return Result<Vec<QueryDecl>, String>.Err(String.from(&"cached declaration kind is missing")) };
+        let kind = match DeclKind.from_code(u32(kind_code)) { Some(item) => item, None => return Result<Vec<QueryDecl>, String>.Err(String.from(&"cached declaration kind is invalid")) };
+        let name = match field_string(record, "name") { Some(item) => String.from(&item), None => return Result<Vec<QueryDecl>, String>.Err(String.from(&"cached declaration name is missing")) };
+        let owner = match field_value(record, "owner") {
+            Some(Value.Null) => Option<Span>.None,
+            Some(value) => match value.as_object() {
+                Some(items) => match (field_position(items, "start"), field_position(items, "end")) {
+                    (Some(start), Some(end)) => Option<Span>.Some(Span(start=start, end=end)),
+                    _ => { name.drop(); return Result<Vec<QueryDecl>, String>.Err(String.from(&"cached declaration owner is invalid")); },
+                },
+                None => { name.drop(); return Result<Vec<QueryDecl>, String>.Err(String.from(&"cached declaration owner is invalid")); },
+            },
+            None => Option<Span>.None,
+        };
+        let type_text = match field_string(record, "type") { Some(item) => Option<String>.Some(String.from(&item)), None => Option<String>.None };
+        let detail = match field_string(record, "detail") { Some(item) => Option<String>.Some(String.from(&item)), None => Option<String>.None };
+        decls.push(QueryDecl(file=file, span=span, kind=kind, name=name, owner=owner, type_text=type_text, detail=detail));
+    }
+    accepted = true;
+    Result<Vec<QueryDecl>, String>.Ok(val=decls)
+}
+
+fn parse_occurrences(document: Object&) -> Result<Vec<QueryOccurrence>, String> {
+    let values = match field_value(document, "occurrences") {
+        Some(value) => match value.as_array() { Some(items) => items, None => return Result<Vec<QueryOccurrence>, String>.Err(String.from(&"cached occurrences are malformed")) },
+        None => return Result<Vec<QueryOccurrence>, String>.Err(String.from(&"cached occurrences are missing")),
+    };
+    let occurrences = Vec<QueryOccurrence>.new();
+    let accepted = false;
+    defer { if !accepted { release_occurrences(&occurrences); } };
+    for value in *values {
+        let record = match value.as_object() { Some(items) => items, None => return Result<Vec<QueryOccurrence>, String>.Err(String.from(&"cached occurrence is malformed")) };
+        let file = match field_u64(record, "file") { Some(item) => item, None => return Result<Vec<QueryOccurrence>, String>.Err(String.from(&"cached occurrence file is missing")) };
+        let start = match field_position(record, "start") { Some(item) => item, None => return Result<Vec<QueryOccurrence>, String>.Err(String.from(&"cached occurrence span is invalid")) };
+        let end = match field_position(record, "end") { Some(item) => item, None => return Result<Vec<QueryOccurrence>, String>.Err(String.from(&"cached occurrence span is invalid")) };
+        let target = match field_u64(record, "target") {
+            Some(item) => Option<u64>.Some(item),
+            None => match field_value(record, "target") {
+                Some(Value.Null) => Option<u64>.None,
+                None => Option<u64>.None,
+                _ => return Result<Vec<QueryOccurrence>, String>.Err(String.from(&"cached occurrence target is invalid")),
+            },
+        };
+        let kind_code = match field_u64(record, "kind") { Some(item) => item, None => return Result<Vec<QueryOccurrence>, String>.Err(String.from(&"cached occurrence kind is missing")) };
+        let kind = match DeclKind.from_code(u32(kind_code)) { Some(item) => item, None => return Result<Vec<QueryOccurrence>, String>.Err(String.from(&"cached occurrence kind is invalid")) };
+        let declaration = match field_bool(record, "is_declaration") { Some(item) => item, None => return Result<Vec<QueryOccurrence>, String>.Err(String.from(&"cached occurrence declaration flag is missing")) };
+        let type_text = match field_string(record, "type") { Some(item) => Option<String>.Some(String.from(&item)), None => Option<String>.None };
+        let signature = match field_string(record, "signature") { Some(item) => Option<String>.Some(String.from(&item)), None => Option<String>.None };
+        occurrences.push(QueryOccurrence(file=file, span=Span(start=start, end=end),
+            target=target, kind=kind, is_declaration=declaration,
+            type_text=type_text, signature=signature));
+    }
+    accepted = true;
+    Result<Vec<QueryOccurrence>, String>.Ok(val=occurrences)
+}
+
+fn parse_warnings(document: Object&) -> Result<Vec<Diagnostic>, String> {
+    let values = match field_value(document, "warnings") {
+        Some(value) => match value.as_array() { Some(items) => items, None => return Result<Vec<Diagnostic>, String>.Err(String.from(&"cached warnings are malformed")) },
+        None => return Result<Vec<Diagnostic>, String>.Err(String.from(&"cached warnings are missing")),
+    };
+    let warnings = Vec<Diagnostic>.new();
+    let accepted = false;
+    defer { if !accepted { release_warnings(&warnings); } };
+    for value in *values {
+        let record = match value.as_object() { Some(items) => items, None => return Result<Vec<Diagnostic>, String>.Err(String.from(&"cached warning is malformed")) };
+        let path = match field_string(record, "path") { Some(item) => String.from(&item), None => return Result<Vec<Diagnostic>, String>.Err(String.from(&"cached warning path is missing")) };
+        let start = match field_position(record, "start") { Some(item) => item, None => { path.drop(); return Result<Vec<Diagnostic>, String>.Err(String.from(&"cached warning span is invalid")); } };
+        let end = match field_position(record, "end") { Some(item) => item, None => { path.drop(); return Result<Vec<Diagnostic>, String>.Err(String.from(&"cached warning span is invalid")); } };
+        let message = match field_string(record, "message") { Some(item) => String.from(&item), None => { path.drop(); return Result<Vec<Diagnostic>, String>.Err(String.from(&"cached warning message is missing")); } };
+        let location = Option<DiagnosticLocation>.Some(
+            DiagnosticLocation.Detached(path, Span(start=start, end=end)));
+        warnings.push(Diagnostic(code=DiagnosticCode.UnreachablePattern, severity=Severity.Warning,
+            location=location, message=message, related=Vec<RelatedLocation>.new(),
+            stage=Option<AnalysisStage>.None, recovered=false));
+    }
+    accepted = true;
+    Result<Vec<Diagnostic>, String>.Ok(val=warnings)
+}
+
+fn build_cache(identity: CacheIdentity&, config_sha256: str, documents: Vec<SourceDocument>&,
+    query: QuerySnapshot&) -> Value {
+    let root = Object.new();
+    root.insert("version", Value.Number(Number.Unsigned(CACHE_VERSION)));
+    let tool = Object.new();
+    tool.insert("executable", Value.String(String.from(&identity.executable.as_str())));
+    tool.insert("target_triple", Value.String(String.from(&identity.target_triple.as_str())));
+    tool.insert("data_layout", Value.String(String.from(&identity.data_layout.as_str())));
+    tool.insert("llvm_version", Value.String(String.from(&identity.llvm_version.as_str())));
+    tool.insert("raw_pointers", Value.Boolean(identity.raw_pointers));
+    root.insert("tool", Value.Object(tool));
+    root.insert("config_sha256", Value.String(String.from(&config_sha256)));
+
+    let inputs = Vec<Value>.new();
+    let file_index = 0u64;
+    while file_index < documents.len() {
+        let record = Object.new();
+        record.insert("path", Value.String(String.from(&documents[file_index].path.as_str())));
+        let digest = document_digest(&documents[file_index]);
+        record.insert("sha256", Value.String(digest));
+        let file = match query.file(file_index) { Some(value) => value, None => break };
+        record.insert("stdlib", Value.Boolean(file.stdlib));
+        let module = file.module_name();
+        record.insert("module", match module {
+            Some(value) => Value.String(String.from(&value)),
+            None => Value.Null,
+        });
+        let tokens = file.tokens();
+        let token_values = Vec<Value>.new();
+        for token in *tokens { token_values.push(Value.Number(Number.Unsigned(*token))); }
+        record.insert("tokens", Value.Array(token_values));
+        inputs.push(Value.Object(record));
+        file_index += 1u64;
+    }
+    root.insert("inputs", Value.Array(inputs));
+
+    let decls = Vec<Value>.new();
+    let decl_index = 0u64;
+    while decl_index < query.decl_count() {
+        let declaration = match query.decl(decl_index) { Some(value) => value, None => break };
+        let record = Object.new();
+        record.insert("file", Value.Number(Number.Unsigned(declaration.file)));
+        append_span(&record, declaration.span);
+        record.insert("kind", Value.Number(Number.Unsigned(u64(declaration.kind.code()))));
+        record.insert("name", Value.String(String.from(&declaration.name.as_str())));
+        match &declaration.owner {
+            Some(span) => {
+                let owner = Object.new();
+                append_span(&owner, *span);
+                record.insert("owner", Value.Object(owner));
+            },
+            None => { record.insert("owner", Value.Null); },
+        }
+        record.insert("type", option_string_value(&declaration.type_text));
+        record.insert("detail", option_string_value(&declaration.detail));
+        decls.push(Value.Object(record));
+        decl_index += 1u64;
+    }
+    root.insert("decls", Value.Array(decls));
+
+    let occurrences = Vec<Value>.new();
+    let occurrence_index = 0u64;
+    while occurrence_index < query.occurrence_count() {
+        let occurrence = match query.occurrence(occurrence_index) { Some(value) => value, None => break };
+        let record = Object.new();
+        record.insert("file", Value.Number(Number.Unsigned(occurrence.file)));
+        append_span(&record, occurrence.span);
+        match occurrence.target {
+            Some(target) => { record.insert("target", Value.Number(Number.Unsigned(target))); },
+            None => { record.insert("target", Value.Null); },
+        }
+        record.insert("kind", Value.Number(Number.Unsigned(u64(occurrence.kind.code()))));
+        record.insert("is_declaration", Value.Boolean(occurrence.is_declaration));
+        record.insert("type", option_string_value(&occurrence.type_text));
+        record.insert("signature", option_string_value(&occurrence.signature));
+        occurrences.push(Value.Object(record));
+        occurrence_index += 1u64;
+    }
+    root.insert("occurrences", Value.Array(occurrences));
+
+    let warnings = Vec<Value>.new();
+    let warning_index = 0u64;
+    while warning_index < query.warnings_len() {
+        match query.warning(warning_index) {
+            Some(warning) => match &warning.location {
+                Some(Detached(path, span)) => {
+                    let record = Object.new();
+                    record.insert("path", Value.String(String.from(&path.as_str())));
+                    append_span(&record, *span);
+                    record.insert("message", Value.String(String.from(&warning.message.as_str())));
+                    warnings.push(Value.Object(record));
+                },
+                _ => {},
+            },
+            None => {},
+        }
+        warning_index += 1u64;
+    }
+    root.insert("warnings", Value.Array(warnings));
+    Value.Object(root)
+}
+
+fn release_specs(specs: Vec<QueryFileSpec>&) {
+    for spec in *specs {
+        spec.path.drop();
+        spec.text.drop();
+        match &spec.module_name { Some(value) => value.drop(), None => {}, }
+        spec.tokens.drop();
+    }
+    specs.drop();
+}
+
+fn build_specs(root: Object&, documents: Vec<SourceDocument>&) -> Option<Vec<QueryFileSpec>> {
+    let inputs = match field_value(root, "inputs") {
+        Some(value) => match value.as_array() { Some(items) => items, None => return Option<Vec<QueryFileSpec>>.None },
+        None => return Option<Vec<QueryFileSpec>>.None,
+    };
+    if inputs.len() != documents.len() { return Option<Vec<QueryFileSpec>>.None; }
+    let specs = Vec<QueryFileSpec>.new();
+    let accepted = false;
+    defer { if !accepted { release_specs(&specs); } };
+    let cursor = 0u64;
+    while cursor < documents.len() {
+        let record = match inputs[cursor].as_object() { Some(value) => value, None => return Option<Vec<QueryFileSpec>>.None };
+        let tokens = match field_u64_array(record, "tokens") { Some(value) => value, None => return Option<Vec<QueryFileSpec>>.None };
+        let module = match field_string(record, "module") { Some(value) => Option<String>.Some(String.from(&value)), None => Option<String>.None };
+        let stdlib = match field_bool(record, "stdlib") {
+            Some(value) => value,
+            None => {
+                tokens.drop();
+                match module { Some(value) => value.drop(), None => {}, }
+                return Option<Vec<QueryFileSpec>>.None;
+            },
+        };
+        specs.push(QueryFileSpec(path=String.from(&documents[cursor].path.as_str()),
+            text=String.from(&documents[cursor].text.as_str()), stdlib=stdlib,
+            module_name=module, tokens=tokens));
+        cursor += 1u64;
+    }
+    accepted = true;
+    Option<Vec<QueryFileSpec>>.Some(specs)
+}
+
+// A cache hit requires the tool identity, analysis configuration and every
+// source path/content digest to match exactly. Structural failures return None
+// so the caller falls back to strict analysis.
+pub fn load(path: str, identity: CacheIdentity&, config_sha256: str,
+    documents: Vec<SourceDocument>&) -> Option<QuerySnapshot> {
+    let text = match read_to_string(path) { Ok(value) => value, Err(problem) => { problem.drop(); return Option<QuerySnapshot>.None; } };
+    defer text.drop();
+    let parsed = match parse(text.as_str()) { Ok(value) => value, Err(_) => return Option<QuerySnapshot>.None };
+    defer parsed.drop();
+    let root = match parsed.as_object() { Some(value) => value, None => return Option<QuerySnapshot>.None };
+    if !cache_matches_identity(root, identity) { return Option<QuerySnapshot>.None; }
+    if !cache_matches_config(root, config_sha256) { return Option<QuerySnapshot>.None; }
+    if !cache_matches_inputs(root, documents) { return Option<QuerySnapshot>.None; }
+
+    let decls = match parse_decls(root) { Ok(value) => value, Err(problem) => { problem.drop(); return Option<QuerySnapshot>.None; } };
+    let occurrences = match parse_occurrences(root) { Ok(value) => value, Err(problem) => { problem.drop(); for item in decls { item.drop(); } decls.drop(); return Option<QuerySnapshot>.None; } };
+    let warnings = match parse_warnings(root) { Ok(value) => value, Err(problem) => {
+        problem.drop();
+        for item in decls { item.drop(); }
+        decls.drop();
+        for item in occurrences { item.drop(); }
+        occurrences.drop();
+        return Option<QuerySnapshot>.None;
+    } };
+    let specs = match build_specs(root, documents) {
+        Some(value) => value,
+        None => {
+            for item in decls { item.drop(); }
+            decls.drop();
+            for item in occurrences { item.drop(); }
+            occurrences.drop();
+            for item in warnings { item.drop(); }
+            warnings.drop();
+            return Option<QuerySnapshot>.None;
+        },
+    };
+    match QuerySnapshot.restore(specs, decls, occurrences, warnings) {
+        Ok(value) => Option<QuerySnapshot>.Some(value),
+        Err(problem) => { problem.drop(); Option<QuerySnapshot>.None },
+    }
+}
+
+// Only open overlays can differ from the frozen disk inputs; every other
+// document was read from disk while assembling this synchronization.
+pub fn publish(path: str, identity: CacheIdentity&, config_sha256: str,
+    documents: Vec<SourceDocument>&, overlays: Vec<SourceDocument>&,
+    query: QuerySnapshot&) -> Result<bool, String> {
+    let cursor = 0u64;
+    while cursor < overlays.len() {
+        let disk = match read_to_string(overlays[cursor].path.as_str()) {
+            Ok(value) => value,
+            Err(error) => {
+                error.drop();
+                return Result<bool, String>.Ok(val=false);
+            },
+        };
+        let same = disk.as_str() == overlays[cursor].text.as_str();
+        disk.drop();
+        if !same { return Result<bool, String>.Ok(val=false); }
+        cursor += 1u64;
+    }
+    let document = build_cache(identity, config_sha256, documents, query);
+    let encoded = match stringify(&document) {
+        Ok(value) => value,
+        Err(_) => { document.drop(); return Result<bool, String>.Err(String.from(&"could not encode the analysis cache")); },
+    };
+    defer encoded.drop();
+    document.drop();
+    let parent = match Path.new(path).parent() {
+        Some(value) => value,
+        None => return Result<bool, String>.Err(String.from(&"analysis cache path has no parent")),
+    };
+    match create_dir_all(parent.as_str()) {
+        Ok(_) => {},
+        Err(error) => { error.drop(); return Result<bool, String>.Err(String.from(&"could not create the analysis cache directory")); },
+    }
+    match write_atomic(path, encoded.as_str().as_slice()) {
+        Ok(_) => Result<bool, String>.Ok(val=true),
+        Err(error) => {
+            error.drop();
+            Result<bool, String>.Err(String.from(&"could not publish the analysis cache"))
+        },
+    }
+}

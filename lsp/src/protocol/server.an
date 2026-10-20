@@ -1,6 +1,8 @@
 from std.core.drop import Drop;
+from std.core.fs import append;
 from std.core.io import IoError, IoErrorKind, NonblockingGuard, Read, Stderr, Stdin, Stdout, Write;
 from std.core.option import Option;
+from std.core.path import Path;
 from std.core.process import Command, Child, SpawnOptions, StdioMode, executable_path;
 from std.core.result import Result;
 from std.core.string import String;
@@ -8,19 +10,24 @@ from std.core.time import Instant, monotonic_now;
 from std.core.vec import Vec;
 from std.core.poller import PollEvent, PollInterests, Poller, PollSource, PollToken;
 from json.value import Value, Number, Object;
+from json.write import stringify;
 from jsonrpc.frame import FrameDecoder, FrameError, WriteQueue;
 from jsonrpc.message import Message, ProtocolError, RequestId, RpcError, encode, parse;
 from lsp.config import Config;
 from lsp.workspace.documents import Documents;
+from lsp.workspace.units import UnitRevisions, WorkspaceUnits;
 from lsp_protocol.sync import DidOpenParams, DidChangeParams, DidSaveParams, DidCloseParams;
 from lsp_protocol.sync import DidChangeWatchedFilesParams, FileChangeType;
-from lsp_protocol.uri import uri_to_path;
+from lsp_protocol.uri import path_to_uri, uri_to_path;
 
 enum PendingKind { Initialize, Synchronize, ClientRequest }
 
 struct PendingRequest {
     internal_id: u64,
     revision: u64,
+    topology_revision: u64,
+    unit_key: String,
+    unit_revision: u64,
     kind: PendingKind,
     client_id: Option<RequestId>,
 }
@@ -29,13 +36,28 @@ struct DeferredRequest {
     id: RequestId,
     method: String,
     params: Option<Value>,
-    revision: u64,
+    unit_key: String,
+    unit_revision: u64,
+    route_provisional: bool,
+}
+
+struct PublishedDiagnostic {
+    uri: String,
+    unit_key: String,
+}
+
+impl Drop for PublishedDiagnostic {
+    pub fn drop() {
+        self.uri.drop();
+        self.unit_key.drop();
+    }
 }
 
 impl Drop for DeferredRequest {
     pub fn drop() {
         self.id.drop();
         self.method.drop();
+        self.unit_key.drop();
         match &self.params { Some(value) => value.drop(), None => {}, }
     }
 }
@@ -43,6 +65,7 @@ impl Drop for DeferredRequest {
 impl Drop for PendingRequest {
     pub fn drop() {
         match &self.client_id { Some(value) => value.drop(), None => {}, }
+        self.unit_key.drop();
     }
 }
 
@@ -61,25 +84,34 @@ struct ServerState {
     pending: Vec<PendingRequest>,
     deferred: Vec<DeferredRequest>,
     documents: Documents,
-    published_diagnostics: Vec<String>,
+    published_diagnostics: Vec<PublishedDiagnostic>,
+    workspace_units: WorkspaceUnits,
+    unit_revisions: UnitRevisions,
     revision: u64,
-    analysis_revision: Option<u64>,
-    full_deadline_ns: Option<i64>,
     topology_revision: u64,
     next_internal_id: u64,
     next_server_request_id: i64,
     initialized: bool,
     supports_watchers: bool,
+    supports_relative_watchers: bool,
     watchers_registered: bool,
+    watchers_rejected: bool,
+    watcher_pending_id: Option<i64>,
+    watcher_bases: Vec<String>,
+    watcher_patterns: Vec<String>,
     supports_semantic_refresh: bool,
     worker_ready: bool,
     worker_initialized: bool,
+    sync_in_flight: bool,
+    topology_pending: bool,
+    topology_retry_blocked: bool,
     shutdown_received: bool,
     exiting: bool,
     input_closed: bool,
     startup_started_ns: i64,
     exit_status: i32,
     workspace_root: Option<String>,
+    trace_file: Option<String>,
 }
 
 fn process_error(message: str) -> IoError { IoError.other(message) }
@@ -102,6 +134,27 @@ fn put(object: Object&, key: str, value: Value) {
     match object.insert(key, value) {
         Some(previous) => previous.drop(),
         None => {},
+    }
+}
+
+fn field_string(object: Object&, key: str) -> Option<str> {
+    match object.get(key) {
+        Some(value) => value.as_string(),
+        None => Option<str>.None,
+    }
+}
+
+fn field_u64(object: Object&, key: str) -> Option<u64> {
+    match object.get(key) {
+        Some(value) => match value {
+            Number(number) => match number {
+                Unsigned(number) => Option<u64>.Some(*number),
+                Signed(number) if *number >= 0i64 => Option<u64>.Some(u64(*number)),
+                _ => Option<u64>.None,
+            },
+            _ => Option<u64>.None,
+        },
+        None => Option<u64>.None,
     }
 }
 
@@ -187,7 +240,8 @@ fn request_id_matches_json(id: RequestId&, value: Value&) -> bool {
 }
 
 impl ServerState {
-    static fn new(child: Child, input: NonblockingGuard&, output: NonblockingGuard&)
+    static fn new(child: Child, input: NonblockingGuard&, output: NonblockingGuard&,
+        config: Config&)
     -> Result<Self, IoError> {
         let poller = Poller.new();
         let client_source = PollSource.from_nonblocking(input)?;
@@ -221,28 +275,41 @@ impl ServerState {
             pending=Vec<PendingRequest>.new(),
             deferred=Vec<DeferredRequest>.new(),
             documents=Documents.new(),
-            published_diagnostics=Vec<String>.new(),
+            published_diagnostics=Vec<PublishedDiagnostic>.new(),
+            workspace_units=WorkspaceUnits.new(),
+            unit_revisions=UnitRevisions.new(),
             revision=0u64,
-            analysis_revision=Option<u64>.None,
-            full_deadline_ns=Option<i64>.None,
             topology_revision=0u64,
             next_internal_id=1u64,
             next_server_request_id=1i64,
             initialized=false,
             supports_watchers=false,
+            supports_relative_watchers=false,
             watchers_registered=false,
+            watchers_rejected=false,
+            watcher_pending_id=Option<i64>.None,
+            watcher_bases=Vec<String>.new(),
+            watcher_patterns=Vec<String>.new(),
             supports_semantic_refresh=false,
             worker_ready=false,
             worker_initialized=false,
+            sync_in_flight=false,
+            topology_pending=true,
+            topology_retry_blocked=false,
             shutdown_received=false,
             exiting=false,
             input_closed=false,
             startup_started_ns=started,
             exit_status=1i32,
             workspace_root=Option<String>.None,
+            trace_file=match &config.trace_file {
+                Some(path) => Option<String>.Some(String.from(&path.as_str())),
+                None => Option<String>.None,
+            },
         );
         let _ = output.fd();
-        state.queue_internal("worker/initialize", empty_object(), PendingKind.Initialize, 0u64)?;
+        state.queue_internal("worker/initialize", empty_object(), PendingKind.Initialize,
+            0u64, 0u64, "", 0u64)?;
         Result<Self, IoError>.Ok(state)
     }
 
@@ -269,18 +336,168 @@ impl ServerState {
         self.queue_client(Message.Notification(name, Option<Value>.Some(params)))
     }
 
-    fn register_file_watchers() -> Result<(), IoError> {
-        if !self.supports_watchers || self.watchers_registered { return Result<(), IoError>.Ok(()); }
-        let watchers = Vec<Value>.new();
-        let source_watcher = Object.new();
-        put(&source_watcher, "globPattern", Value.String(String.from(&"**/*.an")));
-        watchers.push(Value.Object(source_watcher));
-        let manifest_watcher = Object.new();
-        put(&manifest_watcher, "globPattern", Value.String(String.from(&"**/package.anx")));
-        watchers.push(Value.Object(manifest_watcher));
+    static fn append_watcher_pattern(bases: Vec<String>&, patterns: Vec<String>&,
+        base_path: str, pattern: str) -> Result<(), IoError> {
+        let base_uri = match path_to_uri(base_path) {
+            Ok(value) => value,
+            Err(problem) => { let _ = problem.kind; return Result<(), IoError>.Err(
+                process_error("could not encode a watched input root")); },
+        };
+        let index = 0u64;
+        while index < bases.len() {
+            if bases[index].as_str() == base_uri.as_str() &&
+                patterns[index].as_str() == pattern {
+                base_uri.drop();
+                return Result<(), IoError>.Ok(());
+            }
+            index += 1u64;
+        }
+        bases.push(base_uri);
+        patterns.push(String.from(&pattern));
+        Result<(), IoError>.Ok(())
+    }
 
+    static fn append_legacy_watcher(bases: Vec<String>&, patterns: Vec<String>&, pattern: str) {
+        let index = 0u64;
+        while index < patterns.len() {
+            if bases[index].as_str().as_slice().len() == 0u64 &&
+                patterns[index].as_str() == pattern { return; }
+            index += 1u64;
+        }
+        bases.push(String.new());
+        patterns.push(String.from(&pattern));
+    }
+
+    fn send_watcher_unregistration() -> Result<(), IoError> {
+        if self.next_server_request_id >= 9007199254740991i64 {
+            return Result<(), IoError>.Err(process_error("server request ID space exhausted"));
+        }
+        let request_id = self.next_server_request_id;
+        self.next_server_request_id += 1i64;
+        let registration = Object.new();
+        put(&registration, "id", Value.String(String.from(&"yian-watched-files")));
+        put(&registration, "method", Value.String(String.from(&"workspace/didChangeWatchedFiles")));
+        let registrations = Vec<Value>.new();
+        registrations.push(Value.Object(registration));
+        let params = Object.new();
+        put(&params, "unregisterations", Value.Array(registrations));
+        self.queue_client(Message.Request(RequestId.Signed(request_id),
+            String.from(&"client/unregisterCapability"), Option<Value>.Some(Value.Object(params))))
+    }
+
+    fn register_file_watchers() -> Result<(), IoError> {
+        if !self.supports_watchers { return Result<(), IoError>.Ok(()); }
+        let bases = Vec<String>.new();
+        let patterns = Vec<String>.new();
+        if self.supports_relative_watchers {
+            if !self.workspace_units.routes_known() {
+                if let Some(root) = &self.workspace_root {
+                    Self.append_watcher_pattern(&bases, &patterns, root.as_str(), "**/*.an")?;
+                    Self.append_watcher_pattern(&bases, &patterns, root.as_str(), "**/package.anx")?;
+                }
+            } else {
+                let roots = self.workspace_units.primary_source_roots();
+                for root in roots {
+                    Self.append_watcher_pattern(&bases, &patterns, root.as_str(), "**/*.an")?;
+                    root.drop();
+                }
+                roots.drop();
+                let manifests = self.workspace_units.primary_manifest_paths();
+                for manifest in manifests {
+                    let path = Path.new(manifest.as_str());
+                    match path.parent() {
+                        Some(parent) => {
+                            Self.append_watcher_pattern(&bases, &patterns, parent.as_str(), "package.anx")?;
+                        },
+                        None => {},
+                    }
+                    manifest.drop();
+                }
+                manifests.drop();
+                let standard_library = self.workspace_units.standard_library_path();
+                if standard_library.as_slice().len() != 0u64 {
+                    Self.append_watcher_pattern(&bases, &patterns,
+                        standard_library.as_str(), "**/*.an")?;
+                }
+                standard_library.drop();
+                let index = 0u64;
+                while index < self.documents.len() {
+                    let document = self.documents.at(index);
+                    let key = self.workspace_units.key_for_uri(document.uri.as_str());
+                    if key.as_str().starts_with("file:") {
+                        match uri_to_path(document.uri.as_str()) {
+                            Ok(path) => {
+                                let source = Path.new(path.as_str());
+                                match source.parent() {
+                                    Some(parent) => {
+                                        Self.append_watcher_pattern(&bases, &patterns,
+                                            parent.as_str(), "**/*.an")?;
+                                    },
+                                    None => {},
+                                }
+                                path.drop();
+                            },
+                            Err(problem) => { let _ = problem.kind; },
+                        }
+                    }
+                    key.drop();
+                    index += 1u64;
+                }
+            }
+        } elif let Some(root) = &self.workspace_root {
+            Self.append_legacy_watcher(&bases, &patterns, "**/*.an");
+            Self.append_legacy_watcher(&bases, &patterns, "**/package.anx");
+            let _ = root;
+        }
+
+        let same = bases.len() == self.watcher_bases.len() &&
+            patterns.len() == self.watcher_patterns.len();
+        let index = 0u64;
+        while same && index < bases.len() {
+            if bases[index].as_str() != self.watcher_bases[index].as_str() ||
+                patterns[index].as_str() != self.watcher_patterns[index].as_str() {
+                same = false;
+            }
+            index += 1u64;
+        }
+        if same {
+            release_strings(&bases);
+            release_strings(&patterns);
+            return Result<(), IoError>.Ok(());
+        }
+
+        let had_registration = self.watchers_registered || self.watcher_pending_id.is_some();
+        match self.watcher_pending_id.take() { Some(_) => {}, None => {}, }
+        if had_registration { self.send_watcher_unregistration()?; }
+        release_strings(&self.watcher_bases);
+        release_strings(&self.watcher_patterns);
+        self.watcher_bases = bases;
+        self.watcher_patterns = patterns;
+        self.watchers_registered = false;
+        self.watchers_rejected = false;
+        if self.watcher_patterns.len() == 0u64 { return Result<(), IoError>.Ok(()); }
+
+        if !self.supports_relative_watchers {
+            stderr_text("yian-lsp: client lacks relative watcher support; external input roots are not monitored\n");
+        }
+        let registrations_array = Vec<Value>.new();
+        let watcher_index = 0u64;
+        while watcher_index < self.watcher_patterns.len() {
+            let watcher = Object.new();
+            if self.supports_relative_watchers {
+                let glob = Object.new();
+                put(&glob, "baseUri", Value.String(String.from(&self.watcher_bases[watcher_index].as_str())));
+                put(&glob, "pattern", Value.String(String.from(&self.watcher_patterns[watcher_index].as_str())));
+                put(&watcher, "globPattern", Value.Object(glob));
+            } else {
+                put(&watcher, "globPattern", Value.String(String.from(&self.watcher_patterns[watcher_index].as_str())));
+            }
+            put(&watcher, "kind", Value.Number(Number.Unsigned(7u64)));
+            registrations_array.push(Value.Object(watcher));
+            watcher_index += 1u64;
+        }
         let options = Object.new();
-        put(&options, "watchers", Value.Array(watchers));
+        put(&options, "watchers", Value.Array(registrations_array));
         let registration = Object.new();
         put(&registration, "id", Value.String(String.from(&"yian-watched-files")));
         put(&registration, "method", Value.String(String.from(&"workspace/didChangeWatchedFiles")));
@@ -289,11 +506,50 @@ impl ServerState {
         registrations.push(Value.Object(registration));
         let params = Object.new();
         put(&params, "registrations", Value.Array(registrations));
-        let method = String.from(&"client/registerCapability");
-        self.queue_client(Message.Request(RequestId.String(String.from(&"yian-register-watchers")),
-            method, Option<Value>.Some(Value.Object(params))))?;
-        self.watchers_registered = true;
-        Result<(), IoError>.Ok(())
+        if self.next_server_request_id >= 9007199254740991i64 {
+            return Result<(), IoError>.Err(process_error("server request ID space exhausted"));
+        }
+        let request_id = self.next_server_request_id;
+        self.next_server_request_id += 1i64;
+        self.watcher_pending_id = Option<i64>.Some(request_id);
+        self.queue_client(Message.Request(RequestId.Signed(request_id),
+            String.from(&"client/registerCapability"), Option<Value>.Some(Value.Object(params))))
+    }
+
+    static fn request_document_uri(params: Option<Value&>) -> Option<String> {
+        let value = match params {
+            Some(value) => value,
+            None => return Option<String>.None,
+        };
+        let object = match value.as_object() {
+            Some(value) => value,
+            None => return Option<String>.None,
+        };
+        let document = match object.get("textDocument") {
+            Some(value) => match value.as_object() {
+                Some(value) => value,
+                None => return Option<String>.None,
+            },
+            None => return Option<String>.None,
+        };
+        match document.get("uri") {
+            Some(value) => match value.as_string() {
+                Some(uri) => Option<String>.Some(String.from(&uri)),
+                None => Option<String>.None,
+            },
+            None => Option<String>.None,
+        }
+    }
+
+    fn unit_key_for_params(params: Option<Value&>) -> Option<String> {
+        match Self.request_document_uri(params) {
+            Some(uri) => {
+                let key = self.workspace_units.key_for_uri(uri.as_str());
+                uri.drop();
+                Option<String>.Some(key)
+            },
+            None => Option<String>.None,
+        }
     }
 
     fn send_semantic_refresh() -> Result<(), IoError> {
@@ -334,6 +590,38 @@ impl ServerState {
         };
         match watched {
             Some(value) => match value.get("dynamicRegistration") {
+                Some(Boolean(supported)) => *supported,
+                _ => false,
+            },
+            None => false,
+        }
+    }
+
+    static fn client_supports_relative_watchers(params: Option<Value&>) -> bool {
+        let root = match params { Some(value) => value.as_object(), None => Option<Object&>.None };
+        let capabilities = match root {
+            Some(value) => match value.get("capabilities") {
+                Some(value) => value.as_object(),
+                None => Option<Object&>.None,
+            },
+            None => Option<Object&>.None,
+        };
+        let workspace = match capabilities {
+            Some(value) => match value.get("workspace") {
+                Some(value) => value.as_object(),
+                None => Option<Object&>.None,
+            },
+            None => Option<Object&>.None,
+        };
+        let watched = match workspace {
+            Some(value) => match value.get("didChangeWatchedFiles") {
+                Some(value) => value.as_object(),
+                None => Option<Object&>.None,
+            },
+            None => Option<Object&>.None,
+        };
+        match watched {
+            Some(value) => match value.get("relativePatternSupport") {
                 Some(Boolean(supported)) => *supported,
                 _ => false,
             },
@@ -455,7 +743,8 @@ impl ServerState {
         }
     }
 
-    fn queue_internal(method: str, params: Value, kind: PendingKind, revision: u64)
+    fn queue_internal(method: str, params: Value, kind: PendingKind, revision: u64,
+        topology_revision: u64, unit_key: str, unit_revision: u64)
     -> Result<(), IoError> {
         if self.pending.len() >= 128u64 {
             return Result<(), IoError>.Err(process_error("worker request limit exceeded"));
@@ -477,109 +766,266 @@ impl ServerState {
         self.pending.push(PendingRequest(
             internal_id=internal_id,
             revision=revision,
+            topology_revision=topology_revision,
+            unit_key=String.from(&unit_key),
+            unit_revision=unit_revision,
             kind=kind,
             client_id=Option<RequestId>.None,
             ));
         Result<(), IoError>.Ok(())
     }
 
-    fn queue_sync() -> Result<(), IoError> {
+    fn ensure_unit_revisions() {
+        self.unit_revisions.ensure("primary");
+        let index = 0u64;
+        while index < self.documents.len() {
+            let uri = self.documents.at(index).uri.as_str();
+            let key = self.workspace_units.key_for_uri(uri);
+            self.unit_revisions.ensure(key.as_str());
+            key.drop();
+            if !self.workspace_units.routes_known() {
+                let file_key = self.workspace_units.key_for_file_uri(uri);
+                self.unit_revisions.ensure(file_key.as_str());
+                file_key.drop();
+            }
+            index += 1u64;
+        }
+    }
+
+    fn ensure_topology_candidate_revisions() {
+        let index = 0u64;
+        while index < self.documents.len() {
+            let uri = self.documents.at(index).uri.as_str();
+            let current_key = self.workspace_units.key_for_uri(uri);
+            let file_key = self.workspace_units.key_for_file_uri(uri);
+            self.unit_revisions.ensure(current_key.as_str());
+            self.unit_revisions.ensure(file_key.as_str());
+            current_key.drop();
+            file_key.drop();
+            index += 1u64;
+        }
+    }
+
+    fn document_json(index: u64) -> Value {
+        let document = self.documents.at(index);
+        let item = Object.new();
+        put(&item, "uri", Value.String(document.uri.clone()));
+        put(&item, "text", Value.String(document.text.clone()));
+        match document.version {
+            Some(version) => put(&item, "version", Value.Number(Number.Signed(version))),
+            None => put(&item, "version", Value.Null),
+        }
+        Value.Object(item)
+    }
+
+    fn sync_documents(unit_key: str, refresh_all: bool) -> Value {
+        if refresh_all { return self.documents.to_json(); }
+        let result = Vec<Value>.new();
+        let index = 0u64;
+        while index < self.documents.len() {
+            let document = self.documents.at(index);
+            let key = self.workspace_units.key_for_uri(document.uri.as_str());
+            if key.as_str() == unit_key { result.push(self.document_json(index)); }
+            key.drop();
+            index += 1u64;
+        }
+        Value.Array(result)
+    }
+
+    fn trace_sync_queued(unit_key: str, unit_revision: u64, refresh_all: bool) {
+        let path = match &self.trace_file {
+            Some(value) => value.as_str(),
+            None => { return; },
+        };
+        let timestamp = match monotonic_now() {
+            Ok(value) => value.nanoseconds(),
+            Err(problem) => { problem.drop(); return; },
+        };
+        let fields = Object.new();
+        fields.insert("event", Value.String(String.from(&"server_sync_queued")));
+        fields.insert("operation", Value.String(String.from(&"sync")));
+        fields.insert("monotonic_ns", Value.Number(Number.Signed(timestamp)));
+        fields.insert("revision", Value.Number(Number.Unsigned(self.revision)));
+        fields.insert("topology_revision", Value.Number(Number.Unsigned(self.topology_revision)));
+        fields.insert("unit_key", Value.String(String.from(&unit_key)));
+        fields.insert("unit_revision", Value.Number(Number.Unsigned(unit_revision)));
+        fields.insert("refresh_all", Value.Boolean(refresh_all));
+        fields.insert("worker_request_id", Value.Number(Number.Unsigned(self.next_internal_id - 1u64)));
+        let value = Value.Object(fields);
+        let encoded = match stringify(&value) {
+            Ok(text) => text,
+            Err(_) => { value.drop(); return; },
+        };
+        value.drop();
+        let line = String.from(&encoded.as_str());
+        line.push('\n');
+        encoded.drop();
+        match append(path, line.as_slice()) {
+            Ok(_) => {},
+            Err(problem) => { problem.drop(); },
+        }
+        line.drop();
+    }
+
+    fn queue_sync(unit_key: str) -> Result<(), IoError> {
+        if self.sync_in_flight { return Result<(), IoError>.Ok(()); }
+        self.ensure_unit_revisions();
+        // Until the first routing result, the worker's topology revision is not
+        // authoritative for a partial unit payload. Always send the complete
+        // document set in that window.
+        let refresh_all = self.topology_pending || !self.workspace_units.routes_known();
+        if refresh_all { self.ensure_topology_candidate_revisions(); }
+        let unit_revision = self.unit_revisions.revision(unit_key);
         let payload = Object.new();
         put(&payload, "revision", Value.Number(Number.Unsigned(self.revision)));
         put(&payload, "topology_revision", Value.Number(Number.Unsigned(self.topology_revision)));
+        put(&payload, "unit_key", Value.String(String.from(&unit_key)));
+        put(&payload, "unit_revision", Value.Number(Number.Unsigned(unit_revision)));
+        put(&payload, "refresh_all", Value.Boolean(refresh_all));
         match &self.workspace_root {
             Some(value) => put(&payload, "workspace_root", Value.String(value.clone())),
             None => put(&payload, "workspace_root", Value.Null),
         }
-        put(&payload, "documents", self.documents.to_json());
-        self.queue_internal("worker/sync", Value.Object(payload), PendingKind.Synchronize, self.revision)
-    }
-
-    fn queue_current_sync() -> Result<(), IoError> {
-        self.queue_sync()
-    }
-
-    fn clear_pending_analysis() {
-        self.full_deadline_ns = Option<i64>.None;
-    }
-
-    fn has_current_analysis() -> bool {
-        match self.analysis_revision {
-            Some(revision) => revision == self.revision,
-            None => false,
+        put(&payload, "documents", self.sync_documents(unit_key, refresh_all));
+        let unit_revisions = Object.new();
+        if refresh_all {
+            let index = 0u64;
+            while index < self.unit_revisions.count() {
+                put(&unit_revisions, self.unit_revisions.key_at(index),
+                    Value.Number(Number.Unsigned(self.unit_revisions.revision_at(index))));
+                index += 1u64;
+            }
+        } else {
+            put(&unit_revisions, unit_key, Value.Number(Number.Unsigned(unit_revision)));
+        }
+        put(&payload, "unit_revisions", Value.Object(unit_revisions));
+        match self.queue_internal("worker/sync", Value.Object(payload), PendingKind.Synchronize,
+            self.revision, self.topology_revision, unit_key, unit_revision) {
+            Ok(_) => {
+                self.sync_in_flight = true;
+                self.trace_sync_queued(unit_key, unit_revision, refresh_all);
+                Result<(), IoError>.Ok(())
+            },
+            Err(problem) => Result<(), IoError>.Err(problem),
         }
     }
 
+    fn queue_current_sync() -> Result<(), IoError> {
+        self.queue_sync("primary")
+    }
+
+    fn has_current_analysis(unit_key: str) -> bool { self.unit_revisions.is_current(unit_key) }
+
     fn schedule_due_work() -> Result<(), IoError> {
-        if !self.worker_initialized { return Result<(), IoError>.Ok(()); }
+        if !self.worker_initialized || self.sync_in_flight { return Result<(), IoError>.Ok(()); }
+        if self.topology_pending {
+            if !self.topology_retry_blocked { self.queue_sync("primary")?; }
+            return Result<(), IoError>.Ok(());
+        }
         let now = monotonic_now()?.nanoseconds();
-        let due = match self.full_deadline_ns {
-            Some(deadline) => now >= deadline,
-            None => false,
-        };
-        if due {
-            self.full_deadline_ns = Option<i64>.None;
-            self.queue_sync()?;
+        if let Some(key) = self.unit_revisions.take_due(now) {
+            let result = self.queue_sync(key.as_str());
+            key.drop();
+            result?;
         }
         Result<(), IoError>.Ok(())
     }
 
     fn next_wait_milliseconds() -> Result<u64, IoError> {
-        let wait = 100u64;
+        if self.sync_in_flight { return Result<u64, IoError>.Ok(100u64); }
         let now = monotonic_now()?.nanoseconds();
-        match self.full_deadline_ns {
-            Some(deadline) if deadline > now => {
-                let remaining = u64(deadline - now) / 1000000u64;
-                if remaining < wait { wait = remaining; }
-            },
-            Some(_) => return Result<u64, IoError>.Ok(0u64),
-            _ => {},
-        }
-        Result<u64, IoError>.Ok(wait)
+        Result<u64, IoError>.Ok(self.unit_revisions.wait_milliseconds(now, 100u64))
     }
 
-    fn queue_query(id: RequestId, method: String, params: Option<Value>)
+    fn queue_query(id: RequestId, method: String, params: Option<Value>,
+        unit_key: str, unit_revision: u64)
     -> Result<(), IoError> {
         let payload = Object.new();
         put(&payload, "method", Value.String(method));
+        put(&payload, "unit_key", Value.String(String.from(&unit_key)));
+        put(&payload, "unit_revision", Value.Number(Number.Unsigned(unit_revision)));
         match params {
             Some(value) => put(&payload, "params", value),
             None => put(&payload, "params", Value.Null),
         }
         let kind = PendingKind.ClientRequest;
-        self.queue_internal("worker/query", Value.Object(payload), kind, self.revision)?;
+        self.queue_internal("worker/query", Value.Object(payload), kind, self.revision,
+            self.topology_revision, unit_key, unit_revision)?;
         let index = self.pending.len() - 1u64;
         self.pending[index].client_id = Option<RequestId>.Some(id);
         Result<(), IoError>.Ok(())
     }
 
-    fn defer_query(id: RequestId, method: String, params: Option<Value>)
+    fn defer_query(id: RequestId, method: String, params: Option<Value>,
+        unit_key: str, unit_revision: u64)
     -> Result<(), IoError> {
         if self.pending.len() + self.deferred.len() >= 128u64 {
-            return self.error(id, -32803i64, "too many pending requests");
+            let result = self.error(id, -32803i64, "too many pending requests");
+            method.drop();
+            if let Some(value) = params { value.drop(); }
+            return result;
         }
         self.deferred.push(DeferredRequest(
             id=id,
             method=method,
             params=params,
-            revision=self.revision,
+            unit_key=String.from(&unit_key),
+            unit_revision=unit_revision,
+            route_provisional=!self.workspace_units.routes_known(),
             ));
         Result<(), IoError>.Ok(())
     }
 
-    fn flush_deferred(success: bool) -> Result<(), IoError> {
-        while self.deferred.len() != 0u64 {
-            let request = self.deferred.remove(0u64);
-            if request.revision != self.revision {
+    fn flush_deferred(success: bool, failed_unit_key: str, failed_unit_revision: u64)
+    -> Result<(), IoError> {
+        let index = 0u64;
+        while index < self.deferred.len() {
+            let current_key = match self.unit_key_for_params(match &self.deferred[index].params {
+                Some(value) => Option<Value&>.Some(value),
+                None => Option<Value&>.None,
+            }) {
+                Some(value) => value,
+                None => String.from(&self.deferred[index].unit_key.as_str()),
+            };
+            if self.deferred[index].route_provisional &&
+                current_key.as_str() != self.deferred[index].unit_key.as_str() {
+                self.deferred[index].unit_key.drop();
+                self.deferred[index].unit_key = String.from(&current_key.as_str());
+                self.deferred[index].unit_revision = self.unit_revisions.revision(current_key.as_str());
+                self.deferred[index].route_provisional = false;
+            } elif current_key.as_str() != self.deferred[index].unit_key.as_str() {
+                current_key.drop();
+                let request = self.deferred.remove(index);
+                self.error(request.id, -32801i64, "document routing changed while request was running")?;
+                request.method.drop();
+                request.unit_key.drop();
+                match request.params { Some(value) => value.drop(), None => {}, }
+                continue;
+            }
+            current_key.drop();
+            let key = self.deferred[index].unit_key.as_str();
+            let current_revision = self.unit_revisions.revision(key);
+            if current_revision != self.deferred[index].unit_revision {
+                let request = self.deferred.remove(index);
                 self.error(request.id, -32801i64, "document changed while request was running")?;
                 request.method.drop();
+                request.unit_key.drop();
                 match request.params { Some(value) => value.drop(), None => {}, }
-            } elif !success {
+            } elif self.unit_revisions.is_current(key) {
+                let request = self.deferred.remove(index);
+                self.queue_query(request.id, request.method, request.params,
+                    request.unit_key.as_str(), request.unit_revision)?;
+                request.unit_key.drop();
+            } elif !success && (failed_unit_key.as_slice().len() == 0u64 ||
+                (self.deferred[index].unit_key.as_str() == failed_unit_key &&
+                    self.deferred[index].unit_revision == failed_unit_revision)) {
+                let request = self.deferred.remove(index);
                 self.error(request.id, -32603i64, "analysis failed before request could run")?;
                 request.method.drop();
+                request.unit_key.drop();
                 match request.params { Some(value) => value.drop(), None => {}, }
             } else {
-                self.queue_query(request.id, request.method, request.params)?;
+                index += 1u64;
             }
         }
         Result<(), IoError>.Ok(())
@@ -631,30 +1077,91 @@ impl ServerState {
         Value.Object(result)
     }
 
-    fn update_revision(topology: bool, debounce: bool) -> Result<(), IoError> {
-        self.revision += 1u64;
-        if topology { self.topology_revision += 1u64; }
-        self.analysis_revision = Option<u64>.None;
-
-        self.clear_pending_analysis();
-        let now = monotonic_now()?.nanoseconds();
-        self.full_deadline_ns = Option<i64>.Some(now + if debounce { 600000000i64 } else { 0i64 });
-
-        while self.deferred.len() != 0u64 {
-            let request = self.deferred.remove(0u64);
-            self.error(request.id, -32801i64, "document changed while request was running")?;
-            request.method.drop();
-            match request.params { Some(value) => value.drop(), None => {}, }
+    fn publish_empty_diagnostics(uri: str) -> Result<(), IoError> {
+        let payload = Object.new();
+        put(&payload, "uri", Value.String(String.from(&uri)));
+        put(&payload, "diagnostics", empty_array());
+        match self.documents.find(uri) {
+            Some(index) => match self.documents.at(index).version {
+                Some(version) => put(&payload, "version", Value.Number(Number.Signed(version))),
+                None => {},
+            },
+            None => {},
         }
+        self.notification("textDocument/publishDiagnostics", Value.Object(payload))
+    }
 
+    fn clear_unit_diagnostics(unit_key: str) -> Result<(), IoError> {
+        let index = 0u64;
+        while index < self.published_diagnostics.len() {
+            if self.published_diagnostics[index].unit_key.as_str() == unit_key {
+                let removed = self.published_diagnostics.remove(index);
+                self.publish_empty_diagnostics(removed.uri.as_str())?;
+                removed.drop();
+            } else {
+                index += 1u64;
+            }
+        }
+        Result<(), IoError>.Ok(())
+    }
+
+    fn invalidate_unit_requests(unit_key: str) -> Result<(), IoError> {
+        let index = 0u64;
+        while index < self.deferred.len() {
+            if self.deferred[index].unit_key.as_str() == unit_key &&
+                !self.deferred[index].route_provisional {
+                let request = self.deferred.remove(index);
+                self.error(request.id, -32801i64, "document changed while request was running")?;
+                request.method.drop();
+                request.unit_key.drop();
+                match request.params { Some(value) => value.drop(), None => {}, }
+            } else {
+                index += 1u64;
+            }
+        }
         for pending in self.pending {
-            if pending.kind == PendingKind.ClientRequest {
+            if pending.kind == PendingKind.ClientRequest && pending.unit_key.as_str() == unit_key {
                 if let Some(id) = pending.client_id.take() {
                     self.error(id, -32801i64, "document changed while request was running")?;
                 }
             }
         }
+        self.clear_unit_diagnostics(unit_key)
+    }
 
+    fn update_revision(unit_key: str, topology: bool, debounce: bool) -> Result<(), IoError> {
+        self.revision += 1u64;
+        self.topology_retry_blocked = false;
+        if topology {
+            self.topology_revision += 1u64;
+            self.topology_pending = true;
+        }
+        self.ensure_unit_revisions();
+        let now = monotonic_now()?.nanoseconds();
+        let deadline = now + if debounce { 600000000i64 } else { 0i64 };
+        self.unit_revisions.mark_changed(unit_key, deadline);
+        self.invalidate_unit_requests(unit_key)?;
+        if topology && unit_key != "primary" {
+            self.unit_revisions.mark_changed("primary", deadline);
+            self.invalidate_unit_requests("primary")?;
+        }
+        Result<(), IoError>.Ok(())
+    }
+
+    fn update_all_units(debounce: bool) -> Result<(), IoError> {
+        self.revision += 1u64;
+        self.topology_retry_blocked = false;
+        self.ensure_unit_revisions();
+        let now = monotonic_now()?.nanoseconds();
+        let deadline = now + if debounce { 600000000i64 } else { 0i64 };
+        let index = 0u64;
+        while index < self.unit_revisions.count() {
+            let key = String.from(&self.unit_revisions.key_at(index));
+            self.unit_revisions.mark_changed(key.as_str(), deadline);
+            self.invalidate_unit_requests(key.as_str())?;
+            key.drop();
+            index += 1u64;
+        }
         Result<(), IoError>.Ok(())
     }
 
@@ -669,9 +1176,30 @@ impl ServerState {
         };
         value.drop();
         let document = decoded.text_document;
+        let uri = String.from(&document.uri.as_str());
         self.documents.set(document.uri.as_str(), document.text.as_str(), Option<i64>.Some(document.version));
         document.drop();
-        self.update_revision(false, false)
+        let key = self.workspace_units.key_for_uri(uri.as_str());
+        let path = match uri_to_path(uri.as_str()) {
+            Ok(value) => value,
+            Err(problem) => { let _ = problem.kind; String.new() },
+        };
+        let discovers_primary_member = self.workspace_units.routes_known() &&
+            Self.source_path_uri(uri.as_str()) &&
+            self.workspace_units.is_primary_path(path.as_str()) &&
+            !self.workspace_units.is_primary_file_uri(uri.as_str());
+        path.drop();
+        let topology = (!self.workspace_units.routes_known() && Self.source_path_uri(uri.as_str())) ||
+            discovers_primary_member ||
+            (Self.manifest_uri(uri.as_str()) && self.workspace_units.is_primary_uri(uri.as_str()));
+        let route_key = if topology { "primary" } else { key.as_str() };
+        let result = self.update_revision(route_key, topology, false);
+        key.drop();
+        uri.drop();
+        match result {
+            Ok(_) => self.register_file_watchers(),
+            Err(problem) => Result<(), IoError>.Err(problem),
+        }
     }
 
     fn process_did_change(params: Option<Value>) -> Result<(), IoError> {
@@ -694,10 +1222,13 @@ impl ServerState {
             String.from(&decoded.content_changes[decoded.content_changes.len() - 1u64].text.as_str())
         };
         self.documents.set(uri.as_str(), text.as_str(), Option<i64>.Some(decoded.text_document.version));
+        let key = self.workspace_units.key_for_uri(uri.as_str());
         uri.drop();
         text.drop();
         decoded.drop();
-        self.update_revision(false, true)
+        let result = self.update_revision(key.as_str(), false, true);
+        key.drop();
+        result
     }
 
     fn process_did_close(params: Option<Value>) -> Result<(), IoError> {
@@ -711,6 +1242,7 @@ impl ServerState {
         };
         value.drop();
         let uri = String.from(&decoded.text_document.uri.as_str());
+        let key = self.workspace_units.key_for_uri(uri.as_str());
         self.documents.remove(uri.as_str());
         decoded.drop();
         let clear = Object.new();
@@ -718,19 +1250,24 @@ impl ServerState {
         put(&clear, "diagnostics", empty_array());
         self.notification("textDocument/publishDiagnostics", Value.Object(clear))?;
         self.remove_published_diagnostic(uri.as_str());
+        let result = self.update_revision(key.as_str(), false, false);
+        key.drop();
         uri.drop();
-        self.update_revision(false, false)
+        match result {
+            Ok(_) => self.register_file_watchers(),
+            Err(problem) => Result<(), IoError>.Err(problem),
+        }
     }
 
     fn remove_published_diagnostic(uri: str) {
         let index = 0u64;
         while index < self.published_diagnostics.len() {
-            if self.published_diagnostics[index].as_str() == uri {
+            if self.published_diagnostics[index].uri.as_str() == uri {
                 let removed = self.published_diagnostics.remove(index);
                 removed.drop();
-                return;
+            } else {
+                index += 1u64;
             }
-            index += 1u64;
         }
     }
 
@@ -753,9 +1290,13 @@ impl ServerState {
             };
             self.documents.set(uri, text.as_str(), version);
         }
-        let refresh_topology = Self.manifest_uri(uri);
+        let refresh_topology = Self.manifest_uri(uri) && self.workspace_units.is_primary_uri(uri);
+        let key = if refresh_topology { String.from(&"primary") }
+            else { self.workspace_units.key_for_uri(uri) };
         decoded.drop();
-        self.update_revision(refresh_topology, false)
+        let result = self.update_revision(key.as_str(), refresh_topology, false);
+        key.drop();
+        result
     }
 
     fn process_watched_files(params: Option<Value>) -> Result<(), IoError> {
@@ -769,22 +1310,32 @@ impl ServerState {
         };
         value.drop();
 
-        let relevant = false;
-        let refresh_topology = false;
+        let standard_library_changed = false;
         for event in decoded.changes {
-            let manifest = Self.manifest_uri(event.uri.as_str());
-            let source = Self.source_path_uri(event.uri.as_str());
-            if manifest || source {
-                relevant = true;
-                if manifest || (source && (event.kind.value() == 1u64 || event.kind.value() == 3u64)) {
-                    refresh_topology = true;
-                }
+            let uri = event.uri.as_str();
+            let standard_library = self.workspace_units.is_standard_library_uri(uri);
+            let primary = self.workspace_units.is_primary_uri(uri);
+            let manifest = Self.manifest_uri(uri);
+            let source = Self.source_path_uri(uri);
+            let open = self.documents.find(uri).is_some();
+            if standard_library {
+                standard_library_changed = true;
+            } elif primary && (manifest || source) {
+                let topology = manifest || (source &&
+                    (event.kind.value() == 1u64 || event.kind.value() == 3u64));
+                let key = String.from(&"primary");
+                self.update_revision(key.as_str(), topology, false)?;
+                key.drop();
+            } elif open && source {
+                let key = self.workspace_units.key_for_uri(uri);
+                self.update_revision(key.as_str(), false, false)?;
+                key.drop();
             }
             event.drop();
         }
         decoded.drop();
-        if !relevant { return Result<(), IoError>.Ok(()); }
-        self.update_revision(refresh_topology, false)
+        if standard_library_changed { self.update_all_units(false)?; }
+        Result<(), IoError>.Ok(())
     }
 
     fn handle_cancel(params: Option<Value>) -> Result<(), IoError> {
@@ -809,6 +1360,7 @@ impl ServerState {
                 let request = self.deferred.remove(index);
                 self.error(request.id, -32800i64, "request cancelled")?;
                 request.method.drop();
+                request.unit_key.drop();
                 match request.params { Some(value) => value.drop(), None => {}, }
                 break;
             }
@@ -830,6 +1382,10 @@ impl ServerState {
                     });
                 self.supports_watchers = match &params {
                     Some(value) => Self.client_supports_watchers(Option<Value&>.Some(value)),
+                    None => false,
+                };
+                self.supports_relative_watchers = match &params {
+                    Some(value) => Self.client_supports_relative_watchers(Option<Value&>.Some(value)),
                     None => false,
                 };
                 self.supports_semantic_refresh = match &params {
@@ -854,10 +1410,25 @@ impl ServerState {
                 if self.pending.len() + self.deferred.len() >= 128u64 {
                     return self.error(id, -32803i64, "too many pending requests");
                 }
-                if self.has_current_analysis() {
-                    self.queue_query(id, method, params)
-                } else {
-                    self.defer_query(id, method, params)
+                self.ensure_unit_revisions();
+                let unit_key = self.unit_key_for_params(match &params {
+                    Some(value) => Option<Value&>.Some(value),
+                    None => Option<Value&>.None,
+                });
+                match unit_key {
+                    Some(key) => {
+                        let unit_revision = self.unit_revisions.revision(key.as_str());
+                        if self.has_current_analysis(key.as_str()) {
+                            let result = self.queue_query(id, method, params, key.as_str(), unit_revision);
+                            key.drop();
+                            result
+                        } else {
+                            let result = self.defer_query(id, method, params, key.as_str(), unit_revision);
+                            key.drop();
+                            result
+                        }
+                    },
+                    None => self.queue_query(id, method, params, "", 0u64),
                 }
             },
             _ => {
@@ -892,65 +1463,240 @@ impl ServerState {
         }
     }
 
+    fn record_watcher_response(id: RequestId, accepted: bool) {
+        let response_id = match &id {
+            RequestId.Signed(value) => Option<i64>.Some(*value),
+            RequestId.Unsigned(value) if *value <= 9223372036854775807u64 =>
+                Option<i64>.Some(i64(*value)),
+            _ => Option<i64>.None,
+        };
+        let matches_pending = match &self.watcher_pending_id {
+            Some(expected) => match &response_id {
+                Some(actual) => *expected == *actual,
+                None => false,
+            },
+            None => false,
+        };
+        if matches_pending {
+            self.watcher_pending_id = Option<i64>.None;
+            self.watchers_registered = accepted;
+            self.watchers_rejected = !accepted;
+            if !accepted {
+                stderr_text("yian-lsp: client rejected watched-file registration; external input changes may remain stale until another event or restart\n");
+            }
+        }
+        id.drop();
+    }
+
     fn handle_client_message(message: Message) -> Result<(), IoError> {
         match message {
             Request(id, method, params) => self.handle_request(id, method, params),
             Notification(method, params) => self.handle_notification(method, params),
-            SuccessResponse(id, value) => { id.drop(); value.drop(); Result<(), IoError>.Ok(()) },
-            ErrorResponse(id, problem) => { id.drop(); problem.drop(); Result<(), IoError>.Ok(()) },
+            SuccessResponse(id, value) => {
+                self.record_watcher_response(id, true);
+                value.drop();
+                Result<(), IoError>.Ok(())
+            },
+            ErrorResponse(id, problem) => {
+                self.record_watcher_response(id, false);
+                problem.drop();
+                Result<(), IoError>.Ok(())
+            },
         }
     }
 
-    fn publish_sync_result(result: Value) -> Result<(), IoError> {
-        defer result.drop();
-        let diagnostics = match result.as_object() {
-            Some(object) => match object.get("diagnostics") {
-                Some(value) => value.as_object(),
-                None => Option<Object&>.None,
+    static fn strings_from_json(value: Option<Value&>) -> Vec<String> {
+        let result = Vec<String>.new();
+        let array = match value {
+            Some(value) => match value.as_array() {
+                Some(value) => value,
+                None => return result,
             },
-            None => Option<Object&>.None,
+            None => return result,
         };
-        let next_published = Vec<String>.new();
-        let transferred = false;
-        defer {
-            if !transferred {
-                release_strings(&next_published);
+        for item in *array {
+            match item.as_string() {
+                Some(path) => result.push(String.from(&path)),
+                None => {},
             }
+        }
+        result
+    }
+
+    fn clear_published_uri(uri: str) -> Result<(), IoError> {
+        let found = false;
+        let index = 0u64;
+        while index < self.published_diagnostics.len() {
+            if self.published_diagnostics[index].uri.as_str() == uri {
+                let removed = self.published_diagnostics.remove(index);
+                removed.drop();
+                found = true;
+            } else {
+                index += 1u64;
+            }
+        }
+        if found { self.publish_empty_diagnostics(uri)?; }
+        Result<(), IoError>.Ok(())
+    }
+
+    fn replace_routes(object: Object&) -> Result<(), IoError> {
+        let old_keys = Vec<String>.with_capacity(self.documents.len());
+        let index = 0u64;
+        while index < self.documents.len() {
+            old_keys.push(self.workspace_units.key_for_uri(self.documents.at(index).uri.as_str()));
+            index += 1u64;
+        }
+        self.workspace_units.set_primary_files(Self.strings_from_json(match object.get("primary_files") {
+            Some(value) => Option<Value&>.Some(value),
+            None => Option<Value&>.None,
+        }));
+        self.workspace_units.set_primary_roots(Self.strings_from_json(match object.get("primary_roots") {
+            Some(value) => Option<Value&>.Some(value),
+            None => Option<Value&>.None,
+        }));
+        self.workspace_units.set_primary_manifests(Self.strings_from_json(match object.get("primary_manifests") {
+            Some(value) => Option<Value&>.Some(value),
+            None => Option<Value&>.None,
+        }));
+        match field_string(object, "standard_library_root") {
+            Some(root) => self.workspace_units.set_standard_library_root(root),
+            None => {},
+        }
+        self.workspace_units.set_routes_known();
+
+        let now = monotonic_now()?.nanoseconds();
+        let doc_index = 0u64;
+        while doc_index < self.documents.len() {
+            let old_key = &old_keys[doc_index];
+            let uri = self.documents.at(doc_index).uri.as_str();
+            let new_key = self.workspace_units.key_for_uri(uri);
+            if old_key.as_str() != new_key.as_str() {
+                if old_key.as_str() != "primary" {
+                    self.unit_revisions.mark_changed(old_key.as_str(), now);
+                    self.invalidate_unit_requests(old_key.as_str())?;
+                }
+                self.clear_published_uri(uri)?;
+            }
+            self.unit_revisions.ensure(new_key.as_str());
+            new_key.drop();
+            doc_index += 1u64;
+        }
+        release_strings(&old_keys);
+        self.ensure_unit_revisions();
+        Result<(), IoError>.Ok(())
+    }
+
+    fn has_pending_unit_work(unit_key: str) -> bool {
+        for pending in self.pending {
+            if pending.kind == PendingKind.ClientRequest &&
+                pending.unit_key.as_str() == unit_key {
+                return true;
+            }
+        }
+        for request in self.deferred {
+            if request.unit_key.as_str() == unit_key { return true; }
+        }
+        false
+    }
+
+    fn prune_closed_standalone_units() {
+        let index = self.unit_revisions.count();
+        while index != 0u64 {
+            index -= 1u64;
+            let key = String.from(&self.unit_revisions.key_at(index));
+            if key.as_str().starts_with("file:") {
+                let active = false;
+                for document in 0u64..self.documents.len() {
+                    let document_key = self.workspace_units.key_for_uri(
+                        self.documents.at(document).uri.as_str());
+                    if document_key.as_str() == key.as_str() { active = true; }
+                    document_key.drop();
+                    if active { break; }
+                }
+                if !active && !self.has_pending_unit_work(key.as_str()) {
+                    self.unit_revisions.remove(key.as_str());
+                }
+            }
+            key.drop();
+        }
+    }
+
+    fn publish_unit_diagnostics(unit_key: str, diagnostics: Object&) -> Result<(), IoError> {
+        let index = 0u64;
+        while index < self.published_diagnostics.len() {
+            if self.published_diagnostics[index].unit_key.as_str() == unit_key {
+                let uri = String.from(&self.published_diagnostics[index].uri.as_str());
+                let should_clear = diagnostics.get(uri.as_str()).is_none();
+                let removed = self.published_diagnostics.remove(index);
+                if should_clear { self.publish_empty_diagnostics(uri.as_str())?; }
+                removed.drop();
+                uri.drop();
+            } else {
+                index += 1u64;
+            }
+        }
+        let iterator = diagnostics.iter();
+        while let Some((uri, values)) = iterator.next() {
+            let payload = Object.new();
+            put(&payload, "uri", Value.String(String.from(&uri)));
+            put(&payload, "diagnostics", values.clone());
+            match self.documents.find(uri) {
+                Some(index) => match self.documents.at(index).version {
+                    Some(version) => put(&payload, "version", Value.Number(Number.Signed(version))),
+                    None => {},
+                },
+                None => {},
+            }
+            self.notification("textDocument/publishDiagnostics", Value.Object(payload))?;
+            self.published_diagnostics.push(PublishedDiagnostic(
+                uri=String.from(&uri), unit_key=String.from(&unit_key)));
+        }
+        Result<(), IoError>.Ok(())
+    }
+
+    fn publish_sync_result(result: Value, routes_current: bool,
+        sync_current: bool) -> Result<(), IoError> {
+        defer result.drop();
+        let object = match result.as_object() {
+            Some(value) => value,
+            None => return Result<(), IoError>.Err(process_error("worker sync result is invalid")),
         };
-        if let Some(map) = diagnostics {
-            let iterator = map.iter();
-            while let Some((uri, values)) = iterator.next() {
-                let payload = Object.new();
-                put(&payload, "uri", Value.String(String.from(&uri)));
-                put(&payload, "diagnostics", values.clone());
-                match self.documents.find(uri) {
-                    Some(index) => match self.documents.at(index).version {
-                        Some(version) => put(&payload, "version", Value.Number(Number.Signed(version))),
+        if !routes_current { return Result<(), IoError>.Ok(()); }
+        self.replace_routes(object)?;
+        let unit_results = match object.get("unit_results") {
+            Some(value) => value.as_array(),
+            None => Option<Vec<Value>&>.None,
+        };
+        let published = false;
+        if let Some(results) = unit_results {
+            for item in *results {
+                let fields = match item.as_object() {
+                    Some(value) => value,
+                    None => continue,
+                };
+                let key = match field_string(fields, "key") {
+                    Some(value) => value,
+                    None => continue,
+                };
+                let revision = match field_u64(fields, "revision") {
+                    Some(value) => value,
+                    None => continue,
+                };
+                if !self.unit_revisions.mark_analyzed(key, revision) { continue; }
+                match fields.get("diagnostics") {
+                    Some(value) => match value.as_object() {
+                        Some(diagnostics) => {
+                            self.publish_unit_diagnostics(key, diagnostics)?;
+                        },
                         None => {},
                     },
                     None => {},
                 }
-                self.notification("textDocument/publishDiagnostics", Value.Object(payload))?;
-                let already_published = false;
-                for previous in next_published {
-                    if previous.as_str() == uri { already_published = true; break; }
-                }
-                if !already_published { next_published.push(String.from(&uri)); }
-            }
-            for previous in self.published_diagnostics {
-                if map.get(previous.as_str()).is_none() {
-                    let payload = Object.new();
-                    put(&payload, "uri", Value.String(String.from(&previous.as_str())));
-                    put(&payload, "diagnostics", empty_array());
-                    self.notification("textDocument/publishDiagnostics", Value.Object(payload))?;
-                }
+                published = true;
             }
         }
-        self.send_semantic_refresh()?;
-        for uri in self.published_diagnostics { uri.drop(); }
-        self.published_diagnostics.drop();
-        self.published_diagnostics = next_published;
-        transferred = true;
+        if routes_current && sync_current { self.prune_closed_standalone_units(); }
+        if published { self.send_semantic_refresh()?; }
         Result<(), IoError>.Ok(())
     }
 
@@ -985,19 +1731,28 @@ impl ServerState {
                         if self.initialized { self.queue_current_sync()?; }
                     },
                     Synchronize => {
-                        if pending.revision == self.revision {
-                            self.publish_sync_result(result)?;
-                            self.analysis_revision = Option<u64>.Some(self.revision);
-                            self.flush_deferred(true)?;
-                        } else { result.drop(); }
+                        self.sync_in_flight = false;
+                        let routes_current = pending.topology_revision == self.topology_revision;
+                        self.publish_sync_result(result,
+                            routes_current,
+                            pending.revision == self.revision)?;
+                        if routes_current {
+                            self.topology_pending = false;
+                            self.topology_retry_blocked = false;
+                            self.register_file_watchers()?;
+                            self.flush_deferred(true, "", 0u64)?;
+                        }
                     },
                     ClientRequest => match pending.client_id {
                         Some(client_id) => {
-                            if pending.revision == self.revision {
+                            if pending.topology_revision == self.topology_revision &&
+                                (pending.unit_key.as_str().as_slice().len() == 0u64 ||
+                                pending.unit_revision == self.unit_revisions.revision(pending.unit_key.as_str())) {
                                 self.success(client_id, result)?;
                             } else {
                                 result.drop();
-                                self.error(client_id, -32801i64, "document changed while request was running")?;
+                                self.error(client_id, -32801i64,
+                                    "document input or routing changed while request was running")?;
                             }
                         },
                         None => result.drop(),
@@ -1016,13 +1771,33 @@ impl ServerState {
                 match pending.kind {
                     Initialize => {
                         self.worker_initialized = false;
-                        self.flush_deferred(false)?;
+                        self.flush_deferred(false, "", 0u64)?;
                     },
                     Synchronize => {
-                        if pending.revision == self.revision { self.flush_deferred(false)?; }
+                        self.sync_in_flight = false;
+                        if self.unit_revisions.revision(pending.unit_key.as_str()) == pending.unit_revision {
+                            self.unit_revisions.set_deadline(pending.unit_key.as_str(), Option<i64>.None);
+                        }
+                        if pending.unit_key.as_str() == "primary" && self.topology_pending &&
+                            pending.topology_revision == self.topology_revision {
+                            self.topology_retry_blocked = true;
+                        }
+                        stderr_text("[yian-lsp ERROR] worker sync failed: ");
+                        stderr_text(message.as_str());
+                        stderr_text("\n");
+                        self.flush_deferred(false, pending.unit_key.as_str(), pending.unit_revision)?;
                     },
                     ClientRequest => match pending.client_id {
-                        Some(client_id) => { self.error(client_id, code, message.as_str())?; },
+                        Some(client_id) => {
+                            if pending.topology_revision == self.topology_revision &&
+                                (pending.unit_key.as_str().as_slice().len() == 0u64 ||
+                                pending.unit_revision == self.unit_revisions.revision(pending.unit_key.as_str())) {
+                                self.error(client_id, code, message.as_str())?;
+                            } else {
+                                self.error(client_id, -32801i64,
+                                    "document input or routing changed while request was running")?;
+                            }
+                        },
                         None => {},
                     },
                 }
@@ -1327,7 +2102,8 @@ impl ServerState {
                 }
             } elif !self.worker_initialized {
                 if self.pending.len() == 0u64 {
-                    if let Err(problem) = self.queue_internal("worker/initialize", empty_object(), PendingKind.Initialize, self.revision) {
+                    if let Err(problem) = self.queue_internal("worker/initialize", empty_object(),
+                        PendingKind.Initialize, self.revision, self.topology_revision, "", 0u64) {
                         problem.drop();
                         return 1i32;
                     }
@@ -1350,10 +2126,15 @@ impl Drop for ServerState {
         for request in self.deferred { request.drop(); }
         self.deferred.drop();
         self.documents.drop();
-        for uri in self.published_diagnostics { uri.drop(); }
+        for diagnostic in self.published_diagnostics { diagnostic.drop(); }
         self.published_diagnostics.drop();
         self.poller.drop();
+        self.workspace_units.drop();
+        self.unit_revisions.drop();
+        release_strings(&self.watcher_bases);
+        release_strings(&self.watcher_patterns);
         match &self.workspace_root { Some(value) => value.drop(), None => {}, }
+        match &self.trace_file { Some(value) => value.drop(), None => {}, }
         self.child.drop();
     }
 }
@@ -1374,7 +2155,7 @@ pub fn run_server(config: Config&) -> i32 {
         Ok(value) => value,
         Err(problem) => { stderr_text("yian-lsp: "); stderr_text(problem.msg()); stderr_text("\n"); problem.drop(); return 1i32; },
     };
-    let server = match ServerState.new(child, &input_guard, &output_guard) {
+    let server = match ServerState.new(child, &input_guard, &output_guard, config) {
         Ok(value) => value,
         Err(problem) => { stderr_text("yian-lsp: "); stderr_text(problem.msg()); stderr_text("\n"); problem.drop(); return 1i32; },
     };

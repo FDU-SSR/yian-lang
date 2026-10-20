@@ -285,6 +285,7 @@ def _build(args: argparse.Namespace) -> None:
             )
 
         shutil.copytree(root / "lib" / "src", data / "lib" / "src")
+        shutil.copy2(root / "lib" / "package.anx", data / "lib" / "package.anx")
         shutil.copytree(root / "runtime" / "src", data / "runtime" / "src")
         shutil.copytree(root / "runtime" / "include", data / "runtime" / "include")
         if _source_snapshot(root) != initial_sources:

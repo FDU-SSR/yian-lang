@@ -1,0 +1,73 @@
+from lsp.analysis.fingerprint import sha256;
+from std.core.drop import Drop;
+from std.core.string import String;
+from std.core.vec import Vec;
+from yianc.frontend.source import SourceDocument;
+
+struct InputFileIdentity {
+    path: String,
+    content_sha256: String,
+}
+
+impl Drop for InputFileIdentity {
+    pub fn drop() {
+        self.path.drop();
+        self.content_sha256.drop();
+    }
+}
+
+// The key contains only deterministic semantic inputs. Protocol versions and
+// notification counters stay in the server and never enter this identity.
+pub struct InputIdentity {
+    configuration: String,
+    files: Vec<InputFileIdentity>,
+}
+
+impl InputIdentity {
+    static pub fn build(configuration: str, documents: Vec<SourceDocument>&) -> Self {
+        let files = Vec<InputFileIdentity>.with_capacity(documents.len());
+        for document in documents {
+            let digest = sha256(document.text.as_slice());
+            files.push(InputFileIdentity(
+                path=String.from(&document.path.as_str()),
+                content_sha256=digest,
+            ));
+        }
+        Self(configuration=String.from(&configuration), files=files)
+    }
+
+    pub fn same_key(other: InputIdentity&) -> bool {
+        if self.configuration.as_str() != other.configuration.as_str() ||
+            self.files.len() != other.files.len() {
+            return false;
+        }
+        let index = 0u64;
+        while index < self.files.len() {
+            if self.files[index].path.as_str() != other.files[index].path.as_str() ||
+                self.files[index].content_sha256.as_str() !=
+                    other.files[index].content_sha256.as_str() {
+                return false;
+            }
+            index += 1u64;
+        }
+        true
+    }
+
+    pub fn configuration() -> str { self.configuration.as_str() }
+
+    pub fn file_count() -> u64 { self.files.len() }
+
+    pub fn path_at(index: u64) -> str { self.files[index].path.as_str() }
+
+    pub fn content_sha256_at(index: u64) -> str {
+        self.files[index].content_sha256.as_str()
+    }
+}
+
+impl Drop for InputIdentity {
+    pub fn drop() {
+        self.configuration.drop();
+        for file in self.files { file.drop(); }
+        self.files.drop();
+    }
+}

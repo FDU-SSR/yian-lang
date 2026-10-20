@@ -11,10 +11,12 @@ from yianc.codegen.llvm.module import LlvmLowering;
 from yianc.codegen.types import BackendTypes;
 from yianc.codegen.error import CodegenError;
 from yianc.config import OutputKind;
+from llvm.core import llvm_version;
 from llvm.object import Module;
 from std.core.drop import Drop;
 from std.core.option import Option;
 from std.core.result import Result;
+from std.core.string import String;
 from std.core.vec import Vec;
 
 pub struct BackendOptions {
@@ -24,6 +26,64 @@ pub struct BackendOptions {
 
 pub struct EmitOptions {
     pub target: OutputKind,
+}
+
+// TargetIdentity describes the native target used by code generation. It contains copied
+// strings only, so it remains valid after the LLVM module that produced it is released.
+pub struct TargetIdentity {
+    target_triple: String,
+    data_layout: String,
+    llvm_version: (u32, u32, u32),
+}
+
+impl Drop for TargetIdentity {
+    pub fn drop() {
+        self.target_triple.drop();
+        self.data_layout.drop();
+    }
+}
+
+impl TargetIdentity {
+    pub fn target_triple() -> str { self.target_triple.as_str() }
+    pub fn data_layout() -> str { self.data_layout.as_str() }
+    pub fn llvm_version() -> (u32, u32, u32) { self.llvm_version }
+}
+
+// target_identity reads the same target gate as BackendSession without analyzing source.
+pub fn target_identity() -> Result<TargetIdentity, String> {
+    let module = match Module.try_new("yian-target", 0u8) {
+        Ok(value) => value,
+        Err(message) => {
+            let text = match str.from_slice(message.as_slice()) {
+                Some(value) => String.from(&value),
+                None => String.from(&"LLVM target module creation failed"),
+            };
+            message.drop();
+            return Result<TargetIdentity, String>.Err(msg=text);
+        },
+    };
+    defer module.close();
+    let triple_bytes = module.target_triple();
+    defer triple_bytes.drop();
+    let triple_text = match str.from_slice(triple_bytes.as_slice()) {
+        Some(value) => value,
+        None => return Result<TargetIdentity, String>.Err(msg=String.from(&"LLVM target is not UTF-8")),
+    };
+    let layout_bytes = module.data_layout();
+    defer layout_bytes.drop();
+    let layout_text = match str.from_slice(layout_bytes.as_slice()) {
+        Some(value) => value,
+        None => return Result<TargetIdentity, String>.Err(msg=String.from(&"LLVM data layout is not UTF-8")),
+    };
+    if !triple_text.starts_with("x86_64-") || !triple_text.contains("linux") || triple_text.contains("x32")
+    || module.abi_size(module.pointer_type(0u32)) != 8u64 {
+        return Result<TargetIdentity, String>.Err(msg=String.from(&"backend requires Linux x86-64 LP64"));
+    }
+    Result<TargetIdentity, String>.Ok(val=TargetIdentity(
+        target_triple=String.from(&triple_text),
+        data_layout=String.from(&layout_text),
+        llvm_version=llvm_version(),
+    ))
 }
 
 pub struct Emission {

@@ -4,14 +4,20 @@ from anx.project.package_map import package_map_json;
 from anx.project.paths import standard_library_root;
 from json.parse import parse;
 from json.value import Number, Object, Value;
+from json.write import Writer;
 from lsp.analysis.snapshot import Snapshot;
-from lsp.analysis.source_index import DeclInfo, DeclKind, Occurrence, SourceIndex;
+from lsp.analysis.cache import CacheIdentity, cache_path, gather_identity, load as cache_load, publish as cache_publish;
+from lsp.analysis.fingerprint import sha256;
+from lsp.analysis.query_index import QuerySnapshot;
+from lsp.analysis.source_index import DeclKind;
 from lsp.config import Config;
+from lsp.workspace.units import WorkspaceUnits;
 from lsp_protocol.types import Position, Range, ReferenceParams, TextDocumentIdentifier, TextDocumentPositionParams;
 from lsp_protocol.uri import path_to_uri, uri_to_path;
 from std.collections.hash_map import HashMap;
 from std.core.drop import Drop;
 from std.core.fs import canonicalize, read_to_string, resolve;
+from std.core.io import Stderr;
 from std.core.ops import Index;
 from std.core.option import Option;
 from std.core.path import Path, PathBuf;
@@ -20,7 +26,6 @@ from std.core.string import String;
 from std.core.text import LineIndex;
 from std.core.time import monotonic_now;
 from std.core.vec import Vec;
-from yianc.common.ids import SourceId, TypeId, UnitId;
 from yianc.diagnostics.model import Diagnostic, DiagnosticLocation, Severity;
 from yianc.frontend.source import Span, collect_sources, SourceDocument;
 from yianc.package.model import PackageMap;
@@ -37,6 +42,21 @@ impl Drop for OpenInput {
     pub fn drop() {
         self.path.drop();
         self.text.drop();
+    }
+}
+
+struct StandaloneSnapshot {
+    path: String,
+    snapshot: Option<Snapshot>,
+}
+
+impl Drop for StandaloneSnapshot {
+    pub fn drop() {
+        self.path.drop();
+        match self.snapshot.take() {
+            Some(snapshot) => snapshot.drop(),
+            None => {},
+        }
     }
 }
 
@@ -62,6 +82,52 @@ fn field_string(object: Object&, key: str) -> Option<str> {
     }
 }
 
+fn semantic_input_identity(unit_key: str, mode: str, raw_pointers: bool,
+    std_root: str, package_map: str, manifests: Vec<String>&) -> Result<String, String> {
+    let writer = Writer.new();
+    defer writer.drop();
+    writer.begin_object();
+    writer.key("unit_key");
+    writer.write_string(unit_key);
+    writer.key("mode");
+    writer.write_string(mode);
+    writer.key("pointer_mode");
+    writer.write_string(if raw_pointers { "raw" } else { "fat" });
+    writer.key("allow_ffi");
+    writer.write_bool(false);
+    writer.key("standard_library_root");
+    writer.write_string(std_root);
+    writer.key("package_map");
+    writer.write_string(package_map);
+    writer.key("manifests");
+    writer.begin_array();
+    for path in *manifests {
+        let text = match read_to_string(path.as_str()) {
+            Ok(value) => value,
+            Err(problem) => {
+                problem.drop();
+                return Result<String, String>.Err(failure(
+                    "could not freeze a package manifest for input identity"));
+            },
+        };
+        writer.begin_object();
+        writer.key("path");
+        writer.write_string(path.as_str());
+        writer.key("text");
+        writer.write_string(text.as_str());
+        writer.end_object();
+        text.drop();
+    }
+    writer.end_array();
+    writer.end_object();
+    match writer.finish() {
+        Ok(value) => Result<String, String>.Ok(value),
+        Err(_) => {
+            Result<String, String>.Err(failure("could not encode semantic input identity"))
+        },
+    }
+}
+
 fn field_u64(object: Object&, key: str) -> Option<u64> {
     match object.get(key) {
         Some(value) => match value {
@@ -73,6 +139,13 @@ fn field_u64(object: Object&, key: str) -> Option<u64> {
             _ => Option<u64>.None,
         },
         None => Option<u64>.None,
+    }
+}
+
+fn field_bool(object: Object&, key: str) -> Option<bool> {
+    match object.get(key) {
+        Some(Boolean(value)) => Option<bool>.Some(*value),
+        _ => Option<bool>.None,
     }
 }
 
@@ -108,93 +181,80 @@ fn protocol_position(position: Position) -> Value {
     Value.Object(value)
 }
 
-fn protocol_range(span: Span, text: str) -> Value {
-    let index = LineIndex.new(text);
-    defer index.drop();
+fn protocol_range(query: QuerySnapshot&, file: u64, span: Span) -> Value {
+    let source = match query.file(file) {
+        Some(value) => value,
+        None => return Value.Null,
+    };
     let start = Position(line=span.start.row,
-        character=index.utf16_column(span.start.row, span.start.column));
+        character=source.utf16_column(span.start.row, span.start.column));
     let end = Position(line=span.end.row,
-        character=index.utf16_column(span.end.row, span.end.column));
+        character=source.utf16_column(span.end.row, span.end.column));
     let result = Object.new();
     json_put(&result, "start", protocol_position(start));
     json_put(&result, "end", protocol_position(end));
     Value.Object(result)
 }
 
-fn protocol_cursor_range(row: u64, column: u64, text: str) -> Value {
-    let index = LineIndex.new(text);
-    defer index.drop();
-    let start = Position(line=row, character=index.utf16_column(row, column));
-    let end = Position(line=row, character=index.utf16_column(row, column + 1u64));
+fn protocol_cursor_range(query: QuerySnapshot&, file: u64, row: u64, column: u64) -> Value {
+    let source = match query.file(file) {
+        Some(value) => value,
+        None => return Value.Null,
+    };
+    let start = Position(line=row, character=source.utf16_column(row, column));
+    let end = Position(line=row, character=source.utf16_column(row, column + 1u64));
     let result = Object.new();
     json_put(&result, "start", protocol_position(start));
     json_put(&result, "end", protocol_position(end));
     Value.Object(result)
 }
 
-fn source_for_path(snapshot: Snapshot&, path: str) -> Option<SourceId> {
-    match snapshot.source() {
-        Some(index) => index.source_for_path(path),
-        None => Option<SourceId>.None,
-    }
-}
-
-fn query_source(snapshot: Snapshot&, uri: str) -> Result<SourceId, WorkerFailure> {
+fn query_file(query: QuerySnapshot&, uri: str) -> Result<u64, WorkerFailure> {
     let path = match uri_to_path(uri) {
         Ok(value) => value,
-        Err(_) => return Result<SourceId, WorkerFailure>.Err(WorkerFailure.new(-32602i64, "text document URI is invalid")),
+        Err(_) => return Result<u64, WorkerFailure>.Err(
+            WorkerFailure.new(-32602i64, "text document URI is invalid")),
     };
     defer path.drop();
     let target = match resolve(path.as_str()) {
         Ok(value) => value,
-        Err(problem) => { problem.drop(); return Result<SourceId, WorkerFailure>.Err(
+        Err(problem) => { problem.drop(); return Result<u64, WorkerFailure>.Err(
             WorkerFailure.new(-32602i64, "text document URI cannot be resolved")); },
     };
     defer target.drop();
-    match source_for_path(snapshot, target.as_str()) {
-        Some(source) => Result<SourceId, WorkerFailure>.Ok(source),
-        None => Result<SourceId, WorkerFailure>.Err(WorkerFailure.new(-32801i64, "document is not part of the current analysis snapshot")),
+    match query.file_for_path(target.as_str()) {
+        Some(file) => Result<u64, WorkerFailure>.Ok(file),
+        None => Result<u64, WorkerFailure>.Err(
+            WorkerFailure.new(-32801i64, "document is not part of the current analysis snapshot")),
     }
 }
 
-fn position_column(snapshot: Snapshot&, source: SourceId, position: Position) -> u64 {
-    let text = match snapshot.text(source) {
-        Some(value) => value,
-        None => "",
-    };
-    let index = LineIndex.new(text);
-    defer index.drop();
-    index.scalar_column(position.line, position.character)
-}
-
-fn text_at_path(snapshot: Snapshot&, path: str) -> String {
-    match snapshot.text_for_path(path) {
-        Some(text) => String.from(&text),
-        None => String.new(),
+fn position_column(query: QuerySnapshot&, file: u64, position: Position) -> u64 {
+    match query.file(file) {
+        Some(source) => source.scalar_column(position.line, position.character),
+        None => 0u64,
     }
 }
 
-fn location_value(snapshot: Snapshot&, source: SourceId, span: Span) -> Value {
-    let path = match snapshot.path(source) {
+fn location_value(query: QuerySnapshot&, file: u64, span: Span) -> Value {
+    let source = match query.file(file) {
         Some(value) => value,
         None => return Value.Null,
     };
-    let uri = match path_to_uri(path) {
+    let uri = match path_to_uri(source.path.as_str()) {
         Ok(value) => value,
         Err(_) => return Value.Null,
     };
     defer uri.drop();
-    let text = text_at_path(snapshot, path);
-    defer text.drop();
     let result = Object.new();
     json_put(&result, "uri", Value.String(String.from(&uri.as_str())));
-    json_put(&result, "range", protocol_range(span, text.as_str()));
+    json_put(&result, "range", protocol_range(query, file, span));
     Value.Object(result)
 }
 
-fn dedup_key(source: SourceId, span: Span) -> String {
+fn dedup_key(file: u64, span: Span) -> String {
     let text = String.new();
-    let number = u64(source.index).to_string_radix(10);
+    let number = file.to_string_radix(10);
     text.push_str(number.as_str());
     number.drop();
     for value in [span.start.row, span.start.column, span.end.row, span.end.column] {
@@ -206,16 +266,15 @@ fn dedup_key(source: SourceId, span: Span) -> String {
     text
 }
 
-fn targets_at(snapshot: Snapshot&, source: SourceId, row: u64, column: u64) -> Vec<u64> {
+fn targets_at(query: QuerySnapshot&, file: u64, row: u64, column: u64) -> Vec<u64> {
     let result = Vec<u64>.new();
-    let index = match snapshot.source() {
-        Some(value) => value,
-        None => return result,
-    };
-    let occurrences = index.occurrences_at(source, row, column);
+    let occurrences = query.occurrences_at(file, row, column);
     defer occurrences.drop();
     for occurrence_id in occurrences {
-        let occurrence = &index.occurrences.as_slice()[*occurrence_id];
+        let occurrence = match query.occurrence(*occurrence_id) {
+            Some(value) => value,
+            None => continue,
+        };
         match occurrence.target {
             Some(target) => {
                 let known = false;
@@ -226,7 +285,7 @@ fn targets_at(snapshot: Snapshot&, source: SourceId, row: u64, column: u64) -> V
         }
     }
     if result.len() == 0u64 {
-        match index.declaration_at(source, row, column) {
+        match query.declaration_at(file, row, column) {
             Some(value) => result.push(value),
             None => {},
         }
@@ -234,32 +293,34 @@ fn targets_at(snapshot: Snapshot&, source: SourceId, row: u64, column: u64) -> V
     result
 }
 
-fn target_kind(snapshot: Snapshot&, target: u64) -> DeclKind {
-    match snapshot.source() {
-        Some(index) => index.decls[target].kind,
+fn target_kind(query: QuerySnapshot&, target: u64) -> DeclKind {
+    match query.decl(target) {
+        Some(value) => value.kind,
         None => DeclKind.Type,
     }
 }
 
-fn append_location(dedup: HashMap<String, bool>&, values: Vec<Value>&, snapshot: Snapshot&,
-    source: SourceId, span: Span) {
-    let key = dedup_key(source, span);
+fn append_location(dedup: HashMap<String, bool>&, values: Vec<Value>&, query: QuerySnapshot&,
+    file: u64, span: Span) {
+    let key = dedup_key(file, span);
     if dedup.contains(&key) { key.drop(); return; }
     dedup.insert(key, true);
-    let value = location_value(snapshot, source, span);
+    let value = location_value(query, file, span);
     match value { Value.Null => {}, _ => values.push(value), }
 }
 
-fn definition_value(snapshot: Snapshot&, source: SourceId, row: u64, column: u64) -> Value {
-    let targets = targets_at(snapshot, source, row, column);
+fn definition_value(query: QuerySnapshot&, file: u64, row: u64, column: u64) -> Value {
+    let targets = targets_at(query, file, row, column);
     defer targets.drop();
-    let index = match snapshot.source() { Some(value) => value, None => return Value.Null };
     let dedup = HashMap<String, bool>.new();
     defer dedup.drop();
     let values = Vec<Value>.new();
     for target in targets {
-        let decl = &index.decls[*target];
-        append_location(&dedup, &values, snapshot, decl.source, decl.span.span);
+        let declaration = match query.decl(*target) {
+            Some(value) => value,
+            None => continue,
+        };
+        append_location(&dedup, &values, query, declaration.file, declaration.span);
     }
     if values.len() == 0u64 { values.drop(); return Value.Null; }
     if values.len() == 1u64 {
@@ -295,140 +356,56 @@ fn symbol_kind_value(kind: DeclKind) -> u64 {
     }
 }
 
-fn semantic_kind_index(kind: DeclKind) -> u64 {
-    match kind {
-        Struct => 1u64,
-        Enum => 2u64,
-        Trait => 3u64,
-        TypeParameter => 4u64,
-        Function => 5u64,
-        Method => 6u64,
-        Field => 7u64,
-        Variant => 8u64,
-        Variable => 9u64,
-        Parameter => 10u64,
-        _ => 0u64,
-    }
-}
-
-fn module_name_for_path(snapshot: Snapshot&, path: str) -> Option<String> {
-    let package_name = Option<String>.None;
-    let package_root = Option<String>.None;
-    match snapshot.analysis() {
-        Some(analysis) => match analysis.session.package_map() {
-            Some(packages) => match packages.package_of(path) {
-                Some(package) => {
-                    package_name = Option<String>.Some(String.from(&package.name.as_str()));
-                    package_root = Option<String>.Some(String.from(&package.source_root.as_str()));
-                },
-                None => {},
-            },
-            None => {},
-        },
-        None => {},
-    }
-
-    let file_path = Path.new(path);
-    let file_name = match file_path.file_name() {
+fn append_hover_origin(query: QuerySnapshot&, contents: String&, file: u64) {
+    let source = match query.file(file) {
         Some(value) => value,
-        None => { match package_name { Some(value)=>value.drop(), None=>{} } match package_root { Some(value)=>value.drop(), None=>{} } return Option<String>.None; },
+        None => { return; },
     };
-    if !file_name.ends_with(".an") {
-        match package_name { Some(value)=>value.drop(), None=>{} }
-        match package_root { Some(value)=>value.drop(), None=>{} }
-        return Option<String>.None;
-    }
-    let stem = String.from(&file_name);
-    let _ = stem.pop();
-    let _ = stem.pop();
-    let _ = stem.pop();
-
-    let result = String.new();
-    match &package_name { Some(name) => { result.push_str(name.as_str()); result.push('.'); }, None => {}, }
-
-    let directories = Vec<String>.new();
-    match &package_root {
-        Some(root) => {
-            let parent = file_path.parent();
-            while parent.is_some() {
-                let directory = *parent.unwrap();
-                if directory.as_str() == root.as_str() { break; }
-                match directory.file_name() {
-                    Some(name) => directories.push(String.from(&name)),
-                    None => { break; },
-                }
-                parent = directory.parent();
-            }
-        },
-        None => {},
-    }
-
-    let directory_index = directories.len();
-    while directory_index != 0u64 {
-        directory_index -= 1u64;
-        result.push_str(directories[directory_index].as_str());
-        result.push('.');
-    }
-    for directory in directories { directory.drop(); }
-    directories.drop();
-    result.push_str(stem.as_str());
-    stem.drop();
-    match package_name { Some(value) => value.drop(), None => {}, }
-    match package_root { Some(value) => value.drop(), None => {}, }
-    Option<String>.Some(result)
-}
-
-fn append_hover_origin(snapshot: Snapshot&, contents: String&, source: SourceId) {
-    let stdlib = match snapshot.source() {
-        Some(index) => index.is_stdlib_source(source),
-        None => false,
-    };
-    if stdlib {
+    if source.stdlib {
         contents.push_str("\n\n*declared in the standard library*");
         return;
     }
-    match snapshot.path(source) {
-        Some(path) => match module_name_for_path(snapshot, path) {
-            Some(module) => {
-                contents.push_str("\n\n*declared in ");
-                contents.push_str(module.as_str());
-                contents.push('*');
-                module.drop();
-            },
-            None => {},
+    match &source.module_name {
+        Some(module) => {
+            contents.push_str("\n\n*declared in ");
+            contents.push_str(module.as_str());
+            contents.push('*');
         },
         None => {},
     }
 }
 
-fn hover_value(snapshot: Snapshot&, source: SourceId, row: u64, column: u64) -> Value {
-    let targets = targets_at(snapshot, source, row, column);
+fn hover_value(query: QuerySnapshot&, file: u64, row: u64, column: u64) -> Value {
+    let targets = targets_at(query, file, row, column);
     defer targets.drop();
-    let index = match snapshot.source() { Some(value) => value, None => return Value.Null };
     let contents = String.new();
     let seen = HashMap<String, bool>.new();
     defer seen.drop();
     for target in targets {
-        let decl = &index.decls[*target];
+        let declaration = match query.decl(*target) {
+            Some(value) => value,
+            None => continue,
+        };
         let header = String.new();
-        let label = String.from(&hover_kind_label(decl.kind));
+        let label = String.from(&hover_kind_label(declaration.kind));
         header.push_str(label.as_str());
         label.drop();
         header.push(' ');
-        header.push_str(decl.name.as_str());
-        match &decl.detail {
+        header.push_str(declaration.name.as_str());
+        match &declaration.detail {
             Some(detail) => {
-                if decl.kind == DeclKind.Function || decl.kind == DeclKind.Method {
+                if declaration.kind == DeclKind.Function || declaration.kind == DeclKind.Method {
                     header.drop();
                     header.push_str(detail.as_str());
                 }
             },
             None => {},
         }
-        match &decl.type_text {
+        match &declaration.type_text {
             Some(text) => {
-                if decl.kind != DeclKind.Function && decl.kind != DeclKind.Method &&
-                decl.kind != DeclKind.Struct && decl.kind != DeclKind.Enum && decl.kind != DeclKind.Trait {
+                if declaration.kind != DeclKind.Function && declaration.kind != DeclKind.Method &&
+                declaration.kind != DeclKind.Struct && declaration.kind != DeclKind.Enum &&
+                declaration.kind != DeclKind.Trait {
                     header.push_str(": ");
                     header.push_str(text.as_str());
                 }
@@ -442,16 +419,19 @@ fn hover_value(snapshot: Snapshot&, source: SourceId, row: u64, column: u64) -> 
             contents.push_str("```yian\n\n");
             contents.push_str(header.as_str());
             contents.push_str("\n\n```");
-            append_hover_origin(snapshot, &contents, decl.source);
+            append_hover_origin(query, &contents, declaration.file);
         }
         key.drop();
         header.drop();
     }
 
-    let occurrences = index.occurrences_at(source, row, column);
+    let occurrences = query.occurrences_at(file, row, column);
     defer occurrences.drop();
     for occurrence_id in occurrences {
-        let occurrence = &index.occurrences.as_slice()[*occurrence_id];
+        let occurrence = match query.occurrence(*occurrence_id) {
+            Some(value) => value,
+            None => continue,
+        };
         let context = match &occurrence.signature {
             Some(value) => Option<String>.Some(String.from(&value.as_str())),
             None => match &occurrence.type_text {
@@ -483,81 +463,87 @@ fn hover_value(snapshot: Snapshot&, source: SourceId, row: u64, column: u64) -> 
     json_put(&markup, "value", Value.String(String.from(&contents.as_str())));
     let result = Object.new();
     json_put(&result, "contents", Value.Object(markup));
-    let text = match snapshot.text(source) { Some(value) => value, None => "" };
-    json_put(&result, "range", protocol_cursor_range(row, column, text));
+    json_put(&result, "range", protocol_cursor_range(query, file, row, column));
     contents.drop();
     Value.Object(result)
 }
 
-fn references_value(snapshot: Snapshot&, source: SourceId, row: u64, column: u64,
+fn references_value(query: QuerySnapshot&, file: u64, row: u64, column: u64,
     include_declaration: bool) -> Value {
-    let targets = targets_at(snapshot, source, row, column);
+    let targets = targets_at(query, file, row, column);
     defer targets.drop();
-    let index = match snapshot.source() { Some(value) => value, None => return empty_array() };
     let dedup = HashMap<String, bool>.new();
     defer dedup.drop();
     let values = Vec<Value>.new();
     for target in targets {
-        let occurrences = index.occurrences_of(*target);
+        let occurrences = query.occurrences_of(*target);
         defer occurrences.drop();
         for occurrence_id in occurrences {
-            let occurrence = &index.occurrences.as_slice()[*occurrence_id];
+            let occurrence = match query.occurrence(*occurrence_id) {
+                Some(value) => value,
+                None => continue,
+            };
             if !include_declaration && occurrence.is_declaration { continue; }
-            append_location(&dedup, &values, snapshot, occurrence.source, occurrence.span.span);
+            append_location(&dedup, &values, query, occurrence.file, occurrence.span);
         }
     }
     Value.Array(values)
 }
 
-fn highlight_value(snapshot: Snapshot&, source: SourceId, row: u64, column: u64) -> Value {
-    let targets = targets_at(snapshot, source, row, column);
+fn highlight_value(query: QuerySnapshot&, file: u64, row: u64, column: u64) -> Value {
+    let targets = targets_at(query, file, row, column);
     defer targets.drop();
-    let index = match snapshot.source() { Some(value) => value, None => return empty_array() };
     let dedup = HashMap<String, bool>.new();
     defer dedup.drop();
     let values = Vec<Value>.new();
     for target in targets {
-        let occurrences = index.occurrences_of(*target);
+        let occurrences = query.occurrences_of(*target);
         defer occurrences.drop();
         for occurrence_id in occurrences {
-            let occurrence = &index.occurrences.as_slice()[*occurrence_id];
-            if occurrence.source != source { continue; }
-            let key = dedup_key(source, occurrence.span.span);
+            let occurrence = match query.occurrence(*occurrence_id) {
+                Some(value) => value,
+                None => continue,
+            };
+            if occurrence.file != file { continue; }
+            let key = dedup_key(file, occurrence.span);
             if dedup.contains(&key) { key.drop(); continue; }
             dedup.insert(key, true);
-            let text = match snapshot.text(source) { Some(value) => value, None => "" };
             let item = Object.new();
-            json_put(&item, "range", protocol_range(occurrence.span.span, text));
-            json_put(&item, "kind", Value.Number(Number.Unsigned(if occurrence.is_declaration { 3u64 } else { 2u64 })));
+            json_put(&item, "range", protocol_range(query, file, occurrence.span));
+            json_put(&item, "kind", Value.Number(Number.Unsigned(
+                if occurrence.is_declaration { 3u64 } else { 2u64 })));
             values.push(Value.Object(item));
         }
     }
     Value.Array(values)
 }
 
-fn document_symbols_value(snapshot: Snapshot&, source: SourceId) -> Value {
-    let index = match snapshot.source() { Some(value) => value, None => return empty_array() };
-    let text = match snapshot.text(source) { Some(value) => value, None => "" };
+fn document_symbols_value(query: QuerySnapshot&, file: u64) -> Value {
+    let source = match query.file(file) {
+        Some(value) => value,
+        None => return empty_array(),
+    };
+    let ids = source.declarations();
     let values = Vec<Value>.new();
-    let cursor = 0u64;
-    while cursor < index.decls.len() {
-        let decl = &index.decls[cursor];
-        cursor += 1u64;
-        if decl.source != source { continue; }
-        let include = match decl.kind {
+    for id in *ids {
+        let declaration = match query.decl(*id) {
+            Some(value) => value,
+            None => continue,
+        };
+        let include = match declaration.kind {
             Function | Method | Struct | Enum | Trait | Alias | Field | Variant | Constant => true,
             _ => false,
         };
         if !include { continue; }
-        let rendered = protocol_range(decl.span.span, text);
+        let rendered = protocol_range(query, file, declaration.span);
         let object = Object.new();
-        json_put(&object, "name", Value.String(String.from(&decl.name.as_str())));
-        json_put(&object, "kind", Value.Number(Number.Unsigned(symbol_kind_value(decl.kind))));
+        json_put(&object, "name", Value.String(String.from(&declaration.name.as_str())));
+        json_put(&object, "kind", Value.Number(Number.Unsigned(symbol_kind_value(declaration.kind))));
         json_put(&object, "range", rendered.clone());
         json_put(&object, "selectionRange", rendered);
-        let detail = match &decl.detail {
+        let detail = match &declaration.detail {
             Some(value) => Option<String>.Some(String.from(&value.as_str())),
-            None => match &decl.type_text {
+            None => match &declaration.type_text {
                 Some(value) => Option<String>.Some(String.from(&value.as_str())),
                 None => Option<String>.None,
             },
@@ -572,99 +558,18 @@ fn document_symbols_value(snapshot: Snapshot&, source: SourceId) -> Value {
     Value.Array(values)
 }
 
-fn semantic_tokens_value(snapshot: Snapshot&, source: SourceId) -> Value {
-    let index = match snapshot.source() { Some(value) => value, None => return empty_semantic_tokens() };
-    let tokens = match index.tokens_of(source) {
+fn semantic_tokens_value(query: QuerySnapshot&, file: u64) -> Value {
+    let source = match query.file(file) {
         Some(value) => value,
         None => return empty_semantic_tokens(),
     };
-    let text = match snapshot.text(source) { Some(value) => value, None => return empty_semantic_tokens() };
-    let line_index = LineIndex.new(text);
-    defer line_index.drop();
-
-    let declaration_by_start = HashMap<u64, u64>.new();
-    defer declaration_by_start.drop();
-    let occurrence_cursor = 0u64;
-    while occurrence_cursor < index.occurrences.len() {
-        let occurrence = &index.occurrences[occurrence_cursor];
-        occurrence_cursor += 1u64;
-        if occurrence.source != source { continue; }
-        let key = occurrence.span.span.start.row * 1000000u64 + occurrence.span.span.start.column;
-        match occurrence.target {
-            Some(target) => {
-                if occurrence.is_declaration {
-                    declaration_by_start.insert(key, occurrence_cursor - 1u64);
-                } elif declaration_by_start.get(&key).is_none() {
-                    declaration_by_start.insert(key, occurrence_cursor - 1u64);
-                }
-            },
-            None => {},
-        }
-    }
-
-    let data = Vec<Value>.new();
-    let previous_line = 0u64;
-    let previous_start = 0u64;
-    for token in *tokens {
-        let span = token.span;
-        let kind = match token.kind() {
-            Identifier(_) => {
-                let key = span.start.row * 1000000u64 + span.start.column;
-                match declaration_by_start.get(&key) {
-                    Some(occurrence_id) => {
-                        let occurrence = &index.occurrences[*occurrence_id];
-                        match occurrence.target {
-                            Some(target) => {
-                                let target_kind = index.decls[target].kind;
-                                match target_kind {
-                                    Module | Constant | TypeParameter => { continue; },
-                                    _ => {},
-                                }
-                                Option<DeclKind>.Some(target_kind)
-                            },
-                            None => Option<DeclKind>.None,
-                        }
-                    },
-                    None => Option<DeclKind>.None,
-                }
-            },
-            Keyword(keyword) => {
-                let primitive = match keyword {
-                    Void | Bool | Char | Str | I8 | I16 | I32 | I64 | U8 | U16 | U32 | U64 |
-                    F16 | F32 | F64 | Int | Uint | Float => true,
-                    _ => false,
-                };
-                if primitive { Option<DeclKind>.Some(DeclKind.Type) } else { Option<DeclKind>.None }
-            },
-            _ => Option<DeclKind>.None,
-        };
-        let resolved = match kind { Some(value) => value, None => continue };
-        if span.start.row != span.end.row { continue; }
-        let start = line_index.utf16_column(span.start.row, span.start.column);
-        let end = line_index.utf16_column(span.end.row, span.end.column);
-        let delta_line = span.start.row - previous_line;
-        let delta_start = if delta_line == 0u64 { start - previous_start } else { start };
-        let declaration = false;
-        let default_library = false;
-        if let Some(occurrence_id) = declaration_by_start.get(&(span.start.row * 1000000u64 + span.start.column)) {
-            let occurrence = &index.occurrences[*occurrence_id];
-            declaration = occurrence.is_declaration;
-            match occurrence.target {
-                Some(target) => default_library = index.is_stdlib_source(index.decls[target].source),
-                None => {},
-            }
-        }
-        let modifiers = (if declaration { 1u64 } else { 0u64 }) | (if default_library { 2u64 } else { 0u64 });
-        data.push(Value.Number(Number.Unsigned(delta_line)));
-        data.push(Value.Number(Number.Unsigned(delta_start)));
-        data.push(Value.Number(Number.Unsigned(end - start)));
-        data.push(Value.Number(Number.Unsigned(semantic_kind_index(resolved))));
-        data.push(Value.Number(Number.Unsigned(modifiers)));
-        previous_line = span.start.row;
-        previous_start = start;
+    let data = source.tokens();
+    let values = Vec<Value>.new();
+    for value in *data {
+        values.push(Value.Number(Number.Unsigned(*value)));
     }
     let result = Object.new();
-    json_put(&result, "data", Value.Array(data));
+    json_put(&result, "data", Value.Array(values));
     Value.Object(result)
 }
 
@@ -755,6 +660,11 @@ fn release_documents(documents: Vec<SourceDocument>&) {
     documents.drop();
 }
 
+fn release_string_paths(paths: Vec<String>&) {
+    for path in *paths { path.drop(); }
+    paths.drop();
+}
+
 fn overlay_index(inputs: Vec<OpenInput>&, path: str) -> Option<u64> {
     let index = 0u64;
     while index < inputs.len() {
@@ -779,36 +689,106 @@ fn contains_path(paths: Vec<PathBuf>&, path: str) -> bool {
     false
 }
 
-fn collect_input_paths(project: Option<Project&>, std_root: str, open: Vec<OpenInput>&)
+fn collect_input_paths(project: Option<Project&>)
 -> Result<Vec<PathBuf>, String> {
-    let paths = match project {
-        Some(value) => value.build_files(),
-        None => {
-            let roots = Vec<String>.new();
-            roots.push(String.from(&std_root));
-            defer { roots[0].drop(); roots.drop(); };
-            let collected = match collect_sources(&roots) {
-                Ok(value) => value,
-                Err(problem) => {
-                    let message = String.from(&"could not collect standard-library sources: ");
-                    message.push_str(problem.msg());
-                    problem.drop();
-                    return Result<Vec<PathBuf>, String>.Err(message);
-                },
-            };
-            let result = Vec<PathBuf>.with_capacity(collected.len());
-            for path in collected { result.push(PathBuf.from(path.as_str())); path.drop(); }
-            collected.drop();
-            result
+    match project {
+        Some(value) => Result<Vec<PathBuf>, String>.Ok(value.build_files()),
+        None => Result<Vec<PathBuf>, String>.Ok(Vec<PathBuf>.new()),
+    }
+}
+
+fn collect_standalone_paths(std_root: str, source_path: str) -> Result<Vec<PathBuf>, String> {
+    let roots = Vec<String>.new();
+    roots.push(String.from(&std_root));
+    defer { release_string_paths(&roots); };
+    let collected = match collect_sources(&roots) {
+        Ok(value) => value,
+        Err(problem) => {
+            let message = String.from(&"could not collect standard-library sources: ");
+            message.push_str(problem.msg());
+            problem.drop();
+            return Result<Vec<PathBuf>, String>.Err(message);
         },
     };
+    let result = Vec<PathBuf>.with_capacity(collected.len() + 1u64);
+    for path in collected { result.push(PathBuf.from(path.as_str())); path.drop(); }
+    collected.drop();
+    if !contains_path(&result, source_path) { result.push(PathBuf.from(source_path)); }
+    Result<Vec<PathBuf>, String>.Ok(result)
+}
 
-    for input in *open {
-        if input.path.as_str().ends_with(".an") && !contains_path(&paths, input.path.as_str()) {
-            paths.push(PathBuf.from(input.path.as_str()));
+fn string_contains(values: Vec<String>&, value: str) -> bool {
+    for item in *values { if item.as_str() == value { return true; } }
+    false
+}
+
+fn project_roots(project: Project&) -> Vec<String> {
+    let roots = Vec<String>.new();
+    let pending = Vec<String>.new();
+    let visited = Vec<String>.new();
+    pending.push(String.from(&project.root_package()));
+    pending.push(String.from(&project.std_package()));
+    while pending.len() != 0u64 {
+        let name = match pending.pop() { Some(value) => value, None => break };
+        if string_contains(&visited, name.as_str()) { name.drop(); continue; }
+        visited.push(String.from(&name.as_str()));
+        match project.package_by_name(name.as_str()) {
+            Some(package) => {
+                let root = package.source_root();
+                if !string_contains(&roots, root) { roots.push(String.from(&root)); }
+                let dependency = 0u64;
+                while dependency < package.dependency_count() {
+                    pending.push(String.from(&package.dependency(dependency)));
+                    dependency += 1u64;
+                }
+            },
+            None => {},
         }
+        name.drop();
     }
-    Result<Vec<PathBuf>, String>.Ok(paths)
+    release_string_paths(&pending);
+    release_string_paths(&visited);
+    roots
+}
+
+fn project_manifests(project: Project&) -> Vec<String> {
+    let paths = Vec<String>.new();
+    let pending = Vec<String>.new();
+    let visited = Vec<String>.new();
+    pending.push(String.from(&project.root_package()));
+    pending.push(String.from(&project.std_package()));
+    while pending.len() != 0u64 {
+        let name = match pending.pop() { Some(value) => value, None => break };
+        if string_contains(&visited, name.as_str()) { name.drop(); continue; }
+        visited.push(String.from(&name.as_str()));
+        match project.package_by_name(name.as_str()) {
+            Some(package) => {
+                let manifest = package.manifest_path();
+                if !string_contains(&paths, manifest) { paths.push(String.from(&manifest)); }
+                let dependency = 0u64;
+                while dependency < package.dependency_count() {
+                    pending.push(String.from(&package.dependency(dependency)));
+                    dependency += 1u64;
+                }
+            },
+            None => {},
+        }
+        name.drop();
+    }
+    release_string_paths(&pending);
+    release_string_paths(&visited);
+    paths
+}
+
+fn project_files(project: Project&) -> Vec<String> {
+    let paths = Vec<String>.new();
+    let files = project.build_files();
+    for path in files {
+        if !string_contains(&paths, path.as_str()) { paths.push(String.from(&path.as_str())); }
+        path.drop();
+    }
+    files.drop();
+    paths
 }
 
 fn make_documents(paths: Vec<PathBuf>&, open: Vec<OpenInput>&) -> Result<Vec<SourceDocument>, String> {
@@ -818,7 +798,11 @@ fn make_documents(paths: Vec<PathBuf>&, open: Vec<OpenInput>&) -> Result<Vec<Sou
     for path in *paths {
         let normalized = match resolve(path.as_str()) {
             Ok(value) => value,
-            Err(problem) => { problem.drop(); continue; },
+            Err(problem) => {
+                let message = String.from(&problem.msg());
+                problem.drop();
+                return Result<Vec<SourceDocument>, String>.Err(message);
+            },
         };
         let overlay = overlay_index(open, normalized.as_str());
         match overlay {
@@ -828,13 +812,142 @@ fn make_documents(paths: Vec<PathBuf>&, open: Vec<OpenInput>&) -> Result<Vec<Sou
                 Ok(text) => {
                     documents.push(SourceDocument(path=String.from(&normalized.as_str()), text=text));
                 },
-                Err(problem) => problem.drop(),
+                Err(problem) => {
+                    let message = String.from(&problem.msg());
+                    problem.drop();
+                    return Result<Vec<SourceDocument>, String>.Err(message);
+                },
             },
         }
         normalized.drop();
     }
     transferred = true;
     Result<Vec<SourceDocument>, String>.Ok(documents)
+}
+
+fn primary_open_inputs(open: Vec<OpenInput>&, routes: WorkspaceUnits&) -> Vec<OpenInput> {
+    let result = Vec<OpenInput>.new();
+    for input in *open {
+        if routes.is_primary_path(input.path.as_str()) {
+            result.push(OpenInput(path=PathBuf.from(input.path.as_str()),
+                text=String.from(&input.text.as_str()), version=input.version));
+        }
+    }
+    result
+}
+
+fn append_open_paths(paths: Vec<PathBuf>&, open: Vec<OpenInput>&) {
+    for input in *open {
+        if input.path.as_str().ends_with(".an") &&
+            !contains_path(paths, input.path.as_str()) {
+            paths.push(PathBuf.from(input.path.as_str()));
+        }
+    }
+}
+
+fn one_open_input(input: OpenInput&) -> Vec<OpenInput> {
+    let result = Vec<OpenInput>.new();
+    result.push(OpenInput(path=PathBuf.from(input.path.as_str()),
+        text=String.from(&input.text.as_str()), version=input.version));
+    result
+}
+
+fn unit_revision(revisions: Object&, key: str, fallback: u64) -> u64 {
+    match field_u64(revisions, key) {
+        Some(value) => value,
+        None => fallback,
+    }
+}
+
+fn string_array(values: Vec<String>&) -> Value {
+    let result = Vec<Value>.with_capacity(values.len());
+    for value in *values { result.push(Value.String(String.from(&value.as_str()))); }
+    Value.Array(result)
+}
+
+fn unit_result(key: str, revision: u64, ready: bool, full_analysis: bool,
+    reuse_kind: str, strict_analysis_ns: i64, source_index_ns: i64,
+    semantic_index_ns: i64, query_index_ns: i64, cache_state: str, diagnostics: Object&) -> Value {
+    let result = Object.new();
+    json_put(&result, "key", Value.String(String.from(&key)));
+    json_put(&result, "revision", Value.Number(Number.Unsigned(revision)));
+    json_put(&result, "analysis_ready", Value.Boolean(ready));
+    json_put(&result, "full_analysis", Value.Boolean(full_analysis));
+    json_put(&result, "reuse_kind", Value.String(String.from(&reuse_kind)));
+    json_put(&result, "cache_state", Value.String(String.from(&cache_state)));
+    json_put(&result, "session_released", Value.Boolean(ready));
+    json_put(&result, "strict_analysis_count",
+        Value.Number(Number.Unsigned(if full_analysis { 1u64 } else { 0u64 })));
+    let indexes_built = full_analysis && ready;
+    json_put(&result, "source_index_build_count",
+        Value.Number(Number.Unsigned(if indexes_built { 1u64 } else { 0u64 })));
+    json_put(&result, "semantic_index_build_count",
+        Value.Number(Number.Unsigned(if indexes_built { 1u64 } else { 0u64 })));
+    json_put(&result, "query_index_build_count",
+        Value.Number(Number.Unsigned(if indexes_built { 1u64 } else { 0u64 })));
+    let timings = Object.new();
+    timings.insert("strict_analysis_ms",
+        Value.Number(Number.Float(f64(strict_analysis_ns) / 1000000.0)));
+    timings.insert("source_index_ms",
+        Value.Number(Number.Float(f64(source_index_ns) / 1000000.0)));
+    timings.insert("semantic_index_ms",
+        Value.Number(Number.Float(f64(semantic_index_ns) / 1000000.0)));
+    timings.insert("query_index_ms",
+        Value.Number(Number.Float(f64(query_index_ns) / 1000000.0)));
+    json_put(&result, "analysis_timings", Value.Object(timings));
+    json_put(&result, "diagnostics", Value.Object(diagnostics.clone()));
+    Value.Object(result)
+}
+
+fn query_document_uri(params: Value&) -> Option<String> {
+    let object = match params.as_object() {
+        Some(value) => value,
+        None => return Option<String>.None,
+    };
+    let document = match object.get("textDocument") {
+        Some(value) => match value.as_object() {
+            Some(value) => value,
+            None => return Option<String>.None,
+        },
+        None => return Option<String>.None,
+    };
+    match field_string(document, "uri") {
+        Some(uri) => Option<String>.Some(String.from(&uri)),
+        None => Option<String>.None,
+    }
+}
+
+fn empty_query_result(method: str) -> Value {
+    match method {
+        "textDocument/definition" | "textDocument/hover" => Value.Null,
+        "textDocument/semanticTokens/full" => empty_semantic_tokens(),
+        _ => empty_array(),
+    }
+}
+
+fn append_diagnostic_groups(target: Object&, source: Object&) {
+    let iterator = source.iter();
+    while let Some((uri, values)) = iterator.next() {
+        match values.as_array() {
+            Some(items) => {
+                if items.len() == 0u64 {
+                    let present = {
+                        let found = false;
+                        let existing = target.iter();
+                        while let Some((key, _)) = existing.next() {
+                            if key == uri { found = true; break; }
+                        }
+                        found
+                    };
+                    if !present {
+                        json_put(target, uri, empty_array());
+                    }
+                }
+                for item in *items { append_grouped(target, uri, item.clone()); }
+            },
+            None => {},
+        }
+    }
 }
 
 fn json_diagnostic(path: String, span: Span, code: str, severity: u64,
@@ -894,15 +1007,12 @@ fn add_analysis_diagnostic(snapshot: Snapshot&, diagnostic: Diagnostic&, groups:
                 None => {},
             }
         },
-        Some(Source(value)) => match snapshot.analysis() {
-            Some(analysis) => match analysis.session.source(value.source) {
-                Some(file) => {
-                    path.push_str(file.path());
-                    text.push_str(file.text());
-                },
-                None => {},
-            },
-            None => {},
+        // Warning and failure locations are detached during snapshot construction;
+        // a live source location would require the released compiler session.
+        Some(Source(_)) => {
+            path.drop();
+            text.drop();
+            return;
         },
         None => {},
     }
@@ -935,10 +1045,15 @@ fn snapshot_diagnostics(snapshot: Snapshot&, open: Vec<OpenInput>&, project_diag
         }
         failure_index += 1u64;
     }
-    match snapshot.analysis() {
-        Some(analysis) => {
-            for warning in analysis.output.warnings {
-                add_analysis_diagnostic(snapshot, warning, &groups);
+    match snapshot.query() {
+        Some(query) => {
+            let warning_index = 0u64;
+            while warning_index < query.warnings_len() {
+                match query.warning(warning_index) {
+                    Some(warning) => add_analysis_diagnostic(snapshot, warning, &groups),
+                    None => {},
+                }
+                warning_index += 1u64;
             }
         },
         None => {},
@@ -967,27 +1082,83 @@ fn snapshot_diagnostics(snapshot: Snapshot&, open: Vec<OpenInput>&, project_diag
     Value.Object(result)
 }
 
+fn project_diagnostic_groups(open: Vec<OpenInput>&, project_diagnostics: Value&) -> Object {
+    let groups = Object.new();
+    for document in *open {
+        let uri = match path_to_uri(document.path.as_str()) {
+            Ok(value) => value,
+            Err(problem) => { let _ = problem.kind; continue; },
+        };
+        if groups.get(uri.as_str()).is_none() { json_put(&groups, uri.as_str(), empty_array()); }
+        uri.drop();
+    }
+    if let Some(project_items) = project_diagnostics.as_array() {
+        for record in *project_items {
+            if let Some(fields) = record.as_object() {
+                match (field_string(fields, "uri"), fields.get("diagnostic")) {
+                    (Some(uri), Some(diagnostic)) => append_grouped(&groups, uri, diagnostic.clone()),
+                    _ => {},
+                }
+            }
+        }
+    }
+    groups
+}
+
+fn diagnostics_from_result(result: Value) -> Object {
+    let groups = match result.as_object() {
+        Some(object) => match object.get("diagnostics") {
+            Some(value) => match value.as_object() {
+                Some(groups) => groups.clone(),
+                None => Object.new(),
+            },
+            None => Object.new(),
+        },
+        None => Object.new(),
+    };
+    result.drop();
+    groups
+}
+
 pub struct WorkerState {
     std_root: String,
     raw_pointers: bool,
     workspace_root: Option<String>,
     topology_revision: u64,
     project: Option<Project>,
+    project_invalid: bool,
     project_diagnostics: Value,
-    snapshot: Option<Snapshot>,
+    routes: WorkspaceUnits,
+    primary_snapshot: Option<Snapshot>,
+    standalone_snapshots: Vec<StandaloneSnapshot>,
+    cache_identity: Option<CacheIdentity>,
 }
 
 impl WorkerState {
     static pub fn new(config: Config&) -> Result<Self, String> {
         let std_root = stdlib_path(config)?;
+        let routes = WorkspaceUnits.new();
+        routes.set_standard_library_root(std_root.as_str());
+        let cache_identity = match gather_identity(config.raw_pointers) {
+            Ok(value) => Option<CacheIdentity>.Some(value),
+            Err(message) => {
+                report_cache_error(message.as_str());
+                message.drop();
+                Option<CacheIdentity>.None
+            },
+        };
         let state = Self(
             std_root=String.from(&std_root.as_str()),
             raw_pointers=config.raw_pointers,
             workspace_root=Option<String>.None,
             topology_revision=0u64,
             project=Option<Project>.None,
+            project_invalid=false,
             project_diagnostics=empty_array(),
-            snapshot=Option<Snapshot>.None,
+            routes=routes,
+            primary_snapshot=Option<Snapshot>.None,
+            standalone_snapshots=Vec<StandaloneSnapshot>.new(),
+            cache_identity=cache_identity,
         );
         std_root.drop();
         Result<Self, String>.Ok(state)
@@ -999,6 +1170,10 @@ impl WorkerState {
         self.workspace_root = match root { Some(value) => Option<String>.Some(String.from(&value)), None => Option<String>.None };
         self.project_diagnostics.drop();
         self.project_diagnostics = empty_array();
+        self.project_invalid = false;
+        self.routes.set_primary_files(Vec<String>.new());
+        self.routes.set_primary_roots(Vec<String>.new());
+        self.routes.set_primary_manifests(Vec<String>.new());
 
         let root_path = match root {
             Some(value) => value,
@@ -1010,6 +1185,16 @@ impl WorkerState {
             None => return Result<(), String>.Ok(()),
         };
         defer project_root.drop();
+        let fallback_roots = Vec<String>.new();
+        let fallback_source_root = Path.new(project_root.as_str()).join("src");
+        fallback_roots.push(String.from(&fallback_source_root.as_str()));
+        fallback_source_root.drop();
+        self.routes.set_primary_roots(fallback_roots);
+        let fallback_manifests = Vec<String>.new();
+        let manifest = Path.new(project_root.as_str()).join("package.anx");
+        fallback_manifests.push(String.from(&manifest.as_str()));
+        manifest.drop();
+        self.routes.set_primary_manifests(fallback_manifests);
         let report = load(project_root.as_str(), self.std_root.as_str());
         let diagnostics = Vec<Value>.new();
         for problem in report.diagnostics() {
@@ -1040,9 +1225,87 @@ impl WorkerState {
             path.drop();
         }
         self.project_diagnostics = Value.Array(diagnostics);
-        if report.clean() { self.project = report.take_project(); }
+        self.project_invalid = !report.clean();
+        self.project = report.take_project();
+        match &self.project {
+            Some(project) => {
+                self.routes.set_primary_files(project_files(project));
+                self.routes.set_primary_roots(project_roots(project));
+                self.routes.set_primary_manifests(project_manifests(project));
+            },
+            None => {},
+        }
         report.drop();
         Result<(), String>.Ok(())
+    }
+
+    fn snapshot_for_path(path: str) -> Option<Snapshot&> {
+        if self.routes.is_primary_path(path) {
+            match &self.primary_snapshot {
+                Some(snapshot) => return Option<Snapshot&>.Some(snapshot),
+                None => return Option<Snapshot&>.None,
+            }
+        }
+        for item in self.standalone_snapshots {
+            if item.path.as_str() == path {
+                match &item.snapshot {
+                    Some(snapshot) => return Option<Snapshot&>.Some(snapshot),
+                    None => return Option<Snapshot&>.None,
+                }
+            }
+        }
+        Option<Snapshot&>.None
+    }
+
+    fn take_standalone_snapshot(path: str) -> Option<Snapshot> {
+        for item in self.standalone_snapshots {
+            if item.path.as_str() == path { return item.snapshot.take(); }
+        }
+        Option<Snapshot>.None
+    }
+
+    fn store_standalone_snapshot(path: str, snapshot: Snapshot) {
+        for item in self.standalone_snapshots {
+            if item.path.as_str() == path {
+                match item.snapshot.take() { Some(previous) => previous.drop(), None => {}, }
+                item.snapshot = Option<Snapshot>.Some(snapshot);
+                return;
+            }
+        }
+        self.standalone_snapshots.push(StandaloneSnapshot(
+            path=String.from(&path), snapshot=Option<Snapshot>.Some(snapshot)));
+    }
+
+    fn remove_standalone_unit(unit_key: str) {
+        let index = self.standalone_snapshots.len();
+        while index != 0u64 {
+            index -= 1u64;
+            let key = self.routes.key_for_path(self.standalone_snapshots[index].path.as_str());
+            let remove = key.as_str() == unit_key;
+            key.drop();
+            if remove {
+                let previous = self.standalone_snapshots.remove(index);
+                previous.drop();
+            }
+        }
+    }
+
+    fn prune_standalone_snapshots(open: Vec<OpenInput>&) {
+        let index = self.standalone_snapshots.len();
+        while index != 0u64 {
+            index -= 1u64;
+            let path = self.standalone_snapshots[index].path.as_str();
+            let keep = false;
+            if !self.routes.is_primary_path(path) {
+                for input in *open {
+                    if input.path.as_str() == path { keep = true; break; }
+                }
+            }
+            if !keep {
+                let previous = self.standalone_snapshots.remove(index);
+                previous.drop();
+            }
+        }
     }
 
     pub fn synchronize(params: Option<Value>) -> Result<Value, String> {
@@ -1064,6 +1327,19 @@ impl WorkerState {
             Some(value) => value,
             None => return Result<Value, String>.Err(failure("worker/sync topology_revision must be an integer")),
         };
+        let selected_unit = match field_string(object, "unit_key") {
+            Some(value) => String.from(&value),
+            None => String.from(&"primary"),
+        };
+        defer selected_unit.drop();
+        let requested_refresh_all = match field_bool(object, "refresh_all") {
+            Some(value) => value,
+            None => false,
+        };
+        let unit_revisions = match object.get("unit_revisions") {
+            Some(value) => value.as_object(),
+            None => Option<Object&>.None,
+        };
         let root = match object.get("workspace_root") {
             Some(value) => match value {
                 Null => Option<String>.None,
@@ -1079,8 +1355,15 @@ impl WorkerState {
                 None => true,
             },
         };
+        let route_changed = root_changed || topology != self.topology_revision;
+        if route_changed && !requested_refresh_all {
+            match &root { Some(path) => path.drop(), None => {}, }
+            return Result<Value, String>.Err(failure(
+                "worker topology changed without a full input refresh"));
+        }
+        let refresh_all = requested_refresh_all || route_changed;
         let project_started_ns = timing_now_ns();
-        if root_changed || topology != self.topology_revision {
+        if route_changed {
             let root_text = match &root { Some(path) => Option<str>.Some(path.as_str()), None => Option<str>.None };
             self.reload_project(root_text)?;
             self.topology_revision = topology;
@@ -1095,72 +1378,324 @@ impl WorkerState {
         let open = parse_open_inputs(documents_value)?;
         defer release_open_inputs(&open);
         let paths_started_ns = timing_now_ns();
-        let paths = collect_input_paths(match &self.project { Some(value) => Option<Project&>.Some(value), None => Option<Project&>.None },
-            self.std_root.as_str(), &open)?;
         let paths_finished_ns = timing_now_ns();
-        defer release_paths(&paths);
-        let documents = make_documents(&paths, &open)?;
-        defer release_documents(&documents);
         let freeze_finished_ns = timing_now_ns();
-        let trust = match SourceTrust.new(self.std_root.as_str()) {
-            Ok(value) => value,
-            Err(error) => { error.drop(); return Result<Value, String>.Err(failure("could not classify standard-library sources")); },
-        };
-        let package_map = match &self.project {
-            Some(project) => {
-                let encoded = package_map_json(project);
-                defer encoded.drop();
-                let document = match parse(encoded.as_str()) {
-                    Ok(value) => value,
-                    Err(_) => return Result<Value, String>.Err(failure("could not encode the package map")),
-                };
-                defer document.drop();
-                match PackageMap.from_document(&document) {
-                    Ok(value) => Option<PackageMap>.Some(value),
-                    Err(error) => { error.drop(); return Result<Value, String>.Err(failure("could not load the package map")); },
-                }
-            },
-            None => Option<PackageMap>.None,
-        };
-        let identity = String.new();
-        identity.push_str(if self.raw_pointers { "raw" } else { "fat" });
-        identity.push(':');
-        identity.push_str(self.std_root.as_str());
+
+        let unit_results = Vec<Value>.new();
+        let all_diagnostics = Object.new();
+        let all_ready = true;
+        let full_analysis = false;
         let analysis_started_ns = timing_now_ns();
-        let next = match Snapshot.analyze(revision, topology, identity.as_str(), &documents,
-            trust, package_map, self.raw_pointers, false, self.std_root.as_str()) {
-            Ok(value) => value,
-            Err(message) => { identity.drop(); return Result<Value, String>.Err(message); },
-        };
-        identity.drop();
+
+        let analyze_primary = refresh_all || selected_unit.as_str() == "primary";
+        if analyze_primary {
+            let primary_paths = collect_input_paths(match &self.project {
+                Some(value) => Option<Project&>.Some(value),
+                None => Option<Project&>.None,
+            })?;
+            defer release_paths(&primary_paths);
+            let primary_open = primary_open_inputs(&open, &self.routes);
+            defer release_open_inputs(&primary_open);
+            append_open_paths(&primary_paths, &primary_open);
+            let primary_documents = make_documents(&primary_paths, &primary_open)?;
+            defer release_documents(&primary_documents);
+
+            if self.project.is_some() || self.project_invalid {
+            let key = "primary";
+            let unit_revision_value = match unit_revisions {
+                Some(values) => unit_revision(values, key, revision),
+                None => revision,
+            };
+            let reuse_kind = "failed";
+            let strict_analysis = false;
+            let ready = false;
+            let strict_ns = 0i64;
+            let source_ns = 0i64;
+            let semantic_ns = 0i64;
+            let query_ns = 0i64;
+            let cache_state = "disabled";
+            let diagnostics = if self.project_invalid {
+                match self.primary_snapshot.take() { Some(previous) => previous.drop(), None => {}, }
+                project_diagnostic_groups(&primary_open, &self.project_diagnostics)
+            } else {
+                let package_identity = String.new();
+                defer package_identity.drop();
+                let package_map = match &self.project {
+                    Some(project) => {
+                        let encoded = package_map_json(project);
+                        defer encoded.drop();
+                        package_identity.push_str(encoded.as_str());
+                        let document = match parse(encoded.as_str()) {
+                            Ok(value) => value,
+                            Err(_) => return Result<Value, String>.Err(failure("could not encode the package map")),
+                        };
+                        defer document.drop();
+                        match PackageMap.from_document(&document) {
+                            Ok(value) => Option<PackageMap>.Some(value),
+                            Err(error) => { error.drop(); return Result<Value, String>.Err(failure("could not load the package map")); },
+                        }
+                    },
+                    None => Option<PackageMap>.None,
+                };
+                let manifest_paths = self.routes.primary_manifest_paths();
+                defer release_string_paths(&manifest_paths);
+                let configuration_identity = match semantic_input_identity("primary", "primary",
+                    self.raw_pointers, self.std_root.as_str(), package_identity.as_str(), &manifest_paths) {
+                    Ok(value) => value,
+                    Err(message) => {
+                        match package_map { Some(value) => value.drop(), None => {}, }
+                        return Result<Value, String>.Err(message);
+                    },
+                };
+                let config_digest = sha256(configuration_identity.as_str().as_slice());
+                defer config_digest.drop();
+                let previous = self.primary_snapshot.take();
+                let reused = match &previous {
+                    Some(snapshot) => snapshot.same_inputs(configuration_identity.as_str(), &primary_documents),
+                    None => false,
+                };
+                let snapshot = if reused {
+                    match package_map { Some(value) => value.drop(), None => {}, }
+                    match previous {
+                        Some(value) => {
+                            value.rebind_revision(unit_revision_value, topology);
+                            value
+                        },
+                        None => return Result<Value, String>.Err(failure("reusable primary snapshot disappeared")),
+                    }
+                } else {
+                    match previous { Some(value) => value.drop(), None => {}, }
+                    let loaded = match &self.cache_identity {
+                        Some(identity) => match self.primary_cache_path() {
+                            Some(path) => {
+                                let found = cache_load(path.as_str(), identity, config_digest.as_str(),
+                                    &primary_documents);
+                                path.drop();
+                                match found {
+                                    Some(query) => { cache_state = "disk"; Option<QuerySnapshot>.Some(query) },
+                                    None => { cache_state = "miss"; Option<QuerySnapshot>.None },
+                                }
+                            },
+                            None => Option<QuerySnapshot>.None,
+                        },
+                        None => Option<QuerySnapshot>.None,
+                    };
+                    match loaded {
+                        Some(query) => {
+                            match package_map { Some(value) => value.drop(), None => {}, }
+                            Snapshot.restored(unit_revision_value, topology,
+                                configuration_identity.as_str(), &primary_documents, query)
+                        },
+                        None => {
+                            let trust = match SourceTrust.new(self.std_root.as_str()) {
+                                Ok(value) => value,
+                                Err(error) => {
+                                    error.drop();
+                                    match package_map { Some(value) => value.drop(), None => {}, }
+                                    configuration_identity.drop();
+                                    return Result<Value, String>.Err(failure(
+                                        "could not classify standard-library sources"));
+                                },
+                            };
+                            match Snapshot.analyze(unit_revision_value, topology, configuration_identity.as_str(),
+                                &primary_documents, trust, package_map, self.raw_pointers, false, self.std_root.as_str()) {
+                                Ok(value) => value,
+                                Err(message) => { configuration_identity.drop(); return Result<Value, String>.Err(message); },
+                            }
+                        },
+                    }
+                };
+                configuration_identity.drop();
+                if reused {
+                    reuse_kind = if snapshot.ready() { "memory" } else { "failed_memory" };
+                } elif cache_state == "disk" {
+                    strict_analysis = false;
+                    full_analysis = false;
+                    reuse_kind = "disk";
+                } else {
+                    strict_analysis = true;
+                    full_analysis = true;
+                    reuse_kind = "analyzed";
+                }
+                let result = snapshot_diagnostics(&snapshot, &primary_open, self.project_diagnostics.clone());
+                let groups = diagnostics_from_result(result);
+                ready = snapshot.ready();
+                if !ready { all_ready = false; }
+                strict_ns = if strict_analysis { snapshot.strict_analysis_ns() } else { 0i64 };
+                source_ns = if strict_analysis && ready { snapshot.source_index_ns() } else { 0i64 };
+                semantic_ns = if strict_analysis && ready { snapshot.semantic_index_ns() } else { 0i64 };
+                query_ns = if strict_analysis && ready { snapshot.query_index_ns() } else { 0i64 };
+                if ready && !self.project_invalid && cache_state != "disk" {
+                    match self.primary_cache_path() {
+                        Some(path) => {
+                            match &self.cache_identity {
+                                Some(identity) => {
+                                    let overlays = overlay_documents(&primary_open);
+                                    defer release_documents(&overlays);
+                                    match snapshot.query() {
+                                        Some(query) => {
+                                            match cache_publish(path.as_str(), identity, config_digest.as_str(),
+                                                &primary_documents, &overlays, query) {
+                                                Ok(true) => { cache_state = "published"; },
+                                                Ok(false) => { cache_state = "ineligible"; },
+                                                Err(message) => {
+                                                    report_cache_error(message.as_str());
+                                                    message.drop();
+                                                    cache_state = "write_failed";
+                                                },
+                                            }
+                                        },
+                                        None => {},
+                                    }
+                                },
+                                None => {},
+                            }
+                            path.drop();
+                        },
+                        None => {},
+                    }
+                }
+                self.primary_snapshot = Option<Snapshot>.Some(snapshot);
+                if !ready && reused { reuse_kind = "failed_memory"; }
+                groups
+            };
+            if self.project_invalid { all_ready = false; }
+            append_diagnostic_groups(&all_diagnostics, &diagnostics);
+            unit_results.push(unit_result(key, unit_revision_value, ready, strict_analysis,
+                reuse_kind, strict_ns, source_ns, semantic_ns, query_ns, cache_state, &diagnostics));
+            diagnostics.drop();
+            }
+        }
+        if analyze_primary && self.project.is_none() && !self.project_invalid {
+            match self.primary_snapshot.take() { Some(previous) => previous.drop(), None => {}, }
+        }
+
+        if refresh_all { self.prune_standalone_snapshots(&open); }
+        let selected_standalone_found = false;
+        for input in *open {
+            if !input.path.as_str().ends_with(".an") || self.routes.is_primary_path(input.path.as_str()) {
+                continue;
+            }
+            let unit_key = self.routes.key_for_path(input.path.as_str());
+            let key = unit_key.as_str();
+            if !refresh_all && key != selected_unit.as_str() {
+                unit_key.drop();
+                continue;
+            }
+            selected_standalone_found = true;
+            let unit_revision_value = match unit_revisions {
+                Some(values) => unit_revision(values, key, revision),
+                None => revision,
+            };
+            let paths = match collect_standalone_paths(self.std_root.as_str(), input.path.as_str()) {
+                Ok(value) => value,
+                Err(message) => { unit_key.drop(); return Result<Value, String>.Err(message); },
+            };
+            defer release_paths(&paths);
+            let standalone_open = one_open_input(input);
+            defer release_open_inputs(&standalone_open);
+            let documents = make_documents(&paths, &standalone_open)?;
+            defer release_documents(&documents);
+            let no_manifests = Vec<String>.new();
+            let identity_result = semantic_input_identity(key, "standalone", self.raw_pointers,
+                self.std_root.as_str(), "", &no_manifests);
+            no_manifests.drop();
+            let identity = match identity_result {
+                Ok(value) => value,
+                Err(message) => { unit_key.drop(); return Result<Value, String>.Err(message); },
+            };
+            let previous = self.take_standalone_snapshot(input.path.as_str());
+            let reused = match &previous {
+                Some(snapshot) => snapshot.same_inputs(identity.as_str(), &documents),
+                None => false,
+            };
+            let snapshot = if reused {
+                match previous {
+                    Some(value) => {
+                        value.rebind_revision(unit_revision_value, topology);
+                        value
+                    },
+                    None => {
+                        identity.drop();
+                        unit_key.drop();
+                        return Result<Value, String>.Err(failure("reusable standalone snapshot disappeared"));
+                    },
+                }
+            } else {
+                match previous { Some(value) => value.drop(), None => {}, }
+                let trust = match SourceTrust.new(self.std_root.as_str()) {
+                    Ok(value) => value,
+                    Err(error) => {
+                        error.drop();
+                        identity.drop();
+                        unit_key.drop();
+                        return Result<Value, String>.Err(failure(
+                            "could not classify standard-library sources"));
+                    },
+                };
+                match Snapshot.analyze(unit_revision_value, topology, identity.as_str(),
+                    &documents, trust, Option<PackageMap>.None, self.raw_pointers, false,
+                    self.std_root.as_str()) {
+                    Ok(value) => value,
+                    Err(message) => { identity.drop(); unit_key.drop(); return Result<Value, String>.Err(message); },
+                }
+            };
+            identity.drop();
+            let result = snapshot_diagnostics(&snapshot, &standalone_open, empty_array());
+            let diagnostics = diagnostics_from_result(result);
+            append_diagnostic_groups(&all_diagnostics, &diagnostics);
+            let ready = snapshot.ready();
+            if !ready { all_ready = false; }
+            let reuse_kind = if reused {
+                if ready { "memory" } else { "failed_memory" }
+            } else { "analyzed" };
+            let strict_ns = if reused { 0i64 } else { snapshot.strict_analysis_ns() };
+            let source_ns = if !reused && ready { snapshot.source_index_ns() } else { 0i64 };
+            let semantic_ns = if !reused && ready { snapshot.semantic_index_ns() } else { 0i64 };
+            let query_ns = if !reused && ready { snapshot.query_index_ns() } else { 0i64 };
+            unit_results.push(unit_result(key, unit_revision_value, ready, !reused,
+                reuse_kind, strict_ns, source_ns, semantic_ns, query_ns, "disabled", &diagnostics));
+            diagnostics.drop();
+            self.store_standalone_snapshot(input.path.as_str(), snapshot);
+            unit_key.drop();
+            if !reused { full_analysis = true; }
+        }
+        if !refresh_all && !selected_standalone_found &&
+            selected_unit.as_str().starts_with("file:") {
+            self.remove_standalone_unit(selected_unit.as_str());
+        }
         let analysis_finished_ns = timing_now_ns();
-        match self.snapshot.take() { Some(previous) => previous.drop(), None => {}, }
-        self.snapshot = Option<Snapshot>.Some(next);
-        let snapshot = match &self.snapshot {
-            Some(value) => value,
-            None => return Result<Value, String>.Err(failure("analysis snapshot was not retained")),
-        };
-        let diagnostics_started_ns = timing_now_ns();
-        let mut_result = snapshot_diagnostics(snapshot, &open, self.project_diagnostics.clone());
+
         let diagnostics_finished_ns = timing_now_ns();
-        let output = match mut_result.as_object() {
-            Some(result) => {
-                json_put(result, "revision", Value.Number(Number.Unsigned(revision)));
-                json_put(result, "project_loaded", Value.Boolean(self.project.is_some()));
-                json_put(result, "analysis_ready", Value.Boolean(snapshot.ready()));
-                let timings = Object.new();
-                record_timing(&timings, "project_load_ms", project_started_ns, project_finished_ns);
-                record_timing(&timings, "input_path_collection_ms", paths_started_ns, paths_finished_ns);
-                record_timing(&timings, "input_freeze_ms", paths_finished_ns, freeze_finished_ns);
-                record_timing(&timings, "editor_analyze_ms", analysis_started_ns, analysis_finished_ns);
-                record_timing(&timings, "diagnostic_render_ms", diagnostics_started_ns, diagnostics_finished_ns);
-                record_timing(&timings, "sync_total_ms", sync_started_ns, diagnostics_finished_ns);
-                json_put(result, "analysis_timings", Value.Object(timings));
-                mut_result
-            },
-            None => { mut_result.drop(); return Result<Value, String>.Err(failure("analysis result is invalid")); },
-        };
-        Result<Value, String>.Ok(output)
+        let result = Object.new();
+        json_put(&result, "revision", Value.Number(Number.Unsigned(revision)));
+        json_put(&result, "project_loaded", Value.Boolean(self.project.is_some() && !self.project_invalid));
+        json_put(&result, "analysis_ready", Value.Boolean(all_ready));
+        json_put(&result, "full_analysis", Value.Boolean(full_analysis));
+        json_put(&result, "diagnostics", Value.Object(all_diagnostics));
+        json_put(&result, "project_diagnostics", self.project_diagnostics.clone());
+        json_put(&result, "unit_results", Value.Array(unit_results));
+        let files = self.routes.primary_file_paths();
+        let roots = self.routes.primary_source_roots();
+        let manifests = self.routes.primary_manifest_paths();
+        let stdlib = self.routes.standard_library_path();
+        json_put(&result, "primary_files", string_array(&files));
+        json_put(&result, "primary_roots", string_array(&roots));
+        json_put(&result, "primary_manifests", string_array(&manifests));
+        json_put(&result, "standard_library_root", Value.String(String.from(&stdlib.as_str())));
+        release_string_paths(&files);
+        release_string_paths(&roots);
+        release_string_paths(&manifests);
+        stdlib.drop();
+        let timings = Object.new();
+        record_timing(&timings, "project_load_ms", project_started_ns, project_finished_ns);
+        record_timing(&timings, "input_path_collection_ms", paths_started_ns, paths_finished_ns);
+        record_timing(&timings, "input_freeze_ms", paths_finished_ns, freeze_finished_ns);
+        record_timing(&timings, "editor_analyze_ms", analysis_started_ns, analysis_finished_ns);
+        record_timing(&timings, "diagnostic_render_ms", analysis_finished_ns, diagnostics_finished_ns);
+        record_timing(&timings, "sync_total_ms", sync_started_ns, diagnostics_finished_ns);
+        json_put(&result, "analysis_timings", Value.Object(timings));
+        Result<Value, String>.Ok(Value.Object(result))
     }
 
     pub fn query(params: Option<Value>) -> Result<Value, WorkerFailure> {
@@ -1181,25 +1716,60 @@ impl WorkerState {
             Some(value) => value,
             None => return Result<Value, WorkerFailure>.Err(WorkerFailure.new(-32602i64, "query params are missing")),
         };
-        let snapshot = match &self.snapshot {
+        let uri = match query_document_uri(query_params) {
             Some(value) => value,
-            None => return Result<Value, WorkerFailure>.Err(WorkerFailure.new(-32801i64, "no current analysis snapshot")),
+            None => return Result<Value, WorkerFailure>.Err(WorkerFailure.new(-32602i64, "textDocument.uri is invalid")),
+        };
+        defer uri.drop();
+        let path = match uri_to_path(uri.as_str()) {
+            Ok(value) => value,
+            Err(_) => return Result<Value, WorkerFailure>.Err(WorkerFailure.new(-32602i64, "text document URI is invalid")),
+        };
+        defer path.drop();
+        let normalized = match resolve(path.as_str()) {
+            Ok(value) => value,
+            Err(problem) => { problem.drop(); return Result<Value, WorkerFailure>.Err(
+                WorkerFailure.new(-32602i64, "text document URI cannot be resolved")); },
+        };
+        defer normalized.drop();
+        let primary_route = self.routes.is_primary_path(normalized.as_str());
+        let snapshot = match self.snapshot_for_path(normalized.as_str()) {
+            Some(value) => value,
+            None if primary_route => return Result<Value, WorkerFailure>.Ok(empty_query_result(method)),
+            _ => return Result<Value, WorkerFailure>.Err(WorkerFailure.new(-32801i64, "no current analysis snapshot for this document")),
         };
         let ready = snapshot.ready();
 
         match method {
             "textDocument/definition" => {
                 if !ready { return Result<Value, WorkerFailure>.Ok(Value.Null); }
-                let position = position_params(snapshot, query_params)?;
-                Result<Value, WorkerFailure>.Ok(definition_value(snapshot, position.source, position.row, position.column))
+                let query = match snapshot.query() {
+                    Some(value) => value,
+                    None => return Result<Value, WorkerFailure>.Err(WorkerFailure.new(
+                        -32801i64, "analysis snapshot is unavailable")),
+                };
+                let position = position_params(query, query_params)?;
+                Result<Value, WorkerFailure>.Ok(definition_value(query, position.file,
+                    position.row, position.column))
             },
             "textDocument/hover" => {
                 if !ready { return Result<Value, WorkerFailure>.Ok(Value.Null); }
-                let position = position_params(snapshot, query_params)?;
-                Result<Value, WorkerFailure>.Ok(hover_value(snapshot, position.source, position.row, position.column))
+                let query = match snapshot.query() {
+                    Some(value) => value,
+                    None => return Result<Value, WorkerFailure>.Err(WorkerFailure.new(
+                        -32801i64, "analysis snapshot is unavailable")),
+                };
+                let position = position_params(query, query_params)?;
+                Result<Value, WorkerFailure>.Ok(hover_value(query, position.file,
+                    position.row, position.column))
             },
             "textDocument/documentSymbol" => {
                 if !ready { return Result<Value, WorkerFailure>.Ok(empty_array()); }
+                let query = match snapshot.query() {
+                    Some(value) => value,
+                    None => return Result<Value, WorkerFailure>.Err(WorkerFailure.new(
+                        -32801i64, "analysis snapshot is unavailable")),
+                };
                 let object = match query_params.as_object() {
                     Some(value) => value,
                     None => return Result<Value, WorkerFailure>.Err(WorkerFailure.new(-32602i64, "document symbol params must be an object")),
@@ -1213,11 +1783,16 @@ impl WorkerState {
                     None => return Result<Value, WorkerFailure>.Err(WorkerFailure.new(-32602i64, "textDocument.uri is invalid")),
                 };
                 defer document.drop();
-                let source = query_source(snapshot, document.uri.as_str())?;
-                Result<Value, WorkerFailure>.Ok(document_symbols_value(snapshot, source))
+                let file = query_file(query, document.uri.as_str())?;
+                Result<Value, WorkerFailure>.Ok(document_symbols_value(query, file))
             },
             "textDocument/semanticTokens/full" => {
                 if !ready { return Result<Value, WorkerFailure>.Ok(empty_semantic_tokens()); }
+                let query = match snapshot.query() {
+                    Some(value) => value,
+                    None => return Result<Value, WorkerFailure>.Err(WorkerFailure.new(
+                        -32801i64, "analysis snapshot is unavailable")),
+                };
                 let object = match query_params.as_object() {
                     Some(value) => value,
                     None => return Result<Value, WorkerFailure>.Err(WorkerFailure.new(
@@ -1234,61 +1809,110 @@ impl WorkerState {
                         -32602i64, "textDocument.uri is invalid")),
                 };
                 defer document.drop();
-                let source = query_source(snapshot, document.uri.as_str())?;
-                Result<Value, WorkerFailure>.Ok(semantic_tokens_value(snapshot, source))
+                let file = query_file(query, document.uri.as_str())?;
+                Result<Value, WorkerFailure>.Ok(semantic_tokens_value(query, file))
             },
             "textDocument/references" => {
                 if !ready { return Result<Value, WorkerFailure>.Ok(empty_array()); }
+                let query = match snapshot.query() {
+                    Some(value) => value,
+                    None => return Result<Value, WorkerFailure>.Err(WorkerFailure.new(
+                        -32801i64, "analysis snapshot is unavailable")),
+                };
                 let decoded = match ReferenceParams.from_json(query_params) {
                     Some(value) => value,
                     None => return Result<Value, WorkerFailure>.Err(WorkerFailure.new(
                         -32602i64, "invalid reference params")),
                 };
                 defer decoded.drop();
-                let source = query_source(snapshot, decoded.text_document.uri.as_str())?;
+                let file = query_file(query, decoded.text_document.uri.as_str())?;
                 let row = decoded.position.line;
-                let column = position_column(snapshot, source, decoded.position);
-                Result<Value, WorkerFailure>.Ok(references_value(snapshot, source, row, column,
+                let column = position_column(query, file, decoded.position);
+                Result<Value, WorkerFailure>.Ok(references_value(query, file, row, column,
                     decoded.context.include_declaration))
             },
             "textDocument/documentHighlight" => {
                 if !ready { return Result<Value, WorkerFailure>.Ok(empty_array()); }
-                let position = position_params(snapshot, query_params)?;
-                Result<Value, WorkerFailure>.Ok(highlight_value(snapshot, position.source, position.row, position.column))
+                let query = match snapshot.query() {
+                    Some(value) => value,
+                    None => return Result<Value, WorkerFailure>.Err(WorkerFailure.new(
+                        -32801i64, "analysis snapshot is unavailable")),
+                };
+                let position = position_params(query, query_params)?;
+                Result<Value, WorkerFailure>.Ok(highlight_value(query, position.file,
+                    position.row, position.column))
             },
             _ => Result<Value, WorkerFailure>.Err(WorkerFailure.new(-32601i64, "unsupported LSP query")),
         }
     }
 }
 
-fn position_params(snapshot: Snapshot&, value: Value&) -> Result<QueryPosition, WorkerFailure> {
+fn position_params(query: QuerySnapshot&, value: Value&) -> Result<QueryPosition, WorkerFailure> {
     let decoded = match TextDocumentPositionParams.from_json(value) {
         Some(value) => value,
         None => return Result<QueryPosition, WorkerFailure>.Err(
             WorkerFailure.new(-32602i64, "invalid text document position params")),
     };
     defer decoded.drop();
-    let source = match query_source(snapshot, decoded.text_document.uri.as_str()) {
+    let file = match query_file(query, decoded.text_document.uri.as_str()) {
         Ok(value) => value,
         Err(problem) => return Result<QueryPosition, WorkerFailure>.Err(problem),
     };
     let row = decoded.position.line;
-    let column = position_column(snapshot, source, decoded.position);
-    Result<QueryPosition, WorkerFailure>.Ok(QueryPosition(source, row, column))
+    let column = position_column(query, file, decoded.position);
+    Result<QueryPosition, WorkerFailure>.Ok(QueryPosition(file=file, row=row, column=column))
 }
 
 struct QueryPosition {
-    source: SourceId,
+    file: u64,
     row: u64,
     column: u64,
 }
 
+fn report_cache_error(message: str) {
+    let text = String.from(&"[yian-lsp ERROR] ");
+    defer text.drop();
+    text.push_str(message);
+    text.push('\n');
+    match Stderr.new().write_str(text.as_str()) {
+        Ok(_) => {},
+        Err(problem) => problem.drop(),
+    }
+}
+
+fn overlay_documents(open: Vec<OpenInput>&) -> Vec<SourceDocument> {
+    let result = Vec<SourceDocument>.with_capacity(open.len());
+    for item in *open {
+        result.push(SourceDocument(path=String.from(&item.path.as_str()),
+            text=String.from(&item.text.as_str())));
+    }
+    result
+}
+
+impl WorkerState {
+    fn primary_cache_path() -> Option<String> {
+        let project = match &self.project { Some(value) => value, None => return Option<String>.None };
+        let package = match project.package_by_name(project.root_package()) {
+            Some(value) => value,
+            None => return Option<String>.None,
+        };
+        match cache_path(package.root()) {
+            Ok(value) => Option<String>.Some(value),
+            Err(message) => { message.drop(); Option<String>.None },
+        }
+    }
+}
+
 impl Drop for WorkerState {
     pub fn drop() {
-        match self.snapshot.take() { Some(value) => value.drop(), None => {}, }
+        match self.primary_snapshot.take() { Some(value) => value.drop(), None => {}, }
+        for item in self.standalone_snapshots { item.drop(); }
+        self.standalone_snapshots.drop();
         match self.project.take() { Some(value) => value.drop(), None => {}, }
+        match self.cache_identity.take() { Some(value) => value.drop(), None => {}, }
         self.std_root.drop();
         match self.workspace_root.take() { Some(value) => value.drop(), None => {}, }
         self.project_diagnostics.drop();
+        self.routes.drop();
     }
 }

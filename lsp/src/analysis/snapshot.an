@@ -1,7 +1,8 @@
+from lsp.analysis.inputs import InputIdentity;
 from lsp.analysis.compiler import CompilerAnalysis, CompilerFailure, analyze as compiler_analyze;
+from lsp.analysis.query_index import QuerySnapshot;
 from lsp.analysis.semantic_index import SemanticIndex, build as build_semantic;
 from lsp.analysis.source_index import SourceIndex;
-from yianc.common.ids import SourceId;
 from yianc.diagnostics.model import Diagnostic;
 from yianc.frontend.source import SourceDocument;
 from yianc.package.model import PackageMap;
@@ -10,20 +11,38 @@ from std.core.drop import Drop;
 from std.core.option import Option;
 from std.core.result import Result;
 from std.core.string import String;
+from std.core.time import monotonic_now;
 from std.core.vec import Vec;
 
 pub enum SnapshotState {
-    Failed { diagnostics: Vec<Diagnostic> },
-    Ready { analysis: CompilerAnalysis, source: SourceIndex, semantic: SemanticIndex },
+    Failed { documents: Vec<SourceDocument>, diagnostics: Vec<Diagnostic> },
+    Ready { query: QuerySnapshot },
 }
 
 // A snapshot fixes the input text, the configuration identity and the successful result lifetime.
+// Ready owns only query records: the compiler session and its indexes are released after extraction.
 pub struct Snapshot {
     pub revision: u64,
     pub topology_revision: u64,
     pub configuration_identity: String,
-    documents: Vec<SourceDocument>,
+    pub identity: InputIdentity,
+    strict_analysis_ns: i64,
+    source_index_ns: i64,
+    semantic_index_ns: i64,
+    query_index_ns: i64,
     state: SnapshotState,
+}
+
+fn timing_now_ns() -> i64 {
+    match monotonic_now() {
+        Ok(value) => value.nanoseconds(),
+        Err(problem) => { problem.drop(); -1i64 },
+    }
+}
+
+fn elapsed_ns(started: i64, finished: i64) -> i64 {
+    if started < 0i64 || finished < started { return 0i64; }
+    finished - started
 }
 
 fn release_documents(documents: Vec<SourceDocument>&) {
@@ -40,24 +59,50 @@ fn copy_documents(documents: Vec<SourceDocument>&) -> Vec<SourceDocument> {
     result
 }
 
+fn same_document_text(left: Vec<SourceDocument>&, right: Vec<SourceDocument>&) -> bool {
+    if left.len() != right.len() { return false; }
+    let index = 0u64;
+    while index < left.len() {
+        if left[index].path.as_str() != right[index].path.as_str() ||
+            left[index].text.as_str() != right[index].text.as_str() {
+            return false;
+        }
+        index += 1u64;
+    }
+    true
+}
+
 impl Snapshot {
     static pub fn analyze(revision: u64, topology_revision: u64, configuration_identity: str,
         documents: Vec<SourceDocument>&, trust: SourceTrust, packages: Option<PackageMap>,
         raw_pointers: bool, allow_ffi: bool, std_root: str) -> Result<Self, String> {
         let owned = copy_documents(documents);
+        let identity = InputIdentity.build(configuration_identity, documents);
         let accepted = false;
-        defer { if !accepted { release_documents(&owned); } };
+        defer {
+            if !accepted {
+                release_documents(&owned);
+                identity.drop();
+            }
+        };
 
+        let strict_started_ns = timing_now_ns();
         match compiler_analyze(documents, trust, packages, raw_pointers, allow_ffi) {
             Err(failure) => {
+                let strict_finished_ns = timing_now_ns();
                 let diagnostics = failure.take_diagnostics();
                 let snapshot = Self(revision=revision, topology_revision=topology_revision,
                     configuration_identity=String.from(&configuration_identity),
-                    documents=owned, state=SnapshotState.Failed(diagnostics=diagnostics));
+                    identity=identity,
+                    strict_analysis_ns=elapsed_ns(strict_started_ns, strict_finished_ns),
+                    source_index_ns=0i64, semantic_index_ns=0i64, query_index_ns=0i64,
+                    state=SnapshotState.Failed(documents=owned, diagnostics=diagnostics));
                 accepted = true;
                 return Result<Self, String>.Ok(snapshot);
             },
             Ok(analysis) => {
+                let strict_finished_ns = timing_now_ns();
+                let source_started_ns = timing_now_ns();
                 let index = match SourceIndex.build(&owned, &analysis.session, std_root) {
                     Ok(value) => value,
                     Err(message) => {
@@ -65,6 +110,8 @@ impl Snapshot {
                         return Result<Self, String>.Err(message);
                     },
                 };
+                let source_finished_ns = timing_now_ns();
+                let semantic_started_ns = timing_now_ns();
                 let semantic = match build_semantic(&index, &analysis) {
                     Ok(value) => value,
                     Err(message) => {
@@ -73,34 +120,95 @@ impl Snapshot {
                         return Result<Self, String>.Err(message);
                     },
                 };
+                let semantic_finished_ns = timing_now_ns();
+                let query_started_ns = timing_now_ns();
+                let query = match QuerySnapshot.extract(&owned, &index, &analysis) {
+                    Ok(value) => value,
+                    Err(message) => {
+                        semantic.drop();
+                        index.drop();
+                        analysis.drop();
+                        return Result<Self, String>.Err(message);
+                    },
+                };
+                let query_finished_ns = timing_now_ns();
+                // The query snapshot owns every string, token record and position table.
+                // Build state is released before queries can observe this snapshot.
+                semantic.drop();
+                index.drop();
+                analysis.drop();
+                release_documents(&owned);
                 let snapshot = Self(revision=revision, topology_revision=topology_revision,
                     configuration_identity=String.from(&configuration_identity),
-                    documents=owned, state=SnapshotState.Ready(
-                        analysis=analysis, source=index, semantic=semantic));
+                    identity=identity,
+                    strict_analysis_ns=elapsed_ns(strict_started_ns, strict_finished_ns),
+                    source_index_ns=elapsed_ns(source_started_ns, source_finished_ns),
+                    semantic_index_ns=elapsed_ns(semantic_started_ns, semantic_finished_ns),
+                    query_index_ns=elapsed_ns(query_started_ns, query_finished_ns),
+                    state=SnapshotState.Ready(query=query));
                 accepted = true;
                 Result<Self, String>.Ok(snapshot)
             },
         }
     }
 
-    pub fn ready() -> bool {
-        match &self.state { Ready(_, _, _) => true, _ => false }
+    // Cache restoration already owns extracted text and token data. It performs no
+    // compiler, source or semantic indexing; only the input identity is rebuilt.
+    static pub fn restored(revision: u64, topology_revision: u64, configuration_identity: str,
+        documents: Vec<SourceDocument>&, query: QuerySnapshot) -> Self {
+        let identity = InputIdentity.build(configuration_identity, documents);
+        Self(revision=revision, topology_revision=topology_revision,
+            configuration_identity=String.from(&configuration_identity), identity=identity,
+            strict_analysis_ns=0i64, source_index_ns=0i64, semantic_index_ns=0i64,
+            query_index_ns=0i64, state=SnapshotState.Ready(query=query))
     }
 
+    pub fn ready() -> bool {
+        match &self.state { Ready(_) => true, _ => false }
+    }
+
+    pub fn same_inputs(configuration_identity: str, documents: Vec<SourceDocument>&) -> bool {
+        let candidate = InputIdentity.build(configuration_identity, documents);
+        let same_identity = self.identity.same_key(&candidate);
+        candidate.drop();
+        if !same_identity { return false; }
+        match &self.state {
+            Ready(query) => query.same_documents(documents),
+            Failed(owned, _) => same_document_text(owned, documents),
+        }
+    }
+
+    pub fn rebind_revision(revision: u64, topology_revision: u64) {
+        self.revision = revision;
+        self.topology_revision = topology_revision;
+        self.strict_analysis_ns = 0i64;
+        self.source_index_ns = 0i64;
+        self.semantic_index_ns = 0i64;
+        self.query_index_ns = 0i64;
+    }
+
+    pub fn strict_analysis_ns() -> i64 { self.strict_analysis_ns }
+
+    pub fn source_index_ns() -> i64 { self.source_index_ns }
+
+    pub fn semantic_index_ns() -> i64 { self.semantic_index_ns }
+
+    pub fn query_index_ns() -> i64 { self.query_index_ns }
+
     pub fn failed() -> bool {
-        match &self.state { Failed(_) => true, _ => false }
+        match &self.state { Failed(_, _) => true, _ => false }
     }
 
     pub fn failure_count() -> u64 {
         match &self.state {
-            Failed(diagnostics) => diagnostics.len(),
+            Failed(_, diagnostics) => diagnostics.len(),
             _ => 0u64,
         }
     }
 
     pub fn failure_diagnostic(index: u64) -> Option<Diagnostic&> {
         match &self.state {
-            Failed(diagnostics) => match diagnostics.as_slice().get(index) {
+            Failed(_, diagnostics) => match diagnostics.as_slice().get(index) {
                 Some(value) => Option<Diagnostic&>.Some(value),
                 None => Option<Diagnostic&>.None,
             },
@@ -108,71 +216,42 @@ impl Snapshot {
         }
     }
 
-    pub fn analysis() -> Option<CompilerAnalysis&> {
+    pub fn query() -> Option<QuerySnapshot&> {
         match &self.state {
-            Ready(analysis, _, _) => Option<CompilerAnalysis&>.Some(analysis),
-            _ => Option<CompilerAnalysis&>.None,
+            Ready(query) => Option<QuerySnapshot&>.Some(query),
+            _ => Option<QuerySnapshot&>.None,
         }
-    }
-
-    pub fn source() -> Option<SourceIndex&> {
-        match &self.state {
-            Ready(_, source, _) => Option<SourceIndex&>.Some(source),
-            _ => Option<SourceIndex&>.None,
-        }
-    }
-
-    pub fn semantic() -> Option<SemanticIndex&> {
-        match &self.state {
-            Ready(_, _, semantic) => Option<SemanticIndex&>.Some(semantic),
-            _ => Option<SemanticIndex&>.None,
-        }
-    }
-
-    pub fn text(source: SourceId) -> Option<str> {
-        let index = u64(source.index);
-        if index < self.documents.len() {
-            return Option<str>.Some(self.documents[index].text.as_str());
-        }
-        Option<str>.None
     }
 
     pub fn text_for_path(path: str) -> Option<str> {
-        let index = 0u64;
-        while index < self.documents.len() {
-            if self.documents[index].path.as_str() == path {
-                return Option<str>.Some(self.documents[index].text.as_str());
-            }
-            index += 1u64;
+        match &self.state {
+            Ready(query) => query.text_for_path(path),
+            Failed(owned, _) => {
+                let index = 0u64;
+                while index < owned.len() {
+                    if owned[index].path.as_str() == path {
+                        return Option<str>.Some(owned[index].text.as_str());
+                    }
+                    index += 1u64;
+                }
+                Option<str>.None
+            },
         }
-        Option<str>.None
     }
-
-    pub fn path(source: SourceId) -> Option<str> {
-        let index = u64(source.index);
-        if index < self.documents.len() {
-            return Option<str>.Some(self.documents[index].path.as_str());
-        }
-        Option<str>.None
-    }
-
 }
 
 impl Drop for Snapshot {
     pub fn drop() {
         match &self.state {
-            Ready(analysis, source, semantic) => {
-                semantic.drop();
-                source.drop();
-                analysis.drop();
-            },
-            Failed(diagnostics) => {
-                for diagnostic in diagnostics { diagnostic.drop(); }
+            Ready(query) => query.drop(),
+            Failed(owned, diagnostics) => {
+                for diagnostic in *diagnostics { diagnostic.drop(); }
                 diagnostics.drop();
+                for document in *owned { document.drop(); }
+                owned.drop();
             },
         }
-        for document in self.documents { document.drop(); }
-        self.documents.drop();
+        self.identity.drop();
         self.configuration_identity.drop();
     }
 }
