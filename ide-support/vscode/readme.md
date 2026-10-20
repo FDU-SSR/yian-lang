@@ -50,7 +50,9 @@ scripts/refresh_toolchain.sh --anx "$HOME/.local/bin/anx" --yianc "$HOME/.local/
 
 ## 功能
 
-- 诊断、定义、悬停、文档符号、语义 token、引用和文档高亮。
+- 诊断、定义、悬停、文档符号、语义 token、引用、文档高亮和无注解变量的类型提示（inlay hints）。
+- 类型提示覆盖简单 `let`、解构 `let`、`for`、`match`、`if let`/`while let`、闭包捕获和闭包变量；显式注解与形参不重复提示，不可展示的字面量类型不提示。提示只读，不修改源码。
+- 提示使用 VS Code 内建的 `editor.inlayHints.enabled`；可按语言设置 `"[yian]": {"editor.inlayHints.enabled": "off"}` 关闭。
 - 工作区文档同步和文件变更更新。
 - 未保存文本优先参与一次严格前端与语义分析；过期分析结果不会覆盖新版本。
 - 不声明补全、签名帮助、重命名、代码操作或格式化；这些请求由服务器以 `MethodNotFound` 拒绝。
@@ -65,13 +67,13 @@ npm run compile
 npm run package
 ```
 
-生成文件为 `ide-support/vscode/yian-language-support-0.7.0.vsix`。可以将其安装到 VS Code 手动验收；仓库自动检查不会启动 VS Code。
+生成文件为 `ide-support/vscode/yian-language-support-0.8.0.vsix`。可以将其安装到 VS Code 手动验收；仓库自动检查不会启动 VS Code。
 
 ## 手动验收
 
 1. 安装上面的 VSIX，并把 `yian.languageServer.command` 配置为 `yian-lsp` 的绝对路径。
 2. 打开单文件工作区和带 `package.anx` 的多文件项目，检查版本信息和诊断。
-3. 修改但不保存文件，检查悬停、定义、引用、文档高亮和语义高亮是否反映当前缓冲区。
+3. 修改但不保存文件，检查悬停、定义、引用、文档高亮和语义高亮是否反映当前缓冲区；确认无注解变量显示 `: 类型` 提示、注解变量不重复，并用 `editor.inlayHints.enabled` 验证开关。
 4. 在多文件项目中检查跨文件定义与引用；确认补全、重命名和格式化请求被拒绝。
 5. 连续输入、保存、新增/删除源码并修复无效清单，确认诊断更新、失败期间没有旧导航，且修复后导航恢复。
 6. 将 `yian.languageServer.args` 改为 `["--raw-pointers"]`，重启服务并重复代表性操作。
@@ -87,5 +89,7 @@ PATH="$HOME/.local/bin:$PATH" \
 ```
 
 `check_lsp.py` 是协议客户端和测量工具，只启动已安装的原生 `yian-lsp`。`--mode benchmark` 运行性能矩阵，`--mode profile` 保存原生阶段 trace，`--mode infrastructure` 要求完整工具链及共享资源已安装后运行基础设施检查，不安装或刷新工具，也不运行协议场景。
+
+`scripts/probe_lsp_navigation.py` 覆盖 inlay hints 的各绑定形态、注解与形参抑制、range 过滤、失败态和 `workspace/inlayHint/refresh`；`scripts/probe_lsp_cache.py --case restart` 比较严格分析与缓存恢复后的提示数据。
 
 `--mode check` 默认运行 standalone、JSON project 和 compiler project 三种协议场景，并分别使用 fat/raw 两种模式，共六种组合。仓库验证应选择准确的场景和 pointer mode；完整矩阵需要明确授权。`--mode infrastructure` 还会运行 bootstrap package tests、全部 Python unit tests、formatter checks 以及 runtime 普通和 sanitizer checks；这是广泛验证入口，仓库任务执行前需先审查其间接范围并取得明确授权。

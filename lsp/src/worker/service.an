@@ -573,6 +573,43 @@ fn semantic_tokens_value(query: QuerySnapshot&, file: u64) -> Value {
     Value.Object(result)
 }
 
+fn position_in_range(range: Range&, line: u64, character: u64) -> bool {
+    let after_start = range.start.line < line ||
+        (range.start.line == line && range.start.character <= character);
+    let before_end = line < range.end.line ||
+        (line == range.end.line && character <= range.end.character);
+    after_start && before_end
+}
+
+fn inlay_hint_value(query: QuerySnapshot&, file: u64, range: Range) -> Value {
+    let values = Vec<Value>.new();
+    let source = match query.file(file) {
+        Some(value) => value,
+        None => return Value.Array(values),
+    };
+    for declaration_id in source.declarations_in_source_order() {
+        let declaration = match query.decl(*declaration_id) {
+            Some(value) => value,
+            None => continue,
+        };
+        let hint = match &declaration.type_hint {
+            Some(value) => value,
+            None => continue,
+        };
+        let end = declaration.span.end;
+        let character = source.utf16_column(end.row, end.column);
+        if !position_in_range(&range, end.row, character) { continue; }
+        let label = String.from(&": ");
+        label.push_str(hint.as_str());
+        let item = Object.new();
+        json_put(&item, "position", protocol_position(Position(line=end.row, character=character)));
+        json_put(&item, "label", Value.String(label));
+        json_put(&item, "kind", Value.Number(Number.Unsigned(1u64)));
+        values.push(Value.Object(item));
+    }
+    Value.Array(values)
+}
+
 fn stdlib_path(config: Config&) -> Result<PathBuf, String> {
     match &config.compiler_root {
         Some(root) => {
@@ -1841,6 +1878,35 @@ impl WorkerState {
                 let position = position_params(query, query_params)?;
                 Result<Value, WorkerFailure>.Ok(highlight_value(query, position.file,
                     position.row, position.column))
+            },
+            "textDocument/inlayHint" => {
+                if !ready { return Result<Value, WorkerFailure>.Ok(empty_array()); }
+                let query = match snapshot.query() {
+                    Some(value) => value,
+                    None => return Result<Value, WorkerFailure>.Err(WorkerFailure.new(
+                        -32801i64, "analysis snapshot is unavailable")),
+                };
+                let object = match query_params.as_object() {
+                    Some(value) => value,
+                    None => return Result<Value, WorkerFailure>.Err(WorkerFailure.new(
+                        -32602i64, "inlay hint params must be an object")),
+                };
+                let range_value = match object.get("range") {
+                    Some(value) => value,
+                    None => return Result<Value, WorkerFailure>.Err(WorkerFailure.new(
+                        -32602i64, "inlay hint range is missing")),
+                };
+                let range = match Range.from_json(range_value) {
+                    Some(value) => value,
+                    None => return Result<Value, WorkerFailure>.Err(WorkerFailure.new(
+                        -32602i64, "inlay hint range is invalid")),
+                };
+                let file = match query.file_for_path(normalized.as_str()) {
+                    Some(value) => value,
+                    None => return Result<Value, WorkerFailure>.Err(WorkerFailure.new(
+                        -32801i64, "document is not part of the current analysis snapshot")),
+                };
+                Result<Value, WorkerFailure>.Ok(inlay_hint_value(query, file, range))
             },
             _ => Result<Value, WorkerFailure>.Err(WorkerFailure.new(-32601i64, "unsupported LSP query")),
         }

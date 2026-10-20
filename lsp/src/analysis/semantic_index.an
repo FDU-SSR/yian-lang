@@ -132,6 +132,74 @@ fn assign_type_text(index: SourceIndex&, decl: u64, text: String) {
     index.decls[decl].type_text = Option<String>.Some(text);
 }
 
+// Const generic arguments render as numbers or constant names and are valid inside a type.
+fn displayable_argument(types: TypeStore&, type_id: TypeId, depth: u64) -> bool {
+    let data = match types.get(type_id) {
+        Some(value) => value,
+        None => return false,
+    };
+    match *data {
+        LiteralValue(_, _, _) => true,
+        ConstBinary(_, _, _) => true,
+        ConstUnary(_, _) => true,
+        ConstGeneric(_, _) => true,
+        _ => displayable_type(types, type_id, depth),
+    }
+}
+
+// A binding is hinted only when its analyzed type has a stable source-level rendering. Literal
+// types stay context-dependent, and the remaining variants are internal or non-value forms.
+fn displayable_type(types: TypeStore&, type_id: TypeId, depth: u64) -> bool {
+    if depth > 64u64 { return false; }
+    let data = match types.get(type_id) {
+        Some(value) => value,
+        None => return false,
+    };
+    match *data {
+        Void => false,
+        Never => false,
+        Error => false,
+        Bool => true,
+        Char => true,
+        Str => true,
+        IntLiteral => false,
+        FloatLiteral => false,
+        SelfType(_) => false,
+        ConstGeneric(_, _) => false,
+        LiteralValue(_, _, _) => false,
+        ConstUnary(_, _) => false,
+        ConstBinary(_, _, _) => false,
+        Reference(inner) | Pointer(inner) | CPointer(inner) | Slice(inner) =>
+            displayable_type(types, inner, depth + 1u64),
+        TraitObject(_) => true,
+        Array(element, _length) => displayable_type(types, element, depth + 1u64),
+        Tuple(elements) => {
+            for element in elements {
+                if !displayable_type(types, *element, depth + 1u64) { return false; }
+            }
+            true
+        },
+        FunctionPointer(parameters, result) => {
+            for parameter in parameters {
+                if !displayable_type(types, *parameter, depth + 1u64) { return false; }
+            }
+            displayable_type(types, result, depth + 1u64)
+        },
+        Nominal(_, arguments) => {
+            for argument in arguments {
+                if !displayable_argument(types, *argument, depth + 1u64) { return false; }
+            }
+            true
+        },
+        Integer(_, _) => true,
+        Float(_) => true,
+        Generic(_) => true,
+        CScalar(_, _, _) => true,
+        Opaque(_, _) => true,
+        Closure(_, _, _, _, _, _) => true,
+    }
+}
+
 fn member_decl(index: SourceIndex&, span: SourceSpan, kind: DeclKind) -> Option<u64> {
     index.find_decl_exact(span.source, span, kind)
 }
@@ -238,8 +306,12 @@ fn enrich_symbols(session: AnalysisSession&, index: SourceIndex&) {
         cursor += 1u64;
         if symbol.span.is_none() { continue; }
         let span = *symbol.span.unwrap();
-        if index.find_decl_at_span(span.source, span).is_none() { continue; }
-        let target = *index.find_decl_at_span(span.source, span).unwrap();
+        let found = match index.find_decl_at_span(span.source, span) {
+            Some(value) => Option<u64>.Some(value),
+            None => index.find_decl_by_symbol_span(span.source, span),
+        };
+        if found.is_none() { continue; }
+        let target = *found.unwrap();
         match symbol.kind {
             Function => {
                 match signature_text(session, symbol.type_id) {
@@ -253,6 +325,12 @@ fn enrich_symbols(session: AnalysisSession&, index: SourceIndex&) {
                 if index.decls[target].type_text.is_none() {
                     let rendered = stored_type_text(&session.types, &session.names, symbol.type_id);
                     assign_type_text(index, target, rendered);
+                }
+                if index.decls[target].binding && !index.decls[target].annotated &&
+                    index.decls[target].type_hint.is_none() &&
+                    displayable_type(&session.types, symbol.type_id, 0u64) {
+                    let rendered = stored_type_text(&session.types, &session.names, symbol.type_id);
+                    index.decls[target].type_hint = Option<String>.Some(rendered);
                 }
             },
             _ => {},

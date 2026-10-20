@@ -175,6 +175,7 @@ class StdioSession:
                         "relativePatternSupport": True,
                     },
                     "semanticTokens": {"refreshSupport": True},
+                    "inlayHint": {"refreshSupport": True},
                 }
             },
         })

@@ -137,7 +137,7 @@ pub fn parse_config(arguments: Vec<String>&) -> Result<Config, i32> {
             write_stdout(usage());
             return Result<Config, i32>.Err(0i32);
         } elif argument == "--version" {
-            write_stdout("yian-lsp 0.7.0\n");
+            write_stdout("yian-lsp 0.8.0\n");
             return Result<Config, i32>.Err(0i32);
         } elif argument == "--compiler-root" || argument == "--log-level" || argument == "--log-file" {
             if index + 1u64 >= arguments.len() {

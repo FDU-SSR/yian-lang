@@ -32,7 +32,7 @@ pub enum Tag { One, Two }
 """
 
 MAIN = """\
-from provider import A as Imported, B, Cell, Tag;
+from probe.provider import A as Imported, B, Cell, Tag;
 fn read(value: Imported) -> Imported {
     { let value: B = 2; value; }
     value
@@ -52,8 +52,42 @@ fn inspect() {
 """
 
 UTF16_MAIN = """\
-from provider import A as Imported, B;
+from probe.provider import A as Imported, B;
 fn marker() { let text: str = "😀"; let value: Imported = 1; }
+"""
+
+TYPED_MAIN = """\
+fn pair() -> (i32, i32) { (1, 2) }
+
+fn typed_bindings() {
+    let inferred = 1;
+    let flag = true;
+    let letter = 'A';
+    let text = "yian";
+    let annotated: i32 = 2;
+    let (first, second) = pair();
+    let items: i32[2] = [1, 2];
+    for item in items { item; }
+    let opt: Option<i32> = Option<i32>.Some(7);
+    match opt {
+        Some(payload) => { payload; },
+        None => {},
+    }
+    if let Some(found) = opt { found; }
+    let bias: i32 = 10;
+    let closure = |captured = bias| (value: i32) -> i32 { captured + value };
+    inferred; flag; letter; text; annotated; first; second; closure;
+}
+"""
+
+PROBE_MANIFEST = """\
+[package]
+name = "probe"
+kind = "bin"
+version = "0.1.0"
+entry = "src/main.an"
+
+[dependencies]
 """
 
 
@@ -102,8 +136,11 @@ def run_probe(lsp: Path, compiler_root: Path, timeout: float) -> dict[str, Any]:
     report: dict[str, Any] = {}
     with tempfile.TemporaryDirectory(prefix="yian-lsp-navigation-") as directory:
         workspace = Path(directory)
-        provider = workspace / "provider.an"
-        main = workspace / "main.an"
+        source_root = workspace / "src"
+        source_root.mkdir()
+        (workspace / "package.anx").write_text(PROBE_MANIFEST, encoding="utf-8", newline="")
+        provider = source_root / "provider.an"
+        main = source_root / "main.an"
         provider.write_text(PROVIDER, encoding="utf-8", newline="")
         main.write_text(MAIN, encoding="utf-8", newline="")
         provider_uri = provider.as_uri()
@@ -112,7 +149,7 @@ def run_probe(lsp: Path, compiler_root: Path, timeout: float) -> dict[str, Any]:
 
         client = StdioSession(command, cwd=workspace, environment=environment, timeout=timeout)
         try:
-            initialized = client.initialize(None)
+            initialized = client.initialize(workspace)
             capabilities = initialized.get("capabilities") if isinstance(initialized, dict) else None
             require(isinstance(capabilities, dict), "initialize did not return capabilities")
             for retained in (
@@ -122,6 +159,7 @@ def run_probe(lsp: Path, compiler_root: Path, timeout: float) -> dict[str, Any]:
                 "referencesProvider",
                 "documentHighlightProvider",
                 "semanticTokensProvider",
+                "inlayHintProvider",
             ):
                 require(capabilities.get(retained) is not None, f"missing retained capability {retained}")
             for closed in (
@@ -299,7 +337,15 @@ def run_probe(lsp: Path, compiler_root: Path, timeout: float) -> dict[str, Any]:
                 "textDocument": {"uri": provider_uri, "version": 2},
                 "contentChanges": [{"text": broken}],
             })
-            broken_diagnostics = client.wait_diagnostics(provider_uri, 2)["params"]["diagnostics"]
+            # The server clears diagnostics when the revision changes, so skip the empty clear
+            # publication and wait for the analysis result of this revision.
+            broken_diagnostics = client.until(lambda message: (
+                message.get("method") == "textDocument/publishDiagnostics"
+                and isinstance(message.get("params"), dict)
+                and message["params"].get("uri") == provider_uri
+                and message["params"].get("version") == 2
+                and message["params"].get("diagnostics")
+            ))["params"]["diagnostics"]
             require(len(broken_diagnostics) == 1, "failed analysis did not publish exactly one root diagnostic")
             require(broken_diagnostics[0].get("code") == "E302", "failed analysis lost its diagnostic code")
             require(
@@ -364,7 +410,7 @@ def run_probe(lsp: Path, compiler_root: Path, timeout: float) -> dict[str, Any]:
             require("i32" in repaired_text, "repaired hover did not use the restored underlying type")
             report["repaired_diagnostics"] = []
 
-            utf16 = workspace / "utf16.an"
+            utf16 = source_root / "utf16.an"
             utf16.write_text(UTF16_MAIN, encoding="utf-8", newline="")
             client.notify("textDocument/didOpen", {
                 "textDocument": {
@@ -396,6 +442,129 @@ def run_probe(lsp: Path, compiler_root: Path, timeout: float) -> dict[str, Any]:
             require(same_location(utf16_definition, provider_uri, 0, 12, 13),
                     "UTF-16 position did not resolve the imported alias")
             report["utf16_character"] = expected_character
+
+            typed = source_root / "typed.an"
+            typed.write_text(TYPED_MAIN, encoding="utf-8", newline="")
+            typed_uri = typed.as_uri()
+            typed_document = {"uri": typed_uri}
+            typed_lines = TYPED_MAIN.splitlines()
+            client.notify("textDocument/didOpen", {
+                "textDocument": {
+                    "uri": typed_uri,
+                    "languageId": "yian",
+                    "version": 1,
+                    "text": TYPED_MAIN,
+                }
+            })
+            require(client.wait_diagnostics(typed_uri, 1)["params"]["diagnostics"] == [],
+                    "typed fixture produced diagnostics")
+
+            def line_of(marker: str) -> int:
+                for index, line in enumerate(typed_lines):
+                    if marker in line:
+                        return index
+                raise ProbeFailure(f"typed fixture is missing {marker!r}")
+
+            def hint_position(line: int, word: str) -> dict[str, int]:
+                return {"line": line, "character": typed_lines[line].index(word) + len(word)}
+
+            inferred_line = line_of("let inferred")
+            flag_line = line_of("let flag")
+            letter_line = line_of("let letter")
+            text_line = line_of("let text")
+            pair_line = line_of("let (first, second)")
+            for_line = line_of("for item in")
+            match_line = line_of("Some(payload)")
+            if_line = line_of("if let Some(found)")
+            closure_line = line_of("let closure")
+            expected = [
+                (hint_position(inferred_line, "inferred"), ": i32"),
+                (hint_position(flag_line, "flag"), ": bool"),
+                (hint_position(letter_line, "letter"), ": char"),
+                (hint_position(text_line, "text"), ": str"),
+                (hint_position(pair_line, "first"), ": i32"),
+                (hint_position(pair_line, "second"), ": i32"),
+                (hint_position(for_line, "item"), ": i32&"),
+                (hint_position(match_line, "payload"), ": i32"),
+                (hint_position(if_line, "found"), ": i32"),
+                (hint_position(closure_line, "closure"), ": |captured: i32| (value: i32) -> i32"),
+                (hint_position(closure_line, "captured"), ": i32"),
+            ]
+            whole_range = {
+                "start": {"line": 0, "character": 0},
+                "end": {"line": len(typed_lines), "character": 0},
+            }
+            hints = client.request("textDocument/inlayHint", {
+                "textDocument": typed_document, "range": whole_range,
+            })
+            require(isinstance(hints, list), "inlay hints were not an array")
+            actual = [
+                (
+                    (item.get("position") or {}).get("line"),
+                    (item.get("position") or {}).get("character"),
+                    item.get("label"),
+                )
+                for item in hints if isinstance(item, dict)
+            ]
+            require(
+                actual == [(position["line"], position["character"], label)
+                           for position, label in expected],
+                f"inlay hints do not match the inferred bindings: {actual!r}",
+            )
+            require(
+                all(item.get("kind") == 1 and "textEdits" not in item for item in hints),
+                "inlay hints must be Type hints without text edits",
+            )
+            report["inlay_hints"] = len(actual)
+
+            inferred_line_range = {
+                "start": {"line": inferred_line, "character": 0},
+                "end": {"line": inferred_line, "character": len(typed_lines[inferred_line])},
+            }
+            single = client.request("textDocument/inlayHint", {
+                "textDocument": typed_document, "range": inferred_line_range,
+            })
+            require(
+                isinstance(single, list) and len(single) == 1 and single[0].get("label") == ": i32",
+                f"inlay hint range filtering failed: {single!r}",
+            )
+
+            refresh_mark = len(client.messages)
+            client.notify("textDocument/didChange", {
+                "textDocument": {"uri": typed_uri, "version": 2},
+                "contentChanges": [{"text": TYPED_MAIN + "// refresh probe\n"}],
+            })
+            require(client.wait_diagnostics(typed_uri, 2)["params"]["diagnostics"] == [],
+                    "edited typed fixture produced diagnostics")
+            # This round trip reads the frames the server wrote after the diagnostics, so the
+            # retained transcript has the refresh request even though StdioSession answers it.
+            client.request("textDocument/inlayHint", {
+                "textDocument": typed_document, "range": whole_range,
+            })
+            require(
+                any(message.get("method") == "workspace/inlayHint/refresh"
+                    for message in client.messages[refresh_mark:]),
+                "analysis completion did not send workspace/inlayHint/refresh",
+            )
+            report["inlay_hint_refresh"] = True
+
+            client.notify("textDocument/didChange", {
+                "textDocument": {"uri": typed_uri, "version": 3},
+                "contentChanges": [{"text": "fn main() { let broken: Missing = 1; }\n"}],
+            })
+            require(client.until(lambda message: (
+                message.get("method") == "textDocument/publishDiagnostics"
+                and isinstance(message.get("params"), dict)
+                and message["params"].get("uri") == typed_uri
+                and message["params"].get("version") == 3
+                and message["params"].get("diagnostics")
+            )), "invalid typed fixture did not publish a diagnostic")
+            require(
+                client.request("textDocument/inlayHint", {
+                    "textDocument": typed_document, "range": whole_range,
+                }) == [],
+                "failed analysis served stale inlay hints",
+            )
 
             status = client.shutdown()
             require(status == 0, f"LSP exited with status {status}")

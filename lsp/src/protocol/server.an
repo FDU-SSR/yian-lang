@@ -100,6 +100,7 @@ struct ServerState {
     watcher_bases: Vec<String>,
     watcher_patterns: Vec<String>,
     supports_semantic_refresh: bool,
+    supports_inlay_hint_refresh: bool,
     worker_ready: bool,
     worker_initialized: bool,
     sync_in_flight: bool,
@@ -291,6 +292,7 @@ impl ServerState {
             watcher_bases=Vec<String>.new(),
             watcher_patterns=Vec<String>.new(),
             supports_semantic_refresh=false,
+            supports_inlay_hint_refresh=false,
             worker_ready=false,
             worker_initialized=false,
             sync_in_flight=false,
@@ -552,17 +554,24 @@ impl ServerState {
         }
     }
 
-    fn send_semantic_refresh() -> Result<(), IoError> {
-        if !self.supports_semantic_refresh { return Result<(), IoError>.Ok(()); }
-        let method = String.from(&"workspace/semanticTokens/refresh");
+    fn send_refresh(method: str, supported: bool) -> Result<(), IoError> {
+        if !supported { return Result<(), IoError>.Ok(()); }
         // Keep JSON-RPC IDs within JavaScript's exactly representable integer range.
         let request_id = self.next_server_request_id;
         if request_id >= 9007199254740991i64 {
             return Result<(), IoError>.Err(process_error("server request ID space exhausted"));
         }
         self.next_server_request_id += 1i64;
-        self.queue_client(Message.Request(RequestId.Signed(request_id), method,
+        self.queue_client(Message.Request(RequestId.Signed(request_id), String.from(&method),
             Option<Value>.Some(Value.Null)))
+    }
+
+    fn send_semantic_refresh() -> Result<(), IoError> {
+        self.send_refresh("workspace/semanticTokens/refresh", self.supports_semantic_refresh)
+    }
+
+    fn send_inlay_hint_refresh() -> Result<(), IoError> {
+        self.send_refresh("workspace/inlayHint/refresh", self.supports_inlay_hint_refresh)
     }
 
     static fn client_supports_watchers(params: Option<Value&>) -> bool {
@@ -653,6 +662,38 @@ impl ServerState {
             None => Option<Object&>.None,
         };
         match semantic_tokens {
+            Some(value) => match value.get("refreshSupport") {
+                Some(Boolean(supported)) => *supported,
+                _ => false,
+            },
+            None => false,
+        }
+    }
+
+    static fn client_supports_inlay_hint_refresh(params: Option<Value&>) -> bool {
+        let root = match params { Some(value) => value.as_object(), None => Option<Object&>.None };
+        let capabilities = match root {
+            Some(value) => match value.get("capabilities") {
+                Some(value) => value.as_object(),
+                None => Option<Object&>.None,
+            },
+            None => Option<Object&>.None,
+        };
+        let workspace = match capabilities {
+            Some(value) => match value.get("workspace") {
+                Some(value) => value.as_object(),
+                None => Option<Object&>.None,
+            },
+            None => Option<Object&>.None,
+        };
+        let inlay_hint = match workspace {
+            Some(value) => match value.get("inlayHint") {
+                Some(value) => value.as_object(),
+                None => Option<Object&>.None,
+            },
+            None => Option<Object&>.None,
+        };
+        match inlay_hint {
             Some(value) => match value.get("refreshSupport") {
                 Some(Boolean(supported)) => *supported,
                 _ => false,
@@ -1044,6 +1085,7 @@ impl ServerState {
         put(&capabilities, "documentSymbolProvider", Value.Boolean(true));
         put(&capabilities, "referencesProvider", Value.Boolean(true));
         put(&capabilities, "documentHighlightProvider", Value.Boolean(true));
+        put(&capabilities, "inlayHintProvider", Value.Boolean(true));
         let legend = Object.new();
         let token_types = Vec<Value>.new();
         for token_type in ["type", "struct", "enum", "interface", "typeParameter", "function", "method", "property", "enumMember", "variable", "parameter"] {
@@ -1069,7 +1111,7 @@ impl ServerState {
 
         let server_info = Object.new();
         put(&server_info, "name", Value.String(String.from(&"yian-lsp")));
-        put(&server_info, "version", Value.String(String.from(&"0.7.0")));
+        put(&server_info, "version", Value.String(String.from(&"0.8.0")));
 
         let result = Object.new();
         put(&result, "capabilities", Value.Object(capabilities));
@@ -1392,6 +1434,10 @@ impl ServerState {
                     Some(value) => Self.client_supports_semantic_refresh(Option<Value&>.Some(value)),
                     None => false,
                 };
+                self.supports_inlay_hint_refresh = match &params {
+                    Some(value) => Self.client_supports_inlay_hint_refresh(Option<Value&>.Some(value)),
+                    None => false,
+                };
                 if let Some(value) = params { value.drop(); }
                 self.initialized = true;
                 self.success(id, self.initialize_result())?;
@@ -1405,7 +1451,7 @@ impl ServerState {
             },
             "textDocument/definition" | "textDocument/hover" | "textDocument/documentSymbol" |
             "textDocument/semanticTokens/full" | "textDocument/references" |
-            "textDocument/documentHighlight" => {
+            "textDocument/documentHighlight" | "textDocument/inlayHint" => {
                 if !self.initialized { return self.error(id, -32002i64, "server is not initialized"); }
                 if self.pending.len() + self.deferred.len() >= 128u64 {
                     return self.error(id, -32803i64, "too many pending requests");
@@ -1697,6 +1743,7 @@ impl ServerState {
         }
         if routes_current && sync_current { self.prune_closed_standalone_units(); }
         if published { self.send_semantic_refresh()?; }
+        if published { self.send_inlay_hint_refresh()?; }
         Result<(), IoError>.Ok(())
     }
 

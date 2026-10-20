@@ -1095,6 +1095,13 @@ def query_bundle(client: StdioSession, path: Path, text: str,
         "semanticTokens": client.request("textDocument/semanticTokens/full", {
             "textDocument": {"uri": path.as_uri()},
         }),
+        "inlayHint": client.request("textDocument/inlayHint", {
+            "textDocument": {"uri": path.as_uri()},
+            "range": {
+                "start": {"line": 0, "character": 0},
+                "end": {"line": len(text.splitlines()), "character": 0},
+            },
+        }),
     }
     for symbol in symbols:
         result[f"definition:{symbol}"] = request_position(
@@ -1126,7 +1133,7 @@ fn classify(value: i32) -> i32 {
     }
 }
 
-fn main() { let result: i32 = classify(answer); }
+fn main() { let result: i32 = classify(answer); let inferred = classify(answer); inferred; }
 """
 
 
@@ -1243,6 +1250,11 @@ def run_restart(native: Path, timeout: float) -> dict[str, Any]:
             cache_path = project / "build" / "lsp" / "analysis-v1.json"
             require(cache_path.is_file(), "the analysis cache file was not created")
             baseline = query_bundle(client, main, RESTART_MAIN_TEXT, ["classify", "answer"])
+            require(
+                isinstance(baseline.get("inlayHint"), list)
+                and any(item.get("label") == ": i32" for item in baseline["inlayHint"]),
+                "the restart fixture did not produce an inferred type hint",
+            )
             baseline_diagnostics = diagnostics["params"].get("diagnostics")
             require(any(item.get("code") == "W501" for item in baseline_diagnostics or []),
                     "the restart fixture did not produce a warning diagnostic")

@@ -276,7 +276,8 @@ fn parse_decls(document: Object&) -> Result<Vec<QueryDecl>, String> {
         };
         let type_text = match field_string(record, "type") { Some(item) => Option<String>.Some(String.from(&item)), None => Option<String>.None };
         let detail = match field_string(record, "detail") { Some(item) => Option<String>.Some(String.from(&item)), None => Option<String>.None };
-        decls.push(QueryDecl(file=file, span=span, kind=kind, name=name, owner=owner, type_text=type_text, detail=detail));
+        let type_hint = match field_string(record, "hint") { Some(item) => Option<String>.Some(String.from(&item)), None => Option<String>.None };
+        decls.push(QueryDecl(file=file, span=span, kind=kind, name=name, owner=owner, type_text=type_text, detail=detail, type_hint=type_hint));
     }
     accepted = true;
     Result<Vec<QueryDecl>, String>.Ok(val=decls)
@@ -395,6 +396,7 @@ fn build_cache(identity: CacheIdentity&, config_sha256: str, documents: Vec<Sour
         }
         record.insert("type", option_string_value(&declaration.type_text));
         record.insert("detail", option_string_value(&declaration.detail));
+        record.insert("hint", option_string_value(&declaration.type_hint));
         decls.push(Value.Object(record));
         decl_index += 1u64;
     }

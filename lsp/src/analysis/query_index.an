@@ -25,6 +25,7 @@ pub struct QueryDecl {
     pub owner: Option<Span>,
     pub type_text: Option<String>,
     pub detail: Option<String>,
+    pub type_hint: Option<String>,
 }
 
 impl Drop for QueryDecl {
@@ -32,6 +33,7 @@ impl Drop for QueryDecl {
         self.name.drop();
         match &self.type_text { Some(value) => value.drop(), None => {}, }
         match &self.detail { Some(value) => value.drop(), None => {}, }
+        match &self.type_hint { Some(value) => value.drop(), None => {}, }
     }
 }
 
@@ -114,6 +116,10 @@ impl QueryFile {
     }
 
     pub fn declarations() -> Vec<u64>& { &self.decl_ids }
+
+    // Declarations sorted by start position. Inlay hints are emitted in this order so a request
+    // returns source-ordered results regardless of nested binding insertion order.
+    pub fn declarations_in_source_order() -> Vec<u64>& { &self.decl_order }
 }
 
 impl Drop for QueryFile {
@@ -577,9 +583,13 @@ impl QuerySnapshot {
                 Some(value) => Option<String>.Some(String.from(&value.as_str())),
                 None => Option<String>.None,
             };
+            let type_hint = match &source.type_hint {
+                Some(value) => Option<String>.Some(String.from(&value.as_str())),
+                None => Option<String>.None,
+            };
             decls.push(QueryDecl(file=file, span=source.span.span, kind=source.kind,
                 name=String.from(&source.name.as_str()), owner=owner,
-                type_text=type_text, detail=detail));
+                type_text=type_text, detail=detail, type_hint=type_hint));
             files[file].decl_ids.push(decl_cursor);
             decl_cursor += 1u64;
         }

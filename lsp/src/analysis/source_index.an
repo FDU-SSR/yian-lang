@@ -6,8 +6,8 @@ from yianc.common.traversal import WalkControl;
 from yianc.frontend.ast.arena import AstTree;
 from yianc.frontend.ast.node import Argument, Block, CaptureItem, Condition, ConstExpr, ConstGenericParam;
 from yianc.frontend.ast.node import Expr, FieldPattern, Identifier, ImplCondition, Item, Literal;
-from yianc.frontend.ast.node import MatchArm, MethodDecl, MethodDef, ExternFuncDecl, Pattern, PatternLet;
-from yianc.frontend.ast.node import GenericParam, Program, TraitMember, TypeGenericParam, TypeSyntax, VarInfo, VariantInfo;
+from yianc.frontend.ast.node import MatchArm, MethodDecl, MethodDef, ExternFuncDecl, Pattern, PatternLet, PatternParam, LetCondition;
+from yianc.frontend.ast.node import GenericParam, Program, TraitMember, TypeData, TypeGenericParam, TypeSyntax, VarInfo, VariantInfo;
 from yianc.frontend.ast.walk import TryAstVisitor, try_walk_program;
 from yianc.frontend.lex.lexer import Lexer;
 from yianc.frontend.lex.token import KeywordKind, Token, TokenPayload, drop_tokens;
@@ -153,6 +153,15 @@ pub struct DeclInfo {
     pub owner: Option<SourceSpan>,
     pub type_text: Option<String>,
     pub detail: Option<String>,
+    // Set by let/for/match/if-let and capture bindings. Declared parameters stay false because
+    // their type is already written at the declaration site.
+    pub binding: bool,
+    pub annotated: bool,
+    // The compiler records a closure capture symbol at the whole capture item rather than at its
+    // name, so the semantic pass needs the recorded span to find this declaration.
+    pub symbol_span: Option<SourceSpan>,
+    // Type text for an inlay hint; set only for inferable, displayable binding types.
+    pub type_hint: Option<String>,
 }
 
 impl Drop for DeclInfo {
@@ -160,6 +169,7 @@ impl Drop for DeclInfo {
         self.name.drop();
         match &self.type_text { Some(value) => value.drop(), None => {}, }
         match &self.detail { Some(value) => value.drop(), None => {}, }
+        match &self.type_hint { Some(value) => value.drop(), None => {}, }
     }
 }
 
@@ -233,6 +243,14 @@ fn module_stem(path: str) -> String {
     }
 }
 
+// `let v = ...` parses its missing annotation as DeducedType; any other type node is written.
+fn is_deduced_type(node: TypeSyntax&) -> bool {
+    match &node.data {
+        DeducedType => true,
+        _ => false,
+    }
+}
+
 struct ScopeFrame {
     types: HashMap<NameId, u64>,
     values: HashMap<NameId, u64>,
@@ -265,6 +283,8 @@ struct Binder {
     method_def_pending: u64,
     method_modes: Vec<bool>,
     pattern_marks: Vec<u64>,
+    // 0 = parameter pattern (already typed), 1 = inferred binding, 2 = annotated binding.
+    pattern_modes: Vec<u64>,
 }
 
 impl Binder {
@@ -322,7 +342,7 @@ impl Binder {
             Option<SourceSpan>.None)
     }
 
-    fn bind_pattern_name(name: Identifier&, kind: DeclKind) {
+    fn bind_pattern_name(name: Identifier&, kind: DeclKind) -> u64 {
         let target = self.ensure_decl(name.span, kind, name.data.name.as_str());
         let interned = self.names.intern(name.data.name.as_str());
         if self.deferred_patterns != 0u64 {
@@ -330,6 +350,20 @@ impl Binder {
         } else {
             self.bind_value(interned, target);
         }
+        target
+    }
+
+    // Only patterns visited under a binding context become hint candidates. Parameter patterns
+    // register mode 0 so a declared parameter never produces an inlay hint.
+    fn mark_pattern_binding(target: u64) {
+        let mode = if self.pattern_modes.len() != 0u64 {
+            self.pattern_modes[self.pattern_modes.len() - 1u64]
+        } else {
+            0u64
+        };
+        if mode == 0u64 { return; }
+        self.index.decls[target].binding = true;
+        self.index.decls[target].annotated = mode == 2u64;
     }
 
     fn flush_from(mark: u64) {
@@ -385,6 +419,7 @@ impl Drop for Binder {
         self.item_scopes.drop();
         self.method_modes.drop();
         self.pattern_marks.drop();
+        self.pattern_modes.drop();
     }
 }
 
@@ -452,6 +487,10 @@ impl TryAstVisitor<String> for Binder {
         let target = self.ensure_decl(node.data.name.span, DeclKind.Parameter, node.data.name.data.name.as_str());
         let interned = self.names.intern(node.data.name.data.name.as_str());
         self.bind_value(interned, target);
+        self.index.decls[target].binding = true;
+        self.index.decls[target].annotated = false;
+        self.index.decls[target].symbol_span =
+            Option<SourceSpan>.Some(SourceSpan(self.source, node.span));
         Result<WalkControl, String>.Ok(WalkControl.Continue)
     }
 
@@ -464,11 +503,13 @@ impl TryAstVisitor<String> for Binder {
         match &node.data {
             NamePattern(name) => {
                 let kind = if self.binding_params != 0u64 { DeclKind.Parameter } else { DeclKind.Variable };
-                self.bind_pattern_name(*name, kind);
+                let target = self.bind_pattern_name(*name, kind);
+                self.mark_pattern_binding(target);
             },
             BindPattern(name, inner) => {
                 let kind = if self.binding_params != 0u64 { DeclKind.Parameter } else { DeclKind.Variable };
-                self.bind_pattern_name(*name, kind);
+                let target = self.bind_pattern_name(*name, kind);
+                self.mark_pattern_binding(target);
             },
             ConstructPattern(name, qualifier, arguments, rest) => {
                 self.skip_identifier(name.span);
@@ -478,13 +519,58 @@ impl TryAstVisitor<String> for Binder {
         Result<WalkControl, String>.Ok(WalkControl.Continue)
     }
 
+    pub fn enter_pattern_let(node: PatternLet&) -> Result<WalkControl, String> {
+        let mode = if is_deduced_type(node.data.var_type) { 1u64 } else { 2u64 };
+        self.pattern_modes.push(mode);
+        Result<WalkControl, String>.Ok(WalkControl.Continue)
+    }
+
+    pub fn leave_pattern_let(node: PatternLet&) -> Result<(), String> {
+        match self.pattern_modes.pop() {
+            Some(value) => {},
+            None => {},
+        }
+        Result<(), String>.Ok(())
+    }
+
+    pub fn enter_pattern_param(node: PatternParam&) -> Result<WalkControl, String> {
+        self.pattern_modes.push(0u64);
+        Result<WalkControl, String>.Ok(WalkControl.Continue)
+    }
+
+    pub fn leave_pattern_param(node: PatternParam&) -> Result<(), String> {
+        match self.pattern_modes.pop() {
+            Some(value) => {},
+            None => {},
+        }
+        Result<(), String>.Ok(())
+    }
+
+    pub fn enter_let_condition(node: LetCondition&) -> Result<WalkControl, String> {
+        self.pattern_modes.push(1u64);
+        Result<WalkControl, String>.Ok(WalkControl.Continue)
+    }
+
+    pub fn leave_let_condition(node: LetCondition&) -> Result<(), String> {
+        match self.pattern_modes.pop() {
+            Some(value) => {},
+            None => {},
+        }
+        Result<(), String>.Ok(())
+    }
+
     pub fn enter_match_arm(node: MatchArm&) -> Result<WalkControl, String> {
         self.push_scope();
+        self.pattern_modes.push(1u64);
         Result<WalkControl, String>.Ok(WalkControl.Continue)
     }
 
     pub fn leave_match_arm(node: MatchArm&) -> Result<(), String> {
         self.pop_scope();
+        match self.pattern_modes.pop() {
+            Some(value) => {},
+            None => {},
+        }
         Result<(), String>.Ok(())
     }
 
@@ -573,14 +659,19 @@ impl TryAstVisitor<String> for Binder {
     pub fn enter_expr(node: Expr&) -> Result<WalkControl, String> {
         match &node.data {
             Block(_) => self.push_scope(),
-            VarDecl(name, _, _) => {
-                self.ensure_decl(name.span, DeclKind.Variable, name.data.name.as_str());
+            VarDecl(name, var_type, _) => {
+                let target = self.ensure_decl(name.span, DeclKind.Variable, name.data.name.as_str());
+                self.index.decls[target].binding = true;
+                self.index.decls[target].annotated = !is_deduced_type(*var_type);
             },
             PatternLet(_) => {
                 self.pattern_marks.push(self.pending_patterns.len());
                 self.deferred_patterns += 1u64;
             },
-            For(_, _, _) => self.push_scope(),
+            For(_, _, _) => {
+                self.push_scope();
+                self.pattern_modes.push(1u64);
+            },
             ClosureExpr(_, _, _, _) => self.push_scope(),
             MethodCall(_, name, _, _) => self.skip_identifier(name.span),
             FieldAccess(_, name) => self.skip_identifier(name.span),
@@ -615,7 +706,13 @@ impl TryAstVisitor<String> for Binder {
                 };
                 self.flush_from(mark);
             },
-            For(_, _, _) => self.pop_scope(),
+            For(_, _, _) => {
+                self.pop_scope();
+                match self.pattern_modes.pop() {
+                    Some(value) => {},
+                    None => {},
+                }
+            },
             ClosureExpr(_, _, _, _) => self.pop_scope(),
             If(condition, _, _, _) => match condition {
                 Let(_) => self.pop_scope(),
@@ -1034,7 +1131,7 @@ impl SourceIndex {
             skip=HashMap<SpanKey, bool>.new(), pending_patterns=Vec<(NameId, u64)>.new(),
             deferred_patterns=0u64, type_depth=0u64, const_depth=0u64, binding_params=0u64,
             item_scopes=Vec<bool>.new(), method_def_pending=0u64, method_modes=Vec<bool>.new(),
-            pattern_marks=Vec<u64>.new());
+            pattern_marks=Vec<u64>.new(), pattern_modes=Vec<u64>.new());
         binder.push_scope();
         for entry in self.module_names[source.index].entries() {
             let name = *entry[0];
@@ -1068,7 +1165,9 @@ impl SourceIndex {
             None => Option<SourceSpan>.None,
         };
         self.decls.push(DeclInfo(source=source, span=span, kind=kind, name=String.from(&name),
-            owner=owner_copy, type_text=Option<String>.None, detail=Option<String>.None));
+            owner=owner_copy, type_text=Option<String>.None, detail=Option<String>.None,
+            binding=false, annotated=false, symbol_span=Option<SourceSpan>.None,
+            type_hint=Option<String>.None));
         self.decl_keys.insert(key, id);
         self.decl_spans.insert(span_key(source, span), true);
         self.add_occurrence(source, span, Option<u64>.Some(id), kind, true,
@@ -1153,6 +1252,30 @@ impl SourceIndex {
             Some(value) => Option<u64>.Some(*value),
             None => Option<u64>.None,
         }
+    }
+
+    // Closure captures are recorded by the compiler at the whole capture item; this lookup
+    // connects that symbol span to the name declaration the binder created.
+    pub fn find_decl_by_symbol_span(source: SourceId, span: SourceSpan) -> Option<u64> {
+        let index = 0u64;
+        while index < self.decls.len() {
+            let decl = &self.decls[index];
+            if decl.source == source {
+                match &decl.symbol_span {
+                    Some(value) => {
+                        if value.span.start.row == span.span.start.row &&
+                        value.span.start.column == span.span.start.column &&
+                        value.span.end.row == span.span.end.row &&
+                        value.span.end.column == span.span.end.column {
+                            return Option<u64>.Some(index);
+                        }
+                    },
+                    None => {},
+                }
+            }
+            index += 1u64;
+        }
+        Option<u64>.None
     }
 
     pub fn source_for_path(path: str) -> Option<SourceId> {
