@@ -3,7 +3,7 @@ from yianc.frontend.prepare import prepare_file, PreparationStage;
 from yianc.common.ids import SourceId;
 from std.core.drop import Drop;
 from std.core.env import exit;
-from std.core.io import IoError, Stderr, Stdout;
+from std.core.io import IoError, eprint, eprintln, print, println;
 from std.core.string import String;
 from std.core.vec import Vec;
 from yianc.config import FrontendPhase, parse_args;
@@ -26,24 +26,14 @@ fn release_paths(paths: Vec<String>&) {
     paths.drop();
 }
 
-fn write_output(text: str) -> bool {
-    return match Stdout.new().write_str(text) {
-        Ok(_) => true,
-        Err(problem) => {
-            problem.drop();
-            false
-        },
-    };
-}
-
-fn emit_json(writer: Writer&) -> bool {
-    return match writer.finish() {
+fn emit_json(writer: Writer&) {
+    match writer.finish() {
         Ok(text) => {
             defer text.drop();
-            write_output(text.as_str()) && write_output("\n")
+            println(text.as_str());
         },
-        Err(_) => false,
-    };
+        Err(_) => {},
+    }
 }
 
 // The files array is open on entry; close it and open the sibling diagnostic object.
@@ -131,9 +121,8 @@ fn frontend(phase: FrontendPhase, inputs: Vec<String>&) -> bool {
         Err(problem) => {
             defer problem.drop();
             // Input discovery precedes the observation response and reports CLI errors on stderr.
-            write_error("error: ");
-            write_error(problem.msg());
-            write_error("\n");
+            eprint("error: ");
+            eprintln(problem.msg());
             return false;
         },
     };
@@ -181,13 +170,8 @@ fn frontend(phase: FrontendPhase, inputs: Vec<String>&) -> bool {
     output.key("diagnostic");
     output.write_null();
     output.end_object();
-    return emit_json(&output);
-}
-
-fn write_error(text: str) {
-    match Stderr.new().write_str(text) {
-        Ok(_) => {}, Err(problem) => problem.drop(),
-    }
+    emit_json(&output);
+    true
 }
 
 fn main() {
@@ -196,11 +180,7 @@ fn main() {
             defer config.drop();
 
             match &config.action {
-                Help(text) => if write_output(text.as_str()) {
-                    0i32
-                } else {
-                    1i32
-                },
+                Help(text) => { print(text.as_str()); 0i32 },
                 FrontendJson(phase) => if frontend(*phase, &config.inputs) {
                     0i32
                 } else {
@@ -213,12 +193,12 @@ fn main() {
                 },
                 Compile => if compile_cli(&config) { 0i32 } else { 1i32 },
                 Format(rewrite, check) => format_cli(&config, *rewrite, *check),
-                Invalid(message) => { write_error(message.as_str()); 1i32 },
+                Invalid(message) => { eprintln(message.as_str()); 1i32 },
             }
         },
         Err(message) => {
             defer message.drop();
-            write_error(message.as_str());
+            eprintln(message.as_str());
             2i32
         },
     };

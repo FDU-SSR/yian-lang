@@ -365,10 +365,23 @@ impl<W> Write for BufWriter<W> if W: Write {
     pub fn flush() -> Result<(), IoError> { self.drain()?; self.inner.flush() }
 }
 impl<W> Drop for BufWriter<W> { pub fn drop() { self.buffer.drop(); } }
-pub fn print(text: str) {
-    let output = Stdout.new();
-    match output.write_str(text) { Ok(_) => {}, Err(error) => { error.drop(); @panic("stdout write failed"); }, }
+fn write_stdout(text: str) {
+    match Stdout.new().write_str(text) {
+        Ok(_) => {},
+        Err(error) => { error.drop(); @panic("stdout write failed"); },
+    }
 }
+// stderr carries diagnostics; a failed diagnostic write must not abort the process.
+fn write_stderr(text: str) {
+    match Stderr.new().write_str(text) {
+        Ok(_) => {},
+        Err(error) => error.drop(),
+    }
+}
+pub fn print(text: str) { write_stdout(text); }
+pub fn println(text: str) { write_stdout(text); write_stdout("\n"); }
+pub fn eprint(text: str) { write_stderr(text); }
+pub fn eprintln(text: str) { write_stderr(text); write_stderr("\n"); }
 pub fn open_rdonly(path: str) -> Result<File, IoError> { File.open(path, OpenMode.Read) }
 pub fn open_wronly(path: str) -> Result<File, IoError> { File.open(path, OpenMode.Write) }
 pub fn open_append(path: str) -> Result<File, IoError> { File.open(path, OpenMode.Append) }

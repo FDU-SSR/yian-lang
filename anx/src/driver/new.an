@@ -1,24 +1,10 @@
 from std.core.drop import Drop;
 from std.core.fs import create_dir_all, current_dir, resolve, try_exists, write_string;
-from std.core.io import Stderr, Stdout;
+from std.core.io import eprint, eprintln, print;
 from std.core.option import Option;
 from std.core.path import Path, PathBuf;
 from std.core.string import String;
 from std.core.vec import Vec;
-
-fn write_stdout(text: str) -> bool {
-    match Stdout.new().write_str(text) {
-        Ok(_) => true,
-        Err(problem) => { problem.drop(); false },
-    }
-}
-
-fn write_stderr(text: str) {
-    match Stderr.new().write_str(text) {
-        Ok(_) => {},
-        Err(problem) => problem.drop(),
-    }
-}
 
 fn package_basename(name: str) -> String {
     match Path.new(name).file_name() {
@@ -51,9 +37,8 @@ fn write_file(path: str, text: str) -> bool {
     match write_string(path, text) {
         Ok(_) => true,
         Err(problem) => {
-            write_stderr("error: ");
-            write_stderr(problem.msg());
-            write_stderr("\n");
+            eprint("error: ");
+            eprintln(problem.msg());
             problem.drop();
             false
         },
@@ -64,9 +49,8 @@ pub fn scaffold(name: str, kind: str) -> i32 {
     let current = match current_dir() {
         Ok(value) => value,
         Err(problem) => {
-            write_stderr("error: ");
-            write_stderr(problem.msg());
-            write_stderr("\n");
+            eprint("error: ");
+            eprintln(problem.msg());
             problem.drop();
             return 1i32;
         },
@@ -76,17 +60,16 @@ pub fn scaffold(name: str, kind: str) -> i32 {
     defer unresolved.drop();
     let package_dir = match resolve(unresolved.as_str()) {
         Ok(value) => value,
-        Err(problem) => { write_stderr("error: "); write_stderr(problem.msg()); write_stderr("\n"); problem.drop(); return 1i32; },
+        Err(problem) => { eprint("error: "); eprintln(problem.msg()); problem.drop(); return 1i32; },
     };
     defer package_dir.drop();
     match try_exists(package_dir.as_str()) {
         Ok(true) => {
-            write_stderr("error: Directory already exists: ");
-            write_stderr(package_dir.as_str());
-            write_stderr("\n");
+            eprint("error: Directory already exists: ");
+            eprintln(package_dir.as_str());
             return 1i32;
         },
-        Err(problem) => { write_stderr("error: "); write_stderr(problem.msg()); write_stderr("\n"); problem.drop(); return 1i32; },
+        Err(problem) => { eprint("error: "); eprintln(problem.msg()); problem.drop(); return 1i32; },
         _ => {},
     }
 
@@ -97,7 +80,7 @@ pub fn scaffold(name: str, kind: str) -> i32 {
     for directory in [package_dir.as_str(), source_dir.as_str(), tests_dir.as_str()] {
         match create_dir_all(*directory) {
             Ok(_) => {},
-            Err(problem) => { write_stderr("error: "); write_stderr(problem.msg()); write_stderr("\n"); problem.drop(); return 1i32; },
+            Err(problem) => { eprint("error: "); eprintln(problem.msg()); problem.drop(); return 1i32; },
         }
     }
 
@@ -137,6 +120,6 @@ pub fn scaffold(name: str, kind: str) -> i32 {
     message.push_str(package_dir.as_str());
     message.push('\n');
     defer message.drop();
-    if !write_stdout(message.as_str()) { return 1i32; }
+    print(message.as_str());
     0i32
 }

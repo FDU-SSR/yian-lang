@@ -1,6 +1,6 @@
 from std.core.drop import Drop;
 from std.core.fs import create_dir_all, read_to_string, try_exists, write_string;
-from std.core.io import IoError, IoErrorKind, Stderr, Stdout;
+from std.core.io import IoError, IoErrorKind, eprint, eprintln, print, println;
 from std.core.option import Option;
 from std.core.path import Path, PathBuf;
 from std.core.process import Command, ExitStatus, ProcessOutput;
@@ -45,20 +45,6 @@ struct TestFailure { name: String, detail: String }
 
 impl Drop for TestFailure {
     fn drop() { self.name.drop(); self.detail.drop(); }
-}
-
-fn write_stdout(text: str) -> bool {
-    match Stdout.new().write_str(text) {
-        Ok(_) => true,
-        Err(problem) => { problem.drop(); false },
-    }
-}
-
-fn write_stderr(text: str) {
-    match Stderr.new().write_str(text) {
-        Ok(_) => {},
-        Err(problem) => problem.drop(),
-    }
 }
 
 fn release_strings(values: Vec<String>&) {
@@ -268,9 +254,8 @@ fn discover_tests(root: str) -> Vec<ProjectTest> {
                 problem.drop();
                 return Vec<ProjectTest>.new();
             }
-            write_stderr("error: could not discover tests: ");
-            write_stderr(problem.msg());
-            write_stderr("\n");
+            eprint("error: could not discover tests: ");
+            eprintln(problem.msg());
             problem.drop();
             return Vec<ProjectTest>.new();
         },
@@ -634,7 +619,7 @@ fn run_pointer_mode(project: Project&, tests: Vec<ProjectTest>&, compiler: str,
     profile: Option<BuildProfile&>) -> i32 {
     let root_index = match project.package_index(project.root_package()) {
         Some(value) => value,
-        None => { write_stdout("error: project root package is missing\n"); return 1i32; },
+        None => { println("error: project root package is missing"); return 1i32; },
     };
     let root = project.package(root_index).root();
     let test_build_root = Path.new(root).join("build/test");
@@ -644,9 +629,8 @@ fn run_pointer_mode(project: Project&, tests: Vec<ProjectTest>&, compiler: str,
     match create_dir_all(build_dir.as_str()) {
         Ok(_) => {},
         Err(problem) => {
-            write_stdout("error: could not create test build directory: ");
-            write_stdout(problem.msg());
-            write_stdout("\n");
+            print("error: could not create test build directory: ");
+            println(problem.msg());
             problem.drop();
             return 1i32;
         },
@@ -654,9 +638,9 @@ fn run_pointer_mode(project: Project&, tests: Vec<ProjectTest>&, compiler: str,
     let map_path = Path.new(build_dir.as_str()).join("pkg.json");
     defer map_path.drop();
 
-    write_stdout("\nPointer mode: ");
-    write_stdout(mode_name);
-    write_stdout("\n");
+    println("");
+    print("Pointer mode: ");
+    println(mode_name);
     let failures = Vec<TestFailure>.new();
     let index = 0u64;
     while index < tests.len() {
@@ -665,15 +649,13 @@ fn run_pointer_mode(project: Project&, tests: Vec<ProjectTest>&, compiler: str,
             mode_name, optimization, release, profile);
         match detail {
             Some(problem) => {
-                write_stdout("  [FAIL] ");
-                write_stdout(test.name.as_str());
-                write_stdout("\n");
+                print("  [FAIL] ");
+                println(test.name.as_str());
                 failures.push(TestFailure(name=String.from(&test.name.as_str()), detail=problem));
             },
             None => {
-                write_stdout("  [ok] ");
-                write_stdout(test.name.as_str());
-                write_stdout("\n");
+                print("  [ok] ");
+                println(test.name.as_str());
             },
         }
         index += 1u64;
@@ -684,21 +666,20 @@ fn run_pointer_mode(project: Project&, tests: Vec<ProjectTest>&, compiler: str,
     let failed_text = failures.len().to_string();
     let total_text = tests.len().to_string();
     defer { passed_text.drop(); failed_text.drop(); total_text.drop(); };
-    write_stdout("\n");
-    write_stdout(passed_text.as_str());
-    write_stdout(" passed, ");
-    write_stdout(failed_text.as_str());
-    write_stdout(" failed, ");
-    write_stdout(total_text.as_str());
-    write_stdout(" total\n");
+    println("");
+    print(passed_text.as_str());
+    print(" passed, ");
+    print(failed_text.as_str());
+    print(" failed, ");
+    print(total_text.as_str());
+    println(" total");
 
     let failure_index = 0u64;
     while failure_index < failures.len() {
-        write_stdout("\n--- ");
-        write_stdout(failures[failure_index].name.as_str());
-        write_stdout(" ---\n");
-        write_stdout(failures[failure_index].detail.as_str());
-        write_stdout("\n");
+        print("\n--- ");
+        print(failures[failure_index].name.as_str());
+        println(" ---");
+        println(failures[failure_index].detail.as_str());
         failure_index += 1u64;
     }
     let failed = failures.len() != 0u64;
@@ -714,7 +695,7 @@ pub fn run_profiled(project: Project&, mode: PointerMode, optimization: Option<u
     profile: Option<BuildProfile&>) -> i32 {
     let root_index = match project.package_index(project.root_package()) {
         Some(value) => value,
-        None => { write_stdout("error: project root package is missing\n"); return 1i32; },
+        None => { println("error: project root package is missing"); return 1i32; },
     };
     let root = project.package(root_index).root();
     let tests_root = Path.new(root).join("tests");
@@ -724,22 +705,20 @@ pub fn run_profiled(project: Project&, mode: PointerMode, optimization: Option<u
     profile_finish(profile, discovery_token, !tests.is_empty());
     defer release_tests(&tests);
     if tests.is_empty() {
-        write_stdout("No tests found under ");
-        write_stdout(tests_root.as_str());
-        write_stdout("\n");
+        print("No tests found under ");
+        println(tests_root.as_str());
         return 1i32;
     }
     if project.package_index("__anx_test").is_some() {
-        write_stdout("error: the project already declares a package named '__anx_test', which `anx test` needs for its own test root\n");
+        println("error: the project already declares a package named '__anx_test', which `anx test` needs for its own test root");
         return 1i32;
     }
 
     let compiler = match compiler_program() {
         Ok(value) => value,
         Err(message) => {
-            write_stdout("error: could not select YIAN compiler: ");
-            write_stdout(message.as_str());
-            write_stdout("\n");
+            print("error: could not select YIAN compiler: ");
+            println(message.as_str());
             message.drop();
             return 1i32;
         },

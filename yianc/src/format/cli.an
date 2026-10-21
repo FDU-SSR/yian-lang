@@ -3,7 +3,7 @@ from yianc.frontend.source import collect_sources, read_source;
 from yianc.format.api import format_text;
 from std.core.drop import Drop;
 from std.core.fs import write;
-from std.core.io import Stdout, Stderr;
+from std.core.io import eprint, eprintln, print, println;
 from std.core.iter import Iterator, IntoIterator;
 from std.core.fmt import ToString;
 from std.core.string import String;
@@ -14,59 +14,57 @@ fn drop_paths(paths: Vec<String>&) {
     paths.drop();
 }
 
-fn stdout(text: str) -> bool {
-    match Stdout.new().write_str(text) { Ok(_) => true, Err(problem) => { problem.drop(); false }, }
-}
-
-fn stderr(text: str) {
-    match Stderr.new().write_str(text) { Ok(_) => {}, Err(problem) => problem.drop(), }
-}
-
 // Validate before rendering. A parse failure never writes a partially formatted source.
 pub fn format_cli(config: CompilerConfig&, rewrite: bool, check: bool) -> i32 {
     let paths = match collect_sources(&config.inputs) {
         Ok(value) => value,
-        Err(problem) => { defer problem.drop(); stderr(problem.msg()); return 1; },
+        Err(problem) => { defer problem.drop(); eprint(problem.msg()); return 1; },
     };
     defer drop_paths(&paths);
-    if paths.is_empty() { stderr("error: --format needs at least one source file\n"); return 1; }
-    if !rewrite && !check && paths.len() != 1 { stderr("error: --format prints one file; add -w or --check\n"); return 1; }
+    if paths.is_empty() { eprintln("error: --format needs at least one source file"); return 1; }
+    if !rewrite && !check && paths.len() != 1 { eprintln("error: --format prints one file; add -w or --check"); return 1; }
 
     let changed = 0u64;
     for path in paths {
-        let source = match read_source(path.as_str()) { Ok(value) => value, Err(problem) => { defer problem.drop(); stderr(problem.msg()); return 1; }, };
+        let source = match read_source(path.as_str()) { Ok(value) => value, Err(problem) => { defer problem.drop(); eprint(problem.msg()); return 1; }, };
         defer source.drop();
         let formatted = match format_text(source.as_str(), path.as_str()) {
             Ok(Some(value)) => value,
             Ok(None) => {
-                stderr("skip ");
-                stderr(path.as_str());
-                stderr(": cannot be formatted\n");
+                eprint("skip ");
+                eprint(path.as_str());
+                eprintln(": cannot be formatted");
                 continue;
             },
             Err(problem) => {
                 defer problem.drop();
-                stderr("error: formatter failed\n");
+                eprintln("error: formatter failed");
                 return 1;
             },
         };
         defer formatted.drop();
         if formatted.as_str() == source.as_str() { continue; }
         changed += 1;
-        if check { if !stdout(path.as_str()) || !stdout("\n") { return 1; } } elif rewrite {
-            match write(path.as_str(), formatted.as_slice()) { Ok(_) => {}, Err(problem) => { defer problem.drop(); stderr(problem.msg()); return 1; }, }
-        } elif !stdout(formatted.as_str()) { return 1; }
+        if check { println(path.as_str()); } elif rewrite {
+            match write(path.as_str(), formatted.as_slice()) { Ok(_) => {}, Err(problem) => { defer problem.drop(); eprint(problem.msg()); return 1; }, }
+        } else { print(formatted.as_str()); }
     }
     let total = paths.len().to_string();
     defer total.drop();
     let count = changed.to_string();
     defer count.drop();
     if check {
-        if !stdout(count.as_str()) || !stdout(" of ") || !stdout(total.as_str()) || !stdout(" file(s) need formatting\n") { return 1; }
+        print(count.as_str());
+        print(" of ");
+        print(total.as_str());
+        println(" file(s) need formatting");
         return if changed > 0 { 1 } else { 0 };
     }
     if rewrite {
-        if !stdout(total.as_str()) || !stdout(" file(s) checked, ") || !stdout(count.as_str()) || !stdout(" rewritten\n") { return 1; }
+        print(total.as_str());
+        print(" file(s) checked, ");
+        print(count.as_str());
+        println(" rewritten");
     }
     0
 }

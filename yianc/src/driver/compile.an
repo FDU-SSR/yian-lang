@@ -17,7 +17,7 @@ from yianc.common.ids import UnitId;
 from std.core.convert import From;
 from std.core.drop import Drop;
 from std.core.fs import create_dir_all, write, rename, remove_dir, remove_file;
-from std.core.io import Stderr, Write;
+from std.core.io import Stderr, Write, eprint, eprintln;
 from std.core.iter import Iterator, IntoIterator;
 from std.core.fmt import ToString;
 from std.core.option import Option;
@@ -37,8 +37,7 @@ fn report(diagnostic: Diagnostic&, session: Option<AnalysisSession&>) {
         Err(problem) => { problem.drop(); return; },
     };
     defer text.drop();
-    match Stderr.new().write_str(text.as_str()) { Ok(_) => {}, Err(problem) => problem.drop(), }
-    match Stderr.new().write_str("\n") { Ok(_) => {}, Err(problem) => problem.drop(), }
+    eprintln(text.as_str());
 }
 
 fn driver_error(problem: DriverError&) {
@@ -61,7 +60,7 @@ fn driver_error(problem: DriverError&) {
         None => {},
     }
     text.push_str("\n");
-    match Stderr.new().write_str(text.as_str()) { Ok(_) => {}, Err(error) => error.drop(), }
+    eprint(text.as_str());
     match Stderr.new().write_all(problem.stderr.as_slice()) { Ok(_) => {}, Err(error) => error.drop(), }
 }
 
@@ -102,7 +101,7 @@ fn destination(config: CompilerConfig&, session: AnalysisSession&) -> String {
 }
 
 pub fn compile_cli(config: CompilerConfig&) -> bool {
-    let trace = match CompilerTrace.new(config, false) { Ok(value) => value, Err(problem) => { defer problem.drop(); write_error(problem.as_str()); return false; }, };
+    let trace = match CompilerTrace.new(config, false) { Ok(value) => value, Err(problem) => { defer problem.drop(); eprintln(problem.as_str()); return false; }, };
     defer trace.drop();
     let profile_complete = false;
     defer trace.finalize(profile_complete);
@@ -114,7 +113,7 @@ pub fn compile_cli(config: CompilerConfig&) -> bool {
         for current in library.as_str().chars() {
             if !is_alphanumeric(current) && !"_+.-".contains_char(current) { valid = false; }
         }
-        if !valid { write_error("error: invalid --link-lib name\n"); return false; }
+        if !valid { eprintln("error: invalid --link-lib name"); return false; }
     }
     let started = trace.start_pass("source_preparation", "main", "source preparation", ProfileKind.Stage);
     let prepared = prepare_profiled(config, Option<CompilerTrace&>.Some(&trace));
@@ -203,7 +202,7 @@ pub fn compile_cli(config: CompilerConfig&) -> bool {
         let dump_token = trace.start_pass("io.dump", "io", "LLVM IR dump", ProfileKind.Tool);
         match write("build/ir.ll", ir.as_slice()) {
             Ok(_) => trace.finish("io.dump", dump_token),
-            Err(problem) => { trace.fail("io.dump", dump_token); trace.fail("llvm_pipeline", started); defer problem.drop(); write_error(problem.msg()); return false; },
+            Err(problem) => { trace.fail("io.dump", dump_token); trace.fail("llvm_pipeline", started); defer problem.drop(); eprintln(problem.msg()); return false; },
         }
     }
     let emitted = backend.emit_observed(&cfg, EmitOptions(config.target), Option<CompilerTrace&>.Some(&trace));
@@ -218,10 +217,10 @@ pub fn compile_cli(config: CompilerConfig&) -> bool {
     let publish_directory_ready = false;
     defer { if !publish_directory_ready { trace.fail("io.artifact_publish", publish_directory_token); } };
     let parent = match Path.new(path.as_str()).parent() { Some(value) => if value.as_str() == "" { "." } else { value.as_str() }, None => ".", };
-    match create_dir_all(parent) { Ok(_) => {}, Err(problem) => { defer problem.drop(); write_error(problem.msg()); return false; }, }
+    match create_dir_all(parent) { Ok(_) => {}, Err(problem) => { defer problem.drop(); eprintln(problem.msg()); return false; }, }
     let directory = match temporary_directory(parent) {
         Ok(value) => value,
-        Err(problem) => { defer problem.drop(); write_error(problem.msg()); return false; },
+        Err(problem) => { defer problem.drop(); eprintln(problem.msg()); return false; },
     };
     trace.finish("io.artifact_publish", publish_directory_token);
     publish_directory_ready = true;
@@ -234,7 +233,7 @@ pub fn compile_cli(config: CompilerConfig&) -> bool {
     let publish_token = trace.start_pass("io.artifact_publish", "io", "write temporary compiler artifact", ProfileKind.Tool);
     match write(object.as_str(), emission.bytes.as_slice()) {
         Ok(_) => trace.finish("io.artifact_publish", publish_token),
-        Err(problem) => { trace.fail("io.artifact_publish", publish_token); defer problem.drop(); write_error(problem.msg()); return false; },
+        Err(problem) => { trace.fail("io.artifact_publish", publish_token); defer problem.drop(); eprintln(problem.msg()); return false; },
     }
     if config.target == OutputKind.Exe || config.target == OutputKind.Obj {
         started = trace.start_pass("native_pipeline", "main", "native linking", ProfileKind.Stage);
@@ -279,28 +278,23 @@ pub fn compile_cli(config: CompilerConfig&) -> bool {
             if intermediate.as_str() != path.as_str() {
                 match rename(object.as_str(), intermediate.as_str()) {
                     Ok(_) => {},
-                    Err(problem) => { trace.fail("io.artifact_publish", started); defer problem.drop(); write_error(problem.msg()); return false; },
+                    Err(problem) => { trace.fail("io.artifact_publish", started); defer problem.drop(); eprintln(problem.msg()); return false; },
                 }
             }
         }
         // Publish only after both the native artifact and any required intermediate are complete.
         match rename(temporary.as_str(), path.as_str()) {
             Ok(_) => trace.finish("io.artifact_publish", started),
-            Err(problem) => { trace.fail("io.artifact_publish", started); defer problem.drop(); write_error(problem.msg()); return false; },
+            Err(problem) => { trace.fail("io.artifact_publish", started); defer problem.drop(); eprintln(problem.msg()); return false; },
         }
     } else {
         started = trace.start_pass("io.artifact_publish", "io", "publish compiler artifact", ProfileKind.Tool);
         match rename(object.as_str(), path.as_str()) {
             Ok(_) => trace.finish("io.artifact_publish", started),
-            Err(problem) => { trace.fail("io.artifact_publish", started); defer problem.drop(); write_error(problem.msg()); return false; },
+            Err(problem) => { trace.fail("io.artifact_publish", started); defer problem.drop(); eprintln(problem.msg()); return false; },
         }
     }
     trace.finish("compiler.total", total);
     profile_complete = true;
     true
-}
-
-fn write_error(text: str) {
-    match Stderr.new().write_str(text) { Ok(_) => {}, Err(problem) => problem.drop(), }
-    match Stderr.new().write_str("\n") { Ok(_) => {}, Err(problem) => problem.drop(), }
 }

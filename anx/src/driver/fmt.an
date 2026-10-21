@@ -1,6 +1,6 @@
 from std.core.drop import Drop;
 from std.core.fs import resolve, write_string;
-from std.core.io import Stderr, Stdout;
+from std.core.io import eprint, eprintln, print, println;
 from std.core.option import Option;
 from std.core.path import PathBuf;
 from std.core.string import String;
@@ -12,34 +12,19 @@ from anx.project.paths import standard_library_root;
 from yianc.format.api import format_text;
 from yianc.frontend.source import read_source;
 
-fn write_stdout(text: str) -> bool {
-    match Stdout.new().write_str(text) {
-        Ok(_) => true,
-        Err(problem) => { problem.drop(); false },
-    }
-}
-
-fn write_stderr(text: str) {
-    match Stderr.new().write_str(text) {
-        Ok(_) => {},
-        Err(problem) => problem.drop(),
-    }
-}
-
 fn print_diagnostic(item: Diagnostic&) {
-    write_stderr("error[");
-    write_stderr(item.code());
-    write_stderr("]: ");
-    match item.path() { Some(path) => { write_stderr(path); write_stderr(": "); }, None => {}, }
-    write_stderr(item.message());
-    write_stderr("\n");
-    match item.hint() { Some(hint) => { write_stderr("  hint: "); write_stderr(hint); write_stderr("\n"); }, None => {}, }
+    eprint("error[");
+    eprint(item.code());
+    eprint("]: ");
+    match item.path() { Some(path) => { eprint(path); eprint(": "); }, None => {}, }
+    eprintln(item.message());
+    match item.hint() { Some(hint) => { eprint("  hint: "); eprintln(hint); }, None => {}, }
 }
 
 fn load_project(start: str) -> Option<Project> {
     let std_root = match standard_library_root() {
         Ok(value) => value,
-        Err(message) => { write_stderr("error: "); write_stderr(message.as_str()); write_stderr("\n"); message.drop(); return Option<Project>.None; },
+        Err(message) => { eprint("error: "); eprintln(message.as_str()); message.drop(); return Option<Project>.None; },
     };
     defer std_root.drop();
     let root = discover(start);
@@ -96,8 +81,7 @@ pub fn format_project(start: str, check: bool) -> i32 {
         let source = match read_source(file.path()) {
             Ok(value) => value,
             Err(problem) => {
-                write_stderr(problem.msg());
-                write_stderr("\n");
+                eprintln(problem.msg());
                 problem.drop();
                 return 1i32;
             },
@@ -106,15 +90,15 @@ pub fn format_project(start: str, check: bool) -> i32 {
         let formatted = match format_text(source.as_str(), file.path()) {
             Ok(Some(value)) => value,
             Ok(None) => {
-                write_stderr("skip ");
-                write_stderr(file.path());
-                write_stderr(": cannot be formatted\n");
+                eprint("skip ");
+                eprint(file.path());
+                eprintln(": cannot be formatted");
                 index += 1u64;
                 continue;
             },
             Err(problem) => {
                 problem.drop();
-                write_stderr("error: formatter failed\n");
+                eprintln("error: formatter failed");
                 return 1i32;
             },
         };
@@ -122,13 +106,12 @@ pub fn format_project(start: str, check: bool) -> i32 {
         if formatted.as_str() != source.as_str() {
             changed += 1u64;
             if check {
-                if !write_stdout(file.path()) || !write_stdout("\n") { return 1i32; }
+                println(file.path());
             } else {
                 match write_string(file.path(), formatted.as_str()) {
                     Ok(_) => {},
                     Err(problem) => {
-                        write_stderr(problem.msg());
-                        write_stderr("\n");
+                        eprintln(problem.msg());
                         problem.drop();
                         return 1i32;
                     },
@@ -142,11 +125,15 @@ pub fn format_project(start: str, check: bool) -> i32 {
     let count = changed.to_string();
     defer count.drop();
     if check {
-        if !write_stdout(count.as_str()) || !write_stdout(" of ") || !write_stdout(total.as_str()) ||
-        !write_stdout(" file(s) need formatting\n") { return 1i32; }
+        print(count.as_str());
+        print(" of ");
+        print(total.as_str());
+        println(" file(s) need formatting");
         return if changed > 0u64 { 1i32 } else { 0i32 };
     }
-    if !write_stdout(total.as_str()) || !write_stdout(" file(s) checked, ") ||
-    !write_stdout(count.as_str()) || !write_stdout(" rewritten\n") { return 1i32; }
+    print(total.as_str());
+    print(" file(s) checked, ");
+    print(count.as_str());
+    println(" rewritten");
     0i32
 }

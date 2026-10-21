@@ -16,7 +16,7 @@ from yianc.driver.dump import StageDumps;
 from yianc.analysis.session.prepare import PreparationObserver;
 from json.write import Writer;
 from std.core.drop import Drop;
-from std.core.io import Stdout, Stderr;
+from std.core.io import eprint, eprintln, println;
 from std.core.option import Option;
 from std.core.path import Path;
 from std.core.fs import try_exists;
@@ -58,16 +58,13 @@ fn emit(json: bool, diagnostics: Vec<Diagnostic>&, stage: Option<AnalysisStage>,
         writer.end_object();
         let text = match writer.finish() { Ok(value) => value, Err(_) => return false, };
         defer text.drop();
-        return match Stdout.new().write_str(text.as_str()) {
-            Ok(_) => match Stdout.new().write_str("\n") { Ok(_) => true, Err(problem) => { problem.drop(); false }, },
-            Err(problem) => { problem.drop(); false },
-        };
+        println(text.as_str());
+        return true;
     }
     for diagnostic in *diagnostics {
         let text = match render(diagnostic, sources) { Ok(value) => value, Err(problem) => { problem.drop(); return false; }, };
         defer text.drop();
-        match Stderr.new().write_str(text.as_str()) { Ok(_) => {}, Err(problem) => { problem.drop(); return false; }, }
-        match Stderr.new().write_str("\n") { Ok(_) => {}, Err(problem) => { problem.drop(); return false; }, }
+        eprintln(text.as_str());
     }
     true
 }
@@ -166,7 +163,7 @@ pub fn analyze_cli(config: CompilerConfig&, json: bool) -> bool {
         Ok(value) => value,
         Err(problem) => {
             defer problem.drop();
-            match Stderr.new().write_str(problem.as_str()) { Ok(_) => {}, Err(error) => error.drop(), }
+            eprint(problem.as_str());
             return false;
         },
     };

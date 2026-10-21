@@ -5,7 +5,7 @@ from std.core.convert import From;
 from std.core.drop import Drop;
 from std.core.fmt import ToString;
 from std.core.fs import canonicalize, create_dir_all, read_to_string, write_atomic;
-from std.core.io import Stderr, Write;
+from std.core.io import eprint, eprintln;
 from std.core.option import Option;
 from std.core.path import Path;
 from std.core.process import temporary_directory;
@@ -128,9 +128,8 @@ fn is_build_work(pass_id: str) -> bool {
 }
 
 fn write_warning(message: str) {
-    match Stderr.new().write_str("[profile] warning: ") { Ok(_) => {}, Err(problem) => problem.drop(), }
-    match Stderr.new().write_str(message) { Ok(_) => {}, Err(problem) => problem.drop(), }
-    match Stderr.new().write_str("\n") { Ok(_) => {}, Err(problem) => problem.drop(), }
+    eprint("[profile] warning: ");
+    eprintln(message);
 }
 
 fn number(value: Value&) -> Option<u64> {

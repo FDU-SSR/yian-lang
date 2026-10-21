@@ -1,7 +1,7 @@
 from std.core.drop import Drop;
 from std.core.env import args, exit;
 from std.core.fs import resolve;
-from std.core.io import Stderr, Stdout;
+from std.core.io import eprint, eprintln, print, println;
 from std.core.option import Option;
 from std.core.path import PathBuf;
 from std.core.string import String;
@@ -18,20 +18,6 @@ from anx.project.graph import graph_json, graph_text;
 from anx.project.load import discover, load;
 from anx.project.model import LoadReport, Project;
 from anx.project.paths import standard_library_root;
-
-fn write_stdout(text: str) -> bool {
-    match Stdout.new().write_str(text) {
-        Ok(_) => true,
-        Err(problem) => { problem.drop(); false },
-    }
-}
-
-fn write_stderr(text: str) {
-    match Stderr.new().write_str(text) {
-        Ok(_) => {},
-        Err(problem) => problem.drop(),
-    }
-}
 
 fn release_args(values: Vec<String>&) {
     let index = 0u64;
@@ -61,14 +47,14 @@ fn argument_views(argv: Vec<String>&, start: u64, end: u64) -> Vec<str> {
 
 fn report_argument_error(command: str, parser: ArgumentParser&, problem: CliError) -> i32 {
     match parser.format_usage() {
-        Ok(usage) => { write_stderr(usage.as_str()); usage.drop(); },
+        Ok(usage) => { eprint(usage.as_str()); usage.drop(); },
         Err(error) => error.drop(),
     }
     let message = problem.format();
-    write_stderr("anx ");
-    write_stderr(command);
-    write_stderr(": ");
-    write_stderr(message.as_str());
+    eprint("anx ");
+    eprint(command);
+    eprint(": ");
+    eprintln(message.as_str());
     message.drop();
     problem.drop();
     2i32
@@ -127,9 +113,9 @@ fn build_command(argv: Vec<String>&, command: str, end: u64, program_arguments: 
 
     match outcome {
         Help(text) => {
-            let written = write_stdout(text.as_str());
+            print(text.as_str());
             text.drop();
-            if written { 0i32 } else { 1i32 }
+            0i32
         },
         Parsed(matches) => {
             defer matches.drop();
@@ -159,7 +145,7 @@ fn build_command(argv: Vec<String>&, command: str, end: u64, program_arguments: 
                 let path = match executable.take() {
                     Some(value) => value,
                     None => {
-                        write_stderr("error: no executable was produced\n");
+                        eprintln("error: no executable was produced");
                         match &profile { Some(observer) => observer.finalize(true, 1i32), None => {}, }
                         return 1i32;
                     },
@@ -191,9 +177,9 @@ fn format_command(argv: Vec<String>&) -> i32 {
     };
     match outcome {
         Help(text) => {
-            let written = write_stdout(text.as_str());
+            print(text.as_str());
             text.drop();
-            if written { 0i32 } else { 1i32 }
+            0i32
         },
         Parsed(matches) => {
             defer matches.drop();
@@ -219,9 +205,9 @@ fn test_command(argv: Vec<String>&) -> i32 {
     };
     match outcome {
         Help(text) => {
-            let written = write_stdout(text.as_str());
+            print(text.as_str());
             text.drop();
-            if written { 0i32 } else { 1i32 }
+            0i32
         },
         Parsed(matches) => {
             defer matches.drop();
@@ -233,7 +219,7 @@ fn test_command(argv: Vec<String>&) -> i32 {
             };
             let legacy_raw = argument_bool(&matches, "raw-pointers");
             if legacy_raw && selected_mode.is_some() {
-                write_stderr("anx test: --raw-pointers cannot be combined with --pointer-mode\n");
+                eprintln("anx test: --raw-pointers cannot be combined with --pointer-mode");
                 return 2i32;
             }
             let pointer_mode = if legacy_raw {
@@ -294,9 +280,9 @@ fn new_command(argv: Vec<String>&) -> i32 {
     };
     match outcome {
         Help(text) => {
-            let written = write_stdout(text.as_str());
+            print(text.as_str());
             text.drop();
-            if written { 0i32 } else { 1i32 }
+            0i32
         },
         Parsed(matches) => {
             defer matches.drop();
@@ -334,9 +320,8 @@ fn render_graph(project_arg: String, json: bool) -> i32 {
     let std_root = match standard_library_root() {
         Ok(value) => value,
         Err(message) => {
-            write_stderr("error: ");
-            write_stderr(message.as_str());
-            write_stderr("\n");
+            eprint("error: ");
+            eprintln(message.as_str());
             message.drop();
             return 1i32;
         },
@@ -354,10 +339,10 @@ fn render_graph(project_arg: String, json: bool) -> i32 {
 
     let status = if report.clean() && report.project().is_some() { 0i32 } else { 1i32 };
     let output = if json { graph_json(&report) } else { graph_text(&report) };
-    let written = write_stdout(output.as_str()) && write_stdout("\n");
+    print(output.as_str());
+    println("");
     output.drop();
     report.drop();
-    if !written { return 1i32; }
     status
 }
 
@@ -377,9 +362,9 @@ fn graph_command(argv: Vec<String>&) -> i32 {
     };
     match outcome {
         Help(text) => {
-            let written = write_stdout(text.as_str());
+            print(text.as_str());
             text.drop();
-            if written { 0i32 } else { 1i32 }
+            0i32
         },
         Parsed(matches) => {
             defer matches.drop();
@@ -412,12 +397,13 @@ fn build_dispatch(argv: Vec<String>&, command: str) -> i32 {
 
 fn run(argv: Vec<String>&) -> i32 {
     if argv.len() < 2u64 {
-        write_stdout(help_text());
+        print(help_text());
         return 1i32;
     }
     let command = argv[1].as_str();
     if command == "-h" || command == "--help" || command == "help" {
-        return if write_stdout(help_text()) { 0i32 } else { 1i32 };
+        print(help_text());
+        return 0i32;
     }
     if command == "graph" { return graph_command(argv); }
     if command == "build" || command == "run" || command == "check" {
@@ -426,7 +412,7 @@ fn run(argv: Vec<String>&) -> i32 {
     if command == "fmt" { return format_command(argv); }
     if command == "new" { return new_command(argv); }
     if command == "test" { return test_command(argv); }
-    write_stderr("anx: unknown command\n");
+    eprintln("anx: unknown command");
     2i32
 }
 

@@ -1,6 +1,6 @@
 from std.core.drop import Drop;
 from std.core.fs import append;
-from std.core.io import Stderr, Stdout;
+from std.core.io import eprint, eprintln, print, println;
 from std.core.option import Option;
 from std.core.process import env_var;
 from std.core.result import Result;
@@ -21,20 +21,6 @@ impl Drop for Config {
         self.log_level.drop();
         match &self.log_file { Some(value) => value.drop(), None => {}, }
         match &self.trace_file { Some(value) => value.drop(), None => {}, }
-    }
-}
-
-fn write_stdout(text: str) {
-    match Stdout.new().write_str(text) {
-        Ok(_) => {},
-        Err(problem) => problem.drop(),
-    }
-}
-
-fn write_stderr(text: str) {
-    match Stderr.new().write_str(text) {
-        Ok(_) => {},
-        Err(problem) => problem.drop(),
     }
 }
 
@@ -64,10 +50,10 @@ pub fn log(config: Config&, level: str, message: str) {
             Ok(_) => {},
             Err(problem) => {
                 problem.drop();
-                write_stderr(line.as_str());
+                eprint(line.as_str());
             },
         },
-        None => write_stderr(line.as_str()),
+        None => eprint(line.as_str()),
     }
     line.drop();
 }
@@ -134,14 +120,14 @@ pub fn parse_config(arguments: Vec<String>&) -> Result<Config, i32> {
             raw_pointers = true;
             index += 1u64;
         } elif argument == "--help" || argument == "-h" {
-            write_stdout(usage());
+            print(usage());
             return Result<Config, i32>.Err(0i32);
         } elif argument == "--version" {
-            write_stdout("yian-lsp 0.8.0\n");
+            println("yian-lsp 0.8.0");
             return Result<Config, i32>.Err(0i32);
         } elif argument == "--compiler-root" || argument == "--log-level" || argument == "--log-file" {
             if index + 1u64 >= arguments.len() {
-                write_stderr("yian-lsp: option requires a value\n");
+                eprintln("yian-lsp: option requires a value");
                 return Result<Config, i32>.Err(2i32);
             }
 
@@ -158,16 +144,15 @@ pub fn parse_config(arguments: Vec<String>&) -> Result<Config, i32> {
             }
             index += 2u64;
         } else {
-            write_stderr("yian-lsp: unknown option: ");
-            write_stderr(argument);
-            write_stderr("\n");
+            eprint("yian-lsp: unknown option: ");
+            eprintln(argument);
             return Result<Config, i32>.Err(2i32);
         }
     }
 
     let level = log_level.as_str();
     if level != "DEBUG" && level != "INFO" && level != "WARNING" && level != "ERROR" {
-        write_stderr("yian-lsp: invalid log level\n");
+        eprintln("yian-lsp: invalid log level");
         return Result<Config, i32>.Err(2i32);
     }
 

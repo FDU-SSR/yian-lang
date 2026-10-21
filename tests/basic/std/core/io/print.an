@@ -1,10 +1,14 @@
-// Test print and eprint (stdout/stderr via convenience functions)
+// Test print, println, eprint and eprintln convenience functions.
 //
-// Expected output:
+// Expected stdout:
 // stdout ok
+// println ok
 
-from std.core.io import print;
+from std.core.io import eprint, eprintln;
 
 fn main() {
     print("stdout ok\n");
+    println("println ok");
+    eprint("stderr eprint\n");
+    eprintln("stderr eprintln");
 }

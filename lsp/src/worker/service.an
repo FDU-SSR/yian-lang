@@ -17,7 +17,7 @@ from lsp_protocol.uri import path_to_uri, uri_to_path;
 from std.collections.hash_map import HashMap;
 from std.core.drop import Drop;
 from std.core.fs import canonicalize, read_to_string, resolve;
-from std.core.io import Stderr;
+from std.core.io import eprint;
 from std.core.ops import Index;
 from std.core.option import Option;
 from std.core.path import Path, PathBuf;
@@ -1940,10 +1940,7 @@ fn report_cache_error(message: str) {
     defer text.drop();
     text.push_str(message);
     text.push('\n');
-    match Stderr.new().write_str(text.as_str()) {
-        Ok(_) => {},
-        Err(problem) => problem.drop(),
-    }
+    eprint(text.as_str());
 }
 
 fn overlay_documents(open: Vec<OpenInput>&) -> Vec<SourceDocument> {
