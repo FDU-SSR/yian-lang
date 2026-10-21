@@ -1,0 +1,582 @@
+from yianc.analysis.hir.node import Block, HirKind, HirNode;
+from yianc.analysis.passes.hir_verification_cache import HirVerificationCache, HirVerificationObserver;
+from yianc.analysis.passes.verify_hir import verify_hir_observed;
+from yianc.analysis.resolution.context import ResolutionContext;
+from yianc.analysis.session.output import AnalysisOptions, AnalysisOutput, AnalyzedProcedure;
+from yianc.analysis.session.prepare import PreparationObserver;
+from yianc.analysis.session.session import AnalysisSession;
+from yianc.analysis.ty.model import AccessMode, AggregateDefinition, CallableDefinition, DefinitionBody,
+DefinitionHeader, NominalKind, Parameter, StructField;
+from yianc.analysis.ty.validation import validate_concrete_value;
+from yianc.common.ids import DefId, HirId, NameId, SourceId, SymbolId, TypeId, UnitId;
+from yianc.common.location import SourceSpan;
+from yianc.diagnostics.model import AnalysisError, AnalysisErrorKind, DiagnosticLocation;
+from yianc.frontend.source import Position, SourceDocument, Span;
+from yianc.package.model import PackageMap;
+from yianc.package.provenance import SourceTrust;
+from std.collections.hash_map import HashMap;
+from std.core.drop import Drop;
+from std.core.option import Option;
+from std.core.string import String;
+from std.core.vec import Vec;
+
+// Records the actual underlying queries a verification cache performs.
+// Duplicate keys for a successful query path indicate a cache regression.
+struct MissCounter {
+    value_misses: u64,
+    signature_misses: u64,
+    object_misses: u64,
+    value_keys: Vec<TypeId>,
+    signature_keys: Vec<TypeId>,
+    object_keys: Vec<TypeId>,
+}
+
+impl MissCounter {
+    static fn new() -> Self {
+        Self(0u64, 0u64, 0u64, Vec<TypeId>.new(), Vec<TypeId>.new(), Vec<TypeId>.new())
+    }
+}
+
+impl Drop for MissCounter {
+    pub fn drop() {
+        self.value_keys.drop();
+        self.signature_keys.drop();
+        self.object_keys.drop();
+    }
+}
+
+impl HirVerificationObserver for MissCounter {
+    fn value_validation_miss(type_id: TypeId) {
+        self.value_misses += 1;
+        self.value_keys.push(type_id);
+    }
+
+    fn signature_miss(type_id: TypeId) {
+        self.signature_misses += 1;
+        self.signature_keys.push(type_id);
+    }
+
+    fn object_methods_miss(type_id: TypeId) {
+        self.object_misses += 1;
+        self.object_keys.push(type_id);
+    }
+}
+
+fn trust() -> SourceTrust {
+    match SourceTrust.new("../../../../lib/src") {
+        Ok(value) => value,
+        Err(error) => { error.drop(); @panic("could not create source trust"); },
+    }
+}
+
+fn release_documents(documents: Vec<SourceDocument>&) {
+    for document in *documents { document.drop(); }
+    documents.drop();
+}
+
+fn definition(session: AnalysisSession&, name_text: str, kind: NominalKind, location: SourceSpan, generics: Vec<TypeId>) -> DefId {
+    let name = session.names.intern(name_text);
+    session.types.register(DefinitionHeader(kind, name, location, UnitId(0u64)), generics)
+}
+
+fn field(session: AnalysisSession&, name_text: str, type_id: TypeId, index: u64, location: SourceSpan) -> StructField {
+    StructField(session.names.intern(name_text), type_id, AccessMode.Private, index, Option<SourceSpan>.Some(location))
+}
+
+fn count_key(keys: Vec<TypeId>&, id: TypeId) -> u64 {
+    let total = 0u64;
+    for key in *keys {
+        if *key == id {
+            total += 1;
+        }
+    }
+    total
+}
+
+fn has_duplicate(keys: Vec<TypeId>&) -> bool {
+    let index = 0u64;
+    while index < keys.len() {
+        let other = index + 1u64;
+        while other < keys.len() {
+            if keys[index] == keys[other] {
+                return true;
+            }
+            other += 1u64;
+        }
+        index += 1u64;
+    }
+    false
+}
+
+fn same_location(error: AnalysisError&, location: SourceSpan) -> bool {
+    match &error.diagnostic.location {
+        Some(DiagnosticLocation.Source(actual)) => actual.source == location.source
+        && actual.span.start.row == location.span.start.row
+        && actual.span.start.column == location.span.start.column
+        && actual.span.end.row == location.span.end.row
+        && actual.span.end.column == location.span.end.column,
+        Some(DiagnosticLocation.Detached(_, actual)) => actual.start.row == location.span.start.row
+        && actual.start.column == location.span.start.column
+        && actual.end.row == location.span.end.row
+        && actual.end.column == location.span.end.column,
+        None => false,
+    }
+}
+
+struct FixtureTypes {
+    node: TypeId,
+    bad: TypeId,
+    box_i32: TypeId,
+    box_u64: TypeId,
+    plain: TypeId,
+    generic_i32: TypeId,
+    generic_u64: TypeId,
+    generic_bool: TypeId,
+    trait_i32: TypeId,
+    trait_u64: TypeId,
+    plain_definition: DefId,
+}
+
+// Builds the concrete type graph and callable/trait identities used by the
+// cache assertions. All definitions are complete and immutable from here on.
+fn build_types(session: AnalysisSession&, context: ResolutionContext&, location: SourceSpan) -> FixtureTypes {
+    let empty = Vec<TypeId>.new();
+    defer empty.drop();
+
+    let node_definition = definition(session, "Node", NominalKind.Struct, location, Vec<TypeId>.new());
+    let node = *session.types.instance(node_definition, &empty).unwrap();
+    let node_fields = Vec<StructField>.new();
+    node_fields.push(field(session, "next", session.types.pointer(node), 0u64, location));
+    node_fields.push(field(session, "value", context.primitives.integer, 1u64, location));
+    session.types.finish_definition(node_definition,
+        DefinitionBody.Struct(AggregateDefinition(node_fields, HashMap<NameId, TypeId>.new()))).unwrap();
+
+    let bad_definition = definition(session, "Bad", NominalKind.Struct, location, Vec<TypeId>.new());
+    let bad = *session.types.instance(bad_definition, &empty).unwrap();
+    let bad_fields = Vec<StructField>.new();
+    bad_fields.push(field(session, "next", session.types.pointer(bad), 0u64, location));
+    bad_fields.push(field(session, "broken", context.primitives.error, 1u64, location));
+    session.types.finish_definition(bad_definition,
+        DefinitionBody.Struct(AggregateDefinition(bad_fields, HashMap<NameId, TypeId>.new()))).unwrap();
+
+    let box_generic = session.types.generic(session.names.intern("T"));
+    let box_generics = Vec<TypeId>.new();
+    box_generics.push(box_generic);
+    let box_definition = definition(session, "Box", NominalKind.Struct, location, box_generics);
+    let box_fields = Vec<StructField>.new();
+    box_fields.push(field(session, "value", box_generic, 0u64, location));
+    session.types.finish_definition(box_definition,
+        DefinitionBody.Struct(AggregateDefinition(box_fields, HashMap<NameId, TypeId>.new()))).unwrap();
+    let box_i32_arguments = Vec<TypeId>.new();
+    box_i32_arguments.push(context.primitives.integer);
+    let box_i32 = *session.types.instance(box_definition, &box_i32_arguments).unwrap();
+    box_i32_arguments.drop();
+    let box_u64_arguments = Vec<TypeId>.new();
+    box_u64_arguments.push(context.primitives.unsigned);
+    let box_u64 = *session.types.instance(box_definition, &box_u64_arguments).unwrap();
+    box_u64_arguments.drop();
+
+    let plain_definition = definition(session, "plain", NominalKind.Function, location, Vec<TypeId>.new());
+    session.types.finish_definition(plain_definition, DefinitionBody.Function(
+        CallableDefinition(Vec<Parameter>.new(), context.primitives.integer, Option<TypeId>.None,
+        true, false, false, false, false, true, 0u64))).unwrap();
+    let plain = *session.types.instance(plain_definition, &empty).unwrap();
+
+    let function_generic = session.types.generic(session.names.intern("U"));
+    let function_generics = Vec<TypeId>.new();
+    function_generics.push(function_generic);
+    let function_definition = definition(session, "identity", NominalKind.Function, location, function_generics);
+    let function_parameters = Vec<Parameter>.new();
+    function_parameters.push(Parameter(session.names.intern("input"), function_generic, Option<SourceSpan>.None));
+    session.types.finish_definition(function_definition, DefinitionBody.Function(
+        CallableDefinition(function_parameters, function_generic, Option<TypeId>.None,
+        true, false, false, false, false, true, 0u64))).unwrap();
+    let generic_i32_arguments = Vec<TypeId>.new();
+    generic_i32_arguments.push(context.primitives.integer);
+    let generic_i32 = *session.types.instance(function_definition, &generic_i32_arguments).unwrap();
+    generic_i32_arguments.drop();
+    let generic_u64_arguments = Vec<TypeId>.new();
+    generic_u64_arguments.push(context.primitives.unsigned);
+    let generic_u64 = *session.types.instance(function_definition, &generic_u64_arguments).unwrap();
+    generic_u64_arguments.drop();
+    let generic_bool_arguments = Vec<TypeId>.new();
+    generic_bool_arguments.push(context.primitives.boolean);
+    let generic_bool = *session.types.instance(function_definition, &generic_bool_arguments).unwrap();
+    generic_bool_arguments.drop();
+
+    let trait_generic = session.types.generic(session.names.intern("V"));
+    let trait_generics = Vec<TypeId>.new();
+    trait_generics.push(trait_generic);
+    let trait_definition = definition(session, "Convert", NominalKind.Trait, location, trait_generics);
+
+    let first_self = session.types.generic(session.names.intern("Self"));
+    let first_generics = Vec<TypeId>.new();
+    first_generics.push(trait_generic);
+    first_generics.push(first_self);
+    let first_definition = definition(session, "first", NominalKind.Method, location, first_generics);
+    let first_parameters = Vec<Parameter>.new();
+    first_parameters.push(Parameter(session.names.intern("input"), trait_generic, Option<SourceSpan>.None));
+    session.types.finish_definition(first_definition, DefinitionBody.Method(
+        CallableDefinition(first_parameters, trait_generic, Option<TypeId>.Some(first_self),
+        false, false, false, false, false, true, 0u64))).unwrap();
+    let first_arguments = Vec<TypeId>.new();
+    first_arguments.push(trait_generic);
+    first_arguments.push(first_self);
+    let first_method = *session.types.instance(first_definition, &first_arguments).unwrap();
+    first_arguments.drop();
+
+    let second_self = session.types.generic(session.names.intern("Self"));
+    let second_generics = Vec<TypeId>.new();
+    second_generics.push(trait_generic);
+    second_generics.push(second_self);
+    let second_definition = definition(session, "second", NominalKind.Method, location, second_generics);
+    let second_parameters = Vec<Parameter>.new();
+    second_parameters.push(Parameter(session.names.intern("input"), trait_generic, Option<SourceSpan>.None));
+    session.types.finish_definition(second_definition, DefinitionBody.Method(
+        CallableDefinition(second_parameters, trait_generic, Option<TypeId>.Some(second_self),
+        false, false, false, false, false, true, 0u64))).unwrap();
+    let second_arguments = Vec<TypeId>.new();
+    second_arguments.push(trait_generic);
+    second_arguments.push(second_self);
+    let second_method = *session.types.instance(second_definition, &second_arguments).unwrap();
+    second_arguments.drop();
+
+    let methods = HashMap<NameId, TypeId>.new();
+    methods.insert(session.names.intern("first"), first_method);
+    methods.insert(session.names.intern("second"), second_method);
+    session.types.finish_definition(trait_definition, DefinitionBody.Trait(methods)).unwrap();
+    let trait_i32_arguments = Vec<TypeId>.new();
+    trait_i32_arguments.push(context.primitives.integer);
+    let trait_i32 = *session.types.instance(trait_definition, &trait_i32_arguments).unwrap();
+    trait_i32_arguments.drop();
+    let trait_u64_arguments = Vec<TypeId>.new();
+    trait_u64_arguments.push(context.primitives.unsigned);
+    let trait_u64 = *session.types.instance(trait_definition, &trait_u64_arguments).unwrap();
+    trait_u64_arguments.drop();
+
+    FixtureTypes(node, bad, box_i32, box_u64, plain, generic_i32, generic_u64, generic_bool,
+        trait_i32, trait_u64, plain_definition)
+}
+
+fn check_value_cache(context: ResolutionContext&, fixture: FixtureTypes&,
+    first_location: SourceSpan, second_location: SourceSpan, observer: MissCounter&) {
+    let cache = HirVerificationCache.new(context, Option<HirVerificationObserver&>.Some(observer));
+    defer cache.drop();
+
+    cache.validate_value(fixture.node, first_location).unwrap();
+    cache.validate_value(fixture.node, second_location).unwrap();
+    cache.validate_value(fixture.box_i32, first_location).unwrap();
+    cache.validate_value(fixture.box_i32, second_location).unwrap();
+    cache.validate_value(fixture.box_u64, first_location).unwrap();
+    cache.validate_value(fixture.node, first_location).unwrap();
+    assert count_key(&observer.value_keys, fixture.node) == 1u64: "a successful root validates once";
+    assert count_key(&observer.value_keys, fixture.box_i32) == 1u64: "each concrete instance validates separately";
+    assert count_key(&observer.value_keys, fixture.box_u64) == 1u64: "a different instance is not shared";
+
+    let first_bad = cache.validate_value(fixture.bad, first_location);
+    match &first_bad {
+        Err(error) => {
+            assert error.kind == AnalysisErrorKind.User: "a broken field is a user diagnostic";
+            assert error.diagnostic.code.text() == "E499": "a broken field keeps its diagnostic code";
+            assert error.diagnostic.message.as_str() == "value type must be specified": "a broken field keeps its message";
+            assert same_location(error, first_location): "a failure reports its own location";
+        },
+        Ok(_) => @panic("a recursive type with an error field was accepted"),
+    }
+    let direct_bad = validate_concrete_value(context, fixture.bad, first_location);
+    match &direct_bad {
+        Err(expected) => match &first_bad {
+            Err(actual) => {
+                assert actual.kind == expected.kind: "a cached failure keeps the uncached kind";
+                assert actual.diagnostic.code.text() == expected.diagnostic.code.text():
+                "a cached failure keeps the uncached code";
+                assert actual.diagnostic.message.as_str() == expected.diagnostic.message.as_str():
+                "a cached failure keeps the uncached message";
+            },
+            Ok(_) => @panic("the cached query accepted an invalid root"),
+        },
+        Ok(_) => @panic("the uncached query accepted an invalid root"),
+    }
+    match direct_bad { Err(error) => error.drop(), Ok(_) => {}, }
+    match first_bad { Err(error) => error.drop(), Ok(_) => {}, }
+
+    let second_bad = cache.validate_value(fixture.bad, second_location);
+    match &second_bad {
+        Err(error) => {
+            assert error.kind == AnalysisErrorKind.User: "a repeated failure keeps its kind";
+            assert error.diagnostic.message.as_str() == "value type must be specified": "a repeated failure keeps its message";
+            assert same_location(error, second_location): "a repeated failure uses the current location";
+        },
+        Ok(_) => @panic("a repeated invalid root was accepted"),
+    }
+    match second_bad { Err(error) => error.drop(), Ok(_) => {}, }
+    assert count_key(&observer.value_keys, fixture.bad) == 2u64: "failed roots are not cached";
+
+    let first_error = cache.validate_value(context.primitives.error, first_location);
+    match &first_error {
+        Err(error) => {
+            assert error.diagnostic.code.text() == "E499": "an error type keeps its code";
+            assert same_location(error, first_location): "an error type reports the first location";
+        },
+        Ok(_) => @panic("an error type was accepted"),
+    }
+    match first_error { Err(error) => error.drop(), Ok(_) => {}, }
+    let second_error = cache.validate_value(context.primitives.error, second_location);
+    match &second_error {
+        Err(error) => assert same_location(error, second_location): "an error type reports the second location",
+        Ok(_) => @panic("an error type was accepted twice"),
+    }
+    match second_error { Err(error) => error.drop(), Ok(_) => {}, }
+    assert count_key(&observer.value_keys, context.primitives.error) == 2u64: "invalid value types are not cached";
+}
+
+fn check_query_cache(context: ResolutionContext&, fixture: FixtureTypes&, observer: MissCounter&) {
+    let cache = HirVerificationCache.new(context, Option<HirVerificationObserver&>.Some(observer));
+    defer cache.drop();
+
+    // The first signature stays borrowed while later queries grow the index.
+    let first = cache.signature_of(fixture.plain).unwrap();
+    let second = cache.signature_of(fixture.generic_i32).unwrap();
+    let third = cache.signature_of(fixture.generic_u64).unwrap();
+    let fourth = cache.signature_of(fixture.generic_bool).unwrap();
+    cache.signature_of(fixture.generic_i32).unwrap();
+    assert first.definition == fixture.plain_definition: "a borrowed signature keeps its identity";
+    assert first.result == context.primitives.integer: "a plain signature keeps its result";
+    assert first.parameters.len() == 0u64: "a plain signature has no parameters";
+    assert second.parameters.len() == 1u64: "the first generic instance has one parameter";
+    assert second.parameters[0u64].type_id == context.primitives.integer: "generic substitution keeps i32";
+    assert third.parameters[0u64].type_id == context.primitives.unsigned: "generic substitution keeps u64";
+    assert fourth.parameters[0u64].type_id == context.primitives.boolean: "generic substitution keeps bool";
+    assert first.result == context.primitives.integer: "the first borrow survives index growth";
+    assert count_key(&observer.signature_keys, fixture.plain) == 1u64: "a plain signature is built once";
+    assert count_key(&observer.signature_keys, fixture.generic_i32) == 1u64: "a generic instance is built once";
+    assert count_key(&observer.signature_keys, fixture.generic_u64) == 1u64: "each concrete instance is separate";
+    assert count_key(&observer.signature_keys, fixture.generic_bool) == 1u64: "each concrete instance is separate";
+
+    let first_failure = cache.signature_of(context.primitives.integer);
+    match &first_failure {
+        Err(error) => {
+            assert error.kind == AnalysisErrorKind.Internal: "a non-callable signature fails internally";
+            assert error.diagnostic.message.as_str().contains("callable instance is not nominal"):
+            "a non-callable signature keeps its message";
+        },
+        Ok(_) => @panic("a primitive type produced a callable signature"),
+    }
+    match first_failure { Err(error) => error.drop(), Ok(_) => {}, }
+    let second_failure = cache.signature_of(context.primitives.integer);
+    match &second_failure {
+        Err(error) => assert error.diagnostic.message.as_str().contains("callable instance is not nominal"):
+        "a repeated failed signature keeps its message",
+        Ok(_) => @panic("a primitive type produced a callable signature twice"),
+    }
+    match second_failure { Err(error) => error.drop(), Ok(_) => {}, }
+    assert count_key(&observer.signature_keys, context.primitives.integer) == 2u64: "failed signatures are not cached";
+
+    let first_slots = cache.object_methods_of(fixture.trait_i32).unwrap();
+    let second_slots = cache.object_methods_of(fixture.trait_u64).unwrap();
+    cache.object_methods_of(fixture.trait_i32).unwrap();
+    assert first_slots.len() == 2u64: "the trait has two dynamic slots";
+    assert second_slots.len() == 2u64: "the second instance has two dynamic slots";
+    assert first_slots[0u64] != second_slots[0u64]: "concrete trait instances substitute separate slots";
+    assert first_slots[1u64] != second_slots[1u64]: "the second slot is substituted separately";
+    assert count_key(&observer.object_keys, fixture.trait_i32) == 1u64: "trait slots are collected once";
+    assert count_key(&observer.object_keys, fixture.trait_u64) == 1u64: "each trait instance is collected separately";
+
+    let first_slot_failure = cache.object_methods_of(context.primitives.integer);
+    match &first_slot_failure {
+        Err(error) => {
+            assert error.kind == AnalysisErrorKind.Internal: "a non-trait object fails internally";
+            assert error.diagnostic.message.as_str() == "trait object has invalid trait identity":
+            "a non-trait object keeps its message";
+        },
+        Ok(_) => @panic("a primitive type produced trait slots"),
+    }
+    match first_slot_failure { Err(error) => error.drop(), Ok(_) => {}, }
+    let second_slot_failure = cache.object_methods_of(context.primitives.integer);
+    match &second_slot_failure {
+        Err(error) => assert error.diagnostic.message.as_str() == "trait object has invalid trait identity":
+        "a repeated failed trait query keeps its message",
+        Ok(_) => @panic("a primitive type produced trait slots twice"),
+    }
+    match second_slot_failure { Err(error) => error.drop(), Ok(_) => {}, }
+    assert count_key(&observer.object_keys, context.primitives.integer) == 2u64: "failed trait queries are not cached";
+}
+
+fn check_fresh_cache(context: ResolutionContext&, fixture: FixtureTypes&, location: SourceSpan) {
+    let observer = MissCounter.new();
+    defer observer.drop();
+    let cache = HirVerificationCache.new(context, Option<HirVerificationObserver&>.Some(&observer));
+    cache.validate_value(fixture.node, location).unwrap();
+    let rejected = cache.validate_value(fixture.bad, location);
+    match rejected {
+        Err(error) => error.drop(),
+        Ok(_) => @panic("a broken recursive type was accepted"),
+    }
+    cache.drop();
+    assert observer.value_misses == 2u64: "a new cache repeats the underlying work";
+    assert count_key(&observer.value_keys, fixture.node) == 1u64: "a new cache rebuilds a successful root";
+}
+
+fn check_hir_integration(session: AnalysisSession&, output: AnalysisOutput&) {
+    let first_observer = MissCounter.new();
+    defer first_observer.drop();
+    let first_context = match ResolutionContext.new(session) {
+        Ok(value) => value,
+        Err(error) => { error.drop(); @panic("could not rebuild the verification context"); },
+    };
+    defer first_context.drop();
+    verify_hir_observed(&first_context, output,
+        Option<HirVerificationObserver&>.Some(&first_observer)).unwrap();
+    assert first_observer.value_misses >= 2u64: "the document validates its distinct roots";
+    assert !has_duplicate(&first_observer.value_keys): "one cache validates each root once";
+    assert first_observer.signature_misses == output.procedures.len():
+    "the document builds each procedure signature once";
+    assert !has_duplicate(&first_observer.signature_keys): "one cache builds each signature once";
+
+    let second_observer = MissCounter.new();
+    defer second_observer.drop();
+    verify_hir_observed(&first_context, output,
+        Option<HirVerificationObserver&>.Some(&second_observer)).unwrap();
+    assert second_observer.value_misses == first_observer.value_misses:
+    "a second verification repeats the same distinct roots";
+    assert second_observer.signature_misses == first_observer.signature_misses:
+    "a second verification repeats the same signatures";
+
+    // The same Break node is reachable inside a loop and again outside it.
+    let location = SourceSpan(SourceId(0u64), Span(Position(0u64, 0u64), Position(0u64, 0u64)));
+    let break_id = session.hir.add(HirNode(location, first_context.primitives.never, false,
+        HirKind.Break(Option<HirId>.None)));
+    let body_statements = Vec<HirId>.new();
+    body_statements.push(break_id);
+    let loop_body = session.hir.add(HirNode(location, first_context.primitives.void, false,
+        HirKind.Block(Block(body_statements))));
+    let loop_id = session.hir.add(HirNode(location, first_context.primitives.void, false,
+        HirKind.Loop(loop_body)));
+    let root_statements = Vec<HirId>.new();
+    root_statements.push(loop_id);
+    root_statements.push(break_id);
+    let shared_root = session.hir.add(HirNode(location, first_context.primitives.void, false,
+        HirKind.Block(Block(root_statements))));
+
+    let entry_type = match &output.entry {
+        Some(value) => *value,
+        None => @panic("the probe document has no entry"),
+    };
+    let entry_index = 0u64;
+    let located = false;
+    while entry_index < output.procedures.len() {
+        if output.procedures[entry_index].type_id == entry_type {
+            located = true;
+            break;
+        }
+        entry_index += 1u64;
+    }
+    assert located: "the entry procedure is exported";
+
+    let modified = AnalysisOutput.new();
+    defer modified.drop();
+    for checked_definition in output.checked {
+        modified.checked.push(*checked_definition);
+    }
+    modified.procedures.push(AnalyzedProcedure(output.procedures[entry_index].definition,
+        output.procedures[entry_index].type_id, Vec<SymbolId>.new(), shared_root,
+        output.procedures[entry_index].unit, Vec<(NameId, SymbolId)>.new()));
+
+    let context_observer = MissCounter.new();
+    defer context_observer.drop();
+    let result = verify_hir_observed(&first_context, &modified,
+        Option<HirVerificationObserver&>.Some(&context_observer));
+    match &result {
+        Err(error) => {
+            assert error.kind == AnalysisErrorKind.Internal: "a break outside a loop is an internal verification failure";
+            assert error.diagnostic.message.as_str() == "exported break has no enclosing loop":
+            "the shared break is rejected by its second context";
+            assert same_location(error, location): "the shared break failure keeps its location";
+        },
+        Ok(_) => @panic("a break outside every loop was accepted"),
+    }
+    match result { Err(error) => error.drop(), Ok(_) => {}, }
+    assert context_observer.value_misses >= 1u64: "the contextual verification still uses the cache";
+
+    let final_observer = MissCounter.new();
+    defer final_observer.drop();
+    verify_hir_observed(&first_context, output,
+        Option<HirVerificationObserver&>.Some(&final_observer)).unwrap();
+    assert final_observer.value_misses == first_observer.value_misses:
+    "a failed contextual verification leaves no cached state";
+}
+
+fn check_trait_integration() {
+    let documents = Vec<SourceDocument>.new();
+    documents.push(SourceDocument(path=String.from(&"/tmp/hir-verification-trait.an"),
+        text=String.from(&"trait Show { fn show() -> i32; }\nstruct Item { value: i32 }\nimpl Show for Item { pub fn show() -> i32 { self.value } }\nfn render(value: Show&) -> i32 { value.show() }\nfn main() { let item = Item(value=7); let shown = render(&item); assert shown == 7: \"dispatch\"; }\n")));
+    defer release_documents(&documents);
+    let session = match AnalysisSession.prepare_documents(&documents, trust(), Option<PackageMap>.None,
+        false, false, Option<PreparationObserver&>.None) {
+        Ok(value) => value,
+        Err(error) => { error.drop(); @panic("trait probe preparation failed"); },
+    };
+    defer session.drop();
+    let output = match session.analyze(AnalysisOptions.new()) {
+        Ok(value) => value,
+        Err(error) => { error.drop(); @panic("trait probe analysis failed"); },
+    };
+    defer output.drop();
+    let context = match ResolutionContext.new(&session) {
+        Ok(value) => value,
+        Err(error) => { error.drop(); @panic("trait probe context failed"); },
+    };
+    defer context.drop();
+
+    let observer = MissCounter.new();
+    defer observer.drop();
+    match verify_hir_observed(&context, &output, Option<HirVerificationObserver&>.Some(&observer)) {
+        Ok(_) => {},
+        Err(error) => { error.drop(); @panic("trait probe verification failed"); },
+    }
+    assert observer.object_misses == 1u64: "a dynamic call and its coercion share one method table";
+    assert !has_duplicate(&observer.object_keys): "one cache collects each trait method table once";
+    assert observer.signature_misses >= output.procedures.len(): "every procedure signature is queried";
+    assert !has_duplicate(&observer.signature_keys): "one cache builds each signature once";
+    assert !has_duplicate(&observer.value_keys): "one cache validates each type root once";
+}
+
+fn main() {
+    let documents = Vec<SourceDocument>.new();
+    documents.push(SourceDocument(path=String.from(&"/tmp/hir-verification-probe.an"),
+        text=String.from(&"fn left(value: i32) { let first: i32 = value; }\nfn right(value: i32) { let second: i32 = value; }\nfn main() {\n    let value: i32 = 1;\n    left(value);\n    right(value);\n    match value { 0 => {}, _ => {} }\n}\n")));
+    defer release_documents(&documents);
+    let session = match AnalysisSession.prepare_documents(&documents, trust(), Option<PackageMap>.None,
+        false, false, Option<PreparationObserver&>.None) {
+        Ok(value) => value,
+        Err(error) => { error.drop(); @panic("probe preparation failed"); },
+    };
+    defer session.drop();
+    let output = match session.analyze(AnalysisOptions.new()) {
+        Ok(value) => value,
+        Err(error) => { error.drop(); @panic("probe analysis failed"); },
+    };
+    defer output.drop();
+
+    check_hir_integration(&session, &output);
+    check_trait_integration();
+
+    let context = match ResolutionContext.new(&session) {
+        Ok(value) => value,
+        Err(error) => { error.drop(); @panic("probe context failed"); },
+    };
+    defer context.drop();
+    let location = SourceSpan(SourceId(0u64), Span(Position(1u64, 4u64), Position(1u64, 9u64)));
+    let second_location = SourceSpan(SourceId(0u64), Span(Position(2u64, 4u64), Position(2u64, 9u64)));
+    let fixture = build_types(&session, &context, location);
+
+    let value_observer = MissCounter.new();
+    defer value_observer.drop();
+    check_value_cache(&context, &fixture, location, second_location, &value_observer);
+
+    let query_observer = MissCounter.new();
+    defer query_observer.drop();
+    check_query_cache(&context, &fixture, &query_observer);
+
+    check_fresh_cache(&context, &fixture, location);
+}

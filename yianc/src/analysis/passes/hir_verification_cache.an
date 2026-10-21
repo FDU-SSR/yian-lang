@@ -1,0 +1,114 @@
+from yianc.analysis.resolution.context import ResolutionContext;
+from yianc.analysis.ty.callable import CallableSignature, signature;
+from yianc.analysis.ty.trait_object import object_methods;
+from yianc.analysis.ty.validation import validate_concrete_value;
+from yianc.common.ids import TypeId;
+from yianc.common.location import SourceSpan;
+from yianc.diagnostics.model import AnalysisError;
+from std.collections.arena import Arena;
+from std.collections.hash_map import HashMap;
+from std.collections.hash_set import HashSet;
+from std.core.drop import Drop;
+from std.core.option import Option;
+from std.core.result import Result;
+from std.core.vec import Vec;
+
+// Test observers record an actual underlying query before it runs. Production
+// verification installs no observer, so the hot path only tests an Option.
+pub trait HirVerificationObserver {
+    fn value_validation_miss(type_id: TypeId) {}
+    fn signature_miss(type_id: TypeId) {}
+    fn object_methods_miss(type_id: TypeId) {}
+}
+
+// One cache belongs to one verify_hir call and borrows its resolution context.
+// Successful roots and owned query payloads are published only after the full
+// underlying query succeeds; failures leave no cached state.
+pub struct HirVerificationCache {
+    ctx: ResolutionContext&,
+    valid_roots: HashSet<TypeId>,
+    signature_index: HashMap<TypeId, u64>,
+    signatures: Arena<CallableSignature>,
+    object_index: HashMap<TypeId, u64>,
+    object_slots: Arena<Vec<TypeId>>,
+    observer: Option<HirVerificationObserver&>,
+}
+
+impl HirVerificationCache {
+    static pub fn new(ctx: ResolutionContext&, observer: Option<HirVerificationObserver&>) -> Self {
+        Self(ctx, HashSet<TypeId>.new(), HashMap<TypeId, u64>.new(), Arena<CallableSignature>.new(),
+            HashMap<TypeId, u64>.new(), Arena<Vec<TypeId>>.new(), observer)
+    }
+
+    // A root is cached only after its complete validation succeeds. Recursive
+    // visiting state inside the cold call is not a successful root on its own.
+    pub fn validate_value(type_id: TypeId, span: SourceSpan) -> Result<(), AnalysisError> {
+        if self.valid_roots.contains(&type_id) {
+            return Result<(), AnalysisError>.Ok(());
+        }
+
+        match self.observer {
+            Some(value) => value.value_validation_miss(type_id),
+            None => {},
+        }
+
+        validate_concrete_value(self.ctx, type_id, span)?;
+        self.valid_roots.insert(type_id);
+        Result<(), AnalysisError>.Ok(())
+    }
+
+    // Arena payloads keep borrowed signatures stable across later index growth.
+    pub fn signature_of(type_id: TypeId) -> Result<CallableSignature&, AnalysisError> {
+        match self.signature_index.get(&type_id) {
+            Some(index) => return Result<CallableSignature&, AnalysisError>.Ok(*self.signatures.get(*index).unwrap()),
+            None => {},
+        }
+
+        match self.observer {
+            Some(value) => value.signature_miss(type_id),
+            None => {},
+        }
+
+        let created = signature(self.ctx, type_id)?;
+        let index = self.signatures.len();
+        self.signatures.alloc(created);
+        self.signature_index.insert(type_id, index);
+        Result<CallableSignature&, AnalysisError>.Ok(*self.signatures.get(index).unwrap())
+    }
+
+    pub fn object_methods_of(trait_type_id: TypeId) -> Result<Vec<TypeId>&, AnalysisError> {
+        match self.object_index.get(&trait_type_id) {
+            Some(index) => return Result<Vec<TypeId>&, AnalysisError>.Ok(*self.object_slots.get(*index).unwrap()),
+            None => {},
+        }
+
+        match self.observer {
+            Some(value) => value.object_methods_miss(trait_type_id),
+            None => {},
+        }
+
+        let created = object_methods(self.ctx, trait_type_id)?;
+        let index = self.object_slots.len();
+        self.object_slots.alloc(created);
+        self.object_index.insert(trait_type_id, index);
+        Result<Vec<TypeId>&, AnalysisError>.Ok(*self.object_slots.get(index).unwrap())
+    }
+}
+
+impl Drop for HirVerificationCache {
+    pub fn drop() {
+        for value in self.signatures {
+            value.drop();
+        }
+
+        for slots in self.object_slots {
+            slots.drop();
+        }
+
+        self.signatures.drop();
+        self.object_slots.drop();
+        self.valid_roots.drop();
+        self.signature_index.drop();
+        self.object_index.drop();
+    }
+}

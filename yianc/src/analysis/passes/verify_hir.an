@@ -1,13 +1,12 @@
 from yianc.analysis.resolution.context import ResolutionContext;
 from yianc.analysis.session.output import AnalysisOutput;
-from yianc.analysis.ty.callable import signature, instance_substitutions;
+from yianc.analysis.ty.callable import instance_substitutions;
 from yianc.analysis.ty.substitution import substitute;
 from yianc.analysis.ty.aggregate import payload_fields;
 from yianc.analysis.ty.model import StructField;
 from yianc.analysis.constant.floating import round_float;
-from yianc.analysis.ty.validation import validate_concrete_value;
 from yianc.analysis.ty.substitution import has_generic;
-from yianc.analysis.ty.trait_object import object_methods;
+from yianc.analysis.passes.hir_verification_cache import HirVerificationCache, HirVerificationObserver;
 from yianc.analysis.hir.node import HirNode;
 from yianc.analysis.hir.pattern import PatternNode;
 from yianc.analysis.hir.traversal import HirVisitor, walk_expr;
@@ -60,6 +59,7 @@ struct HirVerifier {
     active: HashSet<HirId>,
     active_patterns: HashSet<PatternId>,
     loops: Vec<TypeId>,
+    cache: HirVerificationCache&,
 }
 
 impl Drop for HirVerifier {
@@ -138,8 +138,7 @@ impl HirVerifier {
         if has_generic(&self.ctx.session.types, type_id) {
             return Result<(), AnalysisError>.Err(invalid(span, "exported call contains unresolved generic arguments"));
         }
-        let callable = signature(self.ctx, type_id)?;
-        defer callable.drop();
+        let callable = self.cache.signature_of(type_id)?;
 
         if require_body && !callable.is_header && !self.exported.contains(&type_id) {
             return Result<(), AnalysisError>.Err(invalid(span, "exported call has no checked function body"));
@@ -309,7 +308,7 @@ impl HirVerifier {
                         Some(value) => value,
                         None => return Result<(), AnalysisError>.Err(invalid(node.span, "exported binding contains an invalid symbol ID")),
                     };
-                    validate_concrete_value(self.ctx, record.type_id, node.span)?;
+                    self.cache.validate_value(record.type_id, node.span)?;
                     match &value.init {
                         Some(init) => {
                             self.value(*init, record.type_id, node.span)?;
@@ -339,8 +338,7 @@ impl HirVerifier {
                 self.call(value.method_id, &value.args, node.type_id, Option<HirId>.Some(value.receiver), false, node.span)?;
                 let expected = self.ctx.session.types.trait_object(value.trait_type_id);
                 self.value(value.receiver, expected, node.span)?;
-                let slots = object_methods(self.ctx, value.trait_type_id)?;
-                defer slots.drop();
+                let slots = self.cache.object_methods_of(value.trait_type_id)?;
                 if value.slot_index >= slots.len() || slots[value.slot_index] != value.method_id {
                     return Result<(), AnalysisError>.Err(invalid(node.span, "exported dynamic call has an inconsistent slot"));
                 }
@@ -360,8 +358,7 @@ impl HirVerifier {
                     return Result<(), AnalysisError>.Err(invalid(node.span, "exported trait object has an inconsistent concrete receiver"));
                 }
 
-                let slots = object_methods(self.ctx, value.trait_type_id)?;
-                defer slots.drop();
+                let slots = self.cache.object_methods_of(value.trait_type_id)?;
 
                 if slots.len() != value.method_ids.len() {
                     return Result<(), AnalysisError>.Err(invalid(node.span, "exported trait object has an inconsistent vtable length"));
@@ -370,10 +367,8 @@ impl HirVerifier {
                 let index = 0u64;
 
                 for method in value.method_ids {
-                    let actual = signature(self.ctx, *method)?;
-                    defer actual.drop();
-                    let expected = signature(self.ctx, slots[index])?;
-                    defer expected.drop();
+                    let actual = self.cache.signature_of(*method)?;
+                    let expected = self.cache.signature_of(slots[index])?;
 
                     if has_generic(&self.ctx.session.types, *method) || (!actual.is_header && !self.exported.contains(method)) {
                         return Result<(), AnalysisError>.Err(invalid(node.span, "exported vtable entry has no concrete checked body"));
@@ -647,7 +642,7 @@ impl HirVisitor for HirVerifier {
         match &node.kind {
             Ty => {},
             _ => {
-                validate_concrete_value(self.ctx, node.type_id, node.span)?;
+                self.cache.validate_value(node.type_id, node.span)?;
             },
         }
 
@@ -682,7 +677,7 @@ impl HirVisitor for HirVerifier {
             return Result<WalkControl, AnalysisError>.Err(invalid(node.span, "exported pattern contains an invalid source ID"));
         }
 
-        validate_concrete_value(self.ctx, node.type_id, node.span)?;
+        self.cache.validate_value(node.type_id, node.span)?;
         match &node.kind {
             BindPattern(value) => {
                 let symbol = match self.ctx.session.symbols.get(value.symbol_id) {
@@ -713,6 +708,13 @@ impl HirVisitor for HirVerifier {
 }
 
 pub fn verify_hir(ctx: ResolutionContext&, output: AnalysisOutput&) -> Result<(), AnalysisError> {
+    verify_hir_observed(ctx, output, Option<HirVerificationObserver&>.None)
+}
+
+// The observer exists for focused cache probes; production analysis passes none.
+pub fn verify_hir_observed(ctx: ResolutionContext&, output: AnalysisOutput&, observer: Option<HirVerificationObserver&>) -> Result<(), AnalysisError> {
+    let cache = HirVerificationCache.new(ctx, observer);
+    defer cache.drop();
     let exported = HashSet<TypeId>.new();
     defer exported.drop();
     let checked = HashSet<DefId>.new();
@@ -763,9 +765,8 @@ pub fn verify_hir(ctx: ResolutionContext&, output: AnalysisOutput&) -> Result<()
             Some(Complete) => {},
             _ => return Result<(), AnalysisError>.Err(invalid(root.span, "exported procedure has not completed analysis")),
         }
-        let callable = signature(ctx, procedure.type_id)?;
-        defer callable.drop();
-        let checker = HirVerifier(ctx, callable.result, &exported, HashSet<HirId>.new(), HashSet<PatternId>.new(), Vec<TypeId>.new());
+        let callable = cache.signature_of(procedure.type_id)?;
+        let checker = HirVerifier(ctx, callable.result, &exported, HashSet<HirId>.new(), HashSet<PatternId>.new(), Vec<TypeId>.new(), &cache);
         defer checker.drop();
         let captures = procedure.captures.len();
         let receiver_count = if callable.receiver.is_some() && !callable.is_static {
@@ -786,7 +787,7 @@ pub fn verify_hir(ctx: ResolutionContext&, output: AnalysisOutput&) -> Result<()
             if capture[0] != symbol.name || capture[1] != procedure.parameters[position] {
                 return Result<(), AnalysisError>.Err(invalid(root.span, "exported capture symbols are inconsistent"));
             }
-            validate_concrete_value(ctx, symbol.type_id, root.span)?;
+            cache.validate_value(symbol.type_id, root.span)?;
             position += 1;
         }
 
