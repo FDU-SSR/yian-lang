@@ -11,6 +11,7 @@ from yianc.frontend.source import SourceManager;
 from yianc.driver.paths import source_roots;
 from yianc.driver.host import associated_root;
 from yianc.driver.trace import CompilerTrace;
+from yianc.driver.profile import ProfileKind;
 from yianc.driver.dump import StageDumps;
 from yianc.analysis.session.prepare import PreparationObserver;
 from json.write import Writer;
@@ -82,20 +83,47 @@ fn emit_error(json: bool, problem: Diagnostic&, sources: Option<SourceManager&>)
     emit(analysis_json, &diagnostics, problem.stage, sources);
 }
 
+fn start_profile(trace: Option<CompilerTrace&>, pass_id: str) -> u64 {
+    match trace { Some(value) => value.start_pass(pass_id, "input", pass_id, ProfileKind.Pass), None => 0u64 }
+}
+
+fn finish_profile(trace: Option<CompilerTrace&>, pass_id: str, token: u64, success: bool) {
+    match trace {
+        Some(value) => if success { value.finish(pass_id, token); } else { value.fail(pass_id, token); },
+        None => {},
+    }
+}
+
 pub fn prepare(config: CompilerConfig&) -> Result<AnalysisSession, AnalysisError> {
+    prepare_profiled(config, Option<CompilerTrace&>.None)
+}
+
+pub fn prepare_profiled(config: CompilerConfig&, trace: Option<CompilerTrace&>) -> Result<AnalysisSession, AnalysisError> {
     let transferred = false;
     let packages = match &config.packages {
-        Some(path) => match PackageMap.load(path.as_str()) {
-            Ok(value) => Option<PackageMap>.Some(value),
-            Err(problem) => return Result<AnalysisSession, AnalysisError>.Err(problem),
+        Some(path) => {
+            let token = start_profile(trace, "input.package_map");
+            match PackageMap.load(path.as_str()) {
+                Ok(value) => { finish_profile(trace, "input.package_map", token, true); Option<PackageMap>.Some(value) },
+                Err(problem) => { finish_profile(trace, "input.package_map", token, false); return Result<AnalysisSession, AnalysisError>.Err(problem); },
+            }
         },
-        None => Option<PackageMap>.None,
+        None => {
+            match trace { Some(value) => value.skip("input.package_map", "standalone compilation has no package map"), None => {}, }
+            Option<PackageMap>.None
+        },
     };
     defer {
         if !transferred { match &packages { Some(value) => value.drop(), None => {}, } }
     };
     let map = match &packages { Some(value) => Option<PackageMap&>.Some(value), None => Option<PackageMap&>.None, };
-    let roots = source_roots(config, map)?;
+    let roots_token = start_profile(trace, "input.source_roots");
+    let roots_result = source_roots(config, map);
+    match &roots_result {
+        Ok(_) => finish_profile(trace, "input.source_roots", roots_token, true),
+        Err(_) => finish_profile(trace, "input.source_roots", roots_token, false),
+    }
+    let roots = roots_result?;
     defer roots.drop();
     let trust = SourceTrust.new(roots.standard_library.as_str())?;
     defer {
@@ -127,11 +155,9 @@ pub fn prepare(config: CompilerConfig&) -> Result<AnalysisSession, AnalysisError
     }
 
     transferred = true;
-    let dumps = StageDumps(config.dump);
-    let observer = match &config.action {
-        Compile => if config.dump { Option<PreparationObserver&>.Some(&dumps) } else { Option<PreparationObserver&>.None },
-        _ => Option<PreparationObserver&>.None,
-    };
+    let dumps = StageDumps(config.dump, trace);
+    let observe = match &config.action { Compile => config.dump || trace.is_some(), _ => false };
+    let observer = if observe { Option<PreparationObserver&>.Some(&dumps) } else { Option<PreparationObserver&>.None };
     AnalysisSession.prepare_observed(&config.inputs, trust, packages, config.raw_pointers, config.allow_ffi, observer)
 }
 

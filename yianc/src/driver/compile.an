@@ -1,5 +1,5 @@
 from yianc.config import CompilerConfig, OutputKind;
-from yianc.analysis.cli import prepare;
+from yianc.analysis.cli import prepare, prepare_profiled;
 from yianc.analysis.session.session import AnalysisSession;
 from yianc.analysis.session.output import AnalysisOptions;
 from yianc.analysis.constant.evaluate import TypeSizeProvider;
@@ -8,6 +8,7 @@ from yianc.driver.native import NativeDriver, DriverError;
 from yianc.driver.paths import runtime_root;
 from yianc.driver.dump import hir_dump, cfg_dump;
 from yianc.driver.trace import CompilerTrace;
+from yianc.driver.profile import ProfileKind;
 from yianc.frontend.text import is_alphanumeric;
 from yianc.diagnostics.model import Diagnostic;
 from yianc.diagnostics.render import render;
@@ -103,7 +104,9 @@ fn destination(config: CompilerConfig&, session: AnalysisSession&) -> String {
 pub fn compile_cli(config: CompilerConfig&) -> bool {
     let trace = match CompilerTrace.new(config, false) { Ok(value) => value, Err(problem) => { defer problem.drop(); write_error(problem.as_str()); return false; }, };
     defer trace.drop();
-    defer trace.report();
+    let profile_complete = false;
+    defer trace.finalize(profile_complete);
+    let total = trace.start_pass("compiler.total", "main", "compiler.total", ProfileKind.Stage);
     trace.event("main", 3, "compiling source inputs", Option<str>.None);
     // Native option validation also applies to none/IR targets; analysis ignores link flags.
     for library in config.link_libraries {
@@ -113,14 +116,15 @@ pub fn compile_cli(config: CompilerConfig&) -> bool {
         }
         if !valid { write_error("error: invalid --link-lib name\n"); return false; }
     }
-    let started = trace.start("main", "source preparation");
-    let session = match prepare(config) {
-        Ok(value) => value,
-        Err(problem) => { defer problem.drop(); report(&problem.diagnostic, Option<AnalysisSession&>.None); return false; },
+    let started = trace.start_pass("source_preparation", "main", "source preparation", ProfileKind.Stage);
+    let prepared = prepare_profiled(config, Option<CompilerTrace&>.Some(&trace));
+    let session = match prepared {
+        Ok(value) => { trace.finish("source_preparation", started); value },
+        Err(problem) => { trace.fail("source_preparation", started); defer problem.drop(); report(&problem.diagnostic, Option<AnalysisSession&>.None); return false; },
     };
     defer session.drop();
-    trace.finish("source preparation", started);
-    let backend = match BackendSession.new(&session, BackendOptions(config.raw_pointers, config.optimization)) {
+    let backend_result = BackendSession.new_observed(&session, BackendOptions(config.raw_pointers, config.optimization), Option<CompilerTrace&>.Some(&trace));
+    let backend = match backend_result {
         Ok(value) => value,
         Err(problem) => { defer problem.drop(); report(&problem.diagnostic, Option<AnalysisSession&>.Some(&session)); return false; },
     };
@@ -130,124 +134,170 @@ pub fn compile_cli(config: CompilerConfig&) -> bool {
     options.require_entry = config.target != OutputKind.None;
     options.entry_optional = false;
     options.trace = Option<CompilerTrace&>.Some(&trace);
-    started = trace.start("main", "semantic analysis");
-    let output = match session.analyze(options) {
-        Ok(value) => value,
-        Err(problem) => { defer problem.drop(); report(&problem.diagnostic, Option<AnalysisSession&>.Some(&session)); return false; },
+    started = trace.start_pass("semantic_analysis", "main", "semantic analysis", ProfileKind.Stage);
+    let analyzed = session.analyze(options);
+    let output = match analyzed {
+        Ok(value) => { trace.finish("semantic_analysis", started); value },
+        Err(problem) => { trace.fail("semantic_analysis", started); defer problem.drop(); report(&problem.diagnostic, Option<AnalysisSession&>.Some(&session)); return false; },
     };
     defer output.drop();
-    trace.finish("semantic analysis", started);
     if config.dump {
+        let dump_token = trace.start_pass("io.dump", "io", "HIR dump", ProfileKind.Tool);
         match hir_dump(&session, &output) {
-            Ok(_) => {},
-            Err(problem) => { defer problem.drop(); report(&problem.diagnostic, Option<AnalysisSession&>.Some(&session)); return false; },
+            Ok(_) => trace.finish("io.dump", dump_token),
+            Err(problem) => { trace.fail("io.dump", dump_token); defer problem.drop(); report(&problem.diagnostic, Option<AnalysisSession&>.Some(&session)); return false; },
         }
     }
     for warning in output.warnings { report(warning, Option<AnalysisSession&>.Some(&session)); }
-    started = trace.start("cfg", "HIR to CFG");
-    let cfg = match backend.lower(&output) {
-        Ok(value) => value,
-        Err(problem) => { defer problem.drop(); report(&problem.diagnostic, Option<AnalysisSession&>.Some(&session)); return false; },
+    started = trace.start_pass("cfg_pipeline", "cfg", "HIR to CFG", ProfileKind.Stage);
+    let lowered = backend.lower_observed(&output, Option<CompilerTrace&>.Some(&trace));
+    let cfg = match lowered {
+        Ok(value) => { trace.finish("cfg_pipeline", started); value },
+        Err(problem) => { trace.fail("cfg_pipeline", started); defer problem.drop(); report(&problem.diagnostic, Option<AnalysisSession&>.Some(&session)); return false; },
     };
     defer cfg.drop();
-    trace.finish("HIR to CFG", started);
     if config.dump {
+        let dump_token = trace.start_pass("io.dump", "io", "CFG dump", ProfileKind.Tool);
         match cfg_dump(&cfg) {
-            Ok(_) => {},
-            Err(problem) => { defer problem.drop(); report(&problem.diagnostic, Option<AnalysisSession&>.Some(&session)); return false; },
+            Ok(_) => trace.finish("io.dump", dump_token),
+            Err(problem) => { trace.fail("io.dump", dump_token); defer problem.drop(); report(&problem.diagnostic, Option<AnalysisSession&>.Some(&session)); return false; },
         }
     }
-    if config.target == OutputKind.None { return true; }
+    if config.target == OutputKind.None {
+        for pass_id in ["llvm.lower", "llvm.verify_before_optimization", "llvm.optimize", "llvm.verify_after_optimization",
+            "llvm.emit_native", "llvm.serialize_ir", "llvm.serialize_bitcode", "native.prepare", "native.runtime_compile",
+            "native.runtime_archive", "native.c_shim_compile", "native.link_flags", "native.link", "io.artifact_publish"] {
+            trace.skip(*pass_id, "target none stops after CFG lowering");
+        }
+        trace.finish("compiler.total", total);
+        profile_complete = true;
+        return true;
+    }
+    started = trace.start_pass("llvm_pipeline", "llvm", "LLVM lowering and emission", ProfileKind.Stage);
+    if config.optimization == 0u8 { trace.skip("llvm.optimize", "-O0 skips the LLVM IR optimization pipeline"); }
+    if config.target == OutputKind.Ll {
+        trace.skip("llvm.verify_before_optimization", "target ll serializes IR without the native emission verification pipeline");
+        trace.skip("llvm.optimize", "target ll does not run the LLVM optimization pipeline");
+        trace.skip("llvm.verify_after_optimization", "target ll serializes IR without the native emission verification pipeline");
+        trace.skip("llvm.emit_native", "target ll serializes IR instead of emitting native code");
+        trace.skip("llvm.serialize_bitcode", "target ll does not serialize bitcode");
+    } else {
+        if !config.dump { trace.skip("llvm.serialize_ir", "LLVM IR serialization is only selected by target ll or --dump"); }
+        if config.target != OutputKind.Bc { trace.skip("llvm.serialize_bitcode", "bitcode serialization is only selected by target bc"); }
+    }
+    if config.target != OutputKind.Exe && config.target != OutputKind.Obj && config.target != OutputKind.Asm {
+        trace.skip("llvm.emit_native", "selected target does not emit native object or assembly code");
+    }
+    if config.target != OutputKind.Exe && config.target != OutputKind.Obj {
+        for pass_id in ["native.prepare", "native.runtime_compile", "native.runtime_archive", "native.c_shim_compile", "native.link_flags", "native.link"] {
+            trace.skip(*pass_id, "selected target does not invoke native linking");
+        }
+    }
     if config.dump {
-        let ir = match backend.llvm_snapshot(&cfg) {
+        let snapshot = backend.llvm_snapshot_observed(&cfg, Option<CompilerTrace&>.Some(&trace));
+        let ir = match snapshot {
             Ok(value) => value,
-            Err(problem) => { defer problem.drop(); report(&problem.diagnostic, Option<AnalysisSession&>.Some(&session)); return false; },
+            Err(problem) => { trace.fail("llvm_pipeline", started); defer problem.drop(); report(&problem.diagnostic, Option<AnalysisSession&>.Some(&session)); return false; },
         };
         defer ir.drop();
+        let dump_token = trace.start_pass("io.dump", "io", "LLVM IR dump", ProfileKind.Tool);
         match write("build/ir.ll", ir.as_slice()) {
-            Ok(_) => {},
-            Err(problem) => { defer problem.drop(); write_error(problem.msg()); return false; },
+            Ok(_) => trace.finish("io.dump", dump_token),
+            Err(problem) => { trace.fail("io.dump", dump_token); trace.fail("llvm_pipeline", started); defer problem.drop(); write_error(problem.msg()); return false; },
         }
     }
-    started = trace.start("llvm", "LLVM lowering and emission");
-    let emission = match backend.emit(&cfg, EmitOptions(config.target)) {
-        Ok(value) => value,
-        Err(problem) => { defer problem.drop(); report(&problem.diagnostic, Option<AnalysisSession&>.Some(&session)); return false; },
+    let emitted = backend.emit_observed(&cfg, EmitOptions(config.target), Option<CompilerTrace&>.Some(&trace));
+    let emission = match emitted {
+        Ok(value) => { trace.finish("llvm_pipeline", started); value },
+        Err(problem) => { trace.fail("llvm_pipeline", started); defer problem.drop(); report(&problem.diagnostic, Option<AnalysisSession&>.Some(&session)); return false; },
     };
     defer emission.drop();
-    trace.finish("LLVM lowering and emission", started);
     let path = destination(config, &session);
     defer path.drop();
+    let publish_directory_token = trace.start_pass("io.artifact_publish", "io", "prepare temporary artifact directory", ProfileKind.Tool);
+    let publish_directory_ready = false;
+    defer { if !publish_directory_ready { trace.fail("io.artifact_publish", publish_directory_token); } };
     let parent = match Path.new(path.as_str()).parent() { Some(value) => if value.as_str() == "" { "." } else { value.as_str() }, None => ".", };
     match create_dir_all(parent) { Ok(_) => {}, Err(problem) => { defer problem.drop(); write_error(problem.msg()); return false; }, }
     let directory = match temporary_directory(parent) {
         Ok(value) => value,
         Err(problem) => { defer problem.drop(); write_error(problem.msg()); return false; },
     };
+    trace.finish("io.artifact_publish", publish_directory_token);
+    publish_directory_ready = true;
     defer directory.drop();
     let object = Path.new(directory.as_str()).join("input.o");
     defer object.drop();
     let temporary = Path.new(directory.as_str()).join("output");
     defer temporary.drop();
     defer cleanup(directory.as_str(), object.as_str(), temporary.as_str());
+    let publish_token = trace.start_pass("io.artifact_publish", "io", "write temporary compiler artifact", ProfileKind.Tool);
     match write(object.as_str(), emission.bytes.as_slice()) {
-        Ok(_) => {},
-        Err(problem) => { defer problem.drop(); write_error(problem.msg()); return false; },
+        Ok(_) => trace.finish("io.artifact_publish", publish_token),
+        Err(problem) => { trace.fail("io.artifact_publish", publish_token); defer problem.drop(); write_error(problem.msg()); return false; },
     }
     if config.target == OutputKind.Exe || config.target == OutputKind.Obj {
-        let root = match runtime_root(config) {
+        started = trace.start_pass("native_pipeline", "main", "native linking", ProfileKind.Stage);
+        let prepare_token = trace.start_pass("native.prepare", "native", "native configuration", ProfileKind.Pass);
+        let root_result = runtime_root(config);
+        let root = match root_result {
             Ok(value) => value,
-            Err(problem) => { defer problem.drop(); report(&problem.diagnostic, Option<AnalysisSession&>.Some(&session)); return false; },
+            Err(problem) => { trace.fail("native.prepare", prepare_token); trace.fail("native_pipeline", started); defer problem.drop(); report(&problem.diagnostic, Option<AnalysisSession&>.Some(&session)); return false; },
         };
         defer root.drop();
-        let driver = match NativeDriver.new(root.as_str(), session.package_map()) {
+        let driver_result = NativeDriver.new(root.as_str(), session.package_map());
+        let driver = match driver_result {
             Ok(value) => value,
             Err(problem) => {
+                trace.fail("native.prepare", prepare_token);
+                trace.fail("native_pipeline", started);
                 defer problem.drop();
                 retain_object(object.as_str(), path.as_str());
                 driver_error(&problem);
                 return false;
             },
         };
+        trace.finish("native.prepare", prepare_token);
         defer driver.drop();
-        started = trace.start("main", "native linking");
-        let linked = match driver.link(object.as_str(), temporary.as_str(), config.optimization, config.target == OutputKind.Obj,
-            &config.link_libraries, &config.link_searches) {
-            Ok(artifact) => {
-                artifact.drop();
-                if config.target == OutputKind.Obj {
-                    let intermediate = Path.new(path.as_str()).with_extension("o");
-                    defer intermediate.drop();
-                    if intermediate.as_str() != path.as_str() {
-                        match rename(object.as_str(), intermediate.as_str()) {
-                            Ok(_) => {},
-                            Err(problem) => { defer problem.drop(); write_error(problem.msg()); return false; },
-                        }
-                    }
-                }
-                // Publish only after both the native artifact and any required intermediate are complete.
-                match rename(temporary.as_str(), path.as_str()) {
-                    Ok(_) => true,
-                    Err(problem) => { defer problem.drop(); write_error(problem.msg()); false },
-                }
-            },
+        let linked_result = driver.link_observed(object.as_str(), temporary.as_str(), config.optimization, config.target == OutputKind.Obj,
+            &config.link_libraries, &config.link_searches, Option<CompilerTrace&>.Some(&trace));
+        match linked_result {
+            Ok(artifact) => artifact.drop(),
             Err(problem) => {
+                trace.fail("native_pipeline", started);
                 defer problem.drop();
-                // The reference retains a complete user object when executable linking fails.
-                // It is an inspectable LLVM artifact; the failed executable is never published.
                 retain_object(object.as_str(), path.as_str());
                 driver_error(&problem);
-                false
+                return false;
             },
-        };
-        trace.finish("native linking", started);
-        linked
+        }
+        trace.finish("native_pipeline", started);
+        started = trace.start_pass("io.artifact_publish", "io", "publish native artifact", ProfileKind.Tool);
+        if config.target == OutputKind.Obj {
+            let intermediate = Path.new(path.as_str()).with_extension("o");
+            defer intermediate.drop();
+            if intermediate.as_str() != path.as_str() {
+                match rename(object.as_str(), intermediate.as_str()) {
+                    Ok(_) => {},
+                    Err(problem) => { trace.fail("io.artifact_publish", started); defer problem.drop(); write_error(problem.msg()); return false; },
+                }
+            }
+        }
+        // Publish only after both the native artifact and any required intermediate are complete.
+        match rename(temporary.as_str(), path.as_str()) {
+            Ok(_) => trace.finish("io.artifact_publish", started),
+            Err(problem) => { trace.fail("io.artifact_publish", started); defer problem.drop(); write_error(problem.msg()); return false; },
+        }
     } else {
+        started = trace.start_pass("io.artifact_publish", "io", "publish compiler artifact", ProfileKind.Tool);
         match rename(object.as_str(), path.as_str()) {
-            Ok(_) => true,
-            Err(problem) => { defer problem.drop(); write_error(problem.msg()); false },
+            Ok(_) => trace.finish("io.artifact_publish", started),
+            Err(problem) => { trace.fail("io.artifact_publish", started); defer problem.drop(); write_error(problem.msg()); return false; },
         }
     }
+    trace.finish("compiler.total", total);
+    profile_complete = true;
+    true
 }
 
 fn write_error(text: str) {

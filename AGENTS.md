@@ -110,7 +110,7 @@ Options include:
 - `-t/--target {none,exe,ll,bc,obj,asm}`; the default is `exe`.
 - `-o/--output PATH`.
 - `-O {0..3}`; for non-`ll` targets this controls the LLVM optimization pipeline, backend optimization, and executable linking. `-t ll` emits unoptimized LLVM IR.
-- `--profile`, `--dump`, `--log-spec`, `--log-file`, and `--packages`.
+- `--profile`, native-only `--profile-output PATH`, `--dump`, `--log-spec`, `--log-file`, and `--packages`.
 - `--frontend-json {tokens,ast,desugared}` prints a JSON frontend observation without semantic analysis or code generation.
 - `--compiler-root PATH` (locate the standard library in a checkout) and `--raw-pointers`.
 - `--allow-ffi` permits FFI declarations and operations in standalone sources; package builds use each package's `[package].ffi` value. `--link-lib NAME` and `--link-search DIR` add native libraries and search paths when linking an executable.
@@ -119,7 +119,7 @@ Options include:
 
 `-t none` uses the compilation path: it runs semantic analysis and the CFG path, can create logging or dump output, and skips LLVM emission. Use `--analyze` for a source-to-HIR check without build output. The two options are not interchangeable entry points.
 
-`--dump` on the compilation path writes `tokens.txt`, `ast.txt`, `hir.txt`, and `cfg.txt` under `build/` as their stages complete; code generation also writes `ir.ll`. `ir.ll` is a dump, separate from an explicitly selected `-t ll` output. `--token`, `--ast`, `--hir`, `--cfg`, and `--emit-llvm` are not supported options. Use one action mode per invocation; in the recovery Python CLI, frontend observation takes precedence over analysis and formatting flags.
+`--profile-output PATH` is native-only: it writes structured JSON plus a same-basename `.txt` summary for compile actions; Python recovery CLI does not expose it. `--dump` on the compilation path writes `tokens.txt`, `ast.txt`, `hir.txt`, and `cfg.txt` under `build/` as their stages complete; code generation also writes `ir.ll`. `ir.ll` is a dump, separate from an explicitly selected `-t ll` output. `--token`, `--ast`, `--hir`, `--cfg`, and `--emit-llvm` are not supported options. Use one action mode per invocation; in the recovery Python CLI, frontend observation takes precedence over analysis and formatting flags.
 
 Executables default to `build/a.out`; LLVM bitcode and object outputs default to `build/<stem>.<ext>`, while assembly defaults to `<stem>.s` in the current directory. Pass `-o` whenever the output name matters.
 
@@ -262,7 +262,7 @@ For compiler changes, validate native `yianc` with minimal relevant cases. Check
 
 ## anx package manager
 
-`anx/` implements `new [--kind bin|lib|hybrid]` (`--lib` is shorthand for `--kind lib`), `build`, `run`, `check`, `test`, `fmt [--check]`, and `graph`. Projects declare metadata plus `[dependencies]` and `[dev-dependencies]` (visible only to `anx test`, and not compiled by a normal build) in `package.anx`; imports use package names. Native `anx` produces the v2 package-map contract consumed by native `yianc`; the Python recovery compiler consumes it only for cold-bootstrap compatibility. Its build/check/run/test commands share a strict compiler selector: nonempty `YIANC`, otherwise `yianc` on `PATH`; the selected canonical file must be executable ELF. It never invokes a shell or falls back to Python. `anx test` runs the project's tests under `<project>/tests/` in both fat and raw modes by default, and accepts `--pointer-mode {both,fat,raw}`; `--raw-pointers` remains a raw alias and conflicts with an explicit mode.
+`anx/` implements `new [--kind bin|lib|hybrid]` (`--lib` is shorthand for `--kind lib`), `build`, `run`, `check`, `test`, `fmt [--check]`, and `graph`. The four compiler commands accept default-off `--profile`, which writes a unique `build/profile/<run-id>/` JSON/text report and per-invocation compiler reports; program execution is excluded. Projects declare metadata plus `[dependencies]` and `[dev-dependencies]` (visible only to `anx test`, and not compiled by a normal build) in `package.anx`; imports use package names. Native `anx` produces the v2 package-map contract consumed by native `yianc`; the Python recovery compiler consumes it only for cold-bootstrap compatibility. Its build/check/run/test commands share a strict compiler selector: nonempty `YIANC`, otherwise `yianc` on `PATH`; the selected canonical file must be executable ELF. It never invokes a shell or falls back to Python. `anx test` runs the project's tests under `<project>/tests/` in both fat and raw modes by default, and accepts `--pointer-mode {both,fat,raw}`; `--raw-pointers` remains a raw alias and conflicts with an explicit mode.
 
 `bin` supplies an executable entry, `lib` exposes importable sources without an entry, and `hybrid` supplies both. `anx build`/`run` do not emit a library artifact for `lib`; `check`/`test` are the corresponding package operations, subject to verification scope and authorization. Executables are written to the root project's `build/app`. `--release` selects `-O3` unless an explicit `-O` is supplied. `anx run [project] -- ...` forwards arguments to the program. Verify native package-manager changes with minimal relevant fixtures and the daily native compiler; check recovery compatibility only if the cold recipe consumes the changed contract.
 

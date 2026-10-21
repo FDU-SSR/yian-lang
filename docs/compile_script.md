@@ -95,13 +95,32 @@ yianc -O2 lib/src tests/basic/array/assign.an
 `-t ll` 输出始终为**未优化**的 IR（零优化保留，供调试）；`-t bc` 导出的是序列化后的 IR，
 按同一个 `-O` 档位处理。
 
-### 2.5 `--profile` — 打印各阶段耗时
+### 2.5 `--profile` / `--profile-output PATH` — 编译耗时报告
 
 ```bash
-yianc --profile lib/src tests/basic/array/assign.an
+yianc --profile-output build/profile/compiler.json lib/src tests/basic/array/assign.an
+yianc --profile --profile-output build/profile/compiler.json lib/src tests/basic/array/assign.an
 ```
 
-链接可执行文件时打印实际使用的链接器及其版本；末尾打印 llvmlite 绑定的 LLVM 版本。
+`--profile` 保留 stderr 上的 `[profile]` 文本汇总。native `yianc` 的 `--profile-output PATH` 会额外写结构化
+JSON，并在同目录写一个扩展名为 `.txt` 的可读汇总。两者可同时使用；单独使用 `--profile-output` 不输出
+终端 profile 文本。报告含目标、优化级别、指针模式、成功状态、每项的 `pass_id`、父项、类型、调用次数、
+累计耗时、自耗时、失败次数、不完整标记、未运行原因和统计错误。耗时为包含子项的总耗时，`self_ns` 扣除
+直接子项；重复执行的 pass 累计调用次数及耗时。
+`work_finished_at_ns` 记录编译工作结束、profile 序列化开始前的 monotonic 时间；anx 用它关闭子进程等待区间，
+因此 JSON/文本序列化和写盘时间不计入 `build_total_ns`。
+
+计时覆盖输入收集/读取、词法/解析/desugar、语义解析与检查、地址存储归一化、HIR 验证/覆盖/赋值、CFG
+lower/验证/清理/check insertion、LLVM lowering/优化前后验证/优化/native emission 或 IR/bitcode 序列化，
+以及 runtime、C shim、链接参数、最终链接和产物发布。优化等级 `-O0` 不运行 LLVM 优化，`-t none` 在 CFG
+阶段结束；未执行项标为 `not_run`，不会伪造零耗时成功。原生链接阶段仅在 `exe` 和 `obj` 目标运行；
+`obj` 使用现有的 relocatable link 流程。
+
+`--profile-output` 只接受编译模式及 `none`、`exe`、`ll`、`bc`、`obj`、`asm` 目标；与 `--analyze`、
+`--frontend-json` 或 `--format` 一起使用会报配置错误。报告写入失败只打印警告，不改变原编译结果。`anx`
+的四个编译命令 `build`、`run`、`check`、`test` 用该接口保存每次 compiler 调用的独立明细，并生成命令级
+报告；命令选项见[anx CLI](anx/03.cli.md)。`run` 或 `test` 启动产物后的执行时间不计入编译总计。Python
+恢复编译器的 `--profile` 属于其恢复 CLI 行为；它不支持 native `--profile-output`。
 
 ### 2.6 `--packages` — 包名导入解析
 

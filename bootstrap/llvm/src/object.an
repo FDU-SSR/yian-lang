@@ -1,5 +1,7 @@
 from std.core.result import Result;
+from std.core.option import Option;
 from std.core.vec import Vec;
+from llvm.observation import OperationObserver;
 from llvm.ir import IrSession, IrType, IrValue, IrBlock;
 from llvm.ir import IntCompare, RealCompare, BinaryOp, CastOp;
 from llvm.ir import new_session, try_new_session, close_session, session_target, session_data_layout, abi_size_of, abi_alignment_of;
@@ -16,7 +18,8 @@ from llvm.ir import build_call, build_select, build_alloca, build_load, build_st
 from llvm.ir import build_memset, build_memcpy, build_gep, build_extract_value, build_insert_value;
 from llvm.ir import build_binary, build_neg, build_fneg, build_not, build_icmp, build_fcmp, build_cast;
 from llvm.ir import verify_module, module_ir, module_bitcode, module_object, module_assembly, optimize_session;
-from llvm.ir import try_module_ir, try_module_bitcode;
+from llvm.ir import try_module_ir, try_module_bitcode, try_module_ir_observed, try_module_bitcode_observed;
+from llvm.ir import module_object_observed, module_assembly_observed, optimize_session_observed;
 
 // Module exclusively owns LLVM resource cleanup. Shallow copies do not duplicate resources; the caller closes them once.
 pub struct Module {
@@ -41,8 +44,14 @@ pub struct Global {
 
 impl Module {
     pub ffi fn try_ir() -> Result<Vec<u8>, Vec<u8>> { try_module_ir(&self.session) }
+    pub ffi fn try_ir_observed(observer: Option<OperationObserver&>) -> Result<Vec<u8>, Vec<u8>> {
+        try_module_ir_observed(&self.session, observer)
+    }
 
     pub ffi fn try_bitcode() -> Result<Vec<u8>, Vec<u8>> { try_module_bitcode(&self.session) }
+    pub ffi fn try_bitcode_observed(observer: Option<OperationObserver&>) -> Result<Vec<u8>, Vec<u8>> {
+        try_module_bitcode_observed(&self.session, observer)
+    }
 
     static pub ffi fn new(name: str, optimization_level: u8) -> Self {
         return Self(session=new_session(name, optimization_level));
@@ -186,12 +195,24 @@ impl Module {
         return module_object(&self.session);
     }
 
+    pub ffi fn object_observed(observer: Option<OperationObserver&>) -> Result<Vec<u8>, Vec<u8>> {
+        module_object_observed(&self.session, observer)
+    }
+
     pub ffi fn assembly() -> Result<Vec<u8>, Vec<u8>> {
         module_assembly(&self.session)
     }
 
+    pub ffi fn assembly_observed(observer: Option<OperationObserver&>) -> Result<Vec<u8>, Vec<u8>> {
+        module_assembly_observed(&self.session, observer)
+    }
+
     pub ffi fn optimize() -> Result<bool, Vec<u8>> {
         optimize_session(&self.session)
+    }
+
+    pub ffi fn optimize_observed(observer: Option<OperationObserver&>) -> Result<bool, Vec<u8>> {
+        optimize_session_observed(&self.session, observer)
     }
 }
 

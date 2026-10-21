@@ -1,5 +1,7 @@
 from yianc.config import CompilerConfig;
-from yianc.driver.host import monotonic_ns;
+from yianc.config import OutputKind;
+from yianc.driver.profile import ProfileRecorder, ProfileKind;
+from llvm.observation import OperationKind, OperationObserver;
 from std.core.convert import From;
 from std.core.drop import Drop;
 from std.core.fmt import ToString;
@@ -24,6 +26,15 @@ pub struct CompilerTrace {
     files: Vec<File>,
     timings: Vec<Timing>,
     profile: bool,
+    profile_output: Option<String>,
+    recorder: Option<ProfileRecorder>,
+    target: String,
+    optimization: u8,
+    raw_pointers: bool,
+}
+
+fn target_name(target: OutputKind) -> str {
+    match target { None => "none", Exe => "exe", Ll => "ll", Bc => "bc", Obj => "obj", Asm => "asm" }
 }
 
 fn level(text: str) -> Option<u8> {
@@ -46,7 +57,15 @@ fn environment(name: str) -> Result<Option<String>, String> {
 
 impl CompilerTrace {
     static pub fn new(config: CompilerConfig&, analysis: bool) -> Result<Self, String> {
-        let trace = Self(Vec<LogRule>.new(), Vec<File>.new(), Vec<Timing>.new(), config.profile && !analysis);
+        let terminal_profile = config.profile && !analysis;
+        let collect_profile = terminal_profile || config.profile_output.is_some();
+        let recorder = if collect_profile { Option<ProfileRecorder>.Some(ProfileRecorder.new()) } else { Option<ProfileRecorder>.None };
+        let profile_output = match &config.profile_output {
+            Some(value) if !analysis => Option<String>.Some(String.from(&value.as_str())),
+            _ => Option<String>.None,
+        };
+        let trace = Self(Vec<LogRule>.new(), Vec<File>.new(), Vec<Timing>.new(), terminal_profile,
+            profile_output, recorder, String.from(&target_name(config.target)), config.optimization, config.raw_pointers);
         let transferred = false;
         defer { if !transferred { trace.drop(); } };
         let spec = match &config.log_spec {
@@ -124,12 +143,60 @@ impl CompilerTrace {
     }
 
     pub fn start(channel: str, name: str) -> u64 {
-        self.event(channel, 4, name, Option<str>.None);
-        monotonic_ns()
+        self.start_pass(name, channel, name, ProfileKind.Stage)
+    }
+
+    pub fn start_pass(pass_id: str, channel: str, name: str, kind: ProfileKind) -> u64 {
+        if kind == ProfileKind.Stage { self.event(channel, 4, name, Option<str>.None); }
+        match &self.recorder {
+            Some(recorder) => recorder.begin(pass_id, kind),
+            None => 0u64,
+        }
     }
 
     pub fn finish(name: str, started: u64) {
-        if self.profile { self.timings.push(Timing(name, monotonic_ns() - started)); }
+        self.end_pass(name, started, true);
+    }
+
+    pub fn fail(name: str, started: u64) {
+        self.end_pass(name, started, false);
+    }
+
+    fn end_pass(name: str, started: u64, success: bool) {
+        if started == 0u64 { return; }
+        match &self.recorder {
+            Some(recorder) => match recorder.end(started, success) {
+                Some(elapsed) if self.profile => self.timings.push(Timing(name, elapsed)),
+                _ => {},
+            },
+            None => {},
+        }
+    }
+
+    pub fn skip(pass_id: str, reason: str) {
+        match &self.recorder { Some(recorder) => recorder.skip(pass_id, reason), None => {}, }
+    }
+
+    fn mark_unreached() {
+        let known = [
+            "compiler.total", "source_preparation", "semantic_analysis", "cfg_pipeline", "llvm_pipeline", "native_pipeline",
+            "input.package_map", "input.source_roots", "input.collect_sources", "input.read_sources", "input.classify_sources",
+            "frontend.lex", "frontend.parse", "frontend.desugar", "analysis.restricted", "analysis.context",
+            "analysis.collect_declarations", "analysis.resolve_imports", "analysis.resolve_definitions", "analysis.resolve_impls",
+            "analysis.register_automatic", "analysis.evaluate_constants", "analysis.finalize_types", "analysis.check_impls",
+            "analysis.validate_declarations", "analysis.select_entry", "analysis.check_procedures", "analysis.normalize_address_storage",
+            "analysis.verify_hir", "analysis.check_coverage", "analysis.check_assignment", "backend.initialize",
+            "backend.finish_analysis", "cfg.lower", "cfg.verify_structure", "cfg.cleanup", "cfg.insert_checks", "cfg.verify",
+            "llvm.lower", "llvm.verify_before_optimization", "llvm.optimize", "llvm.verify_after_optimization", "llvm.emit_native",
+            "llvm.serialize_ir", "llvm.serialize_bitcode", "native.prepare", "native.runtime_compile", "native.runtime_archive",
+            "native.c_shim_compile", "native.link_flags", "native.link", "io.dump", "io.artifact_publish",
+        ];
+        match &self.recorder {
+            Some(recorder) => for pass_id in known {
+                if !recorder.has_pass(*pass_id) { recorder.skip(*pass_id, "not reached before compilation stopped or not selected by target"); }
+            },
+            None => {},
+        }
     }
 
     pub fn report() {
@@ -144,6 +211,28 @@ impl CompilerTrace {
             match Stderr.new().write_str(" ms\n") { Ok(_) => {}, Err(problem) => problem.drop(), }
         }
     }
+
+    pub fn finalize(ok: bool) {
+        self.report();
+        self.mark_unreached();
+        match &self.recorder {
+            Some(recorder) => match &self.profile_output {
+                Some(path) => match recorder.write_report(path.as_str(), ok, self.target.as_str(), self.optimization, self.raw_pointers) {
+                    Ok(_) => {},
+                    Err(problem) => {
+                        let warning = String.from(&"[profile] warning: could not write report: ");
+                        warning.push_str(problem.as_str());
+                        warning.push('\n');
+                        defer warning.drop();
+                        problem.drop();
+                        match Stderr.new().write_str(warning.as_str()) { Ok(_) => {}, Err(error) => error.drop(), }
+                    },
+                },
+                None => {},
+            },
+            None => {},
+        }
+    }
 }
 
 impl Drop for CompilerTrace {
@@ -153,5 +242,34 @@ impl Drop for CompilerTrace {
         self.rules.drop();
         self.files.drop();
         self.timings.drop();
+        match &self.profile_output { Some(value) => value.drop(), None => {}, }
+        match &self.recorder { Some(value) => value.drop(), None => {}, }
+        self.target.drop();
+    }
+}
+
+impl OperationObserver for CompilerTrace {
+    pub fn begin(operation: OperationKind) -> u64 {
+        let pass_id = match operation {
+            VerifyBeforeOptimization => "llvm.verify_before_optimization",
+            Optimize => "llvm.optimize",
+            VerifyAfterOptimization => "llvm.verify_after_optimization",
+            EmitNative => "llvm.emit_native",
+            SerializeIr => "llvm.serialize_ir",
+            SerializeBitcode => "llvm.serialize_bitcode",
+        };
+        self.start_pass(pass_id, "llvm", pass_id, ProfileKind.Pass)
+    }
+
+    pub fn end(operation: OperationKind, token: u64, success: bool) {
+        let pass_id = match operation {
+            VerifyBeforeOptimization => "llvm.verify_before_optimization",
+            Optimize => "llvm.optimize",
+            VerifyAfterOptimization => "llvm.verify_after_optimization",
+            EmitNative => "llvm.emit_native",
+            SerializeIr => "llvm.serialize_ir",
+            SerializeBitcode => "llvm.serialize_bitcode",
+        };
+        self.end_pass(pass_id, token, success);
     }
 }

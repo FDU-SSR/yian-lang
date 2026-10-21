@@ -8,6 +8,7 @@ from yianc.analysis.ty.substitution import has_generic;
 from yianc.analysis.ty.validation import validate_concrete_value;
 from yianc.analysis.passes.entry import select_entry;
 from yianc.common.ids import TypeId, SymbolId, NameId, ScopeId, UnitId;
+from yianc.driver.profile import ProfileKind;
 from yianc.common.location import SourceSpan;
 from yianc.diagnostics.model import AnalysisError, AnalysisErrorKind, Diagnostic, DiagnosticCode;
 from std.core.drop import Drop;
@@ -39,7 +40,19 @@ pub fn check_procedures(ctx: ResolutionContext&, options: AnalysisOptions&, diag
         }
     };
 
-    output.entry = select_entry(ctx, options)?;
+    let entry_token = match options.trace {
+        Some(trace) => trace.start_pass("analysis.select_entry", "type_check", "analysis.select_entry", ProfileKind.Pass),
+        None => 0u64,
+    };
+    let entry_result = select_entry(ctx, options);
+    match options.trace {
+        Some(trace) => match &entry_result {
+            Ok(_) => trace.finish("analysis.select_entry", entry_token),
+            Err(_) => trace.fail("analysis.select_entry", entry_token),
+        },
+        None => {},
+    }
+    output.entry = entry_result?;
 
     // Match the reference worklist: entry and reachable calls first, then all concrete root definitions.
     match output.entry { Some(entry) => { schedule(ctx, entry)?; }, None => {}, }

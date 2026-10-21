@@ -11,6 +11,8 @@ from yianc.common.ids import UnitId, HirId, PatternId;
 from yianc.common.traversal import WalkControl;
 from yianc.diagnostics.model import AnalysisError;
 from yianc.frontend.prepare import PreparationStage;
+from yianc.driver.trace import CompilerTrace;
+from yianc.driver.profile import ProfileKind;
 from yianc.frontend.observe import append_token_file;
 from yianc.frontend.ast.format import AstFormatter;
 from json.write import Writer;
@@ -35,16 +37,42 @@ fn save(output: Writer&, path: str) -> Result<(), AnalysisError> {
     }
 }
 
-pub struct StageDumps { pub enabled: bool }
+pub struct StageDumps { pub enabled: bool, pub trace: Option<CompilerTrace&> }
 
 impl PreparationObserver for StageDumps {
+    pub fn begin(pass_id: str) -> u64 {
+        match self.trace {
+            Some(trace) => trace.start_pass(pass_id, "preparation", pass_id, ProfileKind.Pass),
+            None => 0u64,
+        }
+    }
+
+    pub fn finish(pass_id: str, token: u64, success: bool) {
+        match self.trace {
+            Some(trace) => if success { trace.finish(pass_id, token); } else { trace.fail(pass_id, token); },
+            None => {},
+        }
+    }
+
     pub fn stage_complete(stage: PreparationStage, session: AnalysisSession&) -> Result<(), AnalysisError> {
         if !self.enabled { return Result<(), AnalysisError>.Ok(()); }
-        match stage {
+        let writes_dump = match stage { Lex | Desugar => true, Parse => false };
+        if !writes_dump { return Result<(), AnalysisError>.Ok(()); }
+        let token = match self.trace {
+            Some(trace) => trace.start_pass("io.dump", "io", "stage dump", ProfileKind.Tool),
+            None => 0u64,
+        };
+        let result = match stage {
             Lex => tokens_dump(session),
             Desugar => ast_dump(session),
             Parse => Result<(), AnalysisError>.Ok(()),
+        };
+        let success = match &result { Ok(_) => true, Err(_) => false };
+        match self.trace {
+            Some(trace) => if success { trace.finish("io.dump", token); } else { trace.fail("io.dump", token); },
+            None => {},
         }
+        result
     }
 }
 

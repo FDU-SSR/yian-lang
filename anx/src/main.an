@@ -8,11 +8,12 @@ from std.core.string import String;
 from std.core.vec import Vec;
 from std.cli import ArgumentParser, Action, ArgMatches, Nargs, ParseOutcome, ValueType, CliError;
 from anx.diagnostics.model import AX_NO_PROJECT_ROOT, Diagnostic, release_diagnostics;
-from anx.driver.build import compile_project, run_executable;
+from anx.driver.build import compile_project, compile_project_profiled, run_executable;
 from anx.driver.fmt import format_project;
 from anx.driver.new import scaffold;
-from anx.driver.support import load_project;
-from anx.driver.test import PointerMode, run as run_tests;
+from anx.driver.support import load_project, load_project_profiled;
+from anx.driver.test import PointerMode, run as run_tests, run_profiled as run_tests_profiled;
+from anx.driver.profile import BuildProfile;
 from anx.project.graph import graph_json, graph_text;
 from anx.project.load import discover, load;
 from anx.project.model import LoadReport, Project;
@@ -109,6 +110,8 @@ fn build_parser(command: str) -> ArgumentParser {
     .help("Shorthand for -O3");
     parser.add_argument("raw-pointers").long("raw-pointers").action(Action.StoreTrue)
     .help("Build with bare pointers; for anx test, this selects raw mode");
+    parser.add_argument("profile").long("profile").action(Action.StoreTrue)
+    .help("Write a structured timing report under build/profile");
     parser
 }
 
@@ -135,18 +138,38 @@ fn build_command(argv: Vec<String>&, command: str, end: u64, program_arguments: 
             let optimization = argument_level(&matches, "optimization");
             let release = argument_bool(&matches, "release");
             let raw = argument_bool(&matches, "raw-pointers");
+            let profiling = argument_bool(&matches, "profile");
             let target = if command == "check" { "none" } else { "exe" };
+            let mode = if raw { "raw" } else { "fat" };
+            let profile = if profiling {
+                let level = match optimization { Some(value) => value, None => if release { 3u8 } else { 0u8 } };
+                Option<BuildProfile>.Some(BuildProfile.new(command, target, level, mode))
+            } else { Option<BuildProfile>.None };
+            defer { match profile.take() { Some(value) => value.drop(), None => {}, } };
             let executable = Option<PathBuf>.None;
-            let succeeded = compile_project(project.as_str(), target, optimization, release, raw, &executable);
-            if !succeeded { return 1i32; }
+            let succeeded = match &profile {
+                Some(observer) => compile_project_profiled(project.as_str(), target, optimization, release, raw, &executable, Option<BuildProfile&>.Some(observer)),
+                None => compile_project(project.as_str(), target, optimization, release, raw, &executable),
+            };
+            if !succeeded {
+                match &profile { Some(observer) => observer.finalize(false, 1i32), None => {}, }
+                return 1i32;
+            }
             if command == "run" {
                 let path = match executable.take() {
                     Some(value) => value,
-                    None => { write_stderr("error: no executable was produced\n"); return 1i32; },
+                    None => {
+                        write_stderr("error: no executable was produced\n");
+                        match &profile { Some(observer) => observer.finalize(true, 1i32), None => {}, }
+                        return 1i32;
+                    },
                 };
-                return run_executable(path, program_arguments);
+                let status = run_executable(path, program_arguments);
+                match &profile { Some(observer) => observer.finalize(true, status), None => {}, }
+                return status;
             }
             match executable.take() { Some(path) => path.drop(), None => {}, }
+            match &profile { Some(observer) => observer.finalize(true, 0i32), None => {}, }
             0i32
         },
     }
@@ -223,13 +246,33 @@ fn test_command(argv: Vec<String>&) -> i32 {
             };
             let project_path = argument_string(&matches, "project", ".");
             defer project_path.drop();
-            let project = match load_project(project_path.as_str()) {
+            let profiling = argument_bool(&matches, "profile");
+            let profile = if profiling {
+                let level = match argument_level(&matches, "optimization") { Some(value) => value, None => if argument_bool(&matches, "release") { 3u8 } else { 0u8 } };
+                let mode_name = match pointer_mode { Both => "both", Fat => "fat", Raw => "raw" };
+                Option<BuildProfile>.Some(BuildProfile.new("test", "mixed", level, mode_name))
+            } else { Option<BuildProfile>.None };
+            defer { match profile.take() { Some(value) => value.drop(), None => {}, } };
+            let loaded = match &profile {
+                Some(observer) => load_project_profiled(project_path.as_str(), Option<BuildProfile&>.Some(observer)),
+                None => load_project(project_path.as_str()),
+            };
+            let project = match loaded {
                 Some(value) => value,
-                None => return 1i32,
+                None => {
+                    match &profile { Some(observer) => observer.finalize(false, 1i32), None => {}, }
+                    return 1i32;
+                },
             };
             defer project.drop();
-            run_tests(&project, pointer_mode,
-                argument_level(&matches, "optimization"), argument_bool(&matches, "release"))
+            let status = match &profile {
+                Some(observer) => run_tests_profiled(&project, pointer_mode,
+                    argument_level(&matches, "optimization"), argument_bool(&matches, "release"), Option<BuildProfile&>.Some(observer)),
+                None => run_tests(&project, pointer_mode,
+                    argument_level(&matches, "optimization"), argument_bool(&matches, "release")),
+            };
+            match &profile { Some(observer) => observer.finalize(status == 0i32, status), None => {}, }
+            status
         },
     }
 }

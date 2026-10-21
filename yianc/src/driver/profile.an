@@ -1,0 +1,387 @@
+from json.write import Writer;
+from std.core.convert import From;
+from std.core.drop import Drop;
+from std.core.fmt import ToString;
+from std.core.fs import create_dir_all, write_atomic;
+from std.core.option import Option;
+from std.core.path import Path;
+from std.core.result import Result;
+from std.core.string import String;
+from std.core.time import monotonic_now;
+from std.core.vec import Vec;
+
+pub enum ProfileKind { Stage, Pass, Tool }
+
+impl ProfileKind {
+    pub fn name() -> str {
+        match self { Stage => "stage", Pass => "pass", Tool => "tool" }
+    }
+}
+
+struct PassTiming {
+    pub pass_id: String,
+    pub parent: Option<u64>,
+    pub kind: ProfileKind,
+    pub calls: u64,
+    pub duration_ns: u64,
+    pub self_ns: u64,
+    pub failed_calls: u64,
+    pub incomplete: bool,
+}
+
+impl Drop for PassTiming {
+    pub fn drop() { self.pass_id.drop(); }
+}
+
+struct ActiveSpan {
+    pub token: u64,
+    pub timing: u64,
+    pub started_ns: i64,
+    pub child_ns: u64,
+    pub measured: bool,
+}
+
+struct NotRun { pass_id: String, reason: String }
+impl Drop for NotRun {
+    pub fn drop() { self.pass_id.drop(); self.reason.drop(); }
+}
+
+// A recorder owns only profile data. It borrows no compiler/session objects and is
+// intentionally constructed only when one of the profiling CLI options is enabled.
+pub struct ProfileRecorder {
+    timings: Vec<PassTiming>,
+    active: Vec<ActiveSpan>,
+    not_run: Vec<NotRun>,
+    telemetry_errors: Vec<String>,
+    next_token: u64,
+    state: u8,
+}
+
+fn release_strings(values: Vec<String>&) {
+    for value in *values { value.drop(); }
+    values.drop();
+}
+
+impl ProfileRecorder {
+    static pub fn new() -> Self {
+        Self(Vec<PassTiming>.new(), Vec<ActiveSpan>.new(), Vec<NotRun>.new(), Vec<String>.new(), 1u64, 0u8)
+    }
+
+    fn error(message: str) {
+        self.telemetry_errors.push(String.from(&message));
+        if self.state == 0u8 { self.state = 1u8; }
+    }
+
+    pub fn begin(pass_id: str, kind: ProfileKind) -> u64 {
+        let now = match monotonic_now() {
+            Ok(value) => Option<i64>.Some(value.nanoseconds()),
+            Err(problem) => {
+                let message = String.from(&"monotonic clock unavailable: ");
+                message.push_str(problem.msg());
+                defer { message.drop(); problem.drop(); };
+                self.error(message.as_str());
+                self.state = 2u8;
+                Option<i64>.None
+            },
+        };
+        self.begin_at(pass_id, kind, now)
+    }
+
+    // Explicit timestamps keep accounting testable without sleeping or changing
+    // the production clock. None represents a clock read failure.
+    pub fn begin_at(pass_id: str, kind: ProfileKind, now: Option<i64>) -> u64 {
+        let parent = match self.active.last() {
+            Some(span) => Option<u64>.Some(span.timing),
+            None => Option<u64>.None,
+        };
+        let timing_index = self.timings.len();
+        for index in 0u64..self.timings.len() {
+            let timing = &self.timings[index];
+            let parent_matches = if timing.parent.is_none() {
+                parent.is_none()
+            } elif parent.is_none() {
+                false
+            } else {
+                *timing.parent.unwrap() == *parent.unwrap()
+            };
+            if timing.pass_id.as_str() == pass_id && timing.kind == kind && parent_matches {
+                timing_index = index;
+                break;
+            }
+        }
+        if timing_index == self.timings.len() {
+            self.timings.push(PassTiming(String.from(&pass_id), parent, kind, 0u64, 0u64, 0u64, 0u64, false));
+        }
+        self.timings[timing_index].calls += 1u64;
+        let (started_ns, measured) = match now {
+            Some(value) if value >= 0i64 => (value, true),
+            _ => { self.timings[timing_index].incomplete = true; self.state = 2u8; (0i64, false) },
+        };
+        if self.next_token == 0u64 { self.next_token = 1u64; }
+        let token = self.next_token;
+        self.next_token += 1u64;
+        self.active.push(ActiveSpan(token, timing_index, started_ns, 0u64, measured));
+        token
+    }
+
+    pub fn end(token: u64, success: bool) -> Option<u64> {
+        let now = match monotonic_now() {
+            Ok(value) => Option<i64>.Some(value.nanoseconds()),
+            Err(problem) => {
+                let message = String.from(&"monotonic clock unavailable: ");
+                message.push_str(problem.msg());
+                defer { message.drop(); problem.drop(); };
+                self.error(message.as_str());
+                self.state = 2u8;
+                Option<i64>.None
+            },
+        };
+        self.end_at(token, success, now)
+    }
+
+    pub fn end_at(token: u64, success: bool, now: Option<i64>) -> Option<u64> {
+        if token == 0u64 || self.active.is_empty() {
+            self.error("profile span stack is empty");
+            return Option<u64>.None;
+        }
+        let last = self.active.len() - 1u64;
+        if self.active[last].token != token {
+            self.error("profile spans ended out of order");
+            self.timings[self.active[last].timing].incomplete = true;
+            return Option<u64>.None;
+        }
+        let span = *self.active.pop().unwrap();
+        if !success { self.timings[span.timing].failed_calls += 1u64; }
+        match now {
+            Some(ended) if span.measured && span.started_ns >= 0i64 && ended >= span.started_ns => {
+                let duration = u64(ended - span.started_ns);
+                if span.child_ns > duration {
+                    self.timings[span.timing].incomplete = true;
+                    if !self.active.is_empty() { self.active[self.active.len() - 1u64].measured = false; }
+                    self.error("child profile duration exceeds its parent");
+                    Option<u64>.None
+                } else {
+                    self.timings[span.timing].duration_ns += duration;
+                    self.timings[span.timing].self_ns += duration - span.child_ns;
+                    if self.timings[span.timing].failed_calls == 0u64 && !self.timings[span.timing].incomplete {
+                        // Keep the completed record complete; later failed invocations update it.
+                    }
+                    if !self.active.is_empty() {
+                        let parent = self.active.len() - 1u64;
+                        self.active[parent].child_ns += duration;
+                    }
+                    Option<u64>.Some(duration)
+                }
+            },
+            _ => {
+                self.timings[span.timing].incomplete = true;
+                self.state = 2u8;
+                if !self.active.is_empty() { self.active[self.active.len() - 1u64].measured = false; }
+                Option<u64>.None
+            },
+        }
+    }
+
+    pub fn skip(pass_id: str, reason: str) {
+        for item in self.not_run {
+            if item.pass_id.as_str() == pass_id { return; }
+        }
+        self.not_run.push(NotRun(String.from(&pass_id), String.from(&reason)));
+    }
+
+    pub fn has_pass(pass_id: str) -> bool {
+        for timing in self.timings { if timing.pass_id.as_str() == pass_id { return true; } }
+        false
+    }
+
+    pub fn mark_partial(message: str) {
+        self.error(message);
+    }
+
+    fn finish_open_spans() {
+        if !self.active.is_empty() {
+            while !self.active.is_empty() {
+                let span = *self.active.last().unwrap();
+                self.end(span.token, false);
+                self.timings[span.timing].incomplete = true;
+            }
+            if self.state == 0u8 { self.state = 1u8; }
+        }
+    }
+
+    fn state_name() -> str {
+        match self.state { 2u8 => "unavailable", 1u8 => "partial", _ => "complete" }
+    }
+
+    fn append_timings(writer: Writer&) {
+        writer.key("timings");
+        writer.begin_array();
+        for timing in self.timings {
+            writer.begin_object();
+            writer.key("pass_id"); writer.write_string(timing.pass_id.as_str());
+            writer.key("parent");
+            match timing.parent { Some(value) => writer.write_u64(value), None => writer.write_null(), }
+            writer.key("kind"); writer.write_string(timing.kind.name());
+            writer.key("calls"); writer.write_u64(timing.calls);
+            writer.key("duration_ns"); writer.write_u64(timing.duration_ns);
+            writer.key("self_ns"); writer.write_u64(timing.self_ns);
+            writer.key("failed_calls"); writer.write_u64(timing.failed_calls);
+            writer.key("incomplete"); writer.write_bool(timing.incomplete);
+            writer.end_object();
+        }
+        writer.end_array();
+    }
+
+    fn append_not_run(writer: Writer&) {
+        writer.key("not_run");
+        writer.begin_array();
+        for item in self.not_run {
+            writer.begin_object();
+            writer.key("pass_id"); writer.write_string(item.pass_id.as_str());
+            writer.key("reason"); writer.write_string(item.reason.as_str());
+            writer.end_object();
+        }
+        writer.end_array();
+    }
+
+    fn append_errors(writer: Writer&) {
+        writer.key("telemetry_errors");
+        writer.begin_array();
+        for message in self.telemetry_errors { writer.write_string(message.as_str()); }
+        writer.end_array();
+    }
+
+    fn json(ok: bool, target: str, optimization: u8, raw_pointers: bool,
+        work_finished_at_ns: Option<i64>) -> Result<String, String> {
+        let writer = Writer.new();
+        defer writer.drop();
+        writer.begin_object();
+        writer.key("format"); writer.write_u64(1u64);
+        writer.key("kind"); writer.write_string("yianc-profile");
+        writer.key("ok"); writer.write_bool(ok);
+        writer.key("target"); writer.write_string(target);
+        writer.key("optimization"); writer.write_u64(u64(optimization));
+        writer.key("pointer_mode"); writer.write_string(if raw_pointers { "raw" } else { "fat" });
+        writer.key("work_finished_at_ns");
+        match work_finished_at_ns { Some(value) => writer.write_i64(value), None => writer.write_null(), }
+        writer.key("profiling_state"); writer.write_string(self.state_name());
+        self.append_timings(&writer);
+        self.append_not_run(&writer);
+        self.append_errors(&writer);
+        writer.end_object();
+        match writer.finish() {
+            Ok(text) => Result<String, String>.Ok(text),
+            Err(_) => Result<String, String>.Err(String.from(&"could not serialize compiler profile")),
+        }
+    }
+
+    static fn milliseconds(nanoseconds: u64) -> String {
+        let output = (nanoseconds / 1000000u64).to_string();
+        let fractional = (nanoseconds % 1000000u64).to_string();
+        defer fractional.drop();
+        output.push('.');
+        let zeros = 6u64 - fractional.as_str().as_slice().len();
+        for _ in 0u64..zeros { output.push('0'); }
+        output.push_str(fractional.as_str());
+        output
+    }
+
+    fn summary(ok: bool, target: str, optimization: u8, raw_pointers: bool) -> String {
+        let output = String.from(&"YIAN compiler profile\n");
+        output.push_str("outcome: "); output.push_str(if ok { "ok\n" } else { "failed\n" });
+        output.push_str("target: "); output.push_str(target); output.push('\n');
+        output.push_str("optimization: ");
+        let level = u64(optimization).to_string(); defer level.drop();
+        output.push_str(level.as_str()); output.push('\n');
+        output.push_str("pointer mode: "); output.push_str(if raw_pointers { "raw\n" } else { "fat\n" });
+        output.push_str("profile state: "); output.push_str(self.state_name()); output.push('\n');
+        output.push_str("duration is inclusive; self excludes direct child spans.\n");
+        for timing in self.timings {
+            let depth = 0u64;
+            let parent = timing.parent;
+            while let Some(index) = parent {
+                depth += 1u64;
+                parent = self.timings[index].parent;
+            }
+            for _ in 0u64..depth { output.push_str("  "); }
+            output.push_str(timing.pass_id.as_str()); output.push_str(" calls=");
+            let calls = timing.calls.to_string(); defer calls.drop(); output.push_str(calls.as_str());
+            output.push_str(" total_ms=");
+            let duration = Self.milliseconds(timing.duration_ns); defer duration.drop(); output.push_str(duration.as_str());
+            output.push_str(" self_ms=");
+            let own = Self.milliseconds(timing.self_ns); defer own.drop(); output.push_str(own.as_str());
+            output.push_str(" failed=");
+            let failed = timing.failed_calls.to_string(); defer failed.drop(); output.push_str(failed.as_str());
+            if timing.incomplete { output.push_str(" incomplete"); }
+            output.push('\n');
+        }
+        for item in self.not_run {
+            output.push_str("not_run: "); output.push_str(item.pass_id.as_str()); output.push_str(" (");
+            output.push_str(item.reason.as_str()); output.push_str(")\n");
+        }
+        for message in self.telemetry_errors { output.push_str("warning: "); output.push_str(message.as_str()); output.push('\n'); }
+        output
+    }
+
+    pub fn write_report(path: str, ok: bool, target: str, optimization: u8, raw_pointers: bool) -> Result<(), String> {
+        self.finish_open_spans();
+        if !ok && self.state == 0u8 { self.state = 1u8; }
+        let work_finished_at_ns = match monotonic_now() {
+            Ok(value) => Option<i64>.Some(value.nanoseconds()),
+            Err(problem) => {
+                let message = String.from(&"monotonic clock unavailable before profile serialization: ");
+                message.push_str(problem.msg());
+                self.error(message.as_str());
+                message.drop();
+                problem.drop();
+                self.state = 2u8;
+                Option<i64>.None
+            },
+        };
+        let parent = match Path.new(path).parent() {
+            Some(value) => if value.as_str() == "" { "." } else { value.as_str() },
+            None => ".",
+        };
+        match create_dir_all(parent) {
+            Ok(_) => {},
+            Err(problem) => { defer problem.drop(); return Result<(), String>.Err(String.from(&problem.msg())); },
+        }
+        let text_path = Path.new(path).with_extension("txt");
+        defer text_path.drop();
+        let summary = self.summary(ok, target, optimization, raw_pointers);
+        defer summary.drop();
+        let summary_error = Option<String>.None;
+        match write_atomic(text_path.as_str(), summary.as_slice()) {
+            Ok(_) => {},
+            Err(problem) => {
+                self.error(problem.msg());
+                summary_error = Option<String>.Some(String.from(&problem.msg()));
+                problem.drop();
+            },
+        }
+        let json = self.json(ok, target, optimization, raw_pointers, work_finished_at_ns)?;
+        defer json.drop();
+        match write_atomic(path, json.as_slice()) {
+            Ok(_) => {},
+            Err(problem) => {
+                let message = String.from(&problem.msg());
+                problem.drop();
+                match summary_error.take() { Some(previous) => { previous.drop(); }, None => {}, }
+                return Result<(), String>.Err(message);
+            },
+        }
+        match summary_error.take() {
+            Some(message) => Result<(), String>.Err(message),
+            None => Result<(), String>.Ok(()),
+        }
+    }
+}
+
+impl Drop for ProfileRecorder {
+    pub fn drop() {
+        for timing in self.timings { timing.drop(); }
+        for item in self.not_run { item.drop(); }
+        release_strings(&self.telemetry_errors);
+        self.timings.drop(); self.active.drop(); self.not_run.drop();
+    }
+}

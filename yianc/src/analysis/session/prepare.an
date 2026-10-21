@@ -18,7 +18,17 @@ from std.core.vec import Vec;
 
 // Observers borrow the partial session synchronously; preparation never retains them.
 pub trait PreparationObserver {
+    fn begin(pass_id: str) -> u64 { 0u64 }
+    fn finish(pass_id: str, token: u64, success: bool) {}
     fn stage_complete(stage: PreparationStage, session: AnalysisSession&) -> Result<(), AnalysisError>;
+}
+
+fn begin_timing(observer: Option<PreparationObserver&>, pass_id: str) -> u64 {
+    match observer { Some(value) => value.begin(pass_id), None => 0u64 }
+}
+
+fn finish_timing(observer: Option<PreparationObserver&>, pass_id: str, token: u64, success: bool) {
+    match observer { Some(value) => value.finish(pass_id, token, success), None => {}, }
 }
 
 impl AnalysisSession {
@@ -36,7 +46,13 @@ impl AnalysisSession {
             }
         };
 
-        let paths = match collect_sources(inputs) {
+        let collect_token = begin_timing(observer, "input.collect_sources");
+        let paths_result = collect_sources(inputs);
+        match &paths_result {
+            Ok(_) => finish_timing(observer, "input.collect_sources", collect_token, true),
+            Err(_) => finish_timing(observer, "input.collect_sources", collect_token, false),
+        }
+        let paths = match paths_result {
             Ok(value) => value,
             Err(error) => {
                 defer error.drop();
@@ -46,7 +62,15 @@ impl AnalysisSession {
 
         defer release_paths(&paths);
 
-        for path in paths { session.load_source(path.as_str())?; }
+        for path in paths {
+            let token = begin_timing(observer, "input.read_sources");
+            let result = session.load_source(path.as_str());
+            match &result {
+                Ok(_) => finish_timing(observer, "input.read_sources", token, true),
+                Err(_) => finish_timing(observer, "input.read_sources", token, false),
+            }
+            result?;
+        }
         session.finish_loaded_sources(allow_ffi, observer)?;
 
         transferred = true;
@@ -62,7 +86,13 @@ impl AnalysisSession {
         defer { if !transferred { session.drop(); } };
 
         for document in *documents {
-            session.load_text(document.path.as_str(), document.text.as_str())?;
+            let token = begin_timing(observer, "input.read_sources");
+            let result = session.load_text(document.path.as_str(), document.text.as_str());
+            match &result {
+                Ok(_) => finish_timing(observer, "input.read_sources", token, true),
+                Err(_) => finish_timing(observer, "input.read_sources", token, false),
+            }
+            result?;
         }
         session.finish_loaded_sources(allow_ffi, observer)?;
         transferred = true;
@@ -74,7 +104,13 @@ impl AnalysisSession {
         let index = 0u64;
         while index < self.sources.len() {
             let source = SourceId(index);
-            let prepared = match self.prepare_source(source) {
+            let lex_token = begin_timing(observer, "frontend.lex");
+            let prepared_result = self.prepare_source(source);
+            match &prepared_result {
+                Ok(_) => finish_timing(observer, "frontend.lex", lex_token, true),
+                Err(_) => finish_timing(observer, "frontend.lex", lex_token, false),
+            }
+            let prepared = match prepared_result {
                 Ok(value) => value,
                 Err(error) => {
                     match detach(&error.diagnostic, &self.sources) {
@@ -85,20 +121,32 @@ impl AnalysisSession {
                 },
             };
             let file = self.sources.file(source.index);
+            let classify_token = begin_timing(observer, "input.classify_sources");
             let permissions = self.classify(file.canonical_path(), allow_ffi);
+            finish_timing(observer, "input.classify_sources", classify_token, true);
             self.accept(prepared, permissions);
             index += 1u64;
         }
         match observer { Some(value) => { value.stage_complete(PreparationStage.Lex, self)?; }, None => {}, }
 
         for unit in self.units {
-            self.finish_preparation(unit.prepared.parse(), unit.source)?;
+            let token = begin_timing(observer, "frontend.parse");
+            let result = unit.prepared.parse();
+            let success = match &result { Ok(_) => true, Err(_) => false };
+            let finished = self.finish_preparation(result, unit.source);
+            finish_timing(observer, "frontend.parse", token, success);
+            finished?;
         }
         match observer { Some(value) => { value.stage_complete(PreparationStage.Parse, self)?; }, None => {}, }
 
         for unit in self.units {
             let file = self.sources.file(unit.source.index);
-            self.finish_preparation(unit.prepared.desugar(file.path()), unit.source)?;
+            let token = begin_timing(observer, "frontend.desugar");
+            let result = unit.prepared.desugar(file.path());
+            let success = match &result { Ok(_) => true, Err(_) => false };
+            let finished = self.finish_preparation(result, unit.source);
+            finish_timing(observer, "frontend.desugar", token, success);
+            finished?;
         }
         match observer { Some(value) => { value.stage_complete(PreparationStage.Desugar, self)?; }, None => {}, }
         Result<(), AnalysisError>.Ok(())

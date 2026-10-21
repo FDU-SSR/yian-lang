@@ -8,6 +8,7 @@ from anx.diagnostics.model import AX_NO_PROJECT_ROOT, Diagnostic;
 from anx.project.load import discover, load;
 from anx.project.model import Project;
 from anx.project.paths import standard_library_root;
+from anx.driver.profile import BuildProfile;
 
 pub fn write_stdout(text: str) -> bool {
     match Stdout.new().write_str(text) {
@@ -34,6 +35,13 @@ fn print_diagnostic(item: Diagnostic&) {
 }
 
 pub fn load_project(start: str) -> Option<Project> {
+    load_project_profiled(start, Option<BuildProfile&>.None)
+}
+
+pub fn load_project_profiled(start: str, profile: Option<BuildProfile&>) -> Option<Project> {
+    let project_load_token = match profile { Some(value) => value.begin("anx.project_load"), None => 0u64 };
+    let loaded = false;
+    defer { match profile { Some(value) => value.finish(project_load_token, loaded), None => {}, }; };
     let std_root = match standard_library_root() {
         Ok(value) => value,
         Err(message) => {
@@ -65,6 +73,7 @@ pub fn load_project(start: str) -> Option<Project> {
         },
     };
     defer root_path.drop();
+    match profile { Some(value) => value.set_project_root(root_path.as_str()), None => {}, }
     let report = load(root_path.as_str(), std_root.as_str());
     defer report.drop();
     let diagnostics = report.diagnostics();
@@ -75,7 +84,7 @@ pub fn load_project(start: str) -> Option<Project> {
     }
     if diagnostics.len() != 0u64 { return Option<Project>.None; }
     match report.take_project() {
-        Some(project) => Option<Project>.Some(project),
+        Some(project) => { loaded = true; Option<Project>.Some(project) },
         None => {
             write_stderr("error: could not load project\n");
             Option<Project>.None

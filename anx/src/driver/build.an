@@ -14,6 +14,7 @@ from anx.manifest.model import PackageKind;
 from anx.project.model import LoadReport, Project;
 from anx.project.package_map import package_map_json;
 from anx.project.paths import standard_library_root;
+from anx.driver.profile import BuildProfile, InvocationHandle;
 
 fn release_paths(values: Vec<PathBuf>&) {
     let index = 0u64;
@@ -104,8 +105,62 @@ fn package_map_path(project: Project&) -> Result<PathBuf, String> {
     Result<PathBuf, String>.Ok(val=path)
 }
 
+fn load_project_for_build(start: str, profile: Option<BuildProfile&>) -> Option<Project> {
+    let token = profile_begin(profile, "anx.project_load");
+    let loaded = false;
+    defer { profile_finish(profile, token, loaded); };
+    let std_root = match standard_library_root() {
+        Ok(value) => value,
+        Err(message) => {
+            write_error("error: "); write_error(message.as_str()); write_error("\n"); message.drop();
+            return Option<Project>.None;
+        },
+    };
+    defer std_root.drop();
+    let discovered = discover(start);
+    let root_path = match discovered {
+        Some(value) => value,
+        None => {
+            let resolved = match resolve(start) {
+                Ok(value) => value,
+                Err(problem) => { problem.drop(); PathBuf.from(start) },
+            };
+            let message = String.from(&"error[AX001]: no package.anx found in ");
+            message.push_str(resolved.as_str());
+            message.push_str(" or any parent directory\n");
+            write_error(message.as_str());
+            message.drop();
+            resolved.drop();
+            return Option<Project>.None;
+        },
+    };
+    defer root_path.drop();
+    match profile { Some(value) => value.set_project_root(root_path.as_str()), None => {}, }
+    let report = load(root_path.as_str(), std_root.as_str());
+    defer report.drop();
+    if report_diagnostics(&report) { return Option<Project>.None; }
+    let project = match report.take_project() {
+        Some(value) => value,
+        None => { write_error("error: could not load project\n"); return Option<Project>.None; },
+    };
+    loaded = true;
+    Option<Project>.Some(project)
+}
+
+fn profile_begin(profile: Option<BuildProfile&>, pass_id: str) -> u64 {
+    match profile { Some(value) => value.begin(pass_id), None => 0u64 }
+}
+
+fn profile_finish(profile: Option<BuildProfile&>, token: u64, success: bool) {
+    match profile { Some(value) => value.finish(token, success), None => {}, }
+}
+
+fn status_code(status: ExitStatus) -> i32 {
+    match status { Exited(code) => code, Signaled(signal) => -signal }
+}
+
 fn compiler_command(program: str, project: Project&, target: str, level: Option<u8>, release: bool,
-    raw_pointers: bool, map_path: str, executable: Option<PathBuf>) -> bool {
+    raw_pointers: bool, map_path: str, executable: Option<PathBuf>, profile: Option<BuildProfile&>) -> bool {
     let command = Command.new(program);
     defer command.drop();
     command.interruptible(true);
@@ -132,6 +187,16 @@ fn compiler_command(program: str, project: Project&, target: str, level: Option<
         None => if release { command.arg("-O"); command.arg("3"); },
     }
     if raw_pointers { command.arg("--raw-pointers"); }
+    let optimization = match level { Some(value) => value, None => if release { 3u8 } else { 0u8 } };
+    let mode = if raw_pointers { "raw" } else { "fat" };
+    let invocation = match profile {
+        Some(value) => Option<InvocationHandle>.Some(value.begin_invocation(Option<str>.None, mode, target, optimization, program)),
+        None => Option<InvocationHandle>.None,
+    };
+    match &invocation {
+        Some(value) => if !value.profile_path.is_empty() { command.arg("--profile-output"); command.arg(value.profile_path.as_str()); },
+        None => {},
+    }
     let files = project.build_files();
     defer release_paths(&files);
     let index = 0u64;
@@ -139,9 +204,19 @@ fn compiler_command(program: str, project: Project&, target: str, level: Option<
         command.arg(files[index].as_str());
         index += 1u64;
     }
-    let status = match command.status() {
+    let wait_token = profile_begin(profile, "anx.compiler_wait");
+    let status_result = command.status();
+    let status = match status_result {
         Ok(value) => value,
         Err(problem) => {
+            profile_finish(profile, wait_token, false);
+            match invocation.take() {
+                Some(handle) => match profile {
+                    Some(observer) => observer.finish_invocation(handle, Option<i32>.None),
+                    None => { handle.drop(); Option<i64>.None },
+                },
+                None => Option<i64>.None,
+            }
             write_error("error: could not start YIAN compiler: ");
             write_error(problem.msg());
             write_error("\n");
@@ -149,52 +224,39 @@ fn compiler_command(program: str, project: Project&, target: str, level: Option<
             return false;
         },
     };
+    let report_requested = match &invocation { Some(handle) => !handle.profile_path.is_empty(), None => false };
+    let work_finished_at_ns = match invocation.take() {
+        Some(handle) => match profile {
+            Some(observer) => observer.finish_invocation(handle, Option<i32>.Some(status_code(status))),
+            None => { handle.drop(); Option<i64>.None },
+        },
+        None => Option<i64>.None,
+    };
+    match profile {
+        Some(observer) => if report_requested {
+            observer.finish_at(wait_token, status.success(), work_finished_at_ns);
+        } else {
+            observer.finish(wait_token, status.success())
+        },
+        None => {},
+    }
     status.success()
 }
 
 pub fn compile_project(start: str, target: str, level: Option<u8>, release: bool,
     raw_pointers: bool, executable_out: Option<PathBuf>&) -> bool {
+    compile_project_profiled(start, target, level, release, raw_pointers, executable_out, Option<BuildProfile&>.None)
+}
+
+pub fn compile_project_profiled(start: str, target: str, level: Option<u8>, release: bool,
+    raw_pointers: bool, executable_out: Option<PathBuf>&, profile: Option<BuildProfile&>) -> bool {
     let compiler = match compiler_program() {
         Ok(value) => value,
         Err(message) => { write_error("error: "); write_error(message.as_str()); write_error("\n"); message.drop(); return false; },
     };
     defer compiler.drop();
-    let std_root = match standard_library_root() {
-        Ok(value) => value,
-        Err(message) => {
-            write_error("error: ");
-            write_error(message.as_str());
-            write_error("\n");
-            message.drop();
-            return false;
-        },
-    };
-    defer std_root.drop();
-    let root = discover(start);
-    let root_path = match root {
-        Some(value) => value,
-        None => {
-            let resolved = match resolve(start) {
-                Ok(value) => value,
-                Err(problem) => { problem.drop(); PathBuf.from(start) },
-            };
-            let message = String.from(&"error[AX001]: no package.anx found in ");
-            message.push_str(resolved.as_str());
-            message.push_str(" or any parent directory\n");
-            write_error(message.as_str());
-            message.drop();
-            resolved.drop();
-            return false;
-        },
-    };
-    defer root_path.drop();
-    let report = load(root_path.as_str(), std_root.as_str());
-    defer report.drop();
-    if report_diagnostics(&report) { return false; }
-    let project = match report.take_project() {
-        Some(value) => value,
-        None => { write_error("error: could not load project\n"); return false; },
-    };
+    let loaded = load_project_for_build(start, profile);
+    let project = match loaded { Some(value) => value, None => return false };
     defer project.drop();
 
     let root_index = match project.package_index(project.root_package()) {
@@ -206,20 +268,24 @@ pub fn compile_project(start: str, target: str, level: Option<u8>, release: bool
         write_error("error: 'anx build' is not supported for kind 'lib' packages: this stage produces no library artifact\n");
         return false;
     }
-    let map = match package_map_path(&project) {
+    let map_token = profile_begin(profile, "anx.package_map");
+    let map_result = package_map_path(&project);
+    let map = match map_result {
         Ok(value) => value,
-        Err(message) => { write_error("error: "); write_error(message.as_str()); write_error("\n"); message.drop(); return false; },
+        Err(message) => { profile_finish(profile, map_token, false); write_error("error: "); write_error(message.as_str()); write_error("\n"); message.drop(); return false; },
     };
+    profile_finish(profile, map_token, true);
     defer map.drop();
+    let project_root = project.package(root_index).root();
     let output = if target == "exe" {
-        Option<PathBuf>.Some(Path.new(root_path.as_str()).join("build/app"))
+        Option<PathBuf>.Some(Path.new(project_root).join("build/app"))
     } else { Option<PathBuf>.None };
     let command_output = match &output {
         Some(path) => Option<PathBuf>.Some(PathBuf.from(path.as_str())),
         None => Option<PathBuf>.None,
     };
     let succeeded = compiler_command(compiler.as_str(), &project, target, level, release, raw_pointers,
-        map.as_str(), command_output);
+        map.as_str(), command_output, profile);
     if !succeeded {
         match output.take() { Some(path) => path.drop(), None => {}, }
         return false;

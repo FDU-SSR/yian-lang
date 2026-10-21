@@ -19,6 +19,7 @@ from yianc.analysis.passes.address_storage import normalize_address_storage;
 from yianc.diagnostics.model import AnalysisError, AnalysisErrorKind, AnalysisStage;
 from yianc.diagnostics.order import order_diagnostics;
 from yianc.common.ids import TypeId;
+from yianc.driver.profile import ProfileKind;
 from std.core.drop import Drop;
 from std.core.result import Result;
 from std.core.option import Option;
@@ -54,34 +55,45 @@ impl AnalysisSession {
             };
         };
 
-        let started = start_stage(&options, AnalysisStage.Restricted);
-        at_stage(check_restricted(self), AnalysisStage.Restricted, &options, started)?;
-        let context = ResolutionContext.new(self)?;
+        let started = start_stage(&options, "analysis.restricted", AnalysisStage.Restricted);
+        at_stage(check_restricted(self), "analysis.restricted", AnalysisStage.Restricted, &options, started)?;
+        started = start_stage(&options, "analysis.context", AnalysisStage.Resolve);
+        let context_result = ResolutionContext.new(self);
+        match &context_result {
+            Ok(_) => finish_stage(&options, "analysis.context", started, true),
+            Err(_) => finish_stage(&options, "analysis.context", started, false),
+        }
+        let context = context_result?;
         defer context.drop();
         context.sizes = options.sizes;
-        started = start_stage(&options, AnalysisStage.Resolve);
-        at_stage(collect_declarations(&context), AnalysisStage.Resolve, &options, started)?;
-        started = start_stage(&options, AnalysisStage.Resolve);
-        at_stage(resolve_imports(&context), AnalysisStage.Resolve, &options, started)?;
-        started = start_stage(&options, AnalysisStage.Resolve);
-        at_stage(resolve_definitions(&context), AnalysisStage.Resolve, &options, started)?;
-        started = start_stage(&options, AnalysisStage.Resolve);
-        at_stage(resolve_impls(&context), AnalysisStage.Resolve, &options, started)?;
-        started = start_stage(&options, AnalysisStage.Resolve);
-        at_stage(register_automatic(&context), AnalysisStage.Resolve, &options, started)?;
-        started = start_stage(&options, AnalysisStage.Resolve);
-        at_stage(evaluate_constants(&context, options.sizes), AnalysisStage.Resolve, &options, started)?;
-        started = start_stage(&options, AnalysisStage.Finalize);
-        at_stage(finalize_types(&context), AnalysisStage.Finalize, &options, started)?;
-        started = start_stage(&options, AnalysisStage.Resolve);
-        at_stage(check_impls(&context), AnalysisStage.Resolve, &options, started)?;
-        started = start_stage(&options, AnalysisStage.Resolve);
-        at_stage(validate_declarations(&context), AnalysisStage.Resolve, &options, started)?;
+        started = start_stage(&options, "analysis.collect_declarations", AnalysisStage.Resolve);
+        at_stage(collect_declarations(&context), "analysis.collect_declarations", AnalysisStage.Resolve, &options, started)?;
+        started = start_stage(&options, "analysis.resolve_imports", AnalysisStage.Resolve);
+        at_stage(resolve_imports(&context), "analysis.resolve_imports", AnalysisStage.Resolve, &options, started)?;
+        started = start_stage(&options, "analysis.resolve_definitions", AnalysisStage.Resolve);
+        at_stage(resolve_definitions(&context), "analysis.resolve_definitions", AnalysisStage.Resolve, &options, started)?;
+        started = start_stage(&options, "analysis.resolve_impls", AnalysisStage.Resolve);
+        at_stage(resolve_impls(&context), "analysis.resolve_impls", AnalysisStage.Resolve, &options, started)?;
+        started = start_stage(&options, "analysis.register_automatic", AnalysisStage.Resolve);
+        at_stage(register_automatic(&context), "analysis.register_automatic", AnalysisStage.Resolve, &options, started)?;
+        started = start_stage(&options, "analysis.evaluate_constants", AnalysisStage.Resolve);
+        at_stage(evaluate_constants(&context, options.sizes), "analysis.evaluate_constants", AnalysisStage.Resolve, &options, started)?;
+        started = start_stage(&options, "analysis.finalize_types", AnalysisStage.Finalize);
+        at_stage(finalize_types(&context), "analysis.finalize_types", AnalysisStage.Finalize, &options, started)?;
+        started = start_stage(&options, "analysis.check_impls", AnalysisStage.Resolve);
+        at_stage(check_impls(&context), "analysis.check_impls", AnalysisStage.Resolve, &options, started)?;
+        started = start_stage(&options, "analysis.validate_declarations", AnalysisStage.Resolve);
+        at_stage(validate_declarations(&context), "analysis.validate_declarations", AnalysisStage.Resolve, &options, started)?;
         let report = AnalysisReport.new();
         let report_transferred = false;
         defer { if !report_transferred { report.drop(); } };
-        started = start_stage(&options, AnalysisStage.TypeCheck);
-        let output = match check_procedures(&context, &options, &report.diagnostics) {
+        started = start_stage(&options, "analysis.check_procedures", AnalysisStage.TypeCheck);
+        let checked = check_procedures(&context, &options, &report.diagnostics);
+        match &checked {
+            Ok(_) => finish_stage(&options, "analysis.check_procedures", started, true),
+            Err(_) => finish_stage(&options, "analysis.check_procedures", started, false),
+        }
+        let output = match checked {
             Ok(value) => value,
             Err(problem) => return Result<AnalysisReport, AnalysisError>.Err(problem.with_stage(AnalysisStage.TypeCheck)),
         };
@@ -91,20 +103,36 @@ impl AnalysisSession {
                 output.drop();
             }
         };
-        match normalize_address_storage(&context, &output) {
+        let normalize_token = start_stage(&options, "analysis.normalize_address_storage", AnalysisStage.TypeCheck);
+        let normalized = normalize_address_storage(&context, &output);
+        match &normalized {
+            Ok(_) => finish_stage(&options, "analysis.normalize_address_storage", normalize_token, true),
+            Err(_) => finish_stage(&options, "analysis.normalize_address_storage", normalize_token, false),
+        }
+        match normalized {
             Ok(_) => {},
             Err(problem) => return Result<AnalysisReport, AnalysisError>.Err(problem.with_stage(AnalysisStage.TypeCheck)),
         }
-        finish_stage(&options, AnalysisStage.TypeCheck, started);
         // A callee failure leaves a partial call graph. It is never exported to the backend.
-        if report.ok() && options.verify_hir { verify_hir(&context, &output)?; }
-        started = start_stage(&options, AnalysisStage.Coverage);
-        at_stage(check_coverage(&context, &output, options.recover, &report.diagnostics), AnalysisStage.Coverage, &options, started)?;
+        if report.ok() && options.verify_hir {
+            let token = start_stage(&options, "analysis.verify_hir", AnalysisStage.TypeCheck);
+            at_stage(verify_hir(&context, &output), "analysis.verify_hir", AnalysisStage.TypeCheck, &options, token)?;
+        } else {
+            match options.trace { Some(trace) => trace.skip("analysis.verify_hir", "disabled or earlier diagnostics prevent HIR verification"), None => {}, }
+        }
+        started = start_stage(&options, "analysis.check_coverage", AnalysisStage.Coverage);
+        at_stage(check_coverage(&context, &output, options.recover, &report.diagnostics), "analysis.check_coverage", AnalysisStage.Coverage, &options, started)?;
         for warning in output.warnings { report.diagnostics.push(*warning); }
         output.warnings.clear();
 
         for procedure in output.procedures {
-            match check_assignment(&context, procedure) {
+            let token = start_stage(&options, "analysis.check_assignment", AnalysisStage.Assignment);
+            let checked_assignment = check_assignment(&context, procedure);
+            match &checked_assignment {
+                Ok(_) => finish_stage(&options, "analysis.check_assignment", token, true),
+                Err(_) => finish_stage(&options, "analysis.check_assignment", token, false),
+            }
+            match checked_assignment {
                 Ok(_) => {},
                 Err(problem) => {
                     if !options.recover || problem.kind == AnalysisErrorKind.Internal {
@@ -126,18 +154,22 @@ impl AnalysisSession {
     }
 }
 
-fn at_stage(result: Result<(), AnalysisError>, stage: AnalysisStage, options: AnalysisOptions&, started: u64) -> Result<(), AnalysisError> {
-    finish_stage(options, stage, started);
+fn at_stage(result: Result<(), AnalysisError>, pass_id: str, stage: AnalysisStage, options: AnalysisOptions&, started: u64) -> Result<(), AnalysisError> {
+    let success = match &result { Ok(_) => true, Err(_) => false };
+    finish_stage(options, pass_id, started, success);
     match result { Ok(_) => Result<(), AnalysisError>.Ok(()), Err(problem) => Result<(), AnalysisError>.Err(problem.with_stage(stage)), }
 }
 
-fn start_stage(options: AnalysisOptions&, stage: AnalysisStage) -> u64 {
+fn start_stage(options: AnalysisOptions&, pass_id: str, stage: AnalysisStage) -> u64 {
     match options.trace {
-        Some(trace) => trace.start(stage.name(), stage.name()),
+        Some(trace) => trace.start_pass(pass_id, stage.name(), pass_id, ProfileKind.Pass),
         None => 0,
     }
 }
 
-fn finish_stage(options: AnalysisOptions&, stage: AnalysisStage, started: u64) {
-    match options.trace { Some(trace) => trace.finish(stage.name(), started), None => {}, }
+fn finish_stage(options: AnalysisOptions&, pass_id: str, started: u64, success: bool) {
+    match options.trace {
+        Some(trace) => if success { trace.finish(pass_id, started); } else { trace.fail(pass_id, started); },
+        None => {},
+    }
 }

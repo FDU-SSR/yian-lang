@@ -11,6 +11,9 @@ from yianc.codegen.llvm.module import LlvmLowering;
 from yianc.codegen.types import BackendTypes;
 from yianc.codegen.error import CodegenError;
 from yianc.config import OutputKind;
+from yianc.driver.trace import CompilerTrace;
+from yianc.driver.profile import ProfileKind;
+from llvm.observation import OperationObserver;
 from llvm.core import llvm_version;
 from llvm.object import Module;
 from std.core.drop import Drop;
@@ -109,8 +112,93 @@ pub struct BackendSession {
     generated: Option<CfgModule&>,
 }
 
+fn start_profile(trace: Option<CompilerTrace&>, pass_id: str, kind: ProfileKind) -> u64 {
+    match trace { Some(value) => value.start_pass(pass_id, "backend", pass_id, kind), None => 0u64 }
+}
+
+fn end_profile(trace: Option<CompilerTrace&>, pass_id: str, token: u64, success: bool) {
+    match trace {
+        Some(value) => if success { value.finish(pass_id, token); } else { value.fail(pass_id, token); },
+        None => {},
+    }
+}
+
+fn llvm_observer(trace: Option<CompilerTrace&>) -> Option<OperationObserver&> {
+    match trace { Some(value) => Option<OperationObserver&>.Some(value), None => Option<OperationObserver&>.None }
+}
+
+fn lower_cfg(analysis: AnalysisSession&, types: BackendTypes&, output: AnalysisOutput&, trace: Option<CompilerTrace&>) -> Result<CfgModule, CodegenError> {
+    let token = start_profile(trace, "cfg.lower", ProfileKind.Pass);
+    let success = false;
+    defer end_profile(trace, "cfg.lower", token, success);
+    let cfg = lower_module(analysis, types, output)?;
+    success = true;
+    Result<CfgModule, CodegenError>.Ok(cfg)
+}
+
+fn verify_cfg_structure_observed(cfg: CfgModule&, trace: Option<CompilerTrace&>) -> Result<(), CodegenError> {
+    let token = start_profile(trace, "cfg.verify_structure", ProfileKind.Pass);
+    let success = false;
+    defer end_profile(trace, "cfg.verify_structure", token, success);
+    verify_structure(cfg)?;
+    success = true;
+    Result<(), CodegenError>.Ok(val= ())
+}
+
+fn cleanup_cfg_observed(cfg: CfgModule&, trace: Option<CompilerTrace&>) -> Result<(), CodegenError> {
+    let token = start_profile(trace, "cfg.cleanup", ProfileKind.Pass);
+    let success = false;
+    defer end_profile(trace, "cfg.cleanup", token, success);
+    cleanup(cfg)?;
+    success = true;
+    Result<(), CodegenError>.Ok(val= ())
+}
+
+fn insert_checks_observed(cfg: CfgModule&, types: BackendTypes&, trace: Option<CompilerTrace&>) -> Result<(), CodegenError> {
+    let token = start_profile(trace, "cfg.insert_checks", ProfileKind.Pass);
+    let success = false;
+    defer end_profile(trace, "cfg.insert_checks", token, success);
+    insert_checks(cfg, types)?;
+    success = true;
+    Result<(), CodegenError>.Ok(val= ())
+}
+
+fn verify_cfg_observed(cfg: CfgModule&, types: BackendTypes&, trace: Option<CompilerTrace&>) -> Result<(), CodegenError> {
+    let token = start_profile(trace, "cfg.verify", ProfileKind.Pass);
+    let success = false;
+    defer end_profile(trace, "cfg.verify", token, success);
+    verify_cfg(cfg, types)?;
+    success = true;
+    Result<(), CodegenError>.Ok(val= ())
+}
+
+fn finish_analysis_observed(types: BackendTypes&, trace: Option<CompilerTrace&>) {
+    let token = start_profile(trace, "backend.finish_analysis", ProfileKind.Pass);
+    types.finish_analysis();
+    end_profile(trace, "backend.finish_analysis", token, true);
+}
+
+fn lower_llvm(analysis: AnalysisSession&, types: BackendTypes&, module: Module&, cfg: CfgModule&,
+    trace: Option<CompilerTrace&>) -> Result<(), CodegenError> {
+    let token = start_profile(trace, "llvm.lower", ProfileKind.Pass);
+    let success = false;
+    defer end_profile(trace, "llvm.lower", token, success);
+    let lowering = LlvmLowering.new(analysis, types, module, cfg.entry);
+    defer lowering.drop();
+    lowering.lower(cfg)?;
+    success = true;
+    Result<(), CodegenError>.Ok(val= ())
+}
+
 impl BackendSession {
     static pub fn new(analysis: AnalysisSession&, options: BackendOptions) -> Result<Self, CodegenError> {
+        Self.new_observed(analysis, options, Option<CompilerTrace&>.None)
+    }
+
+    static pub fn new_observed(analysis: AnalysisSession&, options: BackendOptions, trace: Option<CompilerTrace&>) -> Result<Self, CodegenError> {
+        let token = start_profile(trace, "backend.initialize", ProfileKind.Pass);
+        let success = false;
+        defer end_profile(trace, "backend.initialize", token, success);
         if options.raw_pointers != analysis.raw_pointers || options.optimization > 3u8 {
             return Result<Self, CodegenError>.Err(CodegenError.invalid("inconsistent backend configuration"));
         }
@@ -133,56 +221,65 @@ impl BackendSession {
         let module = dyn value;
         let types = BackendTypes.new(&analysis.types, &*module, options.raw_pointers);
         accepted = true;
+        success = true;
         Result<Self, CodegenError>.Ok(Self(analysis, module, types, options, BackendPhase.Created, Option<CfgModule&>.None))
     }
 
     pub fn size_provider() -> TypeSizeProvider& { &self.types }
 
     pub fn lower(output: AnalysisOutput&) -> Result<CfgModule, CodegenError> {
+        self.lower_observed(output, Option<CompilerTrace&>.None)
+    }
+
+    pub fn lower_observed(output: AnalysisOutput&, trace: Option<CompilerTrace&>) -> Result<CfgModule, CodegenError> {
         if self.phase != BackendPhase.Created {
             return Result<CfgModule, CodegenError>.Err(CodegenError.invalid("backend lowering has already started"));
         }
         self.phase = BackendPhase.Failed;
-        self.types.finish_analysis();
-        let cfg = lower_module(self.analysis, &self.types, output)?;
+        finish_analysis_observed(&self.types, trace);
+        let cfg = lower_cfg(self.analysis, &self.types, output, trace)?;
         let accepted = false;
         defer { if !accepted { cfg.drop(); } };
-        verify_structure(&cfg)?;
-        cleanup(&cfg)?;
-        insert_checks(&cfg, &self.types)?;
-        verify_cfg(&cfg, &self.types)?;
+        verify_cfg_structure_observed(&cfg, trace)?;
+        cleanup_cfg_observed(&cfg, trace)?;
+        insert_checks_observed(&cfg, &self.types, trace)?;
+        verify_cfg_observed(&cfg, &self.types, trace)?;
         self.phase = BackendPhase.Lowered;
         accepted = true;
         Result<CfgModule, CodegenError>.Ok(cfg)
     }
 
     pub fn emit(cfg: CfgModule&, options: EmitOptions) -> Result<Emission, CodegenError> {
+        self.emit_observed(cfg, options, Option<CompilerTrace&>.None)
+    }
+
+    pub fn emit_observed(cfg: CfgModule&, options: EmitOptions, trace: Option<CompilerTrace&>) -> Result<Emission, CodegenError> {
         self.check_cfg(cfg)?;
         if (self.phase != BackendPhase.Lowered && self.phase != BackendPhase.Generated) || options.target == OutputKind.None {
             return Result<Emission, CodegenError>.Err(CodegenError.invalid("backend emission is not permitted in this state"));
         }
-        if self.phase == BackendPhase.Lowered { self.generate(cfg)?; }
+        if self.phase == BackendPhase.Lowered { self.generate_observed(cfg, trace)?; }
         self.phase = BackendPhase.Failed;
         let bytes = match options.target {
-            Ll => match self.module.try_ir() {
+            Ll => match self.module.try_ir_observed(llvm_observer(trace)) {
                 Ok(value) => value,
                 Err(message) => return Result<Emission, CodegenError>.Err(CodegenError.llvm_error(message)),
             },
             Bc => {
-                match self.module.optimize() {
+                match self.module.optimize_observed(llvm_observer(trace)) {
                     Ok(_) => {},
                     Err(message) => return Result<Emission, CodegenError>.Err(CodegenError.llvm_error(message)),
                 }
-                match self.module.try_bitcode() {
+                match self.module.try_bitcode_observed(llvm_observer(trace)) {
                     Ok(value) => value,
                     Err(message) => return Result<Emission, CodegenError>.Err(CodegenError.llvm_error(message)),
                 }
             },
-            Asm => match self.module.assembly() {
+            Asm => match self.module.assembly_observed(llvm_observer(trace)) {
                 Ok(value) => value,
                 Err(message) => return Result<Emission, CodegenError>.Err(CodegenError.llvm_error(message)),
             },
-            _ => match self.module.object() {
+            _ => match self.module.object_observed(llvm_observer(trace)) {
                 Ok(value) => value,
                 Err(message) => return Result<Emission, CodegenError>.Err(CodegenError.llvm_error(message)),
             },
@@ -191,14 +288,12 @@ impl BackendSession {
         Result<Emission, CodegenError>.Ok(Emission(options.target, bytes))
     }
 
-    fn generate(cfg: CfgModule&) -> Result<(), CodegenError> {
+    fn generate_observed(cfg: CfgModule&, trace: Option<CompilerTrace&>) -> Result<(), CodegenError> {
         self.phase = BackendPhase.Failed;
-        verify_cfg(cfg, &self.types)?;
-        insert_checks(cfg, &self.types)?;
-        verify_cfg(cfg, &self.types)?;
-        let lowering = LlvmLowering.new(self.analysis, &self.types, &*self.module, cfg.entry);
-        defer lowering.drop();
-        lowering.lower(cfg)?;
+        verify_cfg_observed(cfg, &self.types, trace)?;
+        insert_checks_observed(cfg, &self.types, trace)?;
+        verify_cfg_observed(cfg, &self.types, trace)?;
+        lower_llvm(self.analysis, &self.types, &*self.module, cfg, trace)?;
         self.generated = Option<CfgModule&>.Some(cfg);
         self.phase = BackendPhase.Generated;
         Result<(), CodegenError>.Ok(())
@@ -206,12 +301,16 @@ impl BackendSession {
 
     // The caller releases this byte snapshot independently of the LLVM module.
     pub fn llvm_snapshot(cfg: CfgModule&) -> Result<Vec<u8>, CodegenError> {
+        self.llvm_snapshot_observed(cfg, Option<CompilerTrace&>.None)
+    }
+
+    pub fn llvm_snapshot_observed(cfg: CfgModule&, trace: Option<CompilerTrace&>) -> Result<Vec<u8>, CodegenError> {
         self.check_cfg(cfg)?;
         if self.phase != BackendPhase.Lowered && self.phase != BackendPhase.Generated {
             return Result<Vec<u8>, CodegenError>.Err(CodegenError.invalid("LLVM snapshot is unavailable in this state"));
         }
-        if self.phase == BackendPhase.Lowered { self.generate(cfg)?; }
-        match self.module.try_ir() {
+        if self.phase == BackendPhase.Lowered { self.generate_observed(cfg, trace)?; }
+        match self.module.try_ir_observed(llvm_observer(trace)) {
             Ok(value) => Result<Vec<u8>, CodegenError>.Ok(value),
             Err(message) => Result<Vec<u8>, CodegenError>.Err(CodegenError.llvm_error(message)),
         }

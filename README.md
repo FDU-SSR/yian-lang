@@ -78,6 +78,7 @@ See the [compiler CLI guide](docs/compile_script.md) for targets, package maps, 
 anx new myapp
 cd myapp
 anx run
+anx build --profile       # Write compiler timing reports under build/profile/<run-id>/.
 anx check
 anx test
 anx fmt --check
