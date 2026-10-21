@@ -63,6 +63,10 @@ pub enum Operation {
     EnumTag { value: ValueId },
     EnumPayload { value: ValueId },
     EnumPayloadAddress { address: ValueId, enum_type: TypeId },
+    EnumInitAt { address: ValueId, enum_type: TypeId, discriminant: u64, fields: Vec<ValueId> },
+    EnumTagAt { address: ValueId, enum_type: TypeId },
+    EnumFieldAt { address: ValueId, enum_type: TypeId, discriminant: u64, field_index: u64 },
+    EnumCopyAt { destination: ValueId, source: ValueId, enum_type: TypeId },
     Delete { value: ValueId },
     PointerOffset { pointer: ValueId, index: ValueId, subtract: bool },
     PointerDifference { left: ValueId, right: ValueId },
@@ -83,6 +87,7 @@ impl Drop for Operation {
             DynamicCall(_, _, _, args) => args.drop(),
             Phi(incoming) => incoming.drop(),
             Aggregate(fields) => fields.drop(),
+            EnumInitAt(_, _, _, fields) => fields.drop(),
             Builtin(_, type_args, args) => { type_args.drop(); args.drop(); },
             _ => {},
         }
@@ -97,6 +102,8 @@ impl Operation {
             Address(_) => "address", Read(_) => "read", Write(_, _) => "write", Aggregate(_) => "aggregate",
             Extract(_, _) => "extract", FieldAddress(_, _, _) => "field-address", Builtin(_, _, _) => "builtin",
             EnumConstruct(_, _) => "enum", EnumTag(_) => "tag", EnumPayload(_) => "payload", EnumPayloadAddress(_, _) => "payload-address",
+            EnumInitAt(_, _, _, _) => "enum-init-at", EnumTagAt(_, _) => "enum-tag-at",
+            EnumFieldAt(_, _, _, _) => "enum-field-at", EnumCopyAt(_, _, _) => "enum-copy-at",
             Delete(_) => "delete", PointerOffset(_, _, _) => "pointer-offset", PointerDifference(_, _) => "pointer-difference",
             IndexAddress(_, _, _, _) => "index-address", Repeat(_, _) => "repeat", Fill(_, _, _) => "fill",
             TraitObject(_, _) => "trait-object", DynamicCall(_, _, _, _) => "dynamic-call",
@@ -116,6 +123,13 @@ impl Operation {
             Call(_, args) | Builtin(_, _, args) | Aggregate(args) => { for arg in *args { result.push(*arg); } },
             Phi(incoming) => { for edge in *incoming { result.push(edge[0]); } },
             EnumConstruct(_, payload) => match payload { Some(value) => result.push(*value), None => {}, },
+            EnumInitAt(address, _, _, fields) => {
+                result.push(*address);
+                for field in *fields { result.push(*field); }
+            },
+            EnumTagAt(address, _) => result.push(*address),
+            EnumFieldAt(address, _, _, _) => result.push(*address),
+            EnumCopyAt(destination, source, _) => { result.push(*destination); result.push(*source); },
             IndexAddress(address, _, index, bounds) => {
                 result.push(*address);
                 result.push(*index);

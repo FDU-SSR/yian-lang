@@ -149,6 +149,36 @@ fn verify_instruction(function: CfgFunction&, types: BackendTypes&, instruction:
             same(pointee(types, target)?, check_use(function, *element, block_id, order, dominates)?)?;
             integer_offset(types, check_use(function, *count, block_id, order, dominates)?)?;
         },
+        EnumInitAt(address, enumeration, discriminant, fields) => {
+            if result.is_some() { return Result<(), CodegenError>.Err(CodegenError.invalid("enum place initialization defines a value")); }
+            let pointer = check_use(function, *address, block_id, order, dominates)?;
+            same(*enumeration, pointee(types, pointer)?)?;
+            tagged_enum(types, *enumeration)?;
+            match variant_payload(types, *enumeration, *discriminant)? {
+                Some(payload) => {
+                    let members = types.fields_of(payload)?;
+                    if members.len() != fields.len() {
+                        return Result<(), CodegenError>.Err(CodegenError.invalid("CFG enum initializer field count is inconsistent"));
+                    }
+                    for index in 0u64..fields.len() {
+                        same(members[index].type_id, check_use(function, fields[index], block_id, order, dominates)?)?;
+                    }
+                },
+                None => {
+                    if !fields.is_empty() {
+                        return Result<(), CodegenError>.Err(CodegenError.invalid("CFG unit variant initializer has fields"));
+                    }
+                },
+            }
+        },
+        EnumCopyAt(destination, source, enumeration) => {
+            if result.is_some() { return Result<(), CodegenError>.Err(CodegenError.invalid("enum place copy defines a value")); }
+            let target = check_use(function, *destination, block_id, order, dominates)?;
+            same(*enumeration, pointee(types, target)?)?;
+            let origin = check_use(function, *source, block_id, order, dominates)?;
+            same(*enumeration, pointee(types, origin)?)?;
+            tagged_enum(types, *enumeration)?;
+        },
         Write(address, value) => {
             if result.is_some() { return Result<(), CodegenError>.Err(CodegenError.invalid("write defines a value")); }
             let target = check_use(function, *address, block_id, order, dominates)?;
@@ -341,6 +371,27 @@ fn verify_instruction(function: CfgFunction&, types: BackendTypes&, instruction:
                     same(*enum_type, pointee(types, source)?)?;
                     validate_payload(types, *enum_type, pointee(types, type_id)?)?;
                 },
+                EnumTagAt(address, enumeration) => {
+                    let source = check_use(function, *address, block_id, order, dominates)?;
+                    same(*enumeration, pointee(types, source)?)?;
+                    tagged_enum(types, *enumeration)?;
+                    match types.semantic_store().require(type_id)? {
+                        Integer(bits, signed) => {
+                            if *bits != 32u32 || *signed { return Result<(), CodegenError>.Err(CodegenError.invalid("CFG enum tag place type is invalid")); }
+                        },
+                        _ => return Result<(), CodegenError>.Err(CodegenError.invalid("CFG enum tag place is not an integer")),
+                    }
+                },
+                EnumFieldAt(address, enumeration, discriminant, field) => {
+                    let source = check_use(function, *address, block_id, order, dominates)?;
+                    same(*enumeration, pointee(types, source)?)?;
+                    tagged_enum(types, *enumeration)?;
+                    let payload = match variant_payload(types, *enumeration, *discriminant)? {
+                        Some(value) => value,
+                        None => return Result<(), CodegenError>.Err(CodegenError.invalid("CFG enum field read has no payload")),
+                    };
+                    same(field_type(types, payload, *field)?, type_id)?;
+                },
                 PointerOffset(pointer, offset, _) => {
                     let source = check_use(function, *pointer, block_id, order, dominates)?;
                     pointee(types, source)?;
@@ -449,6 +500,26 @@ fn integer_offset(types: BackendTypes&, type_id: TypeId) -> Result<(), CodegenEr
         _ => {},
     }
     Result<(), CodegenError>.Err(CodegenError.invalid("CFG offset is not u64"))
+}
+
+// Tagged enum place operations require the explicit tag word and payload area.
+// Zero-sized and niche representations keep their value-level operations.
+fn tagged_enum(types: BackendTypes&, enumeration: TypeId) -> Result<(), CodegenError> {
+    if types.is_zst(enumeration)? || types.niche_payload(enumeration)?.is_some() {
+        return Result<(), CodegenError>.Err(CodegenError.invalid("CFG enum place operation requires a tagged enum"));
+    }
+    types.variants_of(enumeration)?;
+    Result<(), CodegenError>.Ok(())
+}
+
+fn variant_payload(types: BackendTypes&, enumeration: TypeId, discriminant: u64) -> Result<Option<TypeId>, CodegenError> {
+    let variants = types.variants_of(enumeration)?;
+    for variant in variants {
+        if variant.discriminant == discriminant {
+            return Result<Option<TypeId>, CodegenError>.Ok(variant.payload);
+        }
+    }
+    Result<Option<TypeId>, CodegenError>.Err(CodegenError.invalid("CFG enum place operation has an invalid discriminant"))
 }
 
 fn field_type(types: BackendTypes&, aggregate: TypeId, field: u64) -> Result<TypeId, CodegenError> {

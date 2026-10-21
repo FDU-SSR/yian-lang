@@ -1,0 +1,178 @@
+from yianc.codegen.lowering.context import Lowering;
+from yianc.codegen.cfg.ids import LocalId, ValueId;
+from yianc.codegen.cfg.model import Operation;
+from yianc.codegen.error import CodegenError;
+from yianc.analysis.hir.node import HirNode, VariantConstruct;
+from yianc.analysis.ty.model import NominalKind;
+from yianc.common.ids import HirId, TypeId;
+from yianc.common.location import SourceSpan;
+from yianc.frontend.ast.operator import UnaryOperator;
+from std.core.option import Option;
+from std.core.result import Result;
+from std.core.vec import Vec;
+
+// Provenance of an enum storage address. Only fresh destinations and borrowed
+// places are written; snapshots are independent copies used for reads.
+pub enum EnumPlaceKind {
+    Borrowed,
+    Snapshot,
+    FreshDestination,
+}
+
+pub struct EnumPlace {
+    pub type_id: TypeId,
+    pub address: ValueId,
+    pub kind: EnumPlaceKind,
+}
+
+impl Lowering {
+    // Tagged enums use an explicit tag word plus a payload area. Zero-sized and
+    // niche representations keep their value-level operations.
+    pub fn enum_place_supported(type_id: TypeId) -> Result<bool, CodegenError> {
+        let enumeration = match self.session.types.require(type_id)? {
+            Nominal(definition, _) => self.session.types.definition(*definition).unwrap().header().kind == NominalKind.Enum,
+            _ => false,
+        };
+        if !enumeration { return Result<bool, CodegenError>.Ok(false); }
+        if self.types.is_zst(type_id)? { return Result<bool, CodegenError>.Ok(false); }
+        Result<bool, CodegenError>.Ok(self.types.niche_payload(type_id)?.is_none())
+    }
+
+    // Normalized storage forms can supply an enum address without materializing a value.
+    fn enum_place_addressable(id: HirId) -> Result<bool, CodegenError> {
+        let node = self.session.hir.require(id)?;
+        let addressable = match &node.kind {
+            Var(_) => true,
+            FieldAccess(_) | TupleAccess(_) | ArrayAccess(_) | SliceAccess(_) | Block(_) => node.is_place,
+            Unary(value) => value.op == UnaryOperator.Deref,
+            _ => false,
+        };
+        Result<bool, CodegenError>.Ok(addressable)
+    }
+
+    fn enum_place_type(address: ValueId) -> Result<Option<TypeId>, CodegenError> {
+        match self.session.types.require(self.function.value(address)?.type_id)? {
+            Pointer(inner) | Reference(inner) => Result<Option<TypeId>, CodegenError>.Ok(Option<TypeId>.Some(*inner)),
+            _ => Result<Option<TypeId>, CodegenError>.Ok(Option<TypeId>.None),
+        }
+    }
+
+    fn enum_destination(span: SourceSpan, local: LocalId, type_id: TypeId) -> Result<EnumPlace, CodegenError> {
+        let reference = self.session.types.reference(type_id);
+        let address = self.emit(span, reference, Operation.Address(local))?;
+        Result<EnumPlace, CodegenError>.Ok(EnumPlace(type_id, address, EnumPlaceKind.FreshDestination))
+    }
+
+    // Reads a by-value enum operand into an independent snapshot place so later
+    // guards cannot observe the source and later source writes cannot change it.
+    pub fn enum_snapshot(id: HirId, type_id: TypeId) -> Result<EnumPlace, CodegenError> {
+        let node = self.session.hir.require(id)?;
+        let span = node.span;
+        let local = self.function.add_local(type_id);
+        if self.enum_place_addressable(id)? {
+            let source = self.address(id)?;
+            let destination = self.enum_destination(span, local, type_id)?;
+            self.effect(span, Operation.EnumCopyAt(destination.address, source, type_id))?;
+            return Result<EnumPlace, CodegenError>.Ok(destination);
+        }
+        let value = self.expression(id)?;
+        self.effect(span, Operation.Store(local, value))?;
+        let reference = self.session.types.reference(type_id);
+        let address = self.emit(span, reference, Operation.Address(local))?;
+        Result<EnumPlace, CodegenError>.Ok(EnumPlace(type_id, address, EnumPlaceKind.Snapshot))
+    }
+
+    fn enum_construct_into(node: HirNode&, construction: VariantConstruct&, destination: EnumPlace&)
+    -> Result<(), CodegenError> {
+        let variants = self.types.variants_of(node.type_id)?;
+        let payload = Option<TypeId>.None;
+        let known = false;
+        for variant in variants {
+            if variant.discriminant == construction.variant.discriminant {
+                payload = variant.payload;
+                known = true;
+            }
+        }
+        if !known { return Result<(), CodegenError>.Err(CodegenError.invalid("checked enum initializer has an invalid discriminant")); }
+
+        let evaluated = Vec<ValueId>.new();
+        defer evaluated.drop();
+        match &construction.args {
+            Some(args) => { for field in *args { evaluated.push(self.expression(field[1])?); } },
+            None => {},
+        }
+
+        let fields = Vec<ValueId>.new();
+        let transferred = false;
+        defer { if !transferred { fields.drop(); } };
+        match payload {
+            Some(payload_type) => {
+                let members = self.types.fields_of(payload_type)?;
+                for member in members {
+                    let found = Option<ValueId>.None;
+                    let index = 0u64;
+                    match &construction.args {
+                        Some(args) => {
+                            for field in *args {
+                                if field[0] == member.name { found = Option<ValueId>.Some(evaluated[index]); break; }
+                                index += 1u64;
+                            }
+                        },
+                        None => {},
+                    }
+                    match found {
+                        Some(value) => fields.push(value),
+                        None => return Result<(), CodegenError>.Err(CodegenError.invalid("checked enum payload has a missing field")),
+                    }
+                }
+            },
+            None => {
+                if !evaluated.is_empty() {
+                    return Result<(), CodegenError>.Err(CodegenError.invalid("checked unit variant has payload arguments"));
+                }
+            },
+        }
+        transferred = true;
+        self.effect(node.span, Operation.EnumInitAt(destination.address, node.type_id, construction.variant.discriminant, fields))?;
+        Result<(), CodegenError>.Ok(())
+    }
+
+    // Direct enum initializers store into the destination instead of rebuilding a value.
+    pub fn enum_construct(id: HirId, destination: EnumPlace&) -> Result<bool, CodegenError> {
+        let node = self.session.hir.require(id)?;
+        let construction = match &node.kind {
+            VariantConstruct(value) => value,
+            _ => return Result<bool, CodegenError>.Ok(false),
+        };
+        if node.type_id != destination.type_id { return Result<bool, CodegenError>.Ok(false); }
+        if !self.enum_place_supported(node.type_id)? { return Result<bool, CodegenError>.Ok(false); }
+        self.enum_construct_into(node, construction, destination)?;
+        Result<bool, CodegenError>.Ok(true)
+    }
+
+    // Initializes a fresh local in place; returns the value to store when the
+    // initializer keeps the general value path.
+    pub fn enum_let(span: SourceSpan, local: LocalId, expression: HirId) -> Result<Option<ValueId>, CodegenError> {
+        let node = self.session.hir.require(expression)?;
+        let direct = match &node.kind { VariantConstruct(_) => true, _ => false };
+        if !direct || !self.enum_place_supported(node.type_id)? {
+            return Result<Option<ValueId>, CodegenError>.Ok(Option<ValueId>.Some(self.expression(expression)?));
+        }
+        let destination = self.enum_destination(span, local, node.type_id)?;
+        if self.enum_construct(expression, &destination)? {
+            return Result<Option<ValueId>, CodegenError>.Ok(Option<ValueId>.None);
+        }
+        Result<Option<ValueId>, CodegenError>.Ok(Option<ValueId>.Some(self.expression(expression)?))
+    }
+
+    // Assigns a direct enum initializer at an already evaluated destination address.
+    pub fn enum_assign(span: SourceSpan, address: ValueId, expression: HirId) -> Result<bool, CodegenError> {
+        let enumeration = match self.enum_place_type(address)? {
+            Some(value) => value,
+            None => return Result<bool, CodegenError>.Ok(false),
+        };
+        if !self.enum_place_supported(enumeration)? { return Result<bool, CodegenError>.Ok(false); }
+        let destination = EnumPlace(enumeration, address, EnumPlaceKind.Borrowed);
+        Result<bool, CodegenError>.Ok(self.enum_construct(expression, &destination)?)
+    }
+}

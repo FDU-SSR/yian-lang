@@ -1,5 +1,5 @@
 from yianc.codegen.lowering.context import Lowering;
-from yianc.codegen.cfg.ids import ValueId;
+from yianc.codegen.cfg.ids import LocalId, ValueId;
 from yianc.codegen.cfg.model import ValueKind, Operation, Terminator, IndexBounds;
 from yianc.codegen.error import CodegenError;
 from yianc.analysis.hir.node import HirNode, Binary, Builtin;
@@ -90,17 +90,23 @@ impl Lowering {
                 self.zero(node.type_id)
             },
             Let(value) => {
+                // Binding a local has no runtime effect, so a direct enum initializer
+                // can target the new slot without an intermediate aggregate value.
+                let local = match value.symbol_id {
+                    Some(symbol) => Option<LocalId>.Some(self.bind(symbol)?),
+                    None => Option<LocalId>.None,
+                };
                 let initial = match value.init {
-                    Some(expr) => Option<ValueId>.Some(self.expression(expr)?),
+                    Some(expr) => match local {
+                        Some(target) => self.enum_let(node.span, target, expr)?,
+                        None => Option<ValueId>.Some(self.expression(expr)?),
+                    },
                     None => Option<ValueId>.None,
                 };
-                match value.symbol_id {
-                    Some(symbol) => {
-                        let local = self.bind(symbol)?;
-                        match initial {
-                            Some(value) => { self.effect(node.span, Operation.Store(local, value))?; },
-                            None => {},
-                        }
+                match local {
+                    Some(target) => match initial {
+                        Some(value) => { self.effect(node.span, Operation.Store(target, value))?; },
+                        None => {},
                     },
                     None => {},
                 }
@@ -477,6 +483,11 @@ impl Lowering {
         }
         if value.op == BinaryOperator.Assign {
             let address = self.address(value.left)?;
+            // Payload field values are already computed when the destination is written,
+            // so a direct initializer can fill the assigned storage in place.
+            if self.enum_assign(node.span, address, value.right)? {
+                return Result<ValueId, CodegenError>.Ok(self.zero(node.type_id));
+            }
             let rhs = self.expression(value.right)?;
             self.effect(node.span, Operation.Write(address, rhs))?;
             return Result<ValueId, CodegenError>.Ok(self.zero(node.type_id));

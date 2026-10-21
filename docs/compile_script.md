@@ -374,6 +374,11 @@ build/runtime/libyian_rt.{o,a}   产物（首次使用时构建并缓存）
 | `obj` | `clang -r -nostdlib <user>.o libyian_rt.o -o <out>`，产物单文件自包含 |
 | `ll` / `bc` / `asm` | 运行时不并入：运行时符号是外部声明/未定义符号，需要自行链接运行时库 |
 
+原生 `yianc` 对模块内普通生成函数（`yian.fn.<TypeId>`，含方法、泛型实例与闭包生成函数）使用
+`internal` 链接性，对 `ll`、`bc`、`obj`、`asm`、`exe` 一致生效；入口 `__yian_main`、`extern "C"`
+声明与运行时符号保持外部名称。因此 `-t ll`/`bc`/`asm` 产物只留下运行时符号与 C 声明待链接，
+未被引用的普通函数可被优化器和链接器删除。`pub` 是 YIAN 级可见性，不改变该分类。
+
 自行链接 `-t ll`/`bc`/`asm` 的产物时，需要满足下表这些符号（都在 `yian_rt.h` 里声明）：
 
 | 类别 | 符号 |

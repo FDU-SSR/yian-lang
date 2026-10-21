@@ -309,6 +309,24 @@ pub fn cfg_dump(module: CfgModule&) -> Result<(), CodegenError> {
                         output.end_array();
                     },
                     EnumConstruct(tag, _) => { output.key("tag"); output.write_u64(*tag); },
+                    EnumInitAt(_, enumeration, discriminant, _) => {
+                        output.key("enum");
+                        output.write_u64(enumeration.index);
+                        output.key("tag");
+                        output.write_u64(*discriminant);
+                    },
+                    EnumTagAt(_, enumeration) | EnumCopyAt(_, _, enumeration) => {
+                        output.key("enum");
+                        output.write_u64(enumeration.index);
+                    },
+                    EnumFieldAt(_, enumeration, discriminant, field) => {
+                        output.key("enum");
+                        output.write_u64(enumeration.index);
+                        output.key("tag");
+                        output.write_u64(*discriminant);
+                        output.key("field");
+                        output.write_u64(*field);
+                    },
                     Extract(_, field) | FieldAddress(_, _, field) => { output.key("field"); output.write_u64(*field); },
                     _ => {},
                 }

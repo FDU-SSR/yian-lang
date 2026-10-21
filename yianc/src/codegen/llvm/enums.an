@@ -8,6 +8,7 @@ from std.core.drop import Drop;
 from std.core.iter import Iterator, IntoIterator;
 from std.core.option import Option;
 from std.core.result import Result;
+from std.core.vec import Vec;
 
 impl FunctionLowering {
     // Packed enum payloads begin after the four-byte tag. Access alignment is conservative.
@@ -93,5 +94,90 @@ impl FunctionLowering {
         let loaded = self.builder.load(native, pointer, "");
         self.builder.set_alignment(loaded, 1u32);
         Result<IrValue, CodegenError>.Ok(loaded)
+    }
+
+    fn payload_type(enumeration: TypeId, discriminant: u64) -> Result<Option<TypeId>, CodegenError> {
+        let variants = self.owner.types.variants_of(enumeration)?;
+        for variant in variants {
+            if variant.discriminant == discriminant {
+                return Result<Option<TypeId>, CodegenError>.Ok(variant.payload);
+            }
+        }
+        Result<Option<TypeId>, CodegenError>.Err(CodegenError.invalid("enum place operation has an invalid discriminant"))
+    }
+
+    // The tag word and the inactive payload area keep their previous zero initialization.
+    pub fn enum_init_at(address: ValueId, enumeration: TypeId, discriminant: u64, fields: Vec<ValueId>&) -> Result<(), CodegenError> {
+        let types = self.owner.types;
+        let module = self.owner.module;
+        let native = types.value_type(enumeration)?;
+        let source = self.cfg.value(address)?.type_id;
+        let base = self.memory_address(source, self.get(address)?)?;
+        let tag_indices = [module.const_int(module.int_type(32u32), 0u64), module.const_int(module.int_type(32u32), 0u64)];
+        let tag_pointer = self.builder.gep(native, base, tag_indices.as_slice(), false, "");
+        self.builder.store(module.const_int(module.int_type(32u32), discriminant), tag_pointer);
+        let size = module.abi_size(native);
+        let payload = self.enum_address(enumeration, base)?;
+        if size > 4u64 {
+            let zero = module.const_int(module.int_type(8u32), 0u64);
+            self.builder.memset(payload, zero, module.const_int(module.int_type(64u32), size - 4u64), 1u32);
+        }
+        if fields.is_empty() { return Result<(), CodegenError>.Ok(()); }
+        let payload_type = match self.payload_type(enumeration, discriminant)? {
+            Some(value) => value,
+            None => return Result<(), CodegenError>.Err(CodegenError.invalid("enum initializer has no payload type")),
+        };
+        let native_payload = types.value_type(payload_type)?;
+        let index = 0u64;
+        for field in *fields {
+            let indices = [module.const_int(module.int_type(32u32), 0u64), module.const_int(module.int_type(32u32), index)];
+            let pointer = self.builder.gep(native_payload, payload, indices.as_slice(), false, "");
+            let stored = self.builder.store(self.get(*field)?, pointer);
+            self.builder.set_alignment(stored, 1u32);
+            index += 1u64;
+        }
+        Result<(), CodegenError>.Ok(())
+    }
+
+    pub fn enum_tag_at(address: ValueId, enumeration: TypeId) -> Result<IrValue, CodegenError> {
+        let module = self.owner.module;
+        let source = self.cfg.value(address)?.type_id;
+        let base = self.memory_address(source, self.get(address)?)?;
+        let indices = [module.const_int(module.int_type(32u32), 0u64), module.const_int(module.int_type(32u32), 0u64)];
+        let pointer = self.builder.gep(self.owner.types.value_type(enumeration)?, base, indices.as_slice(), false, "");
+        Result<IrValue, CodegenError>.Ok(self.builder.load(module.int_type(32u32), pointer, ""))
+    }
+
+    pub fn enum_field_at(result: ValueId, address: ValueId, enumeration: TypeId, discriminant: u64, field: u64) -> Result<IrValue, CodegenError> {
+        let types = self.owner.types;
+        let module = self.owner.module;
+        let type_id = self.cfg.value(result)?.type_id;
+        let native = types.value_type(type_id)?;
+        if types.is_zst(type_id)? { return Result<IrValue, CodegenError>.Ok(module.const_null(native)); }
+        let payload_type = match self.payload_type(enumeration, discriminant)? {
+            Some(value) => value,
+            None => return Result<IrValue, CodegenError>.Err(CodegenError.invalid("enum field read has no payload type")),
+        };
+        let source = self.cfg.value(address)?.type_id;
+        let base = self.memory_address(source, self.get(address)?)?;
+        let payload = self.enum_address(enumeration, base)?;
+        let indices = [module.const_int(module.int_type(32u32), 0u64), module.const_int(module.int_type(32u32), field)];
+        let pointer = self.builder.gep(types.value_type(payload_type)?, payload, indices.as_slice(), false, "");
+        let loaded = self.builder.load(native, pointer, "");
+        self.builder.set_alignment(loaded, 1u32);
+        Result<IrValue, CodegenError>.Ok(loaded)
+    }
+
+    // A byte copy preserves shallow value semantics and tolerates source/destination overlap.
+    pub fn enum_copy_at(destination: ValueId, source: ValueId, enumeration: TypeId) -> Result<(), CodegenError> {
+        let module = self.owner.module;
+        let size = module.abi_size(self.owner.types.value_type(enumeration)?);
+        if size == 0u64 { return Result<(), CodegenError>.Ok(()); }
+        let target_type = self.cfg.value(destination)?.type_id;
+        let origin_type = self.cfg.value(source)?.type_id;
+        let target = self.memory_address(target_type, self.get(destination)?)?;
+        let origin = self.memory_address(origin_type, self.get(source)?)?;
+        self.builder.memmove(target, 1u32, origin, 1u32, module.const_int(module.int_type(64u32), size));
+        Result<(), CodegenError>.Ok(())
     }
 }

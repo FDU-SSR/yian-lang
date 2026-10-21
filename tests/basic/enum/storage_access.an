@@ -1,0 +1,245 @@
+// Enum storage, snapshot, and explicit release semantics.
+//
+// Construction evaluates payload fields once in source order, by-value matches
+// keep an independent snapshot, reference matches read the borrowed place, and
+// copies never release resources implicitly.
+
+from std.core.drop import Drop;
+
+enum Packet {
+    Empty,
+    Data { number: i32, count: i64 },
+}
+
+enum State {
+    A { n: i32 },
+    B { n: i32 },
+}
+
+enum Nested {
+    Empty,
+    Inner { packet: Packet, extra: i32 },
+}
+
+enum Marker {
+    Only,
+}
+
+struct Container {
+    packet: Packet,
+}
+
+struct Guarded {
+    value: i32,
+    drop_count: i32*,
+}
+
+enum Holder {
+    Empty,
+    Value { guard: Guarded, tag: i32 },
+}
+
+impl Drop for Guarded {
+    fn drop() {
+        *self.drop_count += 1;
+    }
+}
+
+fn make_number(order: i32*, value: i32) -> i32 {
+    *order = *order * 10 + value;
+    value
+}
+
+fn make_count(order: i32*, value: i64) -> i64 {
+    *order = *order * 10 + i32(value);
+    value
+}
+
+fn slot(target: Packet*, order: i32*) -> Packet* {
+    *order = *order * 10 + 1;
+    target
+}
+
+fn change(state: State*) -> bool {
+    *state = State.B(9);
+    return false;
+}
+
+fn select(packet: Packet) -> i64 {
+    match packet {
+        Packet.Data(number, count) => i64(number) + count,
+        Packet.Empty => 0i64,
+    }
+}
+
+// Payload fields evaluate once in source order. Assignment evaluates the left
+// place first, and overlapping or self copies keep both sides readable.
+fn case_construction_copy() {
+    let order: i32 = 0;
+    let packet = Packet.Data(make_number(&order, 1), make_count(&order, 2));
+    assert order == 12: "payload fields evaluate once in source order";
+    match packet {
+        Packet.Data(number, count) => assert number == 1 && count == 2,
+        Packet.Empty => assert false,
+    }
+
+    let destination = Packet.Empty;
+    let overwrite: i32 = 0;
+    *slot(&destination, &overwrite) = Packet.Data(make_number(&overwrite, 2), make_count(&overwrite, 3));
+    assert overwrite == 123: "the destination place is evaluated before the payload";
+    match destination {
+        Packet.Data(number, count) => assert number == 2 && count == 3,
+        Packet.Empty => assert false,
+    }
+
+    packet = packet;
+    match packet {
+        Packet.Data(number, count) => assert number == 1 && count == 2,
+        Packet.Empty => assert false,
+    }
+
+    let other = Packet.Data(4, 5);
+    let reference: Packet& = &other;
+    packet = *reference;
+    match packet {
+        Packet.Data(number, count) => assert number == 4 && count == 5,
+        Packet.Empty => assert false,
+    }
+
+    // A field target keeps the same order and re-reads the field place.
+    let container = Container(Packet.Empty);
+    container.packet = Packet.Data(6, 7);
+    match container.packet {
+        Packet.Data(number, count) => assert number == 6 && count == 7,
+        Packet.Empty => assert false,
+    }
+}
+
+// A by-value match tests a snapshot; a reference match tests the borrowed place.
+fn case_value_and_reference_match() {
+    let state = State.A(1);
+    let by_value: i32 = match state {
+        State.A(n) if change(&state) => n,
+        State.A(n) => n,
+        State.B(n) => -n,
+        _ => -1,
+    };
+    assert by_value == 1: "a by-value match keeps its snapshot";
+    match state {
+        State.B(n) => assert n == 9: "the guard modified the source",
+        State.A(n) => assert false,
+    }
+
+    let borrowed = State.A(2);
+    let reference: State& = &borrowed;
+    let by_reference: i32 = match reference {
+        State.A(n) if change(&borrowed) => *n,
+        State.B(n) => {
+            let field: i32& = n;
+            assert *field == 9;
+            let observed: i32 = *field;
+            *field = 13;
+            observed
+        },
+        _ => -1,
+    };
+    assert by_reference == 9: "a failed guard re-reads the next arm";
+    match borrowed {
+        State.B(n) => assert n == 13: "payload references update the original",
+        State.A(n) => assert false,
+    }
+}
+
+// Three loop rounds keep entry slots reusable while each round reads the value
+// version produced by the previous round.
+fn case_loop_versions() {
+    let packet = Packet.Empty;
+    let total: i64 = 0;
+    let round: i32 = 0;
+    while round < 3 {
+        let selected: i64 = match packet {
+            Packet.Data(number, count) => i64(number) + count,
+            Packet.Empty => 0i64,
+        };
+        total += selected;
+        packet = Packet.Data(round, i64(round));
+        round += 1;
+    }
+    assert total == 2: "each round reads the version written by the previous round";
+    match packet {
+        Packet.Data(number, count) => assert number == 2 && count == 2,
+        Packet.Empty => assert false,
+    }
+
+    let snapshot: Packet = if round == 3 { packet } else { Packet.Empty };
+    match snapshot {
+        Packet.Data(number, count) => assert number == 2 && count == 2,
+        Packet.Empty => assert false,
+    }
+    let recomputed: i64 = if round == 3 { select(packet) } else { -1i64 };
+    assert recomputed == 4;
+}
+
+// Nested payloads, zero-sized enums, niche layouts, and explicit release.
+fn case_nested_layout_drop() {
+    let empty = Packet.Empty;
+    match empty {
+        Packet.Empty => {},
+        Packet.Data(number, count) => assert false,
+    }
+
+    let nested = Nested.Inner(Packet.Data(5, 6), 7);
+    match nested {
+        Nested.Inner(packet, extra) => {
+            assert extra == 7;
+            match packet {
+                Packet.Data(number, count) => assert number == 5 && count == 6,
+                Packet.Empty => assert false,
+            }
+        },
+        Nested.Empty => assert false,
+    }
+
+    let marker = Marker.Only;
+    match marker {
+        Marker.Only => {},
+    }
+
+    let value: i32 = 4;
+    let pointer: i32* = &value;
+    let present: Option<i32*> = Option<i32*>.Some(pointer);
+    let absent: Option<i32*> = Option<i32*>.None;
+    assert @sizeof<Option<i32*>> == @sizeof<i32*>: "pointer niche layout";
+    match present {
+        Some(inner) => assert *inner == 4,
+        None => assert false,
+    }
+    match absent {
+        None => {},
+        Some(inner) => assert false,
+    }
+
+    let drop_count: i32 = 0;
+    let guard = Guarded(11, &drop_count);
+    let holder = Holder.Value(guard, 5);
+    assert drop_count == 0: "construction does not drop";
+    let copied = holder;
+    match copied {
+        Holder.Value(inner, tag) => {
+            assert drop_count == 0: "value copies do not drop";
+            assert inner.value == 11 && tag == 5;
+            inner.drop();
+            assert drop_count == 1: "explicit drop runs once";
+        },
+        Holder.Empty => assert false,
+    }
+    assert drop_count == 1: "no implicit drop after the match";
+    assert guard.value == 11: "a release does not invalidate the shallow source";
+}
+
+fn main() {
+    case_construction_copy();
+    case_value_and_reference_match();
+    case_loop_versions();
+    case_nested_layout_drop();
+}

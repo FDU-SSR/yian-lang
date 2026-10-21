@@ -15,7 +15,7 @@ from llvm.ir import set_alignment, set_volatile, add_function_attribute, add_par
 from llvm.ir import position_at_end, insertion_block, build_ret, build_ret_void, build_br, build_cond_br;
 from llvm.ir import build_switch, add_switch_case, build_unreachable, build_phi, add_incoming;
 from llvm.ir import build_call, build_select, build_alloca, build_load, build_store;
-from llvm.ir import build_memset, build_memcpy, build_gep, build_extract_value, build_insert_value;
+from llvm.ir import build_memset, build_memcpy, build_memmove, build_gep, build_extract_value, build_insert_value;
 from llvm.ir import build_binary, build_neg, build_fneg, build_not, build_icmp, build_fcmp, build_cast;
 from llvm.ir import verify_module, module_ir, module_bitcode, module_object, module_assembly, optimize_session;
 from llvm.ir import try_module_ir, try_module_bitcode, try_module_ir_observed, try_module_bitcode_observed;
@@ -337,6 +337,10 @@ impl Builder {
 
     pub ffi fn memcpy(target: IrValue, target_alignment: u32, source: IrValue, source_alignment: u32, length: IrValue) -> IrValue {
         return build_memcpy(&self.session, target, target_alignment, source, source_alignment, length);
+    }
+
+    pub ffi fn memmove(target: IrValue, target_alignment: u32, source: IrValue, source_alignment: u32, length: IrValue) -> IrValue {
+        return build_memmove(&self.session, target, target_alignment, source, source_alignment, length);
     }
 
     pub ffi fn gep(ty: IrType, pointer: IrValue, indices: IrValue[], in_bounds: bool, name: str) -> IrValue {

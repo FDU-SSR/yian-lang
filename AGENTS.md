@@ -175,6 +175,8 @@ The native compiler locates runtime resources through `--compiler-root`, nonempt
 
 After concrete procedure type and result-context conversion, native analysis normalizes data-address operands and implicit storage consumers into existing places or local place blocks before HIR verification, match coverage, and definite-assignment checks. CFG address lowering only accepts normalized storage; it does not create a fallback local for arbitrary right values. Function addresses and slice-based element addresses retain their dedicated paths.
 
+Tagged enums with an explicit tag word and payload area lower construction and field access to enum place operations: `EnumInitAt` writes the tag and payload fields at the destination, `EnumTagAt` and `EnumFieldAt` read the active variant directly, and `EnumCopyAt` copies a shallow snapshot. Zero-sized and niche representations keep their value operations. `LlvmLowering.declare` classifies each callable once; generated module-local functions use internal linkage in every LLVM output target, while the entry and extern declarations keep their external names.
+
 ### Pipeline and module boundaries
 
 `AnalysisSession.prepare(...)` collects and loads sources, lexes, parses and desugars them, classifies permissions, and retains the prepared units. `AnalysisSession.analyze(options)` checks restricted operations, registers primitive types and declaration identities, resolves explicit imports and injects prelude bindings, resolves definition signatures and impls, registers automatic implementations, finalizes and validates types, checks and lowers procedures, verifies HIR, checks pattern coverage, and checks definite assignment.

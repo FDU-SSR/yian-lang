@@ -137,6 +137,7 @@ extern "C" {
     fn LLVMBuildStore(builder: cptr<LLVMOpaqueBuilder>, value: cptr<LLVMOpaqueValue>, pointer: cptr<LLVMOpaqueValue>) -> cptr<LLVMOpaqueValue>;
     fn LLVMBuildMemSet(builder: cptr<LLVMOpaqueBuilder>, pointer: cptr<LLVMOpaqueValue>, byte: cptr<LLVMOpaqueValue>, length: cptr<LLVMOpaqueValue>, alignment: c_uint) -> cptr<LLVMOpaqueValue>;
     fn LLVMBuildMemCpy(builder: cptr<LLVMOpaqueBuilder>, target: cptr<LLVMOpaqueValue>, target_alignment: c_uint, source: cptr<LLVMOpaqueValue>, source_alignment: c_uint, length: cptr<LLVMOpaqueValue>) -> cptr<LLVMOpaqueValue>;
+    fn LLVMBuildMemMove(builder: cptr<LLVMOpaqueBuilder>, target: cptr<LLVMOpaqueValue>, target_alignment: c_uint, source: cptr<LLVMOpaqueValue>, source_alignment: c_uint, length: cptr<LLVMOpaqueValue>) -> cptr<LLVMOpaqueValue>;
     fn LLVMBuildGEP2(builder: cptr<LLVMOpaqueBuilder>, ty: cptr<LLVMOpaqueType>, pointer: cptr<LLVMOpaqueValue>, indices: cptr<cptr<LLVMOpaqueValue>>, count: c_uint, name: cptr<c_char>) -> cptr<LLVMOpaqueValue>;
     fn LLVMBuildInBoundsGEP2(builder: cptr<LLVMOpaqueBuilder>, ty: cptr<LLVMOpaqueType>, pointer: cptr<LLVMOpaqueValue>, indices: cptr<cptr<LLVMOpaqueValue>>, count: c_uint, name: cptr<c_char>) -> cptr<LLVMOpaqueValue>;
     fn LLVMBuildExtractValue(builder: cptr<LLVMOpaqueBuilder>, aggregate: cptr<LLVMOpaqueValue>, index: c_uint, name: cptr<c_char>) -> cptr<LLVMOpaqueValue>;
@@ -806,6 +807,13 @@ pub(ffi) ffi fn build_memcpy(session: IrSession&, target: IrValue, target_alignm
     let native_source = checked_value(session, source);
     let native_length = checked_value(session, length);
     return wrap_value(session, LLVMBuildMemCpy(session.builder, native_target, c_uint(target_alignment), native_source, c_uint(source_alignment), native_length));
+}
+
+pub(ffi) ffi fn build_memmove(session: IrSession&, target: IrValue, target_alignment: u32, source: IrValue, source_alignment: u32, length: IrValue) -> IrValue {
+    let native_target = checked_value(session, target);
+    let native_source = checked_value(session, source);
+    let native_length = checked_value(session, length);
+    return wrap_value(session, LLVMBuildMemMove(session.builder, native_target, c_uint(target_alignment), native_source, c_uint(source_alignment), native_length));
 }
 
 pub(ffi) ffi fn build_gep(session: IrSession&, ty: IrType, pointer: IrValue, indices: IrValue[], in_bounds: bool, name: str) -> IrValue {

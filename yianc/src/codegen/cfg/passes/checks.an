@@ -59,6 +59,14 @@ fn checks_for(function: CfgFunction&, types: BackendTypes&, instruction: Instruc
                 }
             }
         },
+        EnumInitAt(address, _, _, _) => { instruction.checks.push(access(function, types, *address)?); },
+        EnumTagAt(address, _) | EnumFieldAt(address, _, _, _) => {
+            if live { instruction.checks.push(access(function, types, *address)?); }
+        },
+        EnumCopyAt(destination, source, _) => {
+            instruction.checks.push(access(function, types, *destination)?);
+            instruction.checks.push(access(function, types, *source)?);
+        },
         IndexAddress(address, _, offset, bounds) => {
             instruction.checks.push(SafetyCheck.Index(*offset, *bounds));
             if live { instruction.checks.push(access(function, types, *address)?); }

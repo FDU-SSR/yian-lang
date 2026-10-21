@@ -74,12 +74,15 @@ impl LlvmLowering {
             Nominal(definition, _) => *self.session.types.definition(*definition).unwrap(),
             _ => return Result<Function, CodegenError>.Err(CodegenError.invalid("LLVM declaration is not a nominal callable")),
         };
-        let external = match record.body()? {
-            Function(value) | Method(value) => value.is_extern,
+        let external = false;
+        let header = false;
+        match record.body()? {
+            Function(value) | Method(value) => { external = value.is_extern; header = value.is_header; },
             _ => return Result<Function, CodegenError>.Err(CodegenError.invalid("LLVM declaration is not a function")),
-        };
+        }
         let name = String.new();
         defer name.drop();
+        let is_entry = match self.entry { Some(value) => value == type_id, None => false, };
         if external {
             match self.externs.get(&record.header().name) {
                 Some(existing) => {
@@ -93,7 +96,6 @@ impl LlvmLowering {
             name.push_str(self.session.names.text(record.header().name));
             self.externs.insert(record.header().name, type_id);
         } else {
-            let is_entry = match self.entry { Some(value) => value == type_id, None => false, };
             if is_entry {
                 name.push_str("__yian_main");
             } else {
@@ -107,6 +109,10 @@ impl LlvmLowering {
             Ok(value) => value,
             Err(message) => return Result<Function, CodegenError>.Err(CodegenError.llvm_error(message)),
         };
+        // Generated functions stay in one module, so their symbols need no external linkage.
+        // Extern declarations, header declarations without a body, and the runtime entry
+        // keep names that a separate object or the runtime must resolve.
+        if !external && !header && !is_entry { function.set_internal_linkage(); }
         self.functions.insert(type_id, function);
         Result<Function, CodegenError>.Ok(function)
     }
@@ -342,6 +348,14 @@ impl FunctionLowering {
                 self.fill(*destination, *element, *count)?;
                 Option<IrValue>.None
             },
+            EnumInitAt(address, enumeration, discriminant, fields) => {
+                self.enum_init_at(*address, *enumeration, *discriminant, fields)?;
+                Option<IrValue>.None
+            },
+            EnumCopyAt(destination, source, enumeration) => {
+                self.enum_copy_at(*destination, *source, *enumeration)?;
+                Option<IrValue>.None
+            },
             Phi(_) => return Result<(), CodegenError>.Ok(()),
             _ => {
                 let type_id = *result.unwrap();
@@ -419,6 +433,8 @@ impl FunctionLowering {
                         let pointer = self.enum_address(*enumeration, base)?;
                         self.make_pointer(type_id, pointer, self.pointer_word(source, self.get(*address)?)?, self.integer(0u64), self.integer(1u64))?
                     },
+                    EnumTagAt(address, enumeration) => self.enum_tag_at(*address, *enumeration)?,
+                    EnumFieldAt(address, enumeration, discriminant, field) => self.enum_field_at(*instruction.result.unwrap(), *address, *enumeration, *discriminant, *field)?,
                     PointerOffset(pointer, index, subtract) => self.pointer_offset(*pointer, *index, *subtract)?,
                     PointerDifference(left, right) => self.pointer_difference(*left, *right)?,
                     IndexAddress(address, element, index, bounds) => self.index_address(type_id, *address, *element, *index, bounds)?,

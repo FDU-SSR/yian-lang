@@ -19,10 +19,19 @@ from std.core.vec import Vec;
 
 impl Lowering {
     pub fn pattern_binding(node: HirNode&, binding: PatternLet&) -> Result<ValueId, CodegenError> {
-        let initial = self.expression(binding.value)?;
+        let type_id = self.session.hir.require(binding.value)?.type_id;
+        let value = Option<ValueId>.None;
+        let address = Option<ValueId>.None;
+        // A by-value pattern tests a snapshot; a reference pattern tests the borrowed place.
+        if self.enum_place_supported(type_id)? {
+            let place = self.enum_snapshot(binding.value, type_id)?;
+            address = Option<ValueId>.Some(place.address);
+        } else {
+            value = Option<ValueId>.Some(self.expression(binding.value)?);
+        }
         let success = self.function.add_block();
         let failure = self.function.add_block();
-        self.pattern_test(binding.pattern, initial, Option<ValueId>.None, success, failure)?;
+        self.pattern_test(binding.pattern, value, address, success, failure)?;
         self.current = Option<BlockId>.Some(failure);
         match binding.else_branch {
             Some(body) => { self.expression(body)?; },
@@ -44,7 +53,7 @@ impl Lowering {
     }
 
     // Tests emit branches directly so payload reads only occur after their tag succeeds.
-    fn pattern_test(id: PatternId, value: ValueId, address: Option<ValueId>, yes: BlockId, no: BlockId)
+    fn pattern_test(id: PatternId, value: Option<ValueId>, address: Option<ValueId>, yes: BlockId, no: BlockId)
     -> Result<(), CodegenError> {
         let pattern = self.session.hir.require_pattern(id)?;
         match self.lower_pattern_test(id, value, address, yes, no) {
@@ -53,7 +62,19 @@ impl Lowering {
         }
     }
 
-    fn lower_pattern_test(id: PatternId, value: ValueId, address: Option<ValueId>, yes: BlockId, no: BlockId)
+    // Reads the matched storage only when the pattern actually needs the whole value.
+    fn pattern_value(value: Option<ValueId>, address: Option<ValueId>, type_id: TypeId, span: SourceSpan)
+    -> Result<ValueId, CodegenError> {
+        match value {
+            Some(id) => Result<ValueId, CodegenError>.Ok(id),
+            None => match address {
+                Some(pointer) => self.emit(span, type_id, Operation.Read(pointer)),
+                None => Result<ValueId, CodegenError>.Err(CodegenError.invalid("pattern has no matched storage")),
+            },
+        }
+    }
+
+    fn lower_pattern_test(id: PatternId, value: Option<ValueId>, address: Option<ValueId>, yes: BlockId, no: BlockId)
     -> Result<(), CodegenError> {
         let pattern = self.session.hir.require_pattern(id)?;
         match &pattern.kind {
@@ -61,8 +82,8 @@ impl Lowering {
             BindPattern(binding) => {
                 let local = self.bind(binding.symbol_id)?;
                 let expected = self.function.local(local)?.type_id;
-                let bound = if expected == self.function.value(value)?.type_id {
-                    value
+                let bound = if expected == pattern.type_id {
+                    self.pattern_value(value, address, pattern.type_id, pattern.span)?
                 } else {
                     match address {
                         Some(pointer) => pointer,
@@ -73,16 +94,18 @@ impl Lowering {
                 self.pattern_test(binding.inner, value, address, yes, no)
             },
             RefPattern(inner) => {
-                let type_id = self.session.hir.require_pattern(*inner)?.type_id;
-                let loaded = self.emit(pattern.span, type_id, Operation.Read(value))?;
-                self.pattern_test(*inner, loaded, Option<ValueId>.Some(value), yes, no)
+                // A reference pattern tests the reference value, which is either the
+                // matched operand or a reference stored at the matched place.
+                let reference = self.pattern_value(value, address, pattern.type_id, pattern.span)?;
+                self.pattern_test(*inner, Option<ValueId>.None, Option<ValueId>.Some(reference), yes, no)
             },
             LiteralPattern(literal) => {
+                let operand = self.pattern_value(value, address, pattern.type_id, pattern.span)?;
                 let condition = match literal.condition {
                     Some(condition) => {
                         let symbol = *literal.condition_symbol.unwrap();
                         let local = self.bind(symbol)?;
-                        self.effect(pattern.span, Operation.Store(local, value))?;
+                        self.effect(pattern.span, Operation.Store(local, operand))?;
                         self.expression(condition)?
                     },
                     None => {
@@ -95,12 +118,13 @@ impl Lowering {
                             _ => return Result<(), CodegenError>.Err(CodegenError.invalid("literal pattern has no scalar value")),
                         };
                         let rhs = self.function.add_value(pattern.type_id, constant);
-                        self.compare(pattern.span, BinaryOperator.Eq, value, rhs)?
+                        self.compare(pattern.span, BinaryOperator.Eq, operand, rhs)?
                     },
                 };
                 self.end(Terminator.Branch(condition, yes, no))
             },
             RangePattern(range) => {
+                let operand = self.pattern_value(value, address, pattern.type_id, pattern.span)?;
                 let width = 64u32;
                 let signed = false;
                 match self.session.types.require(pattern.type_id)? {
@@ -114,7 +138,7 @@ impl Lowering {
                     Finite(key) => {
                         let bits = if signed { *key ^ (1u64 << (width - 1)) } else { *key };
                         let rhs = self.function.add_value(pattern.type_id, ValueKind.Integer(bits));
-                        let condition = self.compare(pattern.span, BinaryOperator.Geq, value, rhs)?;
+                        let condition = self.compare(pattern.span, BinaryOperator.Geq, operand, rhs)?;
                         self.end(Terminator.Branch(condition, high_test, no))?;
                     },
                     AfterMax => { self.end(Terminator.Jump(no))?; },
@@ -127,7 +151,7 @@ impl Lowering {
                         if width < 64 && *key == (1u64 << width) { return self.end(Terminator.Jump(yes)); }
                         let bits = if signed { *key ^ (1u64 << (width - 1)) } else { *key };
                         let rhs = self.function.add_value(pattern.type_id, ValueKind.Integer(bits));
-                        let condition = self.compare(pattern.span, BinaryOperator.Lt, value, rhs)?;
+                        let condition = self.compare(pattern.span, BinaryOperator.Lt, operand, rhs)?;
                         self.end(Terminator.Branch(condition, yes, no))
                     },
                 }
@@ -152,7 +176,23 @@ impl Lowering {
             StructPattern(structure) => self.pattern_fields(pattern.span, pattern.type_id, &structure.fields, value, address, yes, no),
             EnumPattern(enumeration) => {
                 let tag_type = self.session.types.primitive(TypeData.Integer(32u32, false))?;
-                let tag = self.emit(pattern.span, tag_type, Operation.EnumTag(value))?;
+                // Niche and zero-sized representations keep their value-level reads.
+                let place = match address {
+                    Some(_) => self.enum_place_supported(pattern.type_id)?,
+                    None => false,
+                };
+                let tag = match address {
+                    Some(pointer) => if place {
+                        self.emit(pattern.span, tag_type, Operation.EnumTagAt(pointer, pattern.type_id))?
+                    } else {
+                        let source = self.pattern_value(value, Option<ValueId>.Some(pointer), pattern.type_id, pattern.span)?;
+                        self.emit(pattern.span, tag_type, Operation.EnumTag(source))?
+                    },
+                    None => {
+                        let source = self.pattern_value(value, Option<ValueId>.None, pattern.type_id, pattern.span)?;
+                        self.emit(pattern.span, tag_type, Operation.EnumTag(source))?
+                    },
+                };
                 let expected = self.function.add_value(tag_type, ValueKind.Integer(enumeration.variant.discriminant));
                 let condition = self.compare(pattern.span, BinaryOperator.Eq, tag, expected)?;
                 let success = self.function.add_block();
@@ -171,15 +211,26 @@ impl Lowering {
                             Some(value) => value,
                             None => return Result<(), CodegenError>.Err(CodegenError.invalid("enum pattern has no concrete payload")),
                         };
-                        let payload = self.emit(pattern.span, payload_type, Operation.EnumPayload(value))?;
-                        let pointer = match address {
-                            Some(pointer) => {
-                                let reference = self.session.types.reference(payload_type);
-                                Option<ValueId>.Some(self.emit(pattern.span, reference, Operation.EnumPayloadAddress(pointer, pattern.type_id))?)
-                            },
-                            None => Option<ValueId>.None,
-                        };
-                        self.pattern_fields(pattern.span, payload_type, fields, payload, pointer, yes, no)
+                        if place {
+                            match address {
+                                Some(pointer) => self.enum_pattern_fields(pattern.span, pattern.type_id, payload_type,
+                                    enumeration.variant.discriminant, fields, pointer, yes, no),
+                                None => return Result<(), CodegenError>.Err(CodegenError.invalid("enum place pattern has no matched place")),
+                            }
+                        } else {
+                            let source = self.pattern_value(value, address, pattern.type_id, pattern.span)?;
+                            let payload = self.emit(pattern.span, payload_type, Operation.EnumPayload(source))?;
+                            let pointer = match address {
+                                Some(place_value) => {
+                                    let reference = self.session.types.reference(payload_type);
+                                    Option<ValueId>.Some(self.emit(pattern.span, reference,
+                                        Operation.EnumPayloadAddress(place_value, pattern.type_id))?)
+                                },
+                                None => Option<ValueId>.None,
+                            };
+                            self.pattern_fields(pattern.span, payload_type, fields,
+                                Option<ValueId>.Some(payload), pointer, yes, no)
+                        }
                     },
                     None => self.end(Terminator.Jump(yes)),
                 }
@@ -188,8 +239,9 @@ impl Lowering {
         }
     }
 
-    fn sequence_test(span: SourceSpan, type_id: TypeId, sequence: SequencePattern&, value: ValueId,
+    fn sequence_test(span: SourceSpan, type_id: TypeId, sequence: SequencePattern&, value: Option<ValueId>,
         address: Option<ValueId>, yes: BlockId, no: BlockId) -> Result<(), CodegenError> {
+        let operand = self.pattern_value(value, address, type_id, span)?;
         let unsigned = self.session.types.primitive(TypeData.Integer(64u32, false))?;
         let element = Option<TypeId>.None;
         let length = Option<ValueId>.None;
@@ -205,7 +257,7 @@ impl Lowering {
                 base = address;
                 if base.is_none() {
                     let local = self.function.add_local(type_id);
-                    self.effect(span, Operation.Store(local, value))?;
+                    self.effect(span, Operation.Store(local, operand))?;
                     let reference = self.session.types.reference(type_id);
                     base = Option<ValueId>.Some(self.emit(span, reference, Operation.Address(local))?);
                 }
@@ -213,10 +265,10 @@ impl Lowering {
             Slice(inner) => {
                 element = Option<TypeId>.Some(*inner);
                 let arguments = Vec<ValueId>.new();
-                arguments.push(value);
+                arguments.push(operand);
                 length = Option<ValueId>.Some(self.emit(span, unsigned, Operation.Builtin(BuiltinKind.SliceGetLen, Vec<TypeId>.new(), arguments))?);
                 let pointer_arguments = Vec<ValueId>.new();
-                pointer_arguments.push(value);
+                pointer_arguments.push(operand);
                 let pointer = self.session.types.pointer(*inner);
                 base = Option<ValueId>.Some(self.emit(span, pointer, Operation.Builtin(BuiltinKind.SliceGetPtr, Vec<TypeId>.new(), pointer_arguments))?);
             },
@@ -257,17 +309,19 @@ impl Lowering {
         let reference = self.session.types.reference(element);
         let pointer = self.emit(span, reference, Operation.IndexAddress(base, element, offset, IndexBounds.Array(length)))?;
         let value = self.emit(span, element, Operation.Read(pointer))?;
-        self.pattern_test(pattern, value, if borrowed { Option<ValueId>.Some(pointer) } else { Option<ValueId>.None }, yes, no)
+        self.pattern_test(pattern, Option<ValueId>.Some(value),
+            if borrowed { Option<ValueId>.Some(pointer) } else { Option<ValueId>.None }, yes, no)
     }
 
     fn pattern_fields(span: SourceSpan, aggregate_type: TypeId, fields: Vec<(u64, PatternId)>&,
-        value: ValueId, address: Option<ValueId>, yes: BlockId, no: BlockId) -> Result<(), CodegenError> {
+        value: Option<ValueId>, address: Option<ValueId>, yes: BlockId, no: BlockId) -> Result<(), CodegenError> {
         if fields.is_empty() { return self.end(Terminator.Jump(yes)); }
+        let aggregate = self.pattern_value(value, address, aggregate_type, span)?;
         let index = 0u64;
         for field in *fields {
             index += 1u64;
             let pattern = self.session.hir.require_pattern(field[1])?;
-            let element = self.emit(span, pattern.type_id, Operation.Extract(value, field[0]))?;
+            let element = self.emit(span, pattern.type_id, Operation.Extract(aggregate, field[0]))?;
             let pointer = match address {
                 Some(pointer) => {
                     let reference = self.session.types.reference(pattern.type_id);
@@ -276,36 +330,53 @@ impl Lowering {
                 None => Option<ValueId>.None,
             };
             let next = if index == fields.len() { yes } else { self.function.add_block() };
-            self.pattern_test(field[1], element, pointer, next, no)?;
+            self.pattern_test(field[1], Option<ValueId>.Some(element), pointer, next, no)?;
+            if next != yes { self.current = Option<BlockId>.Some(next); }
+        }
+        Result<(), CodegenError>.Ok(())
+    }
+
+    // Reads each payload field from the matched place instead of loading the payload aggregate.
+    fn enum_pattern_fields(span: SourceSpan, enum_type: TypeId, payload_type: TypeId, discriminant: u64,
+        fields: Vec<(u64, PatternId)>&, address: ValueId, yes: BlockId, no: BlockId) -> Result<(), CodegenError> {
+        if fields.is_empty() { return self.end(Terminator.Jump(yes)); }
+        let payload_reference = self.session.types.reference(payload_type);
+        let payload = self.emit(span, payload_reference, Operation.EnumPayloadAddress(address, enum_type))?;
+        let index = 0u64;
+        for field in *fields {
+            index += 1u64;
+            let pattern = self.session.hir.require_pattern(field[1])?;
+            let element = self.emit(span, pattern.type_id, Operation.EnumFieldAt(address, enum_type, discriminant, field[0]))?;
+            let reference = self.session.types.reference(pattern.type_id);
+            let pointer = self.emit(span, reference, Operation.FieldAddress(payload, payload_type, field[0]))?;
+            let next = if index == fields.len() { yes } else { self.function.add_block() };
+            self.pattern_test(field[1], Option<ValueId>.Some(element), Option<ValueId>.Some(pointer), next, no)?;
             if next != yes { self.current = Option<BlockId>.Some(next); }
         }
         Result<(), CodegenError>.Ok(())
     }
 
     pub fn match_value(node: HirNode&, value: Match&) -> Result<ValueId, CodegenError> {
-        let matched = self.expression(value.value)?;
+        let target_type = self.session.hir.require(value.value)?.type_id;
+        let matched = Option<ValueId>.None;
         let address = Option<ValueId>.None;
         if value.is_ref {
-            address = Option<ValueId>.Some(matched);
+            // The matched place of a reference match is the reference value itself.
+            address = Option<ValueId>.Some(self.expression(value.value)?);
+        } elif self.enum_place_supported(target_type)? {
+            let place = self.enum_snapshot(value.value, target_type)?;
+            address = Option<ValueId>.Some(place.address);
+        } else {
+            matched = Option<ValueId>.Some(self.expression(value.value)?);
         }
         let join = self.function.add_block();
         let incoming = Vec<(ValueId, BlockId)>.new();
         let transferred = false;
         defer { if !transferred { incoming.drop(); } };
         for arm in value.arms {
-            match address {
-                Some(pointer) => {
-                    // A failed guard may mutate the referred value before the next arm.
-                    let inner = match self.session.types.require(self.function.value(pointer)?.type_id)? {
-                        Reference(inner) => *inner,
-                        _ => return Result<ValueId, CodegenError>.Err(CodegenError.invalid("reference match has no reference value")),
-                    };
-                    matched = self.emit(node.span, inner, Operation.Read(pointer))?;
-                },
-                None => {},
-            }
             let body = self.function.add_block();
             let next = self.function.add_block();
+            // A failed guard may mutate a borrowed source before the next arm.
             self.pattern_test(arm.pattern, matched, address, body, next)?;
             self.current = Option<BlockId>.Some(body);
             match arm.guard {
