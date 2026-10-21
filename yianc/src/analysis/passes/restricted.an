@@ -24,8 +24,6 @@ impl TryAstVisitor<AnalysisError> for RestrictedVisitor {
                     FfiParts => false,
                     FfiNull => false,
                     FfiPtrCast => false,
-                    FfiCopyFrom => false,
-                    FfiCopyTo => false,
                     _ => true,
                 };
 

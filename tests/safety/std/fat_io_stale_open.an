@@ -1,5 +1,7 @@
 // A stale string passed to the trusted open boundary must fail closed.
 
+from std.core.io import File, OpenMode;
+
 fn main() {
     let p: u8* = dyn[4] 0u8;
     p[0] = 47u8;
@@ -8,5 +10,5 @@ fn main() {
     p[3] = 112u8;
     let path: str = str.from(&p[0u64..4]);
     del p;
-    @open(path, 0);
+    File.open(path, OpenMode.Read).unwrap();
 }

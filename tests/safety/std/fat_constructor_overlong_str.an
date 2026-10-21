@@ -1,7 +1,10 @@
 // A trusted string constructor must reject a length beyond the source extent.
 
+from std.core.io import Stdout, Write;
+
 fn main() {
     let p: u8* = dyn[4] 0u8;
     let s: str = @str_from_parts(p, 5);
-    @sys_write(1, s);
+    let output = Stdout.new();
+    output.write_str(s).unwrap();
 }

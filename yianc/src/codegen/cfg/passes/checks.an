@@ -90,9 +90,7 @@ fn checks_for(function: CfgFunction&, types: BackendTypes&, instruction: Instruc
         },
         Builtin(kind, _, args) => match kind {
             FfiAddr => instruction.checks.push(access(function, types, args[0])?),
-            Panic | Open | FfiParts => instruction.checks.push(SafetyCheck.View(args[0])),
-            SysRead | SysReadBytes | SysWrite | SysWriteBytes => instruction.checks.push(SafetyCheck.View(args[1])),
-            FfiCopyFrom | FfiCopyTo => instruction.checks.push(SafetyCheck.View(args[if *kind == BuiltinKind.FfiCopyFrom { 0u64 } else { 1u64 }])),
+            Panic | FfiParts => instruction.checks.push(SafetyCheck.View(args[0])),
             MemCopy => {
                 if !types.is_zst(function.value(args[0])?.type_id)? && !types.is_zst(function.value(args[1])?.type_id)? {
                     instruction.checks.push(SafetyCheck.Copy(args[0], args[1], args[2]));

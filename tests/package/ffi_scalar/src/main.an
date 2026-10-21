@@ -1,5 +1,6 @@
 from std.core.drop import Drop;
 from std.core.vec import Vec;
+from std.ffi.memory import copy_from, copy_to;
 
 typedef Bytes = u8[];
 
@@ -30,14 +31,14 @@ ffi fn test_native() {
     let output_view: Bytes = output.as_slice();
     let (_, output_size) = @ffi_parts(output_view);
     assert output_size == 2u64: "aliased slice length failed";
-    @ffi_copy_from(output_view, data, 2u64);
+    copy_from(output_view, data, 2u64);
     assert output[0] == 65u8 && output[1] == 66u8: "C byte copy failed";
     output[0] = 67u8;
     output[1] = 68u8;
-    @ffi_copy_to(data, output.as_slice(), 2u64);
+    copy_to(data, output.as_slice(), 2u64);
     assert input[0] == 67u8 && input[1] == 68u8: "YIAN byte copy failed";
-    @ffi_copy_from(output.as_slice(), @ffi_null<u8>(), 0u64);
-    @ffi_copy_to(@ffi_null<u8>(), output.as_slice(), 0u64);
+    copy_from(output.as_slice(), @ffi_null<u8>(), 0u64);
+    copy_to(@ffi_null<u8>(), output.as_slice(), 0u64);
     output.drop();
     input.drop();
 }

@@ -3,6 +3,7 @@ from std.core.convert import From;
 from std.core.option import Option;
 from std.core.result import Result;
 from std.num.parse_error import ParseNumberError;
+from std.ffi.libc import sqrt as c_sqrt, sin as c_sin, cos as c_cos;
 
 struct ParsedFloat {
     mantissa: u64,
@@ -440,14 +441,14 @@ pub fn to_bits(value: f64) -> u64 {
     return bits;
 }
 
-pub fn sqrt(value: f64) -> f64 {
-    return @sqrt(value);
+pub ffi fn sqrt(value: f64) -> f64 {
+    return c_sqrt(value);
 }
 
-pub fn sin(value: f64) -> f64 {
-    return @sin(value);
+pub ffi fn sin(value: f64) -> f64 {
+    return c_sin(value);
 }
 
-pub fn cos(value: f64) -> f64 {
-    return @cos(value);
+pub ffi fn cos(value: f64) -> f64 {
+    return c_cos(value);
 }

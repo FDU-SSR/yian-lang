@@ -1,5 +1,6 @@
 from std.core.drop import Drop;
 from std.core.vec import Vec;
+from std.ffi.memory import copy_from;
 
 // Copy C bytes of a known length; the caller guarantees that any nonempty range is readable.
 pub(ffi) ffi fn copy_c_bytes(source: cptr<u8>, length: u64) -> Vec<u8> {
@@ -10,7 +11,7 @@ pub(ffi) ffi fn copy_c_bytes(source: cptr<u8>, length: u64) -> Vec<u8> {
         index += 1;
     }
     if length != 0u64 {
-        @ffi_copy_from(output.as_slice(), source, length);
+        copy_from(output.as_slice(), source, length);
     }
     return output;
 }
@@ -28,7 +29,7 @@ pub(ffi) ffi fn copy_c_string(source: cptr<c_char>, limit: u64) -> (Vec<u8>, boo
     let data = @ffi_ptr_cast<u8>(source);
     let offset: u64 = 0;
     while offset < limit {
-        @ffi_copy_from(byte.as_slice(), data + offset, 1u64);
+        copy_from(byte.as_slice(), data + offset, 1u64);
         let current = byte.as_slice()[0];
         if current == 0u8 {
             return (output, false);

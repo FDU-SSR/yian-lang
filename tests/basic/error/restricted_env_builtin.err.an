@@ -1,4 +1,4 @@
-// Process argument builtins are reserved for std.core.env.
+// Process argument byte views are reserved for std.core.env.
 fn main() {
-    let count = @argc();
+    @arg_bytes(0);
 }

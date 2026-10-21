@@ -176,11 +176,6 @@ class StmtLowerer:
         self.__state.emitter.terminate(IR.RuntimeFail(code))
         return self.__state.emitter.never_reg()
 
-    def translate_process_exit(self, stmt: HIR.Builtin) -> IR.Value:
-        code = self.__resolver.resolve_val(stmt.args[0])
-        self.__state.emitter.terminate(IR.ProcessExit(code=code))
-        return self.__state.emitter.never_reg()
-
     def translate_delete(self, stmt: HIR.Delete) -> IR.Value:
         ptr = self.__resolver.resolve_val(stmt.target)
         # The insertion pass chooses Delete preconditions (is_heap, live, is_raw) and subsequent state invalidation

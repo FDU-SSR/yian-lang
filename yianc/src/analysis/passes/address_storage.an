@@ -194,7 +194,7 @@ fn normalize_use(ctx: ResolutionContext&, unit: UnitId, id: HirId) -> Result<(),
             if is_closure {
                 let callable = ensure_place(ctx, unit, callable)?;
                 let node = ctx.session.hir.require(id)?;
-                match &node.kind { Invoke(value) => value.callable = callable, _ => return Result<(), AnalysisError>.Err(invalid(span, "closure invocation changed during normalization")), }
+                match &node.kind { Invoke(value) => { value.callable = callable; }, _ => return Result<(), AnalysisError>.Err(invalid(span, "closure invocation changed during normalization")), }
             }
         },
         None => {},

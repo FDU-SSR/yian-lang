@@ -111,8 +111,8 @@ llvmlite 的默认值是 `jitdefault`, 在 64 位平台上等于 `large`, 后端
 
 本编译器按事实登记这些标注, 不把它们当作优化手段:
 
-- `base/intrinsics.py` 声明的外部函数一律加 `nounwind`, 因为 libc 的分配、I/O 与随机数入口失败时
-  返回错误值而不抛异常; `_exit` 另加 `noreturn`。
+- `base/intrinsics.py` 声明的外部函数一律加 `nounwind`, 因为 libc 的分配与随机数入口失败时
+  返回错误值而不抛异常。
 - `base/module.py` 声明的运行时入口 `__yian_runtime_fail` / `__yian_panic` 加 `cold`、`noreturn`、
   `nounwind`; 堆池与锁表入口 `__secl_pool_alloc` / `__secl_pool_alloc_class` /
   `__secl_pool_release` / `__secl_lock_bump_take` / `__secl_lock_release` 加 `nounwind`。
@@ -250,15 +250,12 @@ YIAN 发射器使用普通浮点指令，不添加 `strictfp` 或受约束浮点
 
 - `memcpy`, `memset`, `strlen`, `strcmp` 等内存操作函数
 - `malloc`, `free` 等内存分配函数
-- `sin`, `cos`, `sqrt` 等数学函数
 - `llvm.expect` 用于提供分支预测信息
 
 本编译器(`python/yianc/codegen/llvm/base/intrinsics.py`)声明并使用 C 库的 `malloc`、`realloc`、
-`free`、`write`、`read`、`open`、`close`、`_exit`、`strlen`、`rand`, 以及 LLVM 内建
-`llvm.memcpy.p0.p0.i64`、`llvm.memset.p0.i64`、`llvm.sqrt.f64`、`llvm.sin.f64` 和
-`llvm.cos.f64`。非单字节元素的重复填充使用按元素类型特化的
-`llvm.experimental.memset.pattern`；YIAN 的 `@memcpy`、`@sqrt`、`@sin` 和 `@cos` 分别
-下降到对应内建操作。
+`free`、`strlen`、`rand`, 以及 LLVM 内建 `llvm.memcpy.p0.p0.i64`、`llvm.memset.p0.i64`。
+非单字节元素的重复填充使用按元素类型特化的 `llvm.experimental.memset.pattern`；
+YIAN 的 `@memcpy` 下降到对应内建操作。
 
 ## LLVM 保护机制与 YIAN 检查
 

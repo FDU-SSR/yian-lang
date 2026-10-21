@@ -90,12 +90,6 @@ impl FunctionLowering {
                 self.external_call("__yian_runtime_fail", module.void_type(), parameters.as_slice(), arguments.as_slice())?;
                 module.const_null(native)
             },
-            Exit => {
-                let parameters = [i32_type];
-                let arguments = [self.get(args[0])?];
-                self.external_call("_exit", module.void_type(), parameters.as_slice(), arguments.as_slice())?;
-                module.const_null(native)
-            },
             SliceFromParts | StrFromParts => {
                 let source_type = self.cfg.value(args[0])?.type_id;
                 let source = self.get(args[0])?;
@@ -129,59 +123,15 @@ impl FunctionLowering {
                 value = self.builder.insert_value(value, self.builder.extract_value(source, 0u32, ""), 0u32, "");
                 self.builder.insert_value(value, self.view_length(source), 1u32, "")
             },
-            MemCopy | FfiCopyFrom | FfiCopyTo => {
+            MemCopy => {
                 let destination = self.get(args[0])?;
                 let source = self.get(args[1])?;
-                if kind == BuiltinKind.FfiCopyFrom || kind == BuiltinKind.FfiCopyTo {
-                    let view_index = if kind == BuiltinKind.FfiCopyFrom { 0u64 } else { 1u64 };
-                    let view = self.get(args[view_index])?;
-                    self.checked(self.builder.icmp(IntCompare.Ule, self.get(args[2])?, self.view_length(view), ""), "S001")?;
-                    if kind == BuiltinKind.FfiCopyFrom { destination = self.builder.extract_value(view, 0u32, ""); } else { source = self.builder.extract_value(view, 0u32, ""); }
-                    self.builder.memcpy(destination, 1u32, source, 1u32, self.get(args[2])?);
-                } elif !self.owner.types.is_zst(self.cfg.value(args[0])?.type_id)? && !self.owner.types.is_zst(self.cfg.value(args[1])?.type_id)? {
-                    destination = self.memory_address(self.cfg.value(args[0])?.type_id, destination)?;
-                    source = self.memory_address(self.cfg.value(args[1])?.type_id, source)?;
+                if !self.owner.types.is_zst(self.cfg.value(args[0])?.type_id)? && !self.owner.types.is_zst(self.cfg.value(args[1])?.type_id)? {
+                    let destination = self.memory_address(self.cfg.value(args[0])?.type_id, destination)?;
+                    let source = self.memory_address(self.cfg.value(args[1])?.type_id, source)?;
                     self.builder.memcpy(destination, 1u32, source, 1u32, self.get(args[2])?);
                 }
                 module.const_null(native)
-            },
-            SysWrite | SysWriteBytes | SysRead | SysReadBytes => {
-                let view = self.get(args[1])?;
-                let view_type = self.cfg.value(args[1])?.type_id;
-                let data = self.builder.extract_value(view, 0u32, "");
-                let length = self.view_length(view);
-                let parameters = [i32_type, pointer, i64_type];
-                let arguments = [self.get(args[0])?, data, length];
-                let read = kind == BuiltinKind.SysRead || kind == BuiltinKind.SysReadBytes;
-                let count = self.external_call(if read { "read" } else { "write" }, i64_type, parameters.as_slice(), arguments.as_slice())?;
-                if kind == BuiltinKind.SysRead {
-                    self.make_pointer(type_id, data, self.pointer_word(view_type, view)?, self.integer(0u64), count)?
-                } elif kind == BuiltinKind.SysWrite {
-                    module.const_null(native)
-                } else { count }
-            },
-            Open => {
-                let view = self.get(args[0])?;
-                let path = self.builder.extract_value(view, 0u32, "");
-                let parameters = [pointer, i32_type, i32_type];
-                let arguments = [path, self.get(args[1])?, module.const_int(i32_type, 420u64)];
-                self.external_call("open", i32_type, parameters.as_slice(), arguments.as_slice())?
-            },
-            Close => {
-                let parameters = [i32_type];
-                let arguments = [self.get(args[0])?];
-                self.external_call("close", i32_type, parameters.as_slice(), arguments.as_slice())?
-            },
-            Sqrt | Sin | Cos => {
-                let parameters = [module.double_type()];
-                let arguments = [self.get(args[0])?];
-                let name = match kind { Sqrt => "llvm.sqrt.f64", Sin => "llvm.sin.f64", _ => "llvm.cos.f64", };
-                self.external_call(name, module.double_type(), parameters.as_slice(), arguments.as_slice())?
-            },
-            Argc => {
-                let global = self.owner.runtime_global("__yian_argc", i32_type);
-                let count = self.builder.load(i32_type, global.value(), "");
-                self.builder.cast(CastOp.Zext, count, i64_type, "")
             },
             ArgBytes => {
                 let global = self.owner.runtime_global("__yian_argc", i32_type);

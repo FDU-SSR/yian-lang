@@ -1,0 +1,8 @@
+// libm symbols used by standard-library math wrappers.
+
+pub(ffi) extern "C" {
+    fn sqrt(value: f64) -> f64;
+    fn sin(value: f64) -> f64;
+    fn cos(value: f64) -> f64;
+    fn memcpy(destination: cptr<u8>, source: cptr<u8>, count: c_size) -> cptr<u8>;
+}

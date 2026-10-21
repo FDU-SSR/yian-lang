@@ -479,19 +479,6 @@ class VariantConstruct:
 
 
 @dataclass
-class SysWrite:
-    fd: Value
-    buf: Value
-
-
-@dataclass
-class SysWriteBytes:
-    result: Reg
-    fd: Value
-    buf: Value
-
-
-@dataclass
 class MemCopy:
     """Byte-level memory copy — ``@memcpy(dest, src, count)``."""
     dest: Value
@@ -523,73 +510,11 @@ class FfiPtrCast:
 
 
 @dataclass
-class FfiCopy:
-    destination: Value
-    source: Value
-    count: Value
-    from_c: bool
-
-
-@dataclass
 class MemSetPattern:
     """Repeat a typed value over a freshly allocated element buffer."""
     dest: Value
     value: Value
     count: Value
-
-
-@dataclass
-class SysRead:
-    result: Reg
-    fd: Value
-    buf: Value
-
-
-@dataclass
-class SysReadBytes:
-    result: Reg
-    fd: Value
-    buf: Value
-
-
-@dataclass
-class Open:
-    result: Reg
-    path: Value
-    flags: Value
-
-
-@dataclass
-class Close:
-    result: Reg
-    fd: Value
-
-
-@dataclass
-class Sqrt:
-    """Square root of an ``f64`` value."""
-    result: Reg
-    value: Value
-
-
-@dataclass
-class Sin:
-    """Sine of an ``f64`` value."""
-    result: Reg
-    value: Value
-
-
-@dataclass
-class Cos:
-    """Cosine of an ``f64`` value."""
-    result: Reg
-    value: Value
-
-
-@dataclass
-class ArgCount:
-    """Load the process argument count."""
-    result: Reg
 
 
 @dataclass
@@ -620,8 +545,8 @@ Stmt: TypeAlias = (
     | Call | Invoke | TraitObjectConstruct | TraitObjectInvoke
     | Cast | SizeOf | Undef | Dangling | FuncPtr
     | AggregateConstruct | ArrayConstruct | VariantConstruct
-    | SysWrite | SysWriteBytes | SysRead | SysReadBytes | Open | Close | Sqrt | Sin | Cos | ArgCount | ArgBytes
-    | MemCopy | MemSetPattern | FfiAddr | FfiParts | FfiNull | FfiPtrCast | FfiCopy
+    | ArgBytes
+    | MemCopy | MemSetPattern | FfiAddr | FfiParts | FfiNull | FfiPtrCast
     | GenKey | AcquireFrameLock
     | CheckSafeAccess | CheckViewAccess | CheckInBounds | CheckSliceNonEmpty
     | CheckElementArith | CheckPtrDiff | CheckDelete
@@ -671,17 +596,11 @@ class RuntimeFail:
 
 
 @dataclass
-class ProcessExit:
-    """Terminate the process with an explicit status code."""
-    code: Value
-
-
-@dataclass
 class Unreachable:
     """A statically exhaustive match has no fallthrough value."""
 
 
-Terminator: TypeAlias = Ret | Br | CondBr | Panic | RuntimeFail | ProcessExit | Unreachable
+Terminator: TypeAlias = Ret | Br | CondBr | Panic | RuntimeFail | Unreachable
 
 # ---------------------------------------------------------------------------
 # Basic Data Structures

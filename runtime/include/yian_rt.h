@@ -75,6 +75,9 @@ void __secl_pool_release(void *block);
 extern int32_t __yian_argc;
 extern char **__yian_argv;
 
+/* Read-only accessor for standard-library argument APIs; FFI cannot read the global directly. */
+int32_t yian_argc(void);
+
 /* Process-wide frame-key counter, accessed directly by inline load/store. */
 extern uint64_t __yian_key_stack;
 

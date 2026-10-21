@@ -40,61 +40,6 @@ class SystemEmitter:
     def __builder(self) -> ir.IRBuilder:
         return self.__core.flow.builder
 
-    def sys_write(self, fd: LLValue, buf: LLValue) -> None:
-        self.__core.ir.call_intrinsic(
-            IntrinsicKind.Write,
-            [fd, self.__extract_value_raw(buf, 0), self.__slice_len_field(buf)],
-        )
-
-    def sys_write_bytes(self, fd: LLValue, buf: LLValue) -> LLValue:
-        return self.__core.ir.call_intrinsic(
-            IntrinsicKind.Write,
-            [fd, self.__extract_value_raw(buf, 0), self.__slice_len_field(buf)],
-        )
-
-    def sys_read(self, fd: LLValue, buf: LLValue) -> LLValue:
-        buf_ptr = self.__extract_value_raw(buf, 0)
-        buf_len = self.__slice_len_field(buf)
-        bytes_read = self.__core.ir.call_intrinsic(IntrinsicKind.Read, [fd, buf_ptr, buf_len])
-        value = self.__core.ir.undef(self.__type_ctx.str_id)
-        value = self.__core.ir.insert_value(value, buf_ptr, 0)
-        if self.__raw_pointers:
-            value = self.__core.ir.insert_value(value, bytes_read, 1)
-        else:
-            value = self.__core.ir.insert_value(value, self.__extract_value_raw(buf, 1), 1)
-            value = self.__core.ir.insert_value(value, bytes_read, 2)
-        return value
-
-    def sys_read_bytes(self, fd: LLValue, buf: LLValue) -> LLValue:
-        return self.__core.ir.call_intrinsic(
-            IntrinsicKind.Read,
-            [fd, self.__extract_value_raw(buf, 0), self.__slice_len_field(buf)],
-        )
-
-    def open(self, path: LLValue, flags: LLValue) -> LLValue:
-        mode = LLValue(self.__type_ctx.u32_id, ir.Constant(ir.IntType(32), 420))  # type: ignore
-        return self.__core.ir.call_intrinsic(
-            IntrinsicKind.Open,
-            [self.__extract_value_raw(path, 0), flags, mode],
-        )
-
-    def close(self, fd: LLValue) -> LLValue:
-        return self.__core.ir.call_intrinsic(IntrinsicKind.Close, [fd])
-
-    def sqrt(self, value: LLValue) -> LLValue:
-        return self.__core.ir.call_intrinsic(IntrinsicKind.Sqrt, [value])
-
-    def sin(self, value: LLValue) -> LLValue:
-        return self.__core.ir.call_intrinsic(IntrinsicKind.Sin, [value])
-
-    def cos(self, value: LLValue) -> LLValue:
-        return self.__core.ir.call_intrinsic(IntrinsicKind.Cos, [value])
-
-    def arg_count(self) -> LLValue:
-        loaded = self.__builder.load(self.__core.context.module.argc_global)  # type: ignore
-        extended = cast(ir.Value, self.__builder.zext(loaded, ir.IntType(64)))  # type: ignore
-        return LLValue(self.__type_ctx.u64_id, extended)
-
     def arg_bytes(self, index: LLValue) -> LLValue:
         argc = self.__builder.load(self.__core.context.module.argc_global)  # type: ignore
         argc_u64 = self.__builder.zext(argc, ir.IntType(64))  # type: ignore
@@ -129,10 +74,6 @@ class SystemEmitter:
         word = LLValue(self.__type_ctx.u64_id, self.__pointers.env_word())
         zero = LLValue(self.__type_ctx.u64_id, ir.Constant(ir.IntType(64), 0))  # type: ignore
         return self.__pointers.build_fat(ptr, word, zero, length, slice_type_id)
-
-    def process_exit(self, code: LLValue) -> None:
-        self.__core.ir.call_intrinsic(IntrinsicKind.ImmediateExit, [code])
-        self.__builder.unreachable()
 
     def panic(self, message: LLValue) -> None:
         self.__builder.call(

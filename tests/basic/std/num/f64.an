@@ -1,4 +1,5 @@
-// Test f64 From<str> (string-to-float parsing)
+// Test f64 From<str> and libm-backed math wrappers.
+from std.num.f64 import sqrt, sin, cos;
 
 fn main() {
     let p1: f64 = f64.from(&"1.5");
@@ -12,4 +13,8 @@ fn main() {
 
     let p4: f64 = f64.from(&"123.456");
     assert p4 == 123.456: "parse '123.456'";
+
+    assert sqrt(9.0) == 3.0: "sqrt";
+    assert sin(0.0) == 0.0: "sin";
+    assert cos(0.0) == 1.0: "cos";
 }

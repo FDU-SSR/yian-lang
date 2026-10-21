@@ -317,13 +317,6 @@ class LLTranslator:
                     stmt.result.type_id, stmt.variant.discriminant, stmt.variant.payload_type, fields
                 )
                 self.__bind_result(stmt.result, value)
-            case IR.SysWrite():
-                builder.system.sys_write(self.__resolve(builder, stmt.fd), self.__resolve(builder, stmt.buf))
-            case IR.SysWriteBytes():
-                self.__bind_result(
-                    stmt.result,
-                    builder.system.sys_write_bytes(self.__resolve(builder, stmt.fd), self.__resolve(builder, stmt.buf)),
-                )
             case IR.MemCopy():
                 builder.memory.mem_copy(self.__resolve(builder, stmt.dest), self.__resolve(builder, stmt.src), self.__resolve(builder, stmt.count))
             case IR.FfiAddr():
@@ -334,40 +327,8 @@ class LLTranslator:
                 self.__bind_result(stmt.result, builder.ffi.null(stmt.result.type_id))
             case IR.FfiPtrCast():
                 self.__bind_result(stmt.result, builder.ffi.ptr_cast(self.__resolve(builder, stmt.pointer), stmt.result.type_id))
-            case IR.FfiCopy():
-                builder.ffi.copy(self.__resolve(builder, stmt.destination), self.__resolve(builder, stmt.source), self.__resolve(builder, stmt.count), stmt.from_c)
             case IR.MemSetPattern():
                 builder.memory.mem_set_pattern(self.__resolve(builder, stmt.dest), self.__resolve(builder, stmt.value), self.__resolve(builder, stmt.count))
-            case IR.SysRead():
-                value = builder.system.sys_read(
-                    self.__resolve(builder, stmt.fd), self.__resolve(builder, stmt.buf)
-                )
-                self.__bind_result(stmt.result, value)
-            case IR.SysReadBytes():
-                self.__bind_result(
-                    stmt.result,
-                    builder.system.sys_read_bytes(self.__resolve(builder, stmt.fd), self.__resolve(builder, stmt.buf)),
-                )
-            case IR.Open():
-                value = builder.system.open(
-                    self.__resolve(builder, stmt.path), self.__resolve(builder, stmt.flags)
-                )
-                self.__bind_result(stmt.result, value)
-            case IR.Close():
-                value = builder.system.close(self.__resolve(builder, stmt.fd))
-                self.__bind_result(stmt.result, value)
-            case IR.Sqrt():
-                value = builder.system.sqrt(self.__resolve(builder, stmt.value))
-                self.__bind_result(stmt.result, value)
-            case IR.Sin():
-                value = builder.system.sin(self.__resolve(builder, stmt.value))
-                self.__bind_result(stmt.result, value)
-            case IR.Cos():
-                value = builder.system.cos(self.__resolve(builder, stmt.value))
-                self.__bind_result(stmt.result, value)
-            case IR.ArgCount():
-                value = builder.system.arg_count()
-                self.__bind_result(stmt.result, value)
             case IR.ArgBytes():
                 value = builder.system.arg_bytes(self.__resolve(builder, stmt.index))
                 self.__bind_result(stmt.result, value)
@@ -395,7 +356,5 @@ class LLTranslator:
                 builder.system.panic(self.__resolve(builder, message))
             case IR.RuntimeFail(code=code):
                 builder.flow.runtime_fail(code)
-            case IR.ProcessExit(code=code):
-                builder.system.process_exit(self.__resolve(builder, code))
             case IR.Unreachable():
                 builder.flow.builder.unreachable()

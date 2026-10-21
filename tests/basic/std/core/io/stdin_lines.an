@@ -1,5 +1,5 @@
-// The standard-library harness can close a process descriptor explicitly.
-from std.core.io import Stdin, BufReader, IoErrorKind;
+// BufReader handles UTF-8, CRLF, empty lines, and an unterminated final line.
+from std.core.io import Stdin, BufReader;
 from std.core.drop import Drop;
 
 fn main() {
@@ -13,13 +13,4 @@ fn main() {
     assert second.as_str() == "\n": "stdin empty line";
     assert last.as_str() == "last": "stdin final unterminated line";
     assert reader.read_line().unwrap().is_none(): "stdin EOF";
-    assert @close(0) == 0: "close stdin fixture";
-    match input.read_to_string() {
-        Err(error) => {
-            defer error.drop();
-            assert error.kind() == IoErrorKind.InvalidInput: "stdin read failure";
-            assert *error.raw_os_error().unwrap() == 9: "stdin preserves EBADF";
-        },
-        Ok(text) => { text.drop(); @panic("closed stdin must fail"); },
-    }
 }

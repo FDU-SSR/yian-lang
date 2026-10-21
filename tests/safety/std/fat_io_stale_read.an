@@ -1,8 +1,12 @@
 // A stale slice passed to the trusted read boundary must fail closed.
 
+from std.core.io import File, OpenMode;
+
 fn main() {
+    let file = File.open("/tmp/yian_fat_io_stale_read", OpenMode.ReadWrite).unwrap();
+    defer file.drop();
     let p: u8* = dyn[4] 0u8;
     let view: u8[] = p[0u64..4];
     del p;
-    @sys_read(-1, view);
+    file.read(view).unwrap();
 }

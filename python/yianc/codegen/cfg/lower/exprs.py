@@ -54,24 +54,11 @@ class ExprLowerer:
             BuiltinKind.StrFromParts: self.__resolve_str_from_parts,
             BuiltinKind.StrGetPtr: self.__resolve_str_get_ptr,
             BuiltinKind.StrGetLen: self.__resolve_str_get_len,
-            BuiltinKind.SysRead: self.__resolve_sys_read,
-            BuiltinKind.SysReadBytes: self.__resolve_sys_read_bytes,
-            BuiltinKind.SysWrite: self.__resolve_sys_write,
-            BuiltinKind.SysWriteBytes: self.__resolve_sys_write_bytes,
-            BuiltinKind.Open: self.__resolve_open,
-            BuiltinKind.Close: self.__resolve_close,
-            BuiltinKind.Sqrt: self.__resolve_sqrt,
-            BuiltinKind.Sin: self.__resolve_sin,
-            BuiltinKind.Cos: self.__resolve_cos,
-            BuiltinKind.Argc: self.__resolve_argc,
             BuiltinKind.ArgBytes: self.__resolve_arg_bytes,
-            BuiltinKind.Exit: self.__resolve_exit,
             BuiltinKind.FfiAddr: self.__resolve_ffi_addr,
             BuiltinKind.FfiParts: self.__resolve_ffi_parts,
             BuiltinKind.FfiNull: self.__resolve_ffi_null,
             BuiltinKind.FfiPtrCast: self.__resolve_ffi_ptr_cast,
-            BuiltinKind.FfiCopyFrom: self.__resolve_ffi_copy_from,
-            BuiltinKind.FfiCopyTo: self.__resolve_ffi_copy_to,
         }
 
     @property
@@ -387,16 +374,6 @@ class ExprLowerer:
         result = self.__ffi_result(expr.type_id)
         return self.__state.emitter.emit(IR.FfiPtrCast(result, self.resolve_val(expr.args[0]))).result
 
-    def __resolve_ffi_copy_from(self, expr: HIR.Builtin) -> IR.Value:
-        args = [self.resolve_val(arg) for arg in expr.args]
-        self.__state.emitter.emit(IR.FfiCopy(args[0], args[1], args[2], True))
-        return self.__state.emitter.void_reg()
-
-    def __resolve_ffi_copy_to(self, expr: HIR.Builtin) -> IR.Value:
-        args = [self.resolve_val(arg) for arg in expr.args]
-        self.__state.emitter.emit(IR.FfiCopy(args[0], args[1], args[2], False))
-        return self.__state.emitter.void_reg()
-
     def __resolve_slice_from_parts(self, expr: HIR.Builtin) -> IR.Value:
         aggregate = HIR.Tuple(span=expr.span, field_values=expr.args, type_id=expr.type_id, is_place=False)
         return self.__values.resolve_tuple(aggregate)
@@ -421,41 +398,8 @@ class ExprLowerer:
         value = self.resolve_val(expr.args[0])
         return self.__memory.build_extract_value(value, 3, expr.type_id)
 
-    def __resolve_sys_read(self, expr: HIR.Builtin) -> IR.Value:
-        return self.__sys.resolve_sys_read(expr)
-
-    def __resolve_sys_read_bytes(self, expr: HIR.Builtin) -> IR.Value:
-        return self.__sys.resolve_sys_read_bytes(expr)
-
-    def __resolve_sys_write(self, expr: HIR.Builtin) -> IR.Value:
-        return self.__sys.resolve_sys_write(expr)
-
-    def __resolve_sys_write_bytes(self, expr: HIR.Builtin) -> IR.Value:
-        return self.__sys.resolve_sys_write_bytes(expr)
-
-    def __resolve_open(self, expr: HIR.Builtin) -> IR.Value:
-        return self.__sys.resolve_open(expr)
-
-    def __resolve_close(self, expr: HIR.Builtin) -> IR.Value:
-        return self.__sys.resolve_close(expr)
-
-    def __resolve_sqrt(self, expr: HIR.Builtin) -> IR.Value:
-        return self.__sys.resolve_sqrt(expr)
-
-    def __resolve_sin(self, expr: HIR.Builtin) -> IR.Value:
-        return self.__sys.resolve_sin(expr)
-
-    def __resolve_cos(self, expr: HIR.Builtin) -> IR.Value:
-        return self.__sys.resolve_cos(expr)
-
-    def __resolve_argc(self, expr: HIR.Builtin) -> IR.Value:
-        return self.__sys.resolve_arg_count(expr)
-
     def __resolve_arg_bytes(self, expr: HIR.Builtin) -> IR.Value:
         return self.__sys.resolve_arg_bytes(expr)
-
-    def __resolve_exit(self, expr: HIR.Builtin) -> IR.Value:
-        return self.__stmts.translate_process_exit(expr)
 
     def resolve_var(self, expr: HIR.Var) -> IR.Value:
         addr = self.__values.resolve_var_addr(expr)

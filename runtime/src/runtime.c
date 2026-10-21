@@ -11,6 +11,8 @@
 int32_t __yian_argc = 0;
 char **__yian_argv = 0;
 
+int32_t yian_argc(void) { return __yian_argc; }
+
 uint64_t __yian_key_stack = 0;
 
 /* Lock table: frames [0,2^20), constant slots (key zero, the BSS initial value), and heap.

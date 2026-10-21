@@ -461,10 +461,10 @@ impl Lowering {
                 let operand = self.expression(value.args[0])?;
                 self.emit(node.span, node.type_id, Operation.Cast(operand))
             },
-            Panic | RuntimeFail | Exit | SysRead | SysReadBytes | SysWrite | SysWriteBytes | Open | Close |
+            Panic | RuntimeFail |
             MemCopy | SliceFromParts | SliceGetPtr | SliceGetLen | StrFromParts | StrGetPtr | StrGetLen |
-            FfiAddr | FfiParts | FfiPtrCast | FfiCopyFrom | FfiCopyTo | Alloc | Realloc | Dangling |
-            Sqrt | Sin | Cos | Argc | ArgBytes => {
+            FfiAddr | FfiParts | FfiPtrCast | Alloc | Realloc | Dangling |
+            ArgBytes => {
                 let args = Vec<ValueId>.new();
                 let transferred = false;
                 defer { if !transferred { args.drop(); } };

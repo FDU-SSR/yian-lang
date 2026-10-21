@@ -270,15 +270,6 @@ def __dump_stmt(stmt: IR.Stmt) -> str:
                 return f"%{result.name} = variant {variant.name} {{{pl}}}"
             return f"%{result.name} = variant {variant.name}"
 
-        case IR.SysWrite(
-            fd=fd,
-            buf=buf,
-        ):
-            return f"sys_write {__dump_value(fd)} {__dump_value(buf)}"
-
-        case IR.SysWriteBytes(result=result, fd=fd, buf=buf):
-            return f"%{result.name} = sys_write_bytes {__dump_value(fd)} {__dump_value(buf)}"
-
         case IR.MemCopy(
             dest=dest,
             src=src,
@@ -297,45 +288,6 @@ def __dump_stmt(stmt: IR.Stmt) -> str:
             return f"%{result.name} = ffi_null"
         case IR.FfiPtrCast(result=result, pointer=pointer):
             return f"%{result.name} = ffi_ptr_cast {__dump_value(pointer)}"
-        case IR.FfiCopy(destination=destination, source=source, count=count, from_c=from_c):
-            direction = "from" if from_c else "to"
-            return f"ffi_copy_{direction} {__dump_value(destination)}, {__dump_value(source)}, {__dump_value(count)}"
-
-        case IR.SysRead(
-            result=result,
-            fd=fd,
-            buf=buf,
-        ):
-            return (
-                f"%{result.name} = sys_read"
-                f" {__dump_value(fd)}, {__dump_value(buf)}"
-                f"  [{__type_str(result.type_id)}]"
-            )
-
-        case IR.SysReadBytes(result=result, fd=fd, buf=buf):
-            return f"%{result.name} = sys_read_bytes {__dump_value(fd)}, {__dump_value(buf)}"
-
-        case IR.Open(result=result, path=path, flags=flags):
-            return (
-                f"%{result.name} = open {__dump_value(path)}, {__dump_value(flags)}"
-                f"  [{__type_str(result.type_id)}]"
-            )
-
-        case IR.Close(result=result, fd=fd):
-            return f"%{result.name} = close {__dump_value(fd)}  [{__type_str(result.type_id)}]"
-
-        case IR.Sqrt(result=result, value=value):
-            return f"%{result.name} = sqrt {__dump_value(value)}  [{__type_str(result.type_id)}]"
-
-        case IR.Sin(result=result, value=value):
-            return f"%{result.name} = sin {__dump_value(value)}  [{__type_str(result.type_id)}]"
-
-        case IR.Cos(result=result, value=value):
-            return f"%{result.name} = cos {__dump_value(value)}  [{__type_str(result.type_id)}]"
-
-        case IR.ArgCount(result=result):
-            return f"%{result.name} = arg_count  [{__type_str(result.type_id)}]"
-
         case IR.ArgBytes(result=result, index=index):
             return (
                 f"%{result.name} = arg_bytes {__dump_value(index)}"
@@ -378,9 +330,6 @@ def __dump_terminator(term: IR.Terminator) -> str:
 
         case IR.RuntimeFail(code=code):
             return f"runtime_fail {code.name}"
-
-        case IR.ProcessExit(code=code):
-            return f"process_exit {__dump_value(code)}"
 
         case IR.Unreachable():
             return "unreachable"
