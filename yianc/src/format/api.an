@@ -4,9 +4,6 @@ from yianc.diagnostics.model import AnalysisError;
 from yianc.format.layout import format_tokens;
 from yianc.frontend.prepare import prepare_file;
 from std.core.drop import Drop;
-from std.core.option import Option;
-from std.core.result import Result;
-from std.core.string import String;
 
 // Formatting validates the source without desugaring or semantic analysis.
 // A syntax failure is deliberately represented as None so callers can preserve

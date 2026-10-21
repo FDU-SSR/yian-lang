@@ -11,13 +11,8 @@ from std.collections.hash_set import HashSet;
 from std.core.drop import Drop;
 from std.core.convert import From;
 from std.core.fmt import ToString;
-from std.core.string import String;
 from std.core.iter import Iterator, IntoIterator;
 from std.core.ops import Index;
-from std.core.range import Range;
-from std.core.option import Option;
-from std.core.result import Result;
-from std.core.vec import Vec;
 
 fn release_rows<T>(rows: Vec<Vec<T>>&) {
     for row in *rows { row.drop(); }

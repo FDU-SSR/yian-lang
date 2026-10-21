@@ -16,7 +16,6 @@
 //
 // Both modes share this source. dyn uses inference; ranges such as
 //         x[0u64..n] work in both modes and retain checks in fat mode.
-from std.core.io import print;
 
 struct treeNode {
     left: Option<treeNode&>,
@@ -85,7 +84,7 @@ fn main() {
 
     let depth: u64 = minDepth;
     while depth <= maxDepth {
-        let iterations: i64 = 1 << (maxDepth - depth + minDepth);
+        let iterations: i64 = i64(1u64 << (maxDepth - depth + minDepth));
         let i: i64 = 0;
         while i < iterations {
             let tempTree: Option<treeNode&> = BottomUpTree(depth);

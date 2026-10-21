@@ -1,5 +1,3 @@
-from std.core.option import Option;
-from std.core.string import String;
 from anx.manifest.model import PackageKind;
 from anx.project.model import Package, Project;
 from json.write import Writer;

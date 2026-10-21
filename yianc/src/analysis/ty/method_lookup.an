@@ -5,17 +5,12 @@ from yianc.analysis.ty.store import TypeStore;
 from yianc.analysis.ty.model import Parameter;
 from yianc.analysis.ty.relations import compatible, default_type;
 from yianc.analysis.ty.display import type_text, stored_type_text;
-from std.core.string import String;
 from yianc.common.ids import TypeId, NameId, ImplId;
 from yianc.common.location import SourceSpan;
 from yianc.diagnostics.model import AnalysisError, AnalysisErrorKind, DiagnosticCode;
 from std.collections.hash_map import HashMap;
-from std.core.clone import Clone;
 from std.core.drop import Drop;
 from std.core.iter import Iterator, IntoIterator;
-from std.core.option import Option;
-from std.core.result import Result;
-from std.core.vec import Vec;
 
 struct TraitQuery {
     target: TypeId,

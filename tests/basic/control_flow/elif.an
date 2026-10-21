@@ -3,8 +3,6 @@
 // Expected output:
 // B
 
-from std.core.io import print;
-
 fn test_elif(x: i32) -> str {
     if x == 1 {
         return "A";

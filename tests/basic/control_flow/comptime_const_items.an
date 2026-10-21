@@ -1,5 +1,3 @@
-from std.core.io import print;
-
 const CAPACITY: u64 = BASE + 2u64;
 const ENABLED: bool = CAPACITY == 42u64;
 const SCALE: f32 = 1.5f32 + 0.25f32;

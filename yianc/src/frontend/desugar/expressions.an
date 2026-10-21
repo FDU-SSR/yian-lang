@@ -2,7 +2,6 @@ from yianc.frontend.ast.arena import AstArena, AstTree;
 from yianc.frontend.ast.node import Expr, ExprData, Argument;
 from yianc.frontend.ast.operator import BinaryOperator;
 from yianc.frontend.ast.traversal import AstRewriter, rewrite_expr_children;
-from std.core.vec import Vec;
 from yianc.frontend.desugar.build import identifier, name_expr, method_call, argument;
 
 struct ExpressionLowerer { arena: AstArena& }

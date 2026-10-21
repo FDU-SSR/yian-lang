@@ -1,6 +1,3 @@
-from std.core.string import String;
-from std.core.vec import Vec;
-
 fn rotate_right(value: u32, amount: u32) -> u32 {
     (value >> amount) | (value << (32u32 - amount))
 }

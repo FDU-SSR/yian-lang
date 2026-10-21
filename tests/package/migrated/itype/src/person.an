@@ -1,5 +1,3 @@
-from std.core.io import print;
-
 from typetest.walkable import Walkable;
 
 pub struct Person {

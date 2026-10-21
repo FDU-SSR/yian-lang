@@ -1,5 +1,4 @@
 from yianc.analysis.lowering.checker import ExprChecker;
-from std.core.string import String;
 from std.core.convert import From;
 from yianc.analysis.ty.substitution import infer, substitute;
 from yianc.analysis.ty.callable import instance_substitutions;
@@ -16,9 +15,6 @@ from yianc.frontend.source import Span;
 from yianc.diagnostics.model import AnalysisError, DiagnosticCode;
 from std.core.drop import Drop;
 from std.core.iter import Iterator, IntoIterator;
-from std.core.option import Option;
-from std.core.result import Result;
-from std.core.vec import Vec;
 
 impl ExprChecker {
     pub fn construct(span: Span, type_id: TypeId, args: Vec<Argument&>&,

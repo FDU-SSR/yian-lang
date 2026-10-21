@@ -13,10 +13,6 @@ from std.core.hash import Hash, Murmur3Hasher;
 from std.core.fmt import ToString;
 from std.core.iter import Iterator, IntoIterator;
 from std.core.ops import Index, PartialEq;
-from std.core.option import Option;
-from std.core.result import Result;
-from std.core.string import String;
-from std.core.vec import Vec;
 
 pub struct ThunkKey {
     pub implementation: TypeId,

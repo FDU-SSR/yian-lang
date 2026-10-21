@@ -1,9 +1,5 @@
 // Consolidated basic pointer and allocation scenarios.
 
-from std.core.option import Option;
-
-
-
 // Pointer array: its element width follows the active pointer representation.
 //
 

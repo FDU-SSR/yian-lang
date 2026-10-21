@@ -1,6 +1,5 @@
 from yianc.frontend.lex.token import Token, PunctuatorKind, KeywordKind;
 from std.core.ops import Index;
-from std.core.vec import Vec;
 
 pub fn operand_keyword(token: Token&) -> bool {
     match token.kind() {

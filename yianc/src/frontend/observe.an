@@ -5,7 +5,6 @@ from json.write import Writer;
 from std.core.drop import Drop;
 from std.core.fmt import ToString;
 from std.core.ops import Index;
-from std.core.vec import Vec;
 
 fn token_kind(token: Token&) -> str {
     match token.kind() {

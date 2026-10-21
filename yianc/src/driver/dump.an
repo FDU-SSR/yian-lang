@@ -20,10 +20,7 @@ from std.core.drop import Drop;
 from std.core.fmt import ToString;
 from std.core.fs import create_dir_all, write_string;
 from std.core.iter import Iterator, IntoIterator;
-from std.core.option import Option;
 from std.core.ops import Index;
-from std.core.range import Range;
-from std.core.result import Result;
 
 fn save(output: Writer&, path: str) -> Result<(), AnalysisError> {
     let text = match output.finish() {

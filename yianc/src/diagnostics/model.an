@@ -5,9 +5,6 @@ from std.core.convert import From;
 from std.core.drop import Drop;
 from std.core.fmt import ToString;
 from std.core.iter import Iterator, IntoIterator;
-from std.core.option import Option;
-from std.core.string import String;
-from std.core.vec import Vec;
 
 pub enum DiagnosticCode {
     UnterminatedComment,
@@ -46,6 +43,7 @@ pub enum DiagnosticCode {
     Coverage,
     Uninitialized,
     UnreachablePattern,
+    UnnecessaryPreludeImport,
     Unsupported,
     GenericArguments,
     Constant,
@@ -91,6 +89,7 @@ impl DiagnosticCode {
             Coverage => "E504",
             Uninitialized => "E502",
             UnreachablePattern => "W501",
+            UnnecessaryPreludeImport => "W502",
             Unsupported => "E598",
             GenericArguments => "E405",
             Constant => "E503",
@@ -204,6 +203,10 @@ impl Diagnostic {
         };
 
         Self(code, severity, primary, String.from(&message), Vec<RelatedLocation>.new(), Option<AnalysisStage>.None, false)
+    }
+
+    static pub fn warning(code: DiagnosticCode, location: Option<SourceSpan>, message: str) -> Self {
+        Self.new(code, Severity.Warning, location, message)
     }
 
     pub fn add_related(location: SourceSpan, message: str) {

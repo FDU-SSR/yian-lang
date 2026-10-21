@@ -21,8 +21,6 @@ from yianc.diagnostics.order import order_diagnostics;
 from yianc.common.ids import TypeId;
 from yianc.driver.profile import ProfileKind;
 from std.core.drop import Drop;
-from std.core.result import Result;
-from std.core.option import Option;
 from std.core.iter import Iterator, IntoIterator;
 
 impl AnalysisSession {
@@ -85,6 +83,8 @@ impl AnalysisSession {
         started = start_stage(&options, "analysis.validate_declarations", AnalysisStage.Resolve);
         at_stage(validate_declarations(&context), "analysis.validate_declarations", AnalysisStage.Resolve, &options, started)?;
         let report = AnalysisReport.new();
+        for warning in context.warnings { report.diagnostics.push(*warning); }
+        context.warnings.clear();
         let report_transferred = false;
         defer { if !report_transferred { report.drop(); } };
         started = start_stage(&options, "analysis.check_procedures", AnalysisStage.TypeCheck);

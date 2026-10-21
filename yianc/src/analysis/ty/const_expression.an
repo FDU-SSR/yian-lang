@@ -5,8 +5,6 @@ from yianc.common.ids import TypeId;
 from yianc.common.location import SourceSpan;
 from yianc.frontend.ast.operator import UnaryOperator, BinaryOperator;
 from yianc.diagnostics.model import AnalysisError, DiagnosticCode;
-from std.core.option import Option;
-from std.core.result import Result;
 
 // Symbolic nodes retain declaration identities until a concrete substitution makes them evaluable.
 pub fn const_unary(store: TypeStore&, op: UnaryOperator, operand: TypeId, span: Option<SourceSpan>) -> Result<TypeId, AnalysisError> {

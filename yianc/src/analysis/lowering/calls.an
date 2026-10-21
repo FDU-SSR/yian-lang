@@ -11,12 +11,7 @@ from yianc.frontend.ast.node import Expr, Argument;
 from yianc.frontend.source import Span;
 from yianc.diagnostics.model import AnalysisError;
 from std.core.drop import Drop;
-from std.core.clone import Clone;
 from std.core.iter import Iterator, IntoIterator;
-from std.core.option import Option;
-from std.core.result import Result;
-from std.core.vec import Vec;
-from std.core.string import String;
 
 impl ExprChecker {
     pub fn call(span: Span, callee: Expr&, args: Vec<Argument&>&) -> Result<HirId, AnalysisError> {

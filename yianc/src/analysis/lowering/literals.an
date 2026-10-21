@@ -9,15 +9,12 @@ from yianc.analysis.constant.floating import round_float;
 from yianc.analysis.constant.definitions import evaluate_constant;
 from yianc.common.ids import HirId;
 from yianc.common.location import SourceSpan;
-from std.core.option import Option;
 from yianc.frontend.ast.node import Literal;
 from yianc.frontend.source import Span;
 from yianc.frontend.lex.token import IntSuffix;
 from yianc.diagnostics.model import DiagnosticCode, AnalysisError;
 from std.core.drop import Drop;
-from std.core.clone import Clone;
 from std.core.iter import Iterator, IntoIterator;
-from std.core.result import Result;
 
 impl ExprChecker {
     fn integer_literal(span: Span, magnitude: u64, negative: bool, suffix: IntSuffix) -> Result<HirId, AnalysisError> {

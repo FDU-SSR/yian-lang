@@ -1,8 +1,6 @@
 from std.collections.sort import sort_by;
 from std.core.iter import Iterator, IntoIterator;
 from std.core.ops import Index;
-from std.core.option import Option;
-from std.core.vec import Vec;
 
 // AfterMax denotes the exclusive boundary following the largest u64 key.
 pub enum Boundary {

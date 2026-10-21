@@ -6,8 +6,6 @@ from yianc.frontend.ast.node import Expr;
 from yianc.frontend.ast.atoms import BuiltinKind;
 from yianc.frontend.ast.walk import TryAstVisitor, try_walk_program;
 from yianc.diagnostics.model import DiagnosticCode, AnalysisError, AnalysisErrorKind, AnalysisStage;
-from std.core.option import Option;
-from std.core.result import Result;
 
 struct RestrictedVisitor {
     source: SourceId,

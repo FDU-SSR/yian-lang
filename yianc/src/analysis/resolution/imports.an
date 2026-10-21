@@ -7,11 +7,7 @@ from yianc.diagnostics.model import DiagnosticCode, AnalysisError, AnalysisError
 from std.core.drop import Drop;
 from std.core.fs import canonicalize;
 from std.core.iter import Iterator, IntoIterator;
-from std.core.option import Option;
 from std.core.path import Path, PathBuf;
-from std.core.result import Result;
-from std.core.string import String;
-from std.core.vec import Vec;
 
 fn find_unit(ctx: ResolutionContext&, path: str) -> Option<UnitId> {
     let index = 0u64;
@@ -246,8 +242,37 @@ fn inject_prelude(ctx: ResolutionContext&) -> Result<(), AnalysisError> {
                 }
 
                 let name = ctx.session.names.intern(entry[1]);
+                let provided = ctx.session.symbols.lookup(ctx.scopes[destination.index], name);
+                let bound = ctx.session.symbols.lookup(ctx.scopes[unit.index], name);
+                let redundant = false;
 
-                if !explicit && ctx.session.symbols.lookup(ctx.scopes[unit.index], name).is_none() {
+                match &provided {
+                    Some(value) => match &bound {
+                        Some(local) => if *value == *local { redundant = true; },
+                        None => {},
+                    },
+                    None => {},
+                }
+
+                if redundant {
+                    for item in record.prepared.tree.unwrap().root.data.items {
+                        match &item.data {
+                            Import(_, target, alias, _) => {
+                                let binding = match alias { Some(value) => value.data.name.as_str(), None => target.data.name.as_str() };
+                                if binding == entry[1] {
+                                    let message = String.from(&"unnecessary import of '");
+                                    defer message.drop();
+                                    message.push_str(entry[1]);
+                                    message.push_str("': the prelude already provides it");
+                                    ctx.warning(unit, target.span, DiagnosticCode.UnnecessaryPreludeImport, message.as_str());
+                                }
+                            },
+                            _ => {},
+                        }
+                    }
+                }
+
+                if !explicit && bound.is_none() {
                     if !bind_import(ctx, unit, destination, entry[1], entry[1], record.prepared.tree.unwrap().root.span)? {
                         return Result<(), AnalysisError>.Err(ctx.error(unit, record.prepared.tree.unwrap().root.span, DiagnosticCode.Undefined, "prelude symbol is missing"));
                     }

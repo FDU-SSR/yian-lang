@@ -6,8 +6,6 @@ from yianc.common.ids import TypeId;
 from yianc.frontend.ast.operator import BinaryOperator;
 from yianc.codegen.llvm.scalar import binary;
 from llvm.ir import IrValue, BinaryOp, CastOp, IntCompare;
-from std.core.option import Option;
-from std.core.result import Result;
 
 impl FunctionLowering {
     fn pointed_type(type_id: TypeId) -> Result<TypeId, CodegenError> {

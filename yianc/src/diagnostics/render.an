@@ -5,9 +5,6 @@ from std.core.convert import From;
 from std.core.drop import Drop;
 from std.core.fmt import ToString;
 from std.core.iter import Iterator, IntoIterator;
-from std.core.option import Option;
-from std.core.result import Result;
-from std.core.string import String;
 from std.core.fs import current_dir, canonicalize;
 from json.write import Writer;
 
@@ -106,17 +103,19 @@ pub fn write_json(diagnostic: Diagnostic&, output: Writer&, sources: Option<Sour
 
 fn diagnostic_text(location: Option<DiagnosticLocation>&, sources: Option<SourceManager&>) -> String {
     match location {
-        Some(value) => {
-            match (value, sources) {
-                (Source(span), Some(manager)) => return String.from(&manager.file(span.source.index).text()),
-                _ => {},
-            }
-            match location_path(value, sources) {
-                Ok(path) => match read_source(path) { Ok(text) => return text, Err(problem) => problem.drop(), },
-                Err(problem) => problem.drop(),
-            }
-        },
-        None => {},
+        Some(value) => location_text(value, sources),
+        None => String.new(),
+    }
+}
+
+fn location_text(location: DiagnosticLocation&, sources: Option<SourceManager&>) -> String {
+    match (location, sources) {
+        (Source(span), Some(manager)) => return String.from(&manager.file(span.source.index).text()),
+        _ => {},
+    }
+    match location_path(location, sources) {
+        Ok(path) => match read_source(path) { Ok(text) => return text, Err(problem) => problem.drop(), },
+        Err(problem) => problem.drop(),
     }
     String.new()
 }
@@ -178,7 +177,7 @@ pub fn render(diagnostic: Diagnostic&, sources: Option<SourceManager&>) -> Resul
 
     match &diagnostic.location {
         Some(location) => {
-            append_location(&text, location, sources)?;
+            append_location_block(&text, location, sources, 0u64)?;
         },
         None => {},
     }
@@ -186,24 +185,108 @@ pub fn render(diagnostic: Diagnostic&, sources: Option<SourceManager&>) -> Resul
     for related in diagnostic.related {
         text.push_str("\n  ");
         text.push_str(related.message.as_str());
-        append_location(&text, &related.location, sources)?;
+        append_location_block(&text, &related.location, sources, 2u64)?;
     }
 
     transferred = true;
     Result<String, AnalysisError>.Ok(text)
 }
 
-fn append_location(text: String&, location: DiagnosticLocation&, sources: Option<SourceManager&>) -> Result<(), AnalysisError> {
-    text.push_str(" at ");
-    text.push_str(location_path(location, sources)?);
+// Text diagnostics share one layout: header, arrow, source line, and carets.
+fn append_location_block(text: String&, location: DiagnosticLocation&, sources: Option<SourceManager&>, indent: u64) -> Result<(), AnalysisError> {
     let span = location.span();
+    text.push('\n');
+    append_indent(text, indent);
+    text.push_str("--> ");
+    text.push_str(location_path(location, sources)?);
     let row = (span.start.row + 1).to_string();
     defer row.drop();
     let column = (span.start.column + 1).to_string();
     defer column.drop();
-    text.push_str(":");
+    text.push(':');
     text.push_str(row.as_str());
-    text.push_str(":");
+    text.push(':');
     text.push_str(column.as_str());
+
+    let source = location_text(location, sources);
+    defer source.drop();
+    match source_line(source.as_str(), span.start.row) {
+        Some(line) => {
+            defer line.drop();
+            text.push('\n');
+            append_indent(text, indent);
+            text.push_str("    ");
+            text.push_str(line.as_str());
+            text.push('\n');
+            append_indent(text, indent);
+            text.push_str("    ");
+            append_indent(text, span.start.column);
+            append_carets(text, marker_width(line.as_str(), span));
+        },
+        None => {},
+    }
     Result<(), AnalysisError>.Ok(())
+}
+
+fn append_indent(text: String&, count: u64) {
+    let index = 0u64;
+    while index < count {
+        text.push(' ');
+        index += 1;
+    }
+}
+
+fn append_carets(text: String&, count: u64) {
+    let index = 0u64;
+    while index < count {
+        text.push('^');
+        index += 1;
+    }
+}
+
+fn scalar_count(value: str) -> u64 {
+    let count = 0u64;
+    for _ in value.chars() {
+        count += 1;
+    }
+    count
+}
+
+// The caret line is omitted when the requested source row is absent.
+fn source_line(text: str, row: u64) -> Option<String> {
+    let result = String.new();
+    let current = 0u64;
+    let started = false;
+    for ch in text.chars() {
+        if current == row {
+            if !started {
+                started = true;
+            }
+            if ch == '\n' || ch == '\r' {
+                break;
+            }
+            result.push(ch);
+        } elif ch == '\n' {
+            current += 1;
+        }
+    }
+    if !started {
+        result.drop();
+        return Option<String>.None;
+    }
+    Option<String>.Some(result)
+}
+
+fn marker_width(line: str, span: Span) -> u64 {
+    if span.start.row == span.end.row {
+        if span.end.column > span.start.column {
+            return span.end.column - span.start.column;
+        }
+        return 1u64;
+    }
+    let length = scalar_count(line);
+    if length > span.start.column {
+        return length - span.start.column;
+    }
+    1u64
 }

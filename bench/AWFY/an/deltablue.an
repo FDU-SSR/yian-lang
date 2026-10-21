@@ -35,7 +35,6 @@
 // Both modes share this source: T& links constraints/variables; lists use Vec<Constraint&>.
 // Scale: each work unit runs chainTest(12000) and projectionTest(12000) once.
 // Outer repetitions repeat complete work units.
-from std.core.vec import Vec;
 
 // -- Direction (upstream deltablue/Direction.java) --
 // Flow.Unset means the constraint has no satisfied propagation direction.

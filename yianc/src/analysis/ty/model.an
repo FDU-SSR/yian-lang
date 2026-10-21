@@ -6,9 +6,6 @@ from std.collections.hash_map import HashMap;
 from std.core.drop import Drop;
 from std.core.hash import Hash;
 from std.core.ops import PartialEq;
-from std.core.option import Option;
-from std.core.result import Result;
-from std.core.vec import Vec;
 
 pub enum AccessMode {
     Private,

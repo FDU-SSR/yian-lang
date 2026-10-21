@@ -2,9 +2,6 @@
 //
 // Expected output: 0
 
-from std.core.vec import Vec;
-from std.core.option import Option;
-
 fn case_vec_iteration() {
     let vec = [0u8, 1, 2, 3, 4].to_vec();
 

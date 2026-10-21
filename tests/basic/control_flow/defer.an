@@ -1,5 +1,3 @@
-from std.core.io import print;
-
 fn inner() {
     defer print("inner defer\n");
     print("inner body\n");

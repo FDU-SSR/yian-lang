@@ -1,5 +1,4 @@
 from std.core.drop import Drop;
-from std.core.vec import Vec;
 from std.ffi.memory import copy_from;
 
 // Copy C bytes of a known length; the caller guarantees that any nonempty range is readable.

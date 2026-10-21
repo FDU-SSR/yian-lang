@@ -2,8 +2,6 @@
 //
 // Expected output: 0
 
-from std.core.option import Option;
-
 fn main() {
     // Create an Option with a value
     let opt1: Option<i32> = Option<i32>.Some(42);

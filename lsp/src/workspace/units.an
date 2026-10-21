@@ -1,8 +1,5 @@
 from std.core.drop import Drop;
 from std.core.fs import resolve;
-from std.core.option import Option;
-from std.core.string import String;
-from std.core.vec import Vec;
 from lsp_protocol.uri import uri_to_path;
 
 fn release_strings(values: Vec<String>&) {

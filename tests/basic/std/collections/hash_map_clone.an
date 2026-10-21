@@ -3,12 +3,9 @@
 // in one map never affect the other's table, and element cleanup stays with the
 // caller (a shared buffer is released exactly once).
 from std.collections.hash_map import HashMap;
-from std.core.clone import Clone;
 from std.core.drop import Drop;
 from std.core.hash import Hash, Murmur3Hasher;
 from std.core.ops import PartialEq;
-from std.core.string import String;
-from std.core.vec import Vec;
 
 struct SKey {
     tag: String,

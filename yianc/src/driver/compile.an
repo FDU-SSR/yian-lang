@@ -20,12 +20,8 @@ from std.core.fs import create_dir_all, write, rename, remove_dir, remove_file;
 from std.core.io import Stderr, Write, eprint, eprintln;
 from std.core.iter import Iterator, IntoIterator;
 from std.core.fmt import ToString;
-from std.core.option import Option;
 from std.core.path import Path;
 from std.core.process import temporary_directory, ExitStatus;
-from std.core.result import Result;
-from std.core.string import String;
-from std.core.vec import Vec;
 
 fn report(diagnostic: Diagnostic&, session: Option<AnalysisSession&>) {
     let sources = match session {

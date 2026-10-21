@@ -2,8 +2,6 @@ from yianc.frontend.ast.node import IntLiteralData, FloatLiteralData, CharLitera
 from yianc.frontend.lex.token import KeywordKind;
 from yianc.frontend.parse.state import Parser;
 from std.core.convert import From;
-from std.core.option import Option;
-from std.core.string import String;
 
 pub fn parse_literal(parser: Parser&) -> Option<Literal> {
     parser.ready()?;

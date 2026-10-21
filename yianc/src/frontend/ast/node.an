@@ -3,9 +3,6 @@ from yianc.frontend.lex.token import IntSuffix, FloatSuffix;
 from yianc.frontend.ast.operator import BinaryOperator, UnaryOperator;
 from yianc.frontend.ast.atoms import AttrKind, BuiltinKind, MatchArmOrigin;
 from std.core.drop import Drop;
-from std.core.option import Option;
-from std.core.string import String;
-from std.core.vec import Vec;
 
 // AST nodes contain syntax data and source spans; references do not own storage, and the arena owns all nodes.
 pub struct Node<D> { pub data: D, pub span: Span }

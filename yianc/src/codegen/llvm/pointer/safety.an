@@ -3,8 +3,6 @@ from yianc.codegen.error import CodegenError;
 from yianc.codegen.abi.runtime import FRAME_LOCK_SLOTS, LOCK_TABLE_SLOTS, LOCK_MASK, FRAME_KEY_LIMIT, SENTINEL, HEAP_LOCK_BASE, HEADER_BYTES, LITERAL_WORD;
 from yianc.common.ids import TypeId;
 from llvm.ir import IrValue, BinaryOp, CastOp, IntCompare;
-from std.core.option import Option;
-from std.core.result import Result;
 
 impl FunctionLowering {
     pub fn lock_slot(index: IrValue) -> IrValue {

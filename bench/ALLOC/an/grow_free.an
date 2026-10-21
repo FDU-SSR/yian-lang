@@ -6,8 +6,6 @@
 //
 // Steady-state RSS growth measures reuse and memory return across allocation/release cycles.
 
-from std.core.io import print;
-
 fn main() {
     let cycles: u64 = 40;  // bench-scale
     let chunk_count: u64 = 4096;

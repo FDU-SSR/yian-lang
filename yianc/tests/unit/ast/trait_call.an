@@ -7,9 +7,6 @@ from json.write import Writer;
 from json.parse import parse;
 from std.core.convert import From;
 from std.core.drop import Drop;
-from std.core.option import Option;
-from std.core.string import String;
-from std.core.vec import Vec;
 
 struct Visitor { types: u64 }
 impl AstVisitor for Visitor {

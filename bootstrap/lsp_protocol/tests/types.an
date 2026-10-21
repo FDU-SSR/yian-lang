@@ -7,7 +7,6 @@ from lsp_protocol.diagnostic import Diagnostic, decode_diagnostic;
 from json.parse import parse;
 from json.write import stringify;
 from std.core.drop import Drop;
-from std.core.string import String;
 
 fn main() {
     let method = Method.from_name("textDocument/hover");

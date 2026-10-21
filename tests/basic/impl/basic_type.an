@@ -5,8 +5,6 @@
 // Command: Start
 // Command: Pause
 
-from std.core.io import print;
-
 impl i32 {
     pub fn inc() {
         *self += 1

@@ -5,7 +5,6 @@ from yianc.codegen.abi.runtime import ENV_WORD, LITERAL_WORD;
 from yianc.common.ids import TypeId;
 from yianc.analysis.ty.model import TypeData;
 from llvm.ir import IrValue, BinaryOp, CastOp, IntCompare;
-from std.core.result import Result;
 
 impl FunctionLowering {
     pub fn integer(value: u64) -> IrValue {

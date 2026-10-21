@@ -1,12 +1,8 @@
 // Exercise the modules with anx test and manual editor checks.
-from std.core.io import print;
-from std.core.string import String;
-from std.core.vec import Vec;
 from sample.handles import Marks, accumulate, pointer_bytes, scaled, tally;
 from sample.measure import Bagged, Circle, Rect;
 from sample.text import describe, first_label, labels, offset_by, sum_block;
 from sample.types import Meters;
-from std.core.option import Option;
 
 fn main() {
     let rect: Rect = Rect(width=3.0, height=4.0);

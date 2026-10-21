@@ -86,12 +86,12 @@ mathlib = { path = "vendor/mathlib" }
 
 ```yian
 // demo/src/greet.an
-from std.core.io import print;
-
 pub fn greet() {
     print("hello from demo\n");
 }
 ```
+
+`print` 由 prelude 提供；native 编译器对显式导入 prelude 符号给出 `W502` 警告（不阻止编译），错误和警告都使用多行源码片段。
 
 ```yian
 // demo/src/main.an

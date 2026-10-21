@@ -1,8 +1,6 @@
 from yianc.common.ids import NameId;
 from yianc.analysis.constant.big_integer import BigInteger;
-from std.core.clone import Clone;
 from std.core.drop import Drop;
-from std.core.result import Result;
 
 pub enum ConstEvalError {
     Overflow,

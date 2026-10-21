@@ -2,7 +2,6 @@ from yianc.codegen.llvm.module import FunctionLowering;
 from yianc.codegen.cfg.model import SafetyCheck;
 from yianc.codegen.error import CodegenError;
 from llvm.ir import IntCompare;
-from std.core.result import Result;
 
 impl FunctionLowering {
     pub fn safety_check(check: SafetyCheck&) -> Result<(), CodegenError> {

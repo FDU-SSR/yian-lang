@@ -1,7 +1,6 @@
 from yianc.analysis.constant.integer import magnitude, is_negative, normalized;
 from yianc.analysis.constant.value import IntegerValue, IntegerWidth, ConstEvalError;
 from yianc.frontend.ast.operator import BinaryOperator;
-from std.core.result import Result;
 from std.num.f64 import from_bits, to_bits;
 
 // Classify bit patterns directly; float comparisons use ordered predicates.

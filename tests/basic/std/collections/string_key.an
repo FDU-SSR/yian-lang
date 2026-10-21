@@ -5,7 +5,6 @@
 // incoming shallow copy without drop so the stored key never dangles.
 from std.collections.hash_map import HashMap;
 from std.collections.hash_set import HashSet;
-from std.core.string import String;
 
 fn main() {
     let m = HashMap<String, i32>.new();

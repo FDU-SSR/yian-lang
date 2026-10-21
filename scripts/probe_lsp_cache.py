@@ -252,7 +252,6 @@ def run_fingerprint(yianc: Path, timeout: float) -> dict[str, str]:
     program = (
         "from lsp.analysis.fingerprint import sha256;\n"
         "from std.core.drop import Drop;\n"
-        "from std.core.string import String;\n"
         "fn main() {\n"
         '    let empty_bytes = String.from(&"");\n'
         '    let abc_bytes = String.from(&"abc");\n'

@@ -9,7 +9,6 @@ from yianc.frontend.ast.traversal import AstVisitor, walk_program;
 from yianc.frontend.source import SourceDocument;
 from json.write import Writer;
 from json.parse import parse;
-from std.core.string import String;
 from std.core.drop import Drop;
 from std.core.ops import Index;
 from yianc.analysis.session.session import AnalysisSession;
@@ -18,8 +17,6 @@ from yianc.analysis.session.output import AnalysisOptions;
 from yianc.diagnostics.model import AnalysisErrorKind;
 from yianc.package.model import PackageMap;
 from yianc.package.provenance import SourceTrust;
-from std.core.option import Option;
-from std.core.vec import Vec;
 
 struct Counter { owned_names: u64 }
 impl AstVisitor for Counter {

@@ -1,7 +1,5 @@
 // Test f-string basic variable interpolation
 
-from std.core.io import print;
-
 fn case_fstring_basic() {
     let name = "Yian";
     let ver = 1;

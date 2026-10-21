@@ -3,8 +3,6 @@
 // Expected output: 0
 
 from std.core.iter import Iterator, IteratorExt;
-from std.core.option import Option;
-from std.core.range import Range;
 
 struct Intermittent {
     state: u64,

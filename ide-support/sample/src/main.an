@@ -1,5 +1,4 @@
 // Entry file connecting the modules, used as the editor's default file.
-from std.core.io import print;
 from sample.geometry import Point, Pair, span;
 from sample.shapes import Shape, area, max;
 from sample.types import Meters, Millis;

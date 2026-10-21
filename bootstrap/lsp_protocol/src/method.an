@@ -1,4 +1,3 @@
-from std.core.string import String;
 from std.core.drop import Drop;
 
 pub enum Method {

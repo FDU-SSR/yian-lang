@@ -1,12 +1,8 @@
 from std.core.drop import Drop;
 from std.core.io import IoError, Read, Stdin, Stdout, Write;
 from std.core.fs import append;
-from std.core.option import Option;
 from std.core.process import env_var;
-from std.core.result import Result;
-from std.core.string import String;
 from std.core.time import Instant, monotonic_now;
-from std.core.vec import Vec;
 from json.value import Value, Number, Object;
 from json.write import stringify;
 from jsonrpc.frame import FrameDecoder, WriteQueue;

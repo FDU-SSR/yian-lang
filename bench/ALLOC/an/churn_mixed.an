@@ -7,8 +7,6 @@
 // A first-fit free list degenerates here: the next large allocation scans the preceding small blocks.
 // Raw mode uses churn_mixed.raw.an with T* elements instead of T[].
 
-from std.core.io import print;
-
 fn main() {
     let rounds: u64 = 20000;  // bench-scale
     let small_count: u64 = 256;

@@ -2,14 +2,11 @@ from yianc.analysis.ty.store import TypeStore;
 from yianc.analysis.ty.model import TypeData;
 from yianc.analysis.ty.const_expression import const_unary, const_binary;
 from yianc.common.location import SourceSpan;
-from std.core.option import Option;
 from yianc.common.ids import TypeId;
 from yianc.diagnostics.model import AnalysisError;
 from std.collections.hash_map import HashMap;
 from std.core.drop import Drop;
 from std.core.iter import Iterator, IntoIterator;
-from std.core.result import Result;
-from std.core.vec import Vec;
 
 // Substitutions are caller-owned and isolated for each candidate or function instance.
 pub fn substitute(store: TypeStore&, type_id: TypeId, substitutions: HashMap<TypeId, TypeId>&) -> Result<TypeId, AnalysisError> {

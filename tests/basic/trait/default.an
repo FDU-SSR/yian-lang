@@ -2,7 +2,6 @@
 //
 // Expected output: 0
 
-from std.core.io import print;
 from std.core.convert import From;
 
 struct Circle {

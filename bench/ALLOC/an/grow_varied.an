@@ -6,8 +6,6 @@
 // Measures reuse/return after release: sizes differ and increase each round. Without either mechanism,
 // peak RSS grows to the sum of all sizes (about 528 MiB).
 
-from std.core.io import print;
-
 fn main() {
     let cycles: u64 = 32;  // bench-scale
     let mib: u64 = 1024 * 1024;

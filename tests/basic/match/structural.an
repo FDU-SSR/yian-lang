@@ -1,5 +1,3 @@
-from std.core.vec import Vec;
-
 struct Point {
     pub x: i32,
     pub y: i32,

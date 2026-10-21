@@ -1,7 +1,6 @@
 // Resource-bearing elements survive growth; container operations never drop
 // elements, while callers can explicitly clean elements that remain reachable.
 from std.core.drop import Drop;
-from std.core.vec import Vec;
 
 struct Guard {
     value: i32,

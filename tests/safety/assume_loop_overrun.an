@@ -1,8 +1,6 @@
 // The loop reaches beyond the four-element slice, so the bounds check remains
 // necessary and the out-of-range write triggers a runtime safety error.
 
-from std.core.io import print;
-
 fn main() {
     let p: i32* = dyn[4] 0i32;
     p[0] = 0;

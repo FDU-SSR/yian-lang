@@ -1,9 +1,7 @@
 // A simple calculator for testing stdin and string conversion.
 
-from std.core.string import String;
-from std.core.io import Stdin, BufReader, print;
+from std.core.io import Stdin, BufReader;
 from std.core.drop import Drop;
-from std.core.option import Option;
 
 fn main() {
     let input = Stdin.new();

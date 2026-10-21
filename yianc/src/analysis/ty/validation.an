@@ -12,10 +12,6 @@ from yianc.common.location import SourceSpan;
 from yianc.diagnostics.model import AnalysisError, AnalysisErrorKind, DiagnosticCode;
 from std.core.drop import Drop;
 from std.core.iter import Iterator, IntoIterator;
-from std.core.option import Option;
-from std.core.result import Result;
-from std.core.vec import Vec;
-from std.core.string import String;
 
 fn contains_unsized(ctx: ResolutionContext&, type_id: TypeId, visited: HashSet<TypeId>&) -> Result<bool, AnalysisError> {
     if !visited.insert(type_id) { return Result<bool, AnalysisError>.Ok(false); }

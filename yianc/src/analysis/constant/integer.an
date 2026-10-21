@@ -1,6 +1,5 @@
 from yianc.analysis.constant.value import IntegerValue, IntegerWidth, ConstEvalError;
 from yianc.frontend.ast.operator import BinaryOperator, UnaryOperator;
-from std.core.result import Result;
 
 pub fn normalized(bits: u64, width: IntegerWidth, signed: bool) -> IntegerValue {
     IntegerValue.fixed(bits, width, signed)

@@ -22,9 +22,6 @@ from yianc.package.provenance import SourceTrust;
 from llvm.object import Module;
 from std.collections.hash_map import HashMap;
 from std.core.drop import Drop;
-from std.core.option import Option;
-from std.core.string import String;
-from std.core.vec import Vec;
 
 struct Fixture {
     packet: TypeId,

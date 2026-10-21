@@ -12,7 +12,6 @@
 //           shallow-copy src[i] through a local into dst[i], and pass it by value to sum_item.
 //
 // Both modes share this source; raw T&/T* use 8 B pointers.
-from std.core.io import print;
 
 struct Payload {
     value: i64,

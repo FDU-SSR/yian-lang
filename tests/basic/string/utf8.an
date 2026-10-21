@@ -7,7 +7,6 @@
 // 안녕하세요, 이안!
 // 🤣🤣🤣🤣🤣🤣🤣🤣🤣
 
-from std.core.io import print;
 from std.core.text import LineIndex, TextPosition;
 
 fn main() {

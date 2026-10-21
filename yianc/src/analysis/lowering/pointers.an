@@ -8,8 +8,6 @@ from yianc.common.ids import HirId;
 from yianc.frontend.ast.operator import BinaryOperator, UnaryOperator;
 from yianc.frontend.source import Span;
 from yianc.diagnostics.model import AnalysisError;
-from std.core.option import Option;
-from std.core.result import Result;
 
 impl ExprChecker {
     // Pointer operations preserve the declared pointee; references have identity equality only.

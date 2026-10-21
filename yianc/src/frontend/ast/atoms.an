@@ -1,5 +1,3 @@
-from std.core.option import Option;
-
 pub enum AttrKind {
     Pub,
     PubFfi,

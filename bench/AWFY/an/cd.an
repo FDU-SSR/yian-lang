@@ -24,7 +24,6 @@
 // Both pointer modes share this source; tree links use Option<RBNode<V>&>.
 // Scale: AIRCRAFT=250, FRAMES=200; assert 10830 collisions per work unit.
 from std.num.f64 import sqrt, sin, cos;
-from std.core.vec import Vec;
 
 // -- Value types (upstream cd/Vector2D.java, cd/Vector3D.java) --
 

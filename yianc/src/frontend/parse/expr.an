@@ -11,9 +11,6 @@ from yianc.frontend.source import Position, Span;
 from std.core.convert import From;
 from std.core.drop import Drop;
 from std.core.ops import Index;
-from std.core.option import Option;
-from std.core.string import String;
-from std.core.vec import Vec;
 
 // Consume only operators whose left binding power meets min_bp; right binding power sets the recursive boundary.
 fn expr_bp(parser: Parser&, min_bp: i32) -> Option<Expr&> {

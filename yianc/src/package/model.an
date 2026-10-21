@@ -1,10 +1,7 @@
 from yianc.package.provenance import within;
 from std.core.drop import Drop;
 from std.core.iter import Iterator, IntoIterator;
-from std.core.option import Option;
 from std.core.path import PathBuf;
-from std.core.string import String;
-from std.core.vec import Vec;
 
 pub struct NativeLLVM {
     pub major: u32,

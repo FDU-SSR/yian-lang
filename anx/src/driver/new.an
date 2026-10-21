@@ -1,10 +1,7 @@
 from std.core.drop import Drop;
 from std.core.fs import create_dir_all, current_dir, resolve, try_exists, write_string;
-from std.core.io import eprint, eprintln, print;
-from std.core.option import Option;
+from std.core.io import eprint, eprintln;
 from std.core.path import Path, PathBuf;
-from std.core.string import String;
-from std.core.vec import Vec;
 
 fn package_basename(name: str) -> String {
     match Path.new(name).file_name() {
@@ -23,14 +20,14 @@ fn manifest_text(name: str, kind: str) -> String {
 }
 
 fn main_text(name: str) -> String {
-    let text = String.from(&"from std.core.io import print;\n\nfn main() {\n    print(\"Hello from ");
+    let text = String.from(&"fn main() {\n    print(\"Hello from ");
     text.push_str(name);
     text.push_str("!\\n\");\n}\n");
     text
 }
 
 fn test_text() -> String {
-    String.from(&"// `anx test` runs every .an file under tests/ as its own program.\n// Expected output lives in tests/output/<name>.an.ans.\nfrom std.core.io import print;\n\nfn main() {\n    print(\"tests ok\\n\");\n}\n")
+    String.from(&"// `anx test` runs every .an file under tests/ as its own program.\n// Expected output lives in tests/output/<name>.an.ans.\n\nfn main() {\n    print(\"tests ok\\n\");\n}\n")
 }
 
 fn write_file(path: str, text: str) -> bool {

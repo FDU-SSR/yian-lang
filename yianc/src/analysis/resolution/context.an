@@ -5,14 +5,11 @@ from yianc.analysis.ty.model import TypeData;
 from yianc.analysis.constant.evaluate import TypeSizeProvider;
 from yianc.frontend.ast.node import Item;
 from yianc.frontend.source import Position, Span;
-from yianc.diagnostics.model import DiagnosticCode, AnalysisError;
+from yianc.diagnostics.model import Diagnostic, DiagnosticCode, AnalysisError;
 from std.collections.arena import Arena;
 from std.collections.hash_map import HashMap;
 from std.core.drop import Drop;
 from std.core.iter import Iterator, IntoIterator;
-from std.core.option import Option;
-from std.core.result import Result;
-from std.core.vec import Vec;
 
 pub enum DeclarationState {
     Declared,
@@ -70,6 +67,7 @@ pub struct ResolutionContext {
     pub sizes: Option<TypeSizeProvider&>,
     pub alias_stack: Vec<SymbolId>,
     pub constant_stack: Vec<SymbolId>,
+    pub warnings: Vec<Diagnostic>,
 }
 
 impl ResolutionContext {
@@ -92,7 +90,7 @@ impl ResolutionContext {
         }
 
         accepted = true;
-        Result<Self, AnalysisError>.Ok(Self(session, primitives, scopes, Arena<Declaration>.new(), HashMap<DefId, ScopeId>.new(), HashMap<SymbolId, HirId>.new(), HashMap<DefId, Vec<SymbolId>>.new(), Option<TypeSizeProvider&>.None, Vec<SymbolId>.new(), Vec<SymbolId>.new()))
+        Result<Self, AnalysisError>.Ok(Self(session, primitives, scopes, Arena<Declaration>.new(), HashMap<DefId, ScopeId>.new(), HashMap<SymbolId, HirId>.new(), HashMap<DefId, Vec<SymbolId>>.new(), Option<TypeSizeProvider&>.None, Vec<SymbolId>.new(), Vec<SymbolId>.new(), Vec<Diagnostic>.new()))
     }
 
     pub fn span(unit: UnitId, span: Span) -> SourceSpan {
@@ -101,6 +99,10 @@ impl ResolutionContext {
 
     pub fn error(unit: UnitId, span: Span, code: DiagnosticCode, message: str) -> AnalysisError {
         AnalysisError.user(code, Option<SourceSpan>.Some(self.span(unit, span)), message)
+    }
+
+    pub fn warning(unit: UnitId, span: Span, code: DiagnosticCode, message: str) {
+        self.warnings.push(Diagnostic.warning(code, Option<SourceSpan>.Some(self.span(unit, span)), message));
     }
 
     pub fn add(declaration: Declaration) {
@@ -143,6 +145,7 @@ impl Drop for ResolutionContext {
         }
 
         self.closure_captures.drop();
+        self.warnings.drop();
         self.scopes.drop();
     }
 }

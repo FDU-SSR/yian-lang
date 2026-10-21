@@ -4,7 +4,6 @@ from std.collections.sort import sort_by;
 from std.core.drop import Drop;
 from std.core.iter import Iterator, IntoIterator;
 from std.core.ops import Index;
-from std.core.vec import Vec;
 
 fn path(diagnostic: Diagnostic&, sources: SourceManager&) -> str {
     match &diagnostic.location {

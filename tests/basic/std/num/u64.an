@@ -3,8 +3,6 @@
 //
 // Expected output: 0
 
-from std.core.string import String;
-
 fn main() {
     // ---- rotate_left ----
 

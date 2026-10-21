@@ -9,11 +9,7 @@ from json.write import stringify;
 from json.parse import parse;
 from std.core.drop import Drop;
 from std.core.fs import create_dir_all, read, read_to_string, write_atomic;
-from std.core.option import Option;
 from std.core.path import Path;
-from std.core.result import Result;
-from std.core.string import String;
-from std.core.vec import Vec;
 
 const CACHE_VERSION: u64 = 1u64;
 

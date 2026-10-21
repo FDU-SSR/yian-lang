@@ -5,9 +5,6 @@
 // success: 84
 // doubled
 
-from std.core.io import print;
-from std.core.option import Option;
-
 enum Operation {
     Add {
         a: i32,

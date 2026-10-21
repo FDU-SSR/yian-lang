@@ -3,7 +3,6 @@ from yianc.codegen.error import CodegenError;
 from yianc.codegen.abi.runtime import LOCK_MASK, HEADER_BYTES, HEAP_LOCK_BASE;
 from yianc.common.ids import TypeId;
 from llvm.ir import IrValue, BinaryOp, CastOp, IntCompare;
-from std.core.result import Result;
 
 impl FunctionLowering {
     // The free-list link occupies the anchor half of an inactive lock entry.

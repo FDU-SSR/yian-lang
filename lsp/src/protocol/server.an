@@ -1,13 +1,9 @@
 from std.core.drop import Drop;
 from std.core.fs import append;
 from std.core.io import IoError, IoErrorKind, NonblockingGuard, Read, Stderr, Stdin, Stdout, Write, eprint, eprintln;
-from std.core.option import Option;
 from std.core.path import Path;
 from std.core.process import Command, Child, SpawnOptions, StdioMode, executable_path;
-from std.core.result import Result;
-from std.core.string import String;
 from std.core.time import Instant, monotonic_now;
-from std.core.vec import Vec;
 from std.core.poller import PollEvent, PollInterests, Poller, PollSource, PollToken;
 from json.value import Value, Number, Object;
 from json.write import stringify;

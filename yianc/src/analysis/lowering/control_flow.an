@@ -5,8 +5,6 @@ from yianc.frontend.source import Span;
 from yianc.analysis.hir.node import HirKind, If;
 from yianc.diagnostics.model import AnalysisError;
 from std.core.iter import Iterator, IntoIterator;
-from std.core.result import Result;
-from std.core.option import Option;
 
 impl ExprChecker {
     pub fn branch(span: Span, condition: HirId, yes: HirId, no: Option<HirId>) -> Result<HirId, AnalysisError> {

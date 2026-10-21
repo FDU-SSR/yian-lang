@@ -4,8 +4,6 @@
 // Scale: 40 rounds * 4096 blocks of 4 KiB (16 MiB per round).
 // Assert checksum == value 7 written per block * blocks * rounds.
 
-from std.core.io import print;
-
 fn main() {
     let cycles: u64 = 40;  // bench-scale
     let chunk_count: u64 = 4096;

@@ -1,5 +1,4 @@
 from std.core.drop import Drop;
-from std.core.vec import Vec;
 from std.ffi.memory import copy_from, copy_to;
 
 typedef Bytes = u8[];

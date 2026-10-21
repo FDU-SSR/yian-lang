@@ -2,7 +2,6 @@
 // This file belongs to no anx project and is only for visual/scope checks.
 /* Block comment
    spanning lines */
-from std.core.io import print;
 from sample.geometry import Point, Pair;
 
 // Keywords and declarations.

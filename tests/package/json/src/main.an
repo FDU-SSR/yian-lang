@@ -1,7 +1,6 @@
 from json.parse import parse;
 from json.write import Writer, stringify;
 from std.core.drop import Drop;
-from std.core.clone import Clone;
 
 fn main() {
     let writer = Writer.new(); defer writer.drop();

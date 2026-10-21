@@ -1,5 +1,3 @@
-from std.core.vec import Vec;
-
 fn main() {
     let values = Vec<i32>.new();
     match values {

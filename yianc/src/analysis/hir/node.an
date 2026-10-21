@@ -5,8 +5,6 @@ from yianc.analysis.ty.model import EnumVariant, StructField;
 from yianc.frontend.ast.atoms import BuiltinKind, MatchArmOrigin;
 from yianc.frontend.ast.operator import BinaryOperator, UnaryOperator;
 from std.core.drop import Drop;
-from std.core.option import Option;
-from std.core.vec import Vec;
 
 pub struct Block {
     pub stmts: Vec<HirId>,

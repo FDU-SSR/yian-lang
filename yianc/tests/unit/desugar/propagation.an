@@ -8,7 +8,6 @@ from yianc.frontend.ast.traversal import AstVisitor, walk_program;
 from yianc.frontend.ast.atoms import MatchArmOrigin;
 from std.core.drop import Drop;
 from std.core.ops import Index;
-from std.core.vec import Vec;
 
 struct Check { tries: u64, branches: u64, conversions: u64, sources: u64, bindings: Vec<str> }
 impl AstVisitor for Check {

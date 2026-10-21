@@ -2,8 +2,6 @@
 //
 // Expected output: AliceBobBobCharlie
 
-from std.core.io import print;
-
 struct Person {
     name: str,
     age: i32,

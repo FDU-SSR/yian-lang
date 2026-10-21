@@ -13,13 +13,8 @@ from yianc.common.traversal import WalkControl;
 from yianc.frontend.ast.atoms import MatchArmOrigin;
 from yianc.diagnostics.model import AnalysisError, AnalysisErrorKind, DiagnosticCode, Diagnostic, Severity;
 from std.collections.sort import sort_by;
-from std.core.clone import Clone;
 from std.core.drop import Drop;
 from std.core.iter import Iterator, IntoIterator;
-from std.core.option import Option;
-from std.core.result import Result;
-from std.core.vec import Vec;
-from std.core.string import String;
 from std.collections.hash_set import HashSet;
 from yianc.frontend.text import is_printable;
 

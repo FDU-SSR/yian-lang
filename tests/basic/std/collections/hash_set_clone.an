@@ -3,11 +3,9 @@
 // one set never affects the other; element cleanup stays with the caller, and a
 // shared buffer is released exactly once.
 from std.collections.hash_set import HashSet;
-from std.core.clone import Clone;
 from std.core.drop import Drop;
 from std.core.hash import Hash, Murmur3Hasher;
 from std.core.ops import PartialEq;
-from std.core.string import String;
 
 struct SKey {
     tag: String,

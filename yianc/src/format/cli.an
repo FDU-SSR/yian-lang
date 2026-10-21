@@ -3,11 +3,9 @@ from yianc.frontend.source import collect_sources, read_source;
 from yianc.format.api import format_text;
 from std.core.drop import Drop;
 from std.core.fs import write;
-from std.core.io import eprint, eprintln, print, println;
+from std.core.io import eprint, eprintln;
 from std.core.iter import Iterator, IntoIterator;
 from std.core.fmt import ToString;
-from std.core.string import String;
-from std.core.vec import Vec;
 
 fn drop_paths(paths: Vec<String>&) {
     for path in *paths { path.drop(); }

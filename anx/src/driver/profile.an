@@ -6,13 +6,9 @@ from std.core.drop import Drop;
 from std.core.fmt import ToString;
 from std.core.fs import canonicalize, create_dir_all, read_to_string, write_atomic;
 from std.core.io import eprint, eprintln;
-from std.core.option import Option;
 from std.core.path import Path;
 from std.core.process import temporary_directory;
-from std.core.result import Result;
-from std.core.string import String;
 from std.core.time import monotonic_now;
-from std.core.vec import Vec;
 
 struct AnxTiming {
     pub pass_id: String,

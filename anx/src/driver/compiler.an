@@ -1,11 +1,8 @@
 from std.core.drop import Drop;
 from std.core.fs import canonicalize, metadata;
 from std.core.io import File, IoError, IoErrorKind, OpenMode, Read;
-from std.core.option import Option;
 from std.core.path import Path, PathBuf;
 from std.core.process import Command, env_var;
-from std.core.result import Result;
-from std.core.string import String;
 
 fn invalid_compiler(path: str, reason: str) -> String {
     let message = String.from(&"native YIAN compiler '");

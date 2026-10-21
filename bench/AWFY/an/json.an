@@ -32,8 +32,6 @@
 //
 // Scale: parse the document once per work unit and verify 156 operations.
 // Outer repetitions repeat complete parsing and release.
-from std.core.vec import Vec;
-from std.core.string import String;
 
 // -- JSON values (tagged enum for upstream json/JsonValue.java and subclasses) --
 

@@ -1,9 +1,6 @@
 from lsp_protocol.types import TextDocumentIdentifier, VersionedDocumentIdentifier, TextDocumentItem, ContentChangeEvent;
 from json.value import Value, Number, Object;
 from std.core.drop import Drop;
-from std.core.option import Option;
-from std.core.vec import Vec;
-from std.core.string import String;
 
 pub struct DidOpenParams { pub text_document: TextDocumentItem }
 pub struct DidChangeParams {

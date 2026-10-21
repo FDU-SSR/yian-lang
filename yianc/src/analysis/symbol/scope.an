@@ -7,9 +7,6 @@ from std.collections.hash_map import HashMap;
 from std.core.drop import Drop;
 from std.core.iter import Iterator, IntoIterator;
 from std.core.ops import Index;
-from std.core.option import Option;
-from std.core.result import Result;
-from std.core.vec import Vec;
 
 pub struct Scope {
     parent: Option<ScopeId>,

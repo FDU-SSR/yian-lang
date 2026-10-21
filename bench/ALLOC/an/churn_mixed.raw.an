@@ -4,8 +4,6 @@
 // Scale: 20000 rounds, each with one 16 KiB block and 256 blocks of 16 B.
 // Assert checksum == rounds * (5 for the large block + 256 * 2 for small blocks).
 
-from std.core.io import print;
-
 fn main() {
     let rounds: u64 = 20000;  // bench-scale
     let small_count: u64 = 256;

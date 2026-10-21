@@ -16,9 +16,6 @@ from yianc.package.model import PackageMap;
 from yianc.package.provenance import SourceTrust;
 from std.collections.hash_map import HashMap;
 from std.core.drop import Drop;
-from std.core.option import Option;
-from std.core.string import String;
-from std.core.vec import Vec;
 
 // Records the actual underlying queries a verification cache performs.
 // Duplicate keys for a successful query path indicate a cache regression.

@@ -42,7 +42,6 @@
 //       checking queuePacketCount==23246 and holdCount==9297 per run.
 // Expected values: queuePacketCount=23246, holdCount=9297, matching bench/AWFY/c/richards.c
 //         and official upstream Java expectations.
-from std.core.vec import Vec;
 
 // -- Constants (upstream richards/RBObject.java) --
 // IDLER=0, WORKER=1, HANDLER_A=2, HANDLER_B=3, DEVICE_A=4, DEVICE_B=5,

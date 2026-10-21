@@ -6,9 +6,6 @@ from yianc.common.ids import TypeId;
 from yianc.diagnostics.model import AnalysisError;
 from std.core.drop import Drop;
 from std.core.iter import Iterator, IntoIterator;
-from std.core.option import Option;
-from std.core.result import Result;
-from std.core.vec import Vec;
 
 // Result buffers are caller-owned; fields contain borrowed session identities only.
 pub fn struct_fields(store: TypeStore&, type_id: TypeId) -> Result<Vec<StructField>, AnalysisError> {

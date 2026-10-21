@@ -4,10 +4,7 @@ from yianc.codegen.types import BackendTypes;
 from yianc.codegen.error import CodegenError;
 from yianc.frontend.ast.atoms import BuiltinKind;
 from std.core.iter import Iterator, IntoIterator;
-from std.core.range import Range;
 from std.core.ops import Index;
-from std.core.option import Option;
-from std.core.result import Result;
 
 // Derived place addresses preserve pointer access diagnostics until a language reference is stored or passed.
 fn access_kind(function: CfgFunction&, types: BackendTypes&, address: ValueId) -> Result<AccessKind, CodegenError> {

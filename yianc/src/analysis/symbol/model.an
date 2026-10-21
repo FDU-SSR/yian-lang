@@ -1,7 +1,6 @@
 from yianc.common.ids import NameId, TypeId, SymbolId, UnitId, DefId;
 from yianc.common.location import SourceSpan;
 from std.core.drop import Drop;
-from std.core.option import Option;
 
 pub enum SymbolKind {
     Type,

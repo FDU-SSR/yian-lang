@@ -7,9 +7,6 @@ from yianc.diagnostics.model import AnalysisError, DiagnosticCode;
 from std.collections.hash_map import HashMap;
 from std.core.drop import Drop;
 from std.core.iter import Iterator, IntoIterator;
-from std.core.option import Option;
-from std.core.result import Result;
-from std.core.string import String;
 
 fn signature_error(ctx: ResolutionContext&, span: SourceSpan, method: NameId, trait_id: TypeId, target: TypeId) -> AnalysisError {
     let trait_name = type_text(ctx, trait_id);

@@ -19,11 +19,6 @@ from std.core.drop import Drop;
 from std.core.fmt import ToString;
 from std.core.iter import Iterator, IntoIterator;
 from std.core.ops import Index;
-from std.core.range import Range;
-from std.core.option import Option;
-from std.core.result import Result;
-from std.core.string import String;
-from std.core.vec import Vec;
 
 // All handles are non-owning. The driver closes the module after this view is released.
 pub struct LlvmLowering {

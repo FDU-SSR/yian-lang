@@ -16,12 +16,9 @@ from yianc.driver.dump import StageDumps;
 from yianc.analysis.session.prepare import PreparationObserver;
 from json.write import Writer;
 from std.core.drop import Drop;
-from std.core.io import eprint, eprintln, println;
-from std.core.option import Option;
+from std.core.io import eprint, eprintln;
 from std.core.path import Path;
 from std.core.fs import try_exists;
-from std.core.result import Result;
-from std.core.vec import Vec;
 from std.core.iter import Iterator, IntoIterator;
 
 // The caller owns every diagnostic and keeps its source manager alive throughout rendering.

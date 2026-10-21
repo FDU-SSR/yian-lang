@@ -3,7 +3,6 @@ from yianc.frontend.ast.operator import UnaryOperator, BinaryOperator;
 from std.core.drop import Drop;
 from std.core.hash import Hash, Murmur3Hasher;
 from std.core.ops import PartialEq;
-from std.core.vec import Vec;
 
 // Keys own their sequence buffers independently of stored type records.
 pub enum TypeKey {

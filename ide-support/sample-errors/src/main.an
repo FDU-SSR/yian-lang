@@ -2,7 +2,6 @@
 //
 // This project is for manual IDE diagnostic checks; anx build is expected to fail.
 // See comments in src/errors.an and src/shapes.an for the specific errors.
-from std.core.io import print;
 from sample_errors.helper import double;
 
 fn main() {

@@ -1,8 +1,5 @@
 from std.core.str import CharIter;
 from std.core.iter import Iterator, Peekable;
-from std.core.option import Option;
-from std.core.result import Result;
-from std.core.string import String;
 from std.core.drop import Drop;
 from json.value import Value, Number;
 from json.error import ParseError, ParseErrorKind;

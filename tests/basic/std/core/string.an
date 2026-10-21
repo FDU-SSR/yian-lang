@@ -2,9 +2,6 @@
 //
 // Expected output: 0
 
-from std.core.string import String;
-from std.core.option import Option;
-
 fn main() {
     // Test String construction.
     let s_new: String = String.new();

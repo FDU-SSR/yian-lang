@@ -1,7 +1,6 @@
 from yianc.common.traversal import WalkControl;
 from yianc.frontend.ast.node import Identifier, IntLiteral, FloatLiteral, CharLiteral, StrLiteral, BoolLiteral, Program, Block, Argument, VarInfo, PatternParam, PatternLet, LetCondition, ElifBranch, MatchArm, Attr, TypeGenericParam, ConstGenericParam, FieldInfo, VariantInfo, MethodDecl, MethodDef, ExternFuncDecl, ImplCondition, CaptureItem, FieldPattern, Expr, TypeSyntax, ConstExpr, Pattern, Item, Literal, RangeBounds, Condition, GenericArgument, GenericParam, Parameter, TraitMember, PatternArguments, TypeSource;
 from std.core.ops import Index;
-from std.core.result import Result;
 
 // Each callback and child edge propagates failure before visiting later children.
 pub trait TryAstVisitor<E> {

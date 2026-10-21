@@ -1,5 +1,3 @@
-from std.core.io import print;
-
 fn source(ok: bool) -> Result<i32, i32> {
     if ok { Result<i32, i32>.Ok(7) } else { Result<i32, i32>.Err(3) }
 }

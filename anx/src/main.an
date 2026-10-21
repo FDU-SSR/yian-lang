@@ -1,11 +1,8 @@
 from std.core.drop import Drop;
 from std.core.env import args, exit;
 from std.core.fs import resolve;
-from std.core.io import eprint, eprintln, print, println;
-from std.core.option import Option;
+from std.core.io import eprint, eprintln;
 from std.core.path import PathBuf;
-from std.core.string import String;
-from std.core.vec import Vec;
 from std.cli import ArgumentParser, Action, ArgMatches, Nargs, ParseOutcome, ValueType, CliError;
 from anx.diagnostics.model import AX_NO_PROJECT_ROOT, Diagnostic, release_diagnostics;
 from anx.driver.build import compile_project, compile_project_profiled, run_executable;

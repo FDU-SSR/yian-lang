@@ -16,7 +16,6 @@
 //
 // Fat and raw modes share this source.
 // Use inferred dyn types and x[0u64..n] range views for both modes, retaining fat-mode checks.
-from std.core.io import print;
 from std.num.f64 import sqrt;
 
 fn A(i: u64, j: u64) -> i32 {

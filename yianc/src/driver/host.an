@@ -1,8 +1,5 @@
 from yianc.diagnostics.model import AnalysisError;
 from std.core.drop import Drop;
-from std.core.result import Result;
-from std.core.string import String;
-from std.core.vec import Vec;
 
 extern "C" {
     fn yian_compiler_root(buffer: cptr<u8>, capacity: u64) -> i64;

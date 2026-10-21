@@ -17,10 +17,6 @@ from llvm.observation import OperationObserver;
 from llvm.core import llvm_version;
 from llvm.object import Module;
 from std.core.drop import Drop;
-from std.core.option import Option;
-from std.core.result import Result;
-from std.core.string import String;
-from std.core.vec import Vec;
 
 pub struct BackendOptions {
     pub raw_pointers: bool,

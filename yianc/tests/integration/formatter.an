@@ -4,7 +4,6 @@ from yianc.frontend.lex.token import Token, TokenPayload, drop_tokens;
 from std.core.drop import Drop;
 from std.core.fs import read_to_string;
 from std.core.ops import Index;
-from std.core.vec import Vec;
 
 fn same_tokens(left: Vec<Token>&, right: Vec<Token>&) -> bool {
     if left.len() != right.len() { return false; }

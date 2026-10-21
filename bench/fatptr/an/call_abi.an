@@ -13,7 +13,6 @@
 //
 // Both modes share this source; raw Node*/Node[] use raw pointers/16 B slices.
 from std.core.env import args;
-from std.core.io import print;
 
 struct Node {
     value: i64,

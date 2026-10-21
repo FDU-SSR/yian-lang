@@ -1,7 +1,5 @@
 // Array indexing, mutation, multidimensional access, and inline GEP cases.
 
-from std.core.io import print;
-
 fn case_array_access() {
     let arr: i32[4] = [0, 0, 0, 0];
     arr[0] = 3;

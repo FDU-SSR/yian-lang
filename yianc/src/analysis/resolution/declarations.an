@@ -8,9 +8,6 @@ from yianc.frontend.ast.atoms import AttrKind;
 from yianc.diagnostics.model import DiagnosticCode, AnalysisError, AnalysisErrorKind, AnalysisStage;
 from std.core.drop import Drop;
 from std.core.iter import Iterator, IntoIterator;
-from std.core.option import Option;
-from std.core.result import Result;
-from std.core.vec import Vec;
 
 pub fn has_attr(attrs: Vec<Attr&>&, kind: AttrKind) -> bool {
     for attr in *attrs {

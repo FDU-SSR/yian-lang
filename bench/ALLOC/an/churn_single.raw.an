@@ -4,8 +4,6 @@
 // Scale: 1000 rounds * 4096 dyn[4] i32 blocks (16 B payloads).
 // Assert checksum == value 2 read per block * blocks * rounds.
 
-from std.core.io import print;
-
 fn main() {
     let batch_count: u64 = 4096;
     let rounds: u64 = 1000;  // bench-scale

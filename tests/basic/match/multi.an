@@ -8,8 +8,6 @@
 // small
 // option_a
 
-from std.core.io import print;
-
 enum Color {
     Red,
     Blue,

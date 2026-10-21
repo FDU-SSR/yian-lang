@@ -1,7 +1,6 @@
 from yianc.analysis.constant.big_integer import BigInteger;
 from yianc.frontend.ast.operator import BinaryOperator;
 from std.core.drop import Drop;
-from std.core.clone import Clone;
 
 fn main() {
     let maximum = BigInteger.from_magnitude(0xFFFFFFFFFFFFFFFFu64, false);

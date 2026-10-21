@@ -2,10 +2,6 @@
 
 // Combined expected output: Charlie
 
-from std.core.io import print;
-
-
-
 // Test for 'dyn' statement with basic type dynamic memory allocation
 //
 

@@ -4,7 +4,6 @@ from yianc.common.ids import TypeId;
 from yianc.frontend.ast.operator import BinaryOperator, UnaryOperator;
 from llvm.object import Module, Builder;
 from llvm.ir import IrValue, BinaryOp, IntCompare, RealCompare, CastOp;
-from std.core.result import Result;
 
 pub enum ScalarKind {
     Integer { bits: u32, signed: bool },

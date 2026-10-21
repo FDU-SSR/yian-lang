@@ -13,9 +13,6 @@ from yianc.common.location import SourceSpan;
 from yianc.diagnostics.model import AnalysisError, AnalysisErrorKind, Diagnostic, DiagnosticCode;
 from std.core.drop import Drop;
 from std.core.iter import Iterator, IntoIterator;
-from std.core.option import Option;
-from std.core.result import Result;
-from std.core.vec import Vec;
 
 fn root_unit(ctx: ResolutionContext&, unit: UnitId) -> bool {
     let record = *ctx.session.unit(unit).unwrap();

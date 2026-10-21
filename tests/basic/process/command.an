@@ -4,9 +4,6 @@ from std.core.io import IoErrorKind, Read, Stderr, Stdout, Write;
 from std.core.process import Command, ExitStatus, SpawnOptions, StdioMode;
 from std.core.poller import PollInterests, Poller, PollSource;
 from std.core.time import Instant, monotonic_now;
-from std.core.option import Option;
-from std.core.string import String;
-from std.core.vec import Vec;
 
 fn main() {
     let arguments = args();

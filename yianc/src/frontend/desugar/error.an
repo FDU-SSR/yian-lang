@@ -1,6 +1,5 @@
 from yianc.frontend.source import Span;
 from std.core.drop import Drop;
-from std.core.string import String;
 
 pub struct DesugarError { message: String, span: Span }
 impl DesugarError {

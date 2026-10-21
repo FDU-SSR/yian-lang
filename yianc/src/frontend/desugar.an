@@ -4,7 +4,6 @@ from yianc.frontend.desugar.parameters import normalize_parameters;
 from yianc.frontend.desugar.control import lower_control;
 from yianc.frontend.desugar.expressions import lower_expressions;
 from yianc.frontend.desugar.propagation import validate_propagation, lower_propagation;
-from std.core.result import Result;
 
 // Validation failures leave the AST untouched; successful lowering represents syntax sugar as ordinary control flow and calls.
 pub fn desugar(tree: AstTree&, path: str) -> Result<void, DesugarError> {

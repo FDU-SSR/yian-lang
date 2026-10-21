@@ -6,8 +6,6 @@
 // Store each batch's pointers in a heap array so they escape and allocations cannot be optimized away in either mode.
 // Raw mode uses churn_single.raw.an with T* elements instead of T[].
 
-from std.core.io import print;
-
 fn main() {
     let batch_count: u64 = 4096;
     let rounds: u64 = 1000;  // bench-scale

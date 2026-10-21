@@ -6,9 +6,6 @@ from yianc.format.trivia import gap, Gap;
 from std.core.drop import Drop;
 from std.core.iter import Iterator, IntoIterator;
 from std.core.ops import Index;
-from std.core.option import Option;
-from std.core.string import String;
-from std.core.vec import Vec;
 
 struct Flags { inline_: bool, postfix: bool, tight: bool, closure_open: bool, closure_close: bool }
 

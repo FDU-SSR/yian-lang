@@ -5,11 +5,7 @@ from std.core.convert import From;
 from std.core.drop import Drop;
 from std.core.iter import Iterator, IteratorExt, Peekable;
 from std.core.ops import Index;
-from std.core.option import Option;
-from std.core.result import Result;
 from std.core.str import CharIter;
-from std.core.string import String;
-from std.core.vec import Vec;
 from std.num.parse_error import ParseNumberError;
 
 pub struct LexError {

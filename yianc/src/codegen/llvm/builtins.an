@@ -7,9 +7,6 @@ from yianc.frontend.ast.atoms import BuiltinKind;
 from llvm.ir import IrValue, IrType, IntCompare, BinaryOp, CastOp;
 from std.core.drop import Drop;
 from std.core.ops import Index;
-from std.core.option import Option;
-from std.core.result import Result;
-from std.core.vec import Vec;
 
 impl FunctionLowering {
     fn external_call(name: str, result: IrType, parameters: IrType[], arguments: IrValue[]) -> Result<IrValue, CodegenError> {

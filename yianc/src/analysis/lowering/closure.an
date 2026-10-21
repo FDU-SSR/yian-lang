@@ -13,12 +13,8 @@ from yianc.frontend.ast.node import CaptureItem, Parameter as SyntaxParameter, T
 from yianc.frontend.source import Span;
 from yianc.diagnostics.model import AnalysisError;
 from std.collections.hash_map import HashMap;
-from std.core.clone import Clone;
 from std.core.drop import Drop;
 from std.core.iter import Iterator, IntoIterator;
-from std.core.option import Option;
-from std.core.result import Result;
-from std.core.vec import Vec;
 
 impl ExprChecker {
     pub fn closure(span: Span, captures: Vec<CaptureItem&>&, syntax_parameters: Vec<SyntaxParameter>&, return_type: Option<TypeSyntax&>&, body: Block&) -> Result<HirId, AnalysisError> {

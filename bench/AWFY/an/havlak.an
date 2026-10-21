@@ -40,7 +40,6 @@
 // Scale: official innerIterations=1500 per work unit, producing 6102/5213.
 // Outer repetitions repeat complete LoopTesterApp runs.
 // Assert loops=6102 and nodes=5213 each round, matching the C reference.
-from std.core.vec import Vec;
 
 // -- Basic blocks / edges / CFG (upstream havlak/BasicBlock.java, BasicBlockEdge.java,
 //    ControlFlowGraph.java) ──

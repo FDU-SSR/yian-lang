@@ -10,7 +10,6 @@
 //           then release every node with del.
 //
 // Both modes share this source; raw Option<Node&> is an 8 B pointer.
-from std.core.io import print;
 
 struct Node {
     value: i64,

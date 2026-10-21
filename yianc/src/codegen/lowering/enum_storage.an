@@ -7,9 +7,6 @@ from yianc.analysis.ty.model import NominalKind;
 from yianc.common.ids import HirId, TypeId;
 from yianc.common.location import SourceSpan;
 from yianc.frontend.ast.operator import UnaryOperator;
-from std.core.option import Option;
-from std.core.result import Result;
-from std.core.vec import Vec;
 
 // Provenance of an enum storage address. Only fresh destinations and borrowed
 // places are written; snapshots are independent copies used for reads.

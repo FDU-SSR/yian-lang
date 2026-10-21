@@ -3,11 +3,7 @@ from yianc.codegen.cfg.model import CfgModule, CfgFunction, Instruction, Termina
 from yianc.codegen.error import CodegenError;
 from std.core.drop import Drop;
 from std.core.iter import Iterator, IntoIterator;
-from std.core.range import Range;
 from std.core.ops import Index;
-from std.core.option import Option;
-from std.core.result import Result;
-from std.core.vec import Vec;
 
 fn clean_function(function: CfgFunction&) -> Result<(), CodegenError> {
     let reachable = Vec<bool>.new();

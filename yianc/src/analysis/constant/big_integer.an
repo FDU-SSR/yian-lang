@@ -1,11 +1,7 @@
 from yianc.analysis.constant.value import IntegerValue, ConstEvalError;
 from yianc.analysis.constant.integer import magnitude;
 from yianc.frontend.ast.operator import BinaryOperator;
-from std.core.clone import Clone;
 from std.core.drop import Drop;
-from std.core.option import Option;
-from std.core.result import Result;
-from std.core.vec import Vec;
 from std.num.f64 import from_bits;
 
 // Numbers own normalized little-endian base-2^32 digits; zero has no sign or digits.

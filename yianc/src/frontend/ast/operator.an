@@ -1,4 +1,3 @@
-from std.core.option import Option;
 from yianc.frontend.lex.token import Token, PunctuatorKind;
 
 pub enum BinaryOperator {

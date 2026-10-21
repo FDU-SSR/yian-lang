@@ -438,7 +438,6 @@ class LspProtocolTests(unittest.TestCase):
                 ))
 
                 declarations = (
-                    "from std.core.io import print;\n"
                     "fn helper(value: i32, other: i32) -> i32 { value + other }\n"
                     "fn make_vec() -> Vec<i32> { Vec<i32>.new() }\n"
                 )

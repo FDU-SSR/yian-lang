@@ -6,10 +6,6 @@
 //
 // Expected output: (empty, exit 0)
 
-from std.core.vec import Vec;
-from std.core.string import String;
-from std.core.option import Option;
-
 fn case_empty_container_behaviors() {
     // ---- Empty Vec<u8>: construction and as_slice ----
     let v: Vec<u8> = Vec<u8>.new();

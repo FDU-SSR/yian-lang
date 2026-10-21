@@ -12,12 +12,7 @@ from yianc.frontend.ast.operator import UnaryOperator, BinaryOperator;
 from yianc.diagnostics.model import AnalysisError;
 from std.collections.hash_map import HashMap;
 from std.core.drop import Drop;
-from std.core.clone import Clone;
 from std.core.iter import Iterator, IntoIterator;
-from std.core.option import Option;
-from std.core.result import Result;
-from std.core.vec import Vec;
-from std.core.string import String;
 
 impl ExprChecker {
     pub fn match_argument(expected: TypeId, actual: TypeId, substitutions: HashMap<TypeId, TypeId>&) -> bool {

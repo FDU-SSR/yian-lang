@@ -4,8 +4,6 @@ from yianc.frontend.parse.pattern import parse_binding_pattern;
 from yianc.frontend.parse.state import Parser;
 from yianc.frontend.parse.type import parse_type;
 from std.core.drop import Drop;
-from std.core.option import Option;
-from std.core.vec import Vec;
 
 pub fn parse_var_info(parser: Parser&) -> Option<VarInfo&> {
     let name = parser.identifier()?;

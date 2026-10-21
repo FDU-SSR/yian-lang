@@ -1,7 +1,6 @@
 from std.core.fs import read, read_to_string, write, write_string, append, metadata, symlink_metadata;
 from std.core.fs import create_dir, create_dir_all, remove_file, remove_dir, rename, try_exists, canonicalize, current_dir, Directory;
 from std.core.io import File, OpenMode, OpenOptions, SeekFrom, IoError, IoErrorKind;
-from std.core.result import Result;
 from std.core.drop import Drop;
 
 fn error_kind<T>(result: Result<T, IoError>, kind: IoErrorKind) {

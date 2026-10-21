@@ -1,9 +1,6 @@
 from lsp_protocol.types import Range, decode_range, encode_range;
 from json.value import Value, Object;
-from std.core.string import String;
-from std.core.option import Option;
 from std.core.drop import Drop;
-from std.core.clone import Clone;
 
 // Known required fields are typed; optional and future LSP fields remain owned JSON data.
 pub struct Diagnostic {

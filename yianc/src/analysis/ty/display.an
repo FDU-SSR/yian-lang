@@ -2,7 +2,6 @@ from yianc.analysis.resolution.context import ResolutionContext;
 from yianc.analysis.names import NameInterner;
 from yianc.analysis.ty.store import TypeStore;
 from yianc.common.ids import TypeId;
-from std.core.string import String;
 from std.core.iter import Iterator, IntoIterator;
 from std.core.drop import Drop;
 

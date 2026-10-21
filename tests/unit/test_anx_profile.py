@@ -91,7 +91,7 @@ class AnxProfileTests(unittest.TestCase):
 
     def test_run_and_disabled_build(self) -> None:
         project = self.make_project(
-            main='from std.core.env import exit;\nfrom std.core.io import print;\nfn main() { print("profile-run\\n"); exit(7); }\n'
+            main='from std.core.env import exit;\nfn main() { print("profile-run\\n"); exit(7); }\n'
         )
         run = self.run_anx(project, "run", "--profile", "-O1")
         self.assertEqual(run.returncode, 7, run.stderr)
@@ -208,7 +208,6 @@ class AnxProfileTests(unittest.TestCase):
         source.write_text(
             f'''from anx.driver.profile import BuildProfile;
 from std.core.env import exit;
-from std.core.option import Option;
 from yianc.driver.profile import ProfileKind, ProfileRecorder;
 
 fn main() {{

@@ -1,7 +1,5 @@
 // Literal syntax cases; the string case preserves the original output oracle.
 
-from std.core.io import print;
-
 fn case_string_literals() {
     let hello: str = "Hello, World!";
     print(hello);

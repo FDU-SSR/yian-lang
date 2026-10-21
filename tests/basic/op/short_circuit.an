@@ -3,8 +3,6 @@
 // Expected output:
 // Short circuit works correctly
 
-from std.core.io import print;
-
 fn false_func() -> bool {
     print("false_func called\n");
     return false;

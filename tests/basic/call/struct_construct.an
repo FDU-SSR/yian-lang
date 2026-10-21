@@ -4,8 +4,6 @@
 // Alice
 // Bob
 
-from std.core.io import print;
-
 struct PositionalPerson {
     pub age: i32,
     pub weight: float,

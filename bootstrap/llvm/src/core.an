@@ -1,6 +1,4 @@
 from std.core.drop import Drop;
-from std.core.result import Result;
-from std.core.vec import Vec;
 from llvm.ir import IrType;
 from llvm.object import Module;
 

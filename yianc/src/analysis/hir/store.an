@@ -5,8 +5,6 @@ from yianc.diagnostics.model import AnalysisError;
 from std.collections.arena import Arena;
 from std.core.drop import Drop;
 from std.core.iter import Iterator, IntoIterator;
-from std.core.option import Option;
-from std.core.result import Result;
 
 pub struct HirStore {
     nodes: Arena<HirNode>,

@@ -15,7 +15,6 @@ from yianc.package.provenance import SourceTrust;
 from std.collections.arena import Arena;
 from std.core.drop import Drop;
 from std.core.iter import Iterator, IntoIterator;
-from std.core.option import Option;
 
 pub struct CompilationUnit {
     pub id: UnitId,

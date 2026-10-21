@@ -1,6 +1,3 @@
-from std.core.result import Result;
-from std.core.option import Option;
-from std.core.vec import Vec;
 from llvm.observation import OperationObserver;
 from llvm.ir import IrSession, IrType, IrValue, IrBlock;
 from llvm.ir import IntCompare, RealCompare, BinaryOp, CastOp;
