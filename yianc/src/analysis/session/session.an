@@ -7,23 +7,12 @@ from yianc.analysis.symbol.scope import SymbolStore;
 from yianc.analysis.symbol.model import SymbolKind;
 from yianc.analysis.ty.impl_registry import ImplRegistry;
 from yianc.analysis.ty.store import TypeStore;
-from yianc.diagnostics.model import DiagnosticSink;
-from yianc.frontend.prepare import PreparedFile;
-from yianc.frontend.source import SourceManager, SourceFile;
+from yianc.diagnostics.model import AnalysisError, DiagnosticSink;
+from yianc.frontend.session import CompilationUnit, FrontendSession;
+from yianc.frontend.source import SourceFile, SourceManager;
 from yianc.package.model import PackageMap;
-from yianc.package.provenance import SourceTrust;
-from std.collections.arena import Arena;
 from std.core.drop import Drop;
 from std.core.iter import Iterator, IntoIterator;
-
-pub struct CompilationUnit {
-    pub id: UnitId,
-    pub source: SourceId,
-    pub prepared: PreparedFile,
-    pub is_stdlib: bool,
-    pub allows_restricted: bool,
-    pub allows_ffi: bool,
-}
 
 pub enum AnalysisPhase {
     Prepared,
@@ -32,17 +21,10 @@ pub enum AnalysisPhase {
     Failed,
 }
 
-impl Drop for CompilationUnit {
-    pub fn drop() {
-        self.prepared.drop();
-    }
-}
-
-// This owner keeps all source/AST/semantic references alive for one preparation run.
+// The middle-end owner composes the completed frontend owner and keeps all semantic data.
 pub struct AnalysisSession {
-    sources: SourceManager,
+    frontend: FrontendSession,
     pub names: NameInterner,
-    units: Arena<CompilationUnit>,
     pub types: TypeStore,
     pub symbols: SymbolStore,
     pub hir: HirStore,
@@ -50,49 +32,43 @@ pub struct AnalysisSession {
     pub worklist: DefinitionWorklist,
     pub impls: ImplRegistry,
     pub diagnostics: DiagnosticSink,
-    packages: Option<PackageMap>,
-    trust: SourceTrust,
     pub raw_pointers: bool,
     phase: AnalysisPhase,
 }
 
 impl AnalysisSession {
-    // Package metadata and source trust transfer into this owner at construction.
-    static pub fn new(trust: SourceTrust, packages: Option<PackageMap>, raw_pointers: bool) -> Self {
-        Self(SourceManager.new(), NameInterner.new(), Arena<CompilationUnit>.new(), TypeStore.new(),
-            SymbolStore.new(), HirStore.new(), DefinitionRegistry.new(), DefinitionWorklist.new(),
-            ImplRegistry.new(), DiagnosticSink.new(), packages, trust, raw_pointers, AnalysisPhase.Prepared)
+    static pub fn new(frontend: FrontendSession, raw_pointers: bool) -> Self {
+        Self(frontend, NameInterner.new(), TypeStore.new(), SymbolStore.new(), HirStore.new(),
+            DefinitionRegistry.new(), DefinitionWorklist.new(), ImplRegistry.new(), DiagnosticSink.new(),
+            raw_pointers, AnalysisPhase.Prepared)
     }
 
-    // A lexed file transfers here; later preparation stages mutate the session-owned payload.
-    pub fn accept(prepared: PreparedFile, permissions: SourcePermissions) -> UnitId {
-        let id = UnitId(self.units.len());
-        self.units.alloc(CompilationUnit(id, prepared.source, prepared,
-            permissions.is_stdlib, permissions.allows_restricted, permissions.allows_ffi));
-        id
+    pub fn frontend() -> FrontendSession& {
+        &self.frontend
     }
 
     pub fn unit(id: UnitId) -> Option<CompilationUnit&> {
-        self.units.get(id.index)
+        self.frontend.unit(id)
     }
 
     pub fn source(id: SourceId) -> Option<SourceFile&> {
-        self.sources.get(id.index)
+        self.frontend.source(id)
     }
 
     pub fn len() -> u64 {
-        self.units.len()
+        self.frontend.len()
     }
 
     pub fn source_manager() -> SourceManager& {
-        &self.sources
+        self.frontend.source_manager()
     }
 
     pub fn package_map() -> Option<PackageMap&> {
-        match &self.packages {
-            Some(value) => Option<PackageMap&>.Some(value),
-            None => Option<PackageMap&>.None,
-        }
+        self.frontend.package_map()
+    }
+
+    pub fn stdlib_root() -> str {
+        self.frontend.stdlib_root()
     }
 
     // Intrinsic identity lives in the session, so later passes need no resolver.
@@ -111,8 +87,16 @@ impl AnalysisSession {
         Option<TypeId>.None
     }
 
-    pub fn stdlib_root() -> str {
-        self.trust.stdlib_root()
+    pub fn begin_analysis() -> Result<(), AnalysisError> {
+        if self.phase != AnalysisPhase.Prepared {
+            return Result<(), AnalysisError>.Err(AnalysisError.internal("analysis session cannot be analyzed twice"));
+        }
+        self.phase = AnalysisPhase.Analyzing;
+        Result<(), AnalysisError>.Ok(())
+    }
+
+    pub fn complete_analysis(ok: bool) {
+        self.phase = if ok { AnalysisPhase.Complete } else { AnalysisPhase.Failed };
     }
 }
 
@@ -125,26 +109,7 @@ impl Drop for AnalysisSession {
         self.hir.drop();
         self.symbols.drop();
         self.types.drop();
-
-        for unit in self.units {
-            unit.drop();
-        }
-
-        self.units.drop();
-
-        match &self.packages {
-            Some(packages) => packages.drop(),
-            None => {}
-        }
-
-        self.trust.drop();
         self.names.drop();
-        self.sources.drop();
+        self.frontend.drop();
     }
-}
-
-pub struct SourcePermissions {
-    pub is_stdlib: bool,
-    pub allows_restricted: bool,
-    pub allows_ffi: bool,
 }

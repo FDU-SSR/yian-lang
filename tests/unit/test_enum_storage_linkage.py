@@ -320,8 +320,6 @@ class LinkageTests(NativeProbe):
         outputs = {
             "ll": self.work / "linkage.ll",
             "bc": self.work / "linkage.bc",
-            "obj": self.work / "linkage.o",
-            "asm": self.work / "linkage.s",
             "exe": self.work / "linkage",
         }
         for target, output in outputs.items():
@@ -356,26 +354,17 @@ class LinkageTests(NativeProbe):
         self.assertEqual(linkages[helper], 8, "a generated function is internal in bitcode")
         self.assertEqual(linkages["abs"], 0, "the extern declaration keeps external linkage in bitcode")
 
-        symbols = {}
-        for artifact in ("obj", "exe"):
-            listing = subprocess.run([self.nm, str(outputs[artifact])], text=True, capture_output=True,
-                                     check=False, timeout=120)
-            self.assertEqual(listing.returncode, 0, f"llvm-nm failed for {artifact}:\n{listing.stderr}")
-            table = {}
-            for line in listing.stdout.splitlines():
-                fields = line.split()
-                if len(fields) >= 2:
-                    table[fields[-1].split("@")[0]] = fields[-2]
-            symbols[artifact] = table
-            self.assertEqual(table["__yian_main"], "T", f"the entry stays global in {artifact}")
-            self.assertEqual(table[helper], "t", f"a generated function is local in {artifact}")
-            self.assertEqual(table["abs"], "U", f"the extern symbol stays undefined in {artifact}")
-
-        assembly = outputs["asm"].read_text(encoding="utf-8")
-        exported = re.findall(r"(?m)^\s*\.globl\s+(\S+)", assembly)
-        self.assertIn("__yian_main", exported, "the entry is exported in assembly")
-        self.assertNotIn(helper, exported, "a generated function is not exported in assembly")
-        self.assertIn(f"{helper}:", assembly, "the generated function keeps its body in assembly")
+        listing = subprocess.run([self.nm, str(outputs["exe"])], text=True, capture_output=True,
+                                 check=False, timeout=120)
+        self.assertEqual(listing.returncode, 0, f"llvm-nm failed for executable:\n{listing.stderr}")
+        table = {}
+        for line in listing.stdout.splitlines():
+            fields = line.split()
+            if len(fields) >= 2:
+                table[fields[-1].split("@")[0]] = fields[-2]
+        self.assertEqual(table["__yian_main"], "T", "the entry stays global in the executable")
+        self.assertEqual(table[helper], "t", "a generated function is local in the executable")
+        self.assertEqual(table["abs"], "U", "the extern symbol stays undefined in the executable")
 
         optimized = self.work / "linkage.opt.ll"
         optimized_run = subprocess.run([self.opt, "-passes=default<O2>", "-S", str(outputs["ll"]), "-o",

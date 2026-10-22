@@ -389,8 +389,7 @@ fn compiler_args(command: Command&, project: Project&, test: ProjectTest&, map_p
         index += 1u64;
     }
     if test.expect_error {
-        command.arg("-t");
-        command.arg("none");
+        command.arg("--check");
     } else {
         command.arg("-t");
         command.arg("exe");
@@ -464,7 +463,7 @@ fn run_one(program: str, project: Project&, test: ProjectTest&, build_dir: str, 
     command.interruptible(true);
     let output_path = if test.expect_error { Option<PathBuf>.None } else { Option<PathBuf>.Some(PathBuf.from(executable.as_str())) };
     compiler_args(&command, project, test, map_path, output_path, raw_pointers, optimization, release);
-    let target = if test.expect_error { "none" } else { "exe" };
+    let target = if test.expect_error { "check" } else { "exe" };
     let level = match optimization { Some(value) => value, None => if release { 3u8 } else { 0u8 } };
     let invocation = match profile {
         Some(observer) => Option<InvocationHandle>.Some(observer.begin_invocation(Option<str>.Some(test.name.as_str()), mode_name,

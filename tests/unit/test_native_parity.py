@@ -60,23 +60,12 @@ class NativeParityTests(unittest.TestCase):
         case_id = "compiler/analysis/unicode-range"
         correct = {
             "status": 1,
-            "stdout": {
-                "format": 1,
-                "ok": False,
-                "diagnostics": [{
-                    "severity": "error",
-                    "code": "E301",
-                    "message": "Unknown identifier 'missing'",
-                    "range": {
-                        "start": {"line": 0, "character": 31},
-                        "end": {"line": 0, "character": 38},
-                    },
-                }],
-            },
+            "stdout": "",
+            "stderr": "error[E301]: Unknown identifier 'missing'\n--> input.an:1:31\n",
         }
         self.assertTrue(check_toolchain_parity.oracle_passes(case_id, correct))
-        wrong = json.loads(json.dumps(correct))
-        wrong["stdout"]["diagnostics"][0]["range"]["start"]["character"] = 30
+        wrong = dict(correct)
+        wrong["stderr"] = "error[E301]: Unknown identifier 'missing'\n--> input.an:1:30\n"
         self.assertFalse(check_toolchain_parity.oracle_passes(case_id, wrong))
 
         with tempfile.TemporaryDirectory(prefix="native parity report ") as temporary:
@@ -151,30 +140,20 @@ class NativeParityTests(unittest.TestCase):
             observation = {
                 "observation": {
                     "status": 1,
-                    "stdout": {
-                        "format": 1,
-                        "ok": False,
-                        "stage": "semantic",
-                        "diagnostics": [{
-                            "severity": "error",
-                            "code": code,
-                            "message": message,
-                        }],
-                    },
-                    "expected_error": True,
-                    "expected_error_code": True,
+                    "stdout": "",
+                    "stderr": f"error[{code}]: {message}\n",
                 },
             }
             self.assertTrue(compiler_parity.oracle_passes(case, observation), name)
-            observation["observation"]["stdout"]["diagnostics"][0]["code"] = "E000"
-            observation["observation"]["expected_error_code"] = False
+            observation["observation"]["stderr"] = f"error[E000]: {message}\n"
             self.assertFalse(compiler_parity.oracle_passes(case, observation), name)
 
     def test_compiler_parity_format_write_checks_fixed_output_and_summary(self) -> None:
         case = next(case for case in compiler_parity.cases() if case.name == "format-write")
         source = case.sources[0]
         original = (ROOT / source).read_text(encoding="utf-8")
-        formatted = (ROOT / "tests/compiler_parity/format.expected.an").read_text(encoding="utf-8")
+        expected_path = (ROOT / source).with_name(Path(source).stem + ".expected.an")
+        formatted = expected_path.read_text(encoding="utf-8")
         rewritten = int(original != formatted)
         observation = {
             "observation": {

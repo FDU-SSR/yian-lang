@@ -1,0 +1,192 @@
+from yianc.common.ids import SourceId, UnitId;
+from yianc.common.location import SourceSpan;
+from yianc.diagnostics.model import AnalysisError, AnalysisStage, DiagnosticCode;
+from yianc.diagnostics.render import detach;
+from yianc.frontend.prepare import FrontendPhase, PreparedFile, PreparationError, PreparationStage, prepare_file;
+from yianc.frontend.source import SourceFile, SourceManager;
+from yianc.package.model import PackageMap;
+from yianc.package.provenance import SourceTrust;
+from std.collections.arena import Arena;
+from std.core.drop import Drop;
+from std.core.iter import Iterator, IntoIterator;
+
+pub struct CompilationUnit {
+    pub id: UnitId,
+    pub source: SourceId,
+    pub prepared: PreparedFile,
+    pub is_stdlib: bool,
+    pub allows_restricted: bool,
+    pub allows_ffi: bool,
+}
+
+impl Drop for CompilationUnit {
+    pub fn drop() {
+        self.prepared.drop();
+    }
+}
+
+pub struct SourcePermissions {
+    pub is_stdlib: bool,
+    pub allows_restricted: bool,
+    pub allows_ffi: bool,
+}
+
+// Observers borrow the partial frontend owner synchronously; preparation never retains them.
+pub trait PreparationObserver {
+    fn begin(pass_id: str) -> u64 { 0u64 }
+    fn finish(pass_id: str, token: u64, success: bool) {}
+    fn stage_complete(stage: PreparationStage, session: FrontendSession&) -> Result<(), AnalysisError>;
+}
+
+// This owner keeps every source, prepared token stream, AST and trust decision for one run.
+pub struct FrontendSession {
+    sources: SourceManager,
+    units: Arena<CompilationUnit>,
+    packages: Option<PackageMap>,
+    trust: SourceTrust,
+}
+
+impl FrontendSession {
+    static pub fn new(trust: SourceTrust, packages: Option<PackageMap>) -> Self {
+        Self(SourceManager.new(), Arena<CompilationUnit>.new(), packages, trust)
+    }
+
+    // A lexed file transfers here; later preparation stages mutate the session-owned payload.
+    pub fn accept(prepared: PreparedFile, permissions: SourcePermissions) -> UnitId {
+        let id = UnitId(self.units.len());
+        self.units.alloc(CompilationUnit(id, prepared.source, prepared,
+            permissions.is_stdlib, permissions.allows_restricted, permissions.allows_ffi));
+        id
+    }
+
+    pub fn unit(id: UnitId) -> Option<CompilationUnit&> {
+        self.units.get(id.index)
+    }
+
+    pub fn unit_at(index: u64) -> Option<CompilationUnit&> {
+        self.units.get(index)
+    }
+
+    pub fn source(id: SourceId) -> Option<SourceFile&> {
+        self.sources.get(id.index)
+    }
+
+    pub fn source_at(index: u64) -> Option<SourceFile&> {
+        self.sources.get(index)
+    }
+
+    pub fn source_count() -> u64 {
+        self.sources.len()
+    }
+
+    pub fn len() -> u64 {
+        self.units.len()
+    }
+
+    pub fn source_manager() -> SourceManager& {
+        &self.sources
+    }
+
+    pub fn package_map() -> Option<PackageMap&> {
+        match &self.packages {
+            Some(value) => Option<PackageMap&>.Some(value),
+            None => Option<PackageMap&>.None,
+        }
+    }
+
+    pub fn stdlib_root() -> str {
+        self.trust.stdlib_root()
+    }
+
+    // Source order is supplied by the caller; each file is copied into this owner.
+    pub fn load_source(path: str) -> Result<SourceId, AnalysisError> {
+        match self.sources.load(path) {
+            Ok(id) => Result<SourceId, AnalysisError>.Ok(SourceId(id)),
+            Err(error) => {
+                defer error.drop();
+                let contextual = error.with_path(path);
+                defer contextual.drop();
+                Result<SourceId, AnalysisError>.Err(AnalysisError.user(DiagnosticCode.Source, Option<SourceSpan>.None, contextual.msg()))
+            },
+        }
+    }
+
+    pub fn load_text(path: str, text: str) -> Result<SourceId, AnalysisError> {
+        match self.sources.load_text(path, text) {
+            Ok(id) => Result<SourceId, AnalysisError>.Ok(SourceId(id)),
+            Err(error) => {
+                defer error.drop();
+                let contextual = error.with_path(path);
+                defer contextual.drop();
+                Result<SourceId, AnalysisError>.Err(AnalysisError.user(DiagnosticCode.Source,
+                    Option<SourceSpan>.None, contextual.msg()))
+            },
+        }
+    }
+
+    pub fn prepare_source(source: SourceId) -> Result<PreparedFile, AnalysisError> {
+        let file = self.sources.file(source.index);
+
+        match prepare_file(source, file.path(), file.text(), FrontendPhase.Tokens) {
+            Ok(value) => Result<PreparedFile, AnalysisError>.Ok(value),
+            Err(error) => {
+                defer error.drop();
+                let stage = match error.stage { Lex => AnalysisStage.Lex, Parse => AnalysisStage.Parse, Desugar => AnalysisStage.Desugar, };
+                Result<PreparedFile, AnalysisError>.Err(AnalysisError.user(error.code,
+                    Option<SourceSpan>.Some(SourceSpan(source, error.span)), error.message.as_str()).with_stage(stage))
+            },
+        }
+    }
+
+    pub fn finish_preparation(result: Result<(), PreparationError>, source: SourceId) -> Result<(), AnalysisError> {
+        match result {
+            Ok(_) => Result<(), AnalysisError>.Ok(()),
+            Err(error) => {
+                defer error.drop();
+                let stage = match error.stage { Lex => AnalysisStage.Lex, Parse => AnalysisStage.Parse, Desugar => AnalysisStage.Desugar, };
+                let problem = AnalysisError.user(error.code, Option<SourceSpan>.Some(SourceSpan(source, error.span)),
+                    error.message.as_str()).with_stage(stage);
+                match detach(&problem.diagnostic, &self.sources) {
+                    Ok(_) => Result<(), AnalysisError>.Err(problem),
+                    Err(detach_error) => { problem.drop(); Result<(), AnalysisError>.Err(detach_error) },
+                }
+            },
+        }
+    }
+
+    // Permission precedence is independent of the spelling of the input path.
+    pub fn classify(canonical: str, allow_ffi: bool) -> SourcePermissions {
+        let stdlib = self.trust.is_stdlib(canonical);
+        let restricted = self.trust.allows_restricted(canonical);
+        let ffi = stdlib || allow_ffi;
+
+        match &self.packages {
+            None => {},
+            Some(packages) => match packages.package_of(canonical) {
+                None => {},
+                Some(package) => {
+                    ffi = package.allows_ffi;
+                },
+            },
+        }
+
+        SourcePermissions(stdlib, restricted, ffi)
+    }
+}
+
+impl Drop for FrontendSession {
+    pub fn drop() {
+        for unit in self.units {
+            unit.drop();
+        }
+        self.units.drop();
+
+        match &self.packages {
+            Some(packages) => packages.drop(),
+            None => {},
+        }
+
+        self.trust.drop();
+        self.sources.drop();
+    }
+}

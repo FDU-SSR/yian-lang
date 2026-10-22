@@ -20,7 +20,7 @@ pub fn format_cli(config: CompilerConfig&, rewrite: bool, check: bool) -> i32 {
     };
     defer drop_paths(&paths);
     if paths.is_empty() { eprintln("error: --format needs at least one source file"); return 1; }
-    if !rewrite && !check && paths.len() != 1 { eprintln("error: --format prints one file; add -w or --check"); return 1; }
+    if !rewrite && !check && paths.len() != 1 { eprintln("error: --format prints one file; add -w or --format-check"); return 1; }
 
     let changed = 0u64;
     for path in paths {

@@ -457,17 +457,17 @@ impl NativeDriver {
     }
 
     // Runtime and C-shim objects belong to one temporary build directory.
-    pub fn link(object: str, output: str, level: u8, relocatable: bool,
+    pub fn link(object: str, output: str, level: u8,
         libraries: Vec<String>&, searches: Vec<String>&) -> Result<Artifact, DriverError> {
-        self.link_inner(object, output, level, relocatable, libraries, searches, Option<CompilerTrace&>.None)
+        self.link_inner(object, output, level, libraries, searches, Option<CompilerTrace&>.None)
     }
 
-    pub fn link_observed(object: str, output: str, level: u8, relocatable: bool,
+    pub fn link_observed(object: str, output: str, level: u8,
         libraries: Vec<String>&, searches: Vec<String>&, trace: Option<CompilerTrace&>) -> Result<Artifact, DriverError> {
-        self.link_inner(object, output, level, relocatable, libraries, searches, trace)
+        self.link_inner(object, output, level, libraries, searches, trace)
     }
 
-    fn link_inner(object: str, output: str, level: u8, relocatable: bool,
+    fn link_inner(object: str, output: str, level: u8,
         libraries: Vec<String>&, searches: Vec<String>&, trace: Option<CompilerTrace&>) -> Result<Artifact, DriverError> {
         if level > 3u8 {
             return Result<Artifact, DriverError>.Err(DriverError.message("link", "invalid optimization level"));
@@ -557,28 +557,22 @@ impl NativeDriver {
         let destination = Path.new(directory.as_str()).join("output");
         defer destination.drop();
         temporary.push(String.from(&destination.as_str()));
-        if relocatable {
-            arguments.push(String.from(&"-r"));
-            arguments.push(String.from(&"-nostdlib"));
-        }
         arguments.push(String.from(&object));
         for path in native { arguments.push(String.from(&path.as_str())); }
-        arguments.push(String.from(&if relocatable { runtime_object.as_str() } else { archive.as_str() }));
-        if !relocatable {
-            for flag in flags { arguments.push(String.from(&flag.as_str())); }
-            for search in *searches {
-                let flag = String.from(&"-L");
-                flag.push_str(search.as_str());
-                arguments.push(flag);
-            }
-            for library in *libraries {
-                let flag = String.from(&"-l");
-                flag.push_str(library.as_str());
-                arguments.push(flag);
-            }
-            arguments.push(String.from(&"-lm"));
-            arguments.push(String.from(&match level { 0 => "-O0", 1 => "-O1", 2 => "-O2", _ => "-O3" }));
+        arguments.push(String.from(&archive.as_str()));
+        for flag in flags { arguments.push(String.from(&flag.as_str())); }
+        for search in *searches {
+            let flag = String.from(&"-L");
+            flag.push_str(search.as_str());
+            arguments.push(flag);
         }
+        for library in *libraries {
+            let flag = String.from(&"-l");
+            flag.push_str(library.as_str());
+            arguments.push(flag);
+        }
+        arguments.push(String.from(&"-lm"));
+        arguments.push(String.from(&match level { 0 => "-O0", 1 => "-O1", 2 => "-O2", _ => "-O3" }));
         arguments.push(String.from(&"-o"));
         arguments.push(String.from(&destination.as_str()));
         let link_token = match &trace { Some(observer) => observer.start_pass("native.link", "native", "link native executable", ProfileKind.Pass), None => 0u64, };

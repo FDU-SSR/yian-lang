@@ -161,8 +161,12 @@ fn compiler_command(program: str, project: Project&, target: str, level: Option<
     command.current_dir(project.package(root_index).root());
     command.arg("--packages");
     command.arg(map_path);
-    command.arg("-t");
-    command.arg(target);
+    if target == "check" {
+        command.arg("--check");
+    } else {
+        command.arg("-t");
+        command.arg(target);
+    }
     match executable {
         Some(path) => { command.arg("-o"); command.arg(path.as_str()); path.drop(); },
         None => {},

@@ -673,13 +673,13 @@ def run_test(
     cmd += test.compiler_args
     exe_path: Path | None = None
     if test.expect_error:
-        cmd += ["-t", "none"]
+        cmd += ["--check"]
     elif run:
         exe_path = BUILD_DIR / "test_exe" / _suite_name / test.name
         exe_path.parent.mkdir(parents=True, exist_ok=True)
         cmd += ["-t", "exe", "-o", str(exe_path)]
     else:
-        cmd += ["-t", "none"]
+        cmd += ["--check"]
     if dump:
         cmd.append("--dump")
 

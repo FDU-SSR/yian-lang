@@ -45,13 +45,13 @@ DEFAULT_CASES: dict[str, Case] = {
         "compiler/analysis/unicode-range",
         "analyze",
         "tests/compiler_parity/unicode_error.an",
-        ("--analyze", "--json"),
+        ("--check",),
     ),
     "compiler/analysis/restricted-bitcast": Case(
         "compiler/analysis/restricted-bitcast",
         "analyze",
         "tests/basic/error/restricted_bitcast.err.an",
-        ("--analyze", "--json"),
+        ("--check",),
     ),
     "compiler/native/array-access": Case(
         "compiler/native/array-access",
@@ -227,8 +227,9 @@ def _preview(
                 commands.append({
                     "case": case_id,
                     "pointer_mode": mode,
-                    "command": [native, *case.arguments, *raw, "--compiler-root", str(ROOT),
-                                str(ROOT / "lib/src"), target],
+                    "command": [native, *case.arguments, *raw, "--compiler-root",
+                                str(prefix.expanduser().resolve() / "share/yian"),
+                                str(prefix.expanduser().resolve() / "share/yian/lib/src"), target],
                     "run": ["<temp>/result"] if case.run_program else None,
                 })
     direct_calls = sum(case.kind != "package" for _, case in selections) * len(modes)
@@ -304,7 +305,7 @@ def _observe(
     source = directory / "input.an"
     source.parent.mkdir(parents=True, exist_ok=True)
     source.write_bytes((ROOT / case.source).read_bytes())
-    command = [str(yianc), *case.arguments, *raw, "--compiler-root", str(ROOT),
+    command = [str(yianc), *case.arguments, *raw, "--compiler-root", str(prefix / "share/yian"),
                str(prefix / "share/yian/lib/src"), str(source)]
     if case.kind == "compile":
         command.extend(())
@@ -336,38 +337,21 @@ def _observe(
 
 def oracle_passes(case_id: str, observation: dict[str, Json]) -> bool:
     if case_id == "compiler/analysis/unicode-range":
-        result = observation.get("stdout")
-        if not isinstance(result, dict) or result.get("ok") is not False:
-            return False
-        diagnostics = result.get("diagnostics")
-        if not isinstance(diagnostics, list):
-            return False
-        errors = [item for item in diagnostics if isinstance(item, dict) and item.get("severity") == "error"]
+        stderr = observation.get("stderr")
         return (
             observation.get("status") == 1
-            and len(errors) == 1
-            and errors[0].get("code") == "E301"
-            and errors[0].get("message") == "Unknown identifier 'missing'"
-            and errors[0].get("range") == {
-                "start": {"line": 0, "character": 31},
-                "end": {"line": 0, "character": 38},
-            }
+            and isinstance(stderr, str)
+            and "error[E301]: Unknown identifier 'missing'" in stderr
+            and "input.an:1:31" in stderr
+            and observation.get("stdout") == ""
         )
     if case_id == "compiler/analysis/restricted-bitcast":
-        result = observation.get("stdout")
-        diagnostics = result.get("diagnostics") if isinstance(result, dict) else None
-        errors = [
-            item for item in diagnostics
-            if isinstance(item, dict) and item.get("severity") == "error"
-        ] if isinstance(diagnostics, list) else []
+        stderr = observation.get("stderr")
         return (
             observation.get("status") == 1
-            and isinstance(result, dict)
-            and result.get("ok") is False
-            and result.get("format") == 1
-            and len(errors) == 1
-            and errors[0].get("code") == "E501"
-            and errors[0].get("message") == "restricted operation '@bitcast' is only allowed in the standard library"
+            and isinstance(stderr, str)
+            and "error[E501]: restricted operation '@bitcast' is only allowed in the standard library" in stderr
+            and observation.get("stdout") == ""
         )
     if case_id == "compiler/native/array-access":
         run = observation.get("run")

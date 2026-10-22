@@ -1,5 +1,4 @@
 from yianc.common.ids import SourceId;
-from yianc.config import FrontendPhase;
 from yianc.diagnostics.model import DiagnosticCode;
 from yianc.frontend.ast.arena import AstTree;
 from yianc.frontend.desugar import desugar;
@@ -11,6 +10,20 @@ from yianc.frontend.parse.state import Parser;
 from yianc.frontend.source import Span;
 from std.core.convert import From;
 from std.core.drop import Drop;
+
+pub enum FrontendPhase {
+    Tokens, Ast, Desugared
+}
+
+impl FrontendPhase {
+    pub fn name() -> str {
+        match self {
+            Tokens => "tokens",
+            Ast => "ast",
+            Desugared => "desugared",
+        }
+    }
+}
 
 pub enum PreparationStage {
     Lex,

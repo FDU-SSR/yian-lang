@@ -1,0 +1,281 @@
+from yianc.analysis.session.session import AnalysisSession;
+from yianc.analysis.session.output import AnalysisOptions, AnalysisOutput, AnalysisReport;
+from yianc.analysis.resolution.context import ResolutionContext;
+from yianc.analysis.resolution.declarations import collect_declarations;
+from yianc.analysis.resolution.imports import resolve_imports;
+from yianc.analysis.resolution.definitions import resolve_definitions;
+from yianc.analysis.resolution.methods import resolve_impls;
+from yianc.analysis.resolution.automatic import register_automatic;
+from yianc.analysis.passes.restricted import check_restricted;
+from yianc.analysis.passes.type_check import check_procedures;
+from yianc.analysis.constant.definitions import evaluate_constants;
+from yianc.analysis.ty.finalize import finalize_types;
+from yianc.analysis.ty.impl_check import check_impls;
+from yianc.analysis.ty.validation import validate_declarations;
+from yianc.analysis.passes.definite_assignment import check_assignment;
+from yianc.analysis.passes.coverage import check_coverage;
+from yianc.analysis.passes.verify_hir import verify_hir;
+from yianc.analysis.passes.address_storage import normalize_address_storage;
+from yianc.diagnostics.model import AnalysisError, AnalysisErrorKind, AnalysisStage;
+from yianc.diagnostics.order import order_diagnostics;
+from yianc.driver.dump import hir_dump;
+from yianc.driver.profile import ProfileKind;
+from yianc.driver.report import report, report_diagnostics;
+from yianc.frontend.session import FrontendSession;
+from yianc.frontend.source import SourceManager;
+from std.core.drop import Drop;
+from std.core.iter import Iterator, IntoIterator;
+
+// The middle-end driver owns the semantic session and the exported analysis output.
+pub struct MiddleEndDriver {
+    session: Option<AnalysisSession>,
+    output: Option<AnalysisOutput>,
+}
+
+fn start_stage(options: AnalysisOptions&, pass_id: str, stage: AnalysisStage) -> u64 {
+    match options.trace {
+        Some(trace) => trace.start_pass(pass_id, stage.name(), pass_id, ProfileKind.Pass),
+        None => 0,
+    }
+}
+
+fn finish_stage(options: AnalysisOptions&, pass_id: str, started: u64, success: bool) {
+    match options.trace {
+        Some(trace) => if success { trace.finish(pass_id, started); } else { trace.fail(pass_id, started); },
+        None => {},
+    }
+}
+
+fn at_stage(result: Result<(), AnalysisError>, pass_id: str, stage: AnalysisStage, options: AnalysisOptions&, started: u64) -> Result<(), AnalysisError> {
+    let success = match &result { Ok(_) => true, Err(_) => false };
+    finish_stage(options, pass_id, started, success);
+    match result { Ok(_) => Result<(), AnalysisError>.Ok(()), Err(problem) => Result<(), AnalysisError>.Err(problem.with_stage(stage)) }
+}
+
+impl MiddleEndDriver {
+    static pub fn new(frontend: FrontendSession, raw_pointers: bool) -> Self {
+        Self(Option<AnalysisSession>.Some(AnalysisSession.new(frontend, raw_pointers)), Option<AnalysisOutput>.None)
+    }
+
+    pub fn analysis_session() -> AnalysisSession& {
+        match &self.session {
+            Some(value) => value,
+            None => @panic("E599: analysis session has already been transferred"),
+        }
+    }
+
+    pub fn take_session() -> AnalysisSession {
+        match self.session.take() {
+            Some(value) => value,
+            None => @panic("E599: analysis session has already been transferred"),
+        }
+    }
+
+    pub fn output() -> AnalysisOutput& {
+        match &self.output {
+            Some(value) => value,
+            None => @panic("E599: analysis output is not available"),
+        }
+    }
+
+    pub fn take_output() -> AnalysisOutput {
+        match self.output.take() {
+            Some(value) => value,
+            None => @panic("E599: analysis output is not available"),
+        }
+    }
+
+    // The pass sequence is the middle-end contract; callers choose recover/strict via options.
+    pub fn run(options: AnalysisOptions) -> Result<AnalysisReport, AnalysisError> {
+        let session = self.analysis_session();
+        session.begin_analysis()?;
+        let completed = false;
+        defer { session.complete_analysis(completed); };
+
+        let started = start_stage(&options, "analysis.restricted", AnalysisStage.Restricted);
+        at_stage(check_restricted(session), "analysis.restricted", AnalysisStage.Restricted, &options, started)?;
+        let context_started = start_stage(&options, "analysis.context", AnalysisStage.Resolve);
+        let context_result = ResolutionContext.new(session);
+        match &context_result {
+            Ok(_) => finish_stage(&options, "analysis.context", context_started, true),
+            Err(_) => finish_stage(&options, "analysis.context", context_started, false),
+        }
+        let context = context_result?;
+        defer context.drop();
+        context.sizes = options.sizes;
+        let declaration_token = start_stage(&options, "analysis.collect_declarations", AnalysisStage.Resolve);
+        at_stage(collect_declarations(&context), "analysis.collect_declarations", AnalysisStage.Resolve, &options, declaration_token)?;
+        let import_token = start_stage(&options, "analysis.resolve_imports", AnalysisStage.Resolve);
+        at_stage(resolve_imports(&context), "analysis.resolve_imports", AnalysisStage.Resolve, &options, import_token)?;
+        let definition_token = start_stage(&options, "analysis.resolve_definitions", AnalysisStage.Resolve);
+        at_stage(resolve_definitions(&context), "analysis.resolve_definitions", AnalysisStage.Resolve, &options, definition_token)?;
+        let impl_token = start_stage(&options, "analysis.resolve_impls", AnalysisStage.Resolve);
+        at_stage(resolve_impls(&context), "analysis.resolve_impls", AnalysisStage.Resolve, &options, impl_token)?;
+        let automatic_token = start_stage(&options, "analysis.register_automatic", AnalysisStage.Resolve);
+        at_stage(register_automatic(&context), "analysis.register_automatic", AnalysisStage.Resolve, &options, automatic_token)?;
+        let constant_token = start_stage(&options, "analysis.evaluate_constants", AnalysisStage.Resolve);
+        at_stage(evaluate_constants(&context, options.sizes), "analysis.evaluate_constants", AnalysisStage.Resolve, &options, constant_token)?;
+        let finalize_token = start_stage(&options, "analysis.finalize_types", AnalysisStage.Finalize);
+        at_stage(finalize_types(&context), "analysis.finalize_types", AnalysisStage.Finalize, &options, finalize_token)?;
+        let check_impl_token = start_stage(&options, "analysis.check_impls", AnalysisStage.Resolve);
+        at_stage(check_impls(&context), "analysis.check_impls", AnalysisStage.Resolve, &options, check_impl_token)?;
+        let validate_token = start_stage(&options, "analysis.validate_declarations", AnalysisStage.Resolve);
+        at_stage(validate_declarations(&context), "analysis.validate_declarations", AnalysisStage.Resolve, &options, validate_token)?;
+        let report_value = AnalysisReport.new();
+        for warning in context.warnings { report_value.diagnostics.push(*warning); }
+        context.warnings.clear();
+        let report_transferred = false;
+        defer { if !report_transferred { report_value.drop(); } };
+        let procedure_token = start_stage(&options, "analysis.check_procedures", AnalysisStage.TypeCheck);
+        let checked = check_procedures(&context, &options, &report_value.diagnostics);
+        match &checked {
+            Ok(_) => finish_stage(&options, "analysis.check_procedures", procedure_token, true),
+            Err(_) => finish_stage(&options, "analysis.check_procedures", procedure_token, false),
+        }
+        let output = match checked {
+            Ok(value) => value,
+            Err(problem) => return Result<AnalysisReport, AnalysisError>.Err(problem.with_stage(AnalysisStage.TypeCheck)),
+        };
+        let accepted_output = false;
+        defer {
+            if !accepted_output {
+                output.drop();
+            }
+        };
+        let normalize_token = start_stage(&options, "analysis.normalize_address_storage", AnalysisStage.TypeCheck);
+        let normalized = normalize_address_storage(&context, &output);
+        match &normalized {
+            Ok(_) => finish_stage(&options, "analysis.normalize_address_storage", normalize_token, true),
+            Err(_) => finish_stage(&options, "analysis.normalize_address_storage", normalize_token, false),
+        }
+        match normalized {
+            Ok(_) => {},
+            Err(problem) => return Result<AnalysisReport, AnalysisError>.Err(problem.with_stage(AnalysisStage.TypeCheck)),
+        }
+        // A callee failure leaves a partial call graph. It is never exported to the backend.
+        if report_value.ok() && options.verify_hir {
+            let token = start_stage(&options, "analysis.verify_hir", AnalysisStage.TypeCheck);
+            at_stage(verify_hir(&context, &output), "analysis.verify_hir", AnalysisStage.TypeCheck, &options, token)?;
+        } else {
+            match options.trace { Some(trace) => trace.skip("analysis.verify_hir", "disabled or earlier diagnostics prevent HIR verification"), None => {}, }
+        }
+        let coverage_token = start_stage(&options, "analysis.check_coverage", AnalysisStage.Coverage);
+        at_stage(check_coverage(&context, &output, options.recover, &report_value.diagnostics), "analysis.check_coverage", AnalysisStage.Coverage, &options, coverage_token)?;
+        for warning in output.warnings { report_value.diagnostics.push(*warning); }
+        output.warnings.clear();
+
+        for procedure in output.procedures {
+            let token = start_stage(&options, "analysis.check_assignment", AnalysisStage.Assignment);
+            let checked_assignment = check_assignment(&context, procedure);
+            match &checked_assignment {
+                Ok(_) => finish_stage(&options, "analysis.check_assignment", token, true),
+                Err(_) => finish_stage(&options, "analysis.check_assignment", token, false),
+            }
+            match checked_assignment {
+                Ok(_) => {},
+                Err(problem) => {
+                    if !options.recover || problem.kind == AnalysisErrorKind.Internal {
+                        return Result<AnalysisReport, AnalysisError>.Err(problem.with_stage(AnalysisStage.Assignment));
+                    }
+                    report_value.diagnostics.push(problem.diagnostic);
+                },
+            }
+        }
+
+        order_diagnostics(&report_value.diagnostics, session.source_manager());
+        completed = report_value.ok();
+        if completed {
+            accepted_output = true;
+            report_value.output = Option<AnalysisOutput>.Some(output);
+        }
+        report_transferred = true;
+        Result<AnalysisReport, AnalysisError>.Ok(report_value)
+    }
+
+    pub fn analyze(options: AnalysisOptions, dump: bool) -> bool {
+        options.recover = false;
+        match self.run(options) {
+            Ok(report_value) => {
+                if !report_value.ok() {
+                    report_diagnostics(&report_value.diagnostics, Option<SourceManager&>.Some(self.analysis_session().source_manager()));
+                    report_value.drop();
+                    return false;
+                }
+                let output = match report_value.output.take() {
+                    Some(value) => value,
+                    None => {
+                        report_value.drop();
+                        return false;
+                    },
+                };
+                for warning in output.warnings {
+                    report(warning, Option<SourceManager&>.Some(self.analysis_session().source_manager()));
+                }
+                if dump {
+                    match hir_dump(self.analysis_session(), &output) {
+                        Ok(_) => {},
+                        Err(problem) => {
+                            report(&problem.diagnostic, Option<SourceManager&>.Some(self.analysis_session().source_manager()));
+                            problem.drop();
+                            output.drop();
+                            report_value.drop();
+                            return false;
+                        },
+                    }
+                }
+                self.output = Option<AnalysisOutput>.Some(output);
+                report_value.drop();
+                true
+            },
+            Err(problem) => {
+                report(&problem.diagnostic, Option<SourceManager&>.Some(self.analysis_session().source_manager()));
+                problem.drop();
+                false
+            },
+        }
+    }
+
+    pub fn check(options: AnalysisOptions, dump: bool) -> bool {
+        options.recover = true;
+        match self.run(options) {
+            Ok(report_value) => {
+                let ok = report_value.ok();
+                let emitted = report_diagnostics(&report_value.diagnostics, Option<SourceManager&>.Some(self.analysis_session().source_manager()));
+                if ok && dump {
+                    match &report_value.output {
+                        Some(output) => match hir_dump(self.analysis_session(), output) {
+                            Ok(_) => {},
+                            Err(problem) => {
+                                report(&problem.diagnostic, Option<SourceManager&>.Some(self.analysis_session().source_manager()));
+                                problem.drop();
+                                report_value.drop();
+                                return false;
+                            },
+                        },
+                        None => {},
+                    }
+                }
+                report_value.drop();
+                ok && emitted
+            },
+            Err(problem) => {
+                report(&problem.diagnostic, Option<SourceManager&>.Some(self.analysis_session().source_manager()));
+                problem.drop();
+                false
+            },
+        }
+    }
+}
+
+impl Drop for MiddleEndDriver {
+    pub fn drop() {
+        match &self.output {
+            Some(value) => value.drop(),
+            None => {},
+        }
+        match self.session.take() {
+            Some(value) => value.drop(),
+            None => {},
+        }
+    }
+}

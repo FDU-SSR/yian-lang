@@ -1,0 +1,439 @@
+from yianc.config import CompilerConfig, OutputKind;
+from yianc.analysis.session.session import AnalysisSession;
+from yianc.analysis.session.output import AnalysisOutput;
+from yianc.codegen.session import BackendSession, BackendOptions, Emission;
+from yianc.codegen.types import BackendTypes;
+from yianc.analysis.constant.evaluate import TypeSizeProvider;
+from yianc.codegen.cfg.model import CfgModule;
+from yianc.codegen.cfg.verify import verify_cfg, verify_structure;
+from yianc.codegen.cfg.passes.checks import insert_checks;
+from yianc.codegen.cfg.passes.cleanup import cleanup;
+from yianc.codegen.lowering.context import lower_module;
+from yianc.codegen.llvm.module import LlvmLowering;
+from yianc.codegen.error import CodegenError;
+from yianc.driver.dump import cfg_dump;
+from yianc.driver.native import NativeDriver, DriverError;
+from yianc.driver.paths import runtime_root;
+from yianc.driver.profile import ProfileKind;
+from yianc.driver.report import report, driver_error;
+from yianc.driver.trace import CompilerTrace;
+from yianc.frontend.text import is_alphanumeric;
+from yianc.common.ids import UnitId;
+from llvm.observation import OperationObserver;
+from std.core.convert import From;
+from std.core.drop import Drop;
+from std.core.fs import create_dir_all, write, rename, remove_dir, remove_file;
+from std.core.io import eprintln;
+from std.core.iter import Iterator, IntoIterator;
+from std.core.path import Path;
+from std.core.process import temporary_directory;
+from llvm.object import Module;
+from yianc.frontend.source import SourceManager;
+
+pub enum BackendPhase {
+    Created, Lowered, Generated, Emitted, Failed,
+}
+
+fn start_profile(trace: Option<CompilerTrace&>, pass_id: str, kind: ProfileKind) -> u64 {
+    match trace { Some(value) => value.start_pass(pass_id, "backend", pass_id, kind), None => 0u64 }
+}
+
+fn end_profile(trace: Option<CompilerTrace&>, pass_id: str, token: u64, success: bool) {
+    match trace {
+        Some(value) => if success { value.finish(pass_id, token); } else { value.fail(pass_id, token); },
+        None => {},
+    }
+}
+
+fn llvm_observer(trace: Option<CompilerTrace&>) -> Option<OperationObserver&> {
+    match trace { Some(value) => Option<OperationObserver&>.Some(value), None => Option<OperationObserver&>.None }
+}
+
+fn lower_cfg(analysis: AnalysisSession&, types: BackendTypes&, output: AnalysisOutput&, trace: Option<CompilerTrace&>) -> Result<CfgModule, CodegenError> {
+    let token = start_profile(trace, "cfg.lower", ProfileKind.Pass);
+    let success = false;
+    defer end_profile(trace, "cfg.lower", token, success);
+    let cfg = lower_module(analysis, types, output)?;
+    success = true;
+    Result<CfgModule, CodegenError>.Ok(cfg)
+}
+
+fn verify_structure_observed(cfg: CfgModule&, trace: Option<CompilerTrace&>) -> Result<(), CodegenError> {
+    let token = start_profile(trace, "cfg.verify_structure", ProfileKind.Pass);
+    let success = false;
+    defer end_profile(trace, "cfg.verify_structure", token, success);
+    verify_structure(cfg)?;
+    success = true;
+    Result<(), CodegenError>.Ok(val= ())
+}
+
+fn cleanup_observed(cfg: CfgModule&, trace: Option<CompilerTrace&>) -> Result<(), CodegenError> {
+    let token = start_profile(trace, "cfg.cleanup", ProfileKind.Pass);
+    let success = false;
+    defer end_profile(trace, "cfg.cleanup", token, success);
+    cleanup(cfg)?;
+    success = true;
+    Result<(), CodegenError>.Ok(val= ())
+}
+
+fn insert_checks_observed(cfg: CfgModule&, types: BackendTypes&, trace: Option<CompilerTrace&>) -> Result<(), CodegenError> {
+    let token = start_profile(trace, "cfg.insert_checks", ProfileKind.Pass);
+    let success = false;
+    defer end_profile(trace, "cfg.insert_checks", token, success);
+    insert_checks(cfg, types)?;
+    success = true;
+    Result<(), CodegenError>.Ok(val= ())
+}
+
+fn verify_cfg_observed(cfg: CfgModule&, types: BackendTypes&, trace: Option<CompilerTrace&>) -> Result<(), CodegenError> {
+    let token = start_profile(trace, "cfg.verify", ProfileKind.Pass);
+    let success = false;
+    defer end_profile(trace, "cfg.verify", token, success);
+    verify_cfg(cfg, types)?;
+    success = true;
+    Result<(), CodegenError>.Ok(val= ())
+}
+
+fn finish_analysis_observed(types: BackendTypes&, trace: Option<CompilerTrace&>) {
+    let token = start_profile(trace, "backend.finish_analysis", ProfileKind.Pass);
+    types.finish_analysis();
+    end_profile(trace, "backend.finish_analysis", token, true);
+}
+
+fn lower_llvm(analysis: AnalysisSession&, types: BackendTypes&, module: Module&,
+    cfg: CfgModule&, trace: Option<CompilerTrace&>) -> Result<(), CodegenError> {
+    let token = start_profile(trace, "llvm.lower", ProfileKind.Pass);
+    let success = false;
+    defer end_profile(trace, "llvm.lower", token, success);
+    let lowering = LlvmLowering.new(analysis, types, module, cfg.entry);
+    defer lowering.drop();
+    lowering.lower(cfg)?;
+    success = true;
+    Result<(), CodegenError>.Ok(val= ())
+}
+
+fn fail_publish(trace: Option<CompilerTrace&>, token: u64) {
+    match trace { Some(observer) => observer.fail("io.artifact_publish", token), None => {}, }
+}
+
+fn cleanup_directory(directory: str, object: str, output: str) {
+    match remove_file(object) { Ok(_) => {}, Err(error) => error.drop(), }
+    match remove_file(output) { Ok(_) => {}, Err(error) => error.drop(), }
+    match remove_dir(directory) { Ok(_) => {}, Err(error) => error.drop(), }
+}
+
+fn retain_object(object: str, output: str) {
+    let retained = Path.new(output).with_extension("o");
+    defer retained.drop();
+    match rename(object, retained.as_str()) { Ok(_) => {}, Err(problem) => problem.drop(), }
+}
+
+fn destination(config: CompilerConfig&, session: AnalysisSession&) -> String {
+    match &config.output {
+        Some(value) => match config.target {
+            Ll => {
+                let path = Path.new(value.as_str()).with_extension("ll");
+                defer path.drop();
+                return String.from(&path.as_str());
+            },
+            Bc => {
+                let path = Path.new(value.as_str()).with_extension("bc");
+                defer path.drop();
+                return String.from(&path.as_str());
+            },
+            Exe => return String.from(&value.as_str()),
+        },
+        None => {},
+    }
+    if config.target == OutputKind.Exe { return String.from(&"build/a.out"); }
+    let source = session.unit(UnitId(0u64)).unwrap().source;
+    let file = session.source(source).unwrap().path();
+    let name = match Path.new(file).file_name() { Some(value) => value, None => "output", };
+    let path = Path.new(name).with_extension(config.target.extension());
+    defer path.drop();
+    let output = Path.new("build").join(path.as_str());
+    defer output.drop();
+    String.from(&output.as_str())
+}
+
+// The backend driver owns the CFG and LLVM stages and publishes the selected artifact.
+pub struct BackendDriver {
+    session: BackendSession,
+    cfg: Option<CfgModule>,
+    phase: BackendPhase,
+}
+
+impl BackendDriver {
+    static pub fn new(analysis: AnalysisSession&, options: BackendOptions, trace: Option<CompilerTrace&>) -> Result<Self, CodegenError> {
+        let backend = BackendSession.new_observed(analysis, options, trace)?;
+        Result<Self, CodegenError>.Ok(Self(backend, Option<CfgModule>.None, BackendPhase.Created))
+    }
+
+    pub fn size_provider() -> TypeSizeProvider& {
+        self.session.size_provider()
+    }
+
+    fn cfg_ref() -> CfgModule& {
+        match &self.cfg {
+            Some(value) => value,
+            None => @panic("E599: CFG is not available"),
+        }
+    }
+
+    fn lower(output: AnalysisOutput&, trace: Option<CompilerTrace&>) -> Result<CfgModule&, CodegenError> {
+        if self.phase != BackendPhase.Created {
+            return Result<CfgModule&, CodegenError>.Err(CodegenError.invalid("backend lowering has already started"));
+        }
+        self.phase = BackendPhase.Failed;
+        finish_analysis_observed(self.session.backend_types(), trace);
+        let cfg = lower_cfg(self.session.analysis_session(), self.session.backend_types(), output, trace)?;
+        let accepted = false;
+        defer { if !accepted { cfg.drop(); } };
+        verify_structure_observed(&cfg, trace)?;
+        cleanup_observed(&cfg, trace)?;
+        insert_checks_observed(&cfg, self.session.backend_types(), trace)?;
+        verify_cfg_observed(&cfg, self.session.backend_types(), trace)?;
+        self.cfg = Option<CfgModule>.Some(cfg);
+        accepted = true;
+        self.phase = BackendPhase.Lowered;
+        Result<CfgModule&, CodegenError>.Ok(self.cfg_ref())
+    }
+
+    fn generate(trace: Option<CompilerTrace&>) -> Result<(), CodegenError> {
+        self.phase = BackendPhase.Failed;
+        let cfg = self.cfg_ref();
+        verify_cfg_observed(cfg, self.session.backend_types(), trace)?;
+        insert_checks_observed(cfg, self.session.backend_types(), trace)?;
+        verify_cfg_observed(cfg, self.session.backend_types(), trace)?;
+        lower_llvm(self.session.analysis_session(), self.session.backend_types(), self.session.llvm_module(), cfg, trace)?;
+        self.phase = BackendPhase.Generated;
+        Result<(), CodegenError>.Ok(())
+    }
+
+    fn emit(target: OutputKind, trace: Option<CompilerTrace&>) -> Result<Emission, CodegenError> {
+        if (self.phase != BackendPhase.Lowered && self.phase != BackendPhase.Generated) {
+            return Result<Emission, CodegenError>.Err(CodegenError.invalid("backend emission is not permitted in this state"));
+        }
+        if self.phase == BackendPhase.Lowered { self.generate(trace)?; }
+        self.phase = BackendPhase.Failed;
+        let module = self.session.llvm_module();
+        let bytes = match target {
+            Ll => match module.try_ir_observed(llvm_observer(trace)) {
+                Ok(value) => value,
+                Err(message) => return Result<Emission, CodegenError>.Err(CodegenError.llvm_error(message)),
+            },
+            Bc => {
+                match module.optimize_observed(llvm_observer(trace)) {
+                    Ok(_) => {},
+                    Err(message) => return Result<Emission, CodegenError>.Err(CodegenError.llvm_error(message)),
+                }
+                match module.try_bitcode_observed(llvm_observer(trace)) {
+                    Ok(value) => value,
+                    Err(message) => return Result<Emission, CodegenError>.Err(CodegenError.llvm_error(message)),
+                }
+            },
+            Exe => match module.object_observed(llvm_observer(trace)) {
+                Ok(value) => value,
+                Err(message) => return Result<Emission, CodegenError>.Err(CodegenError.llvm_error(message)),
+            },
+        };
+        self.phase = BackendPhase.Emitted;
+        Result<Emission, CodegenError>.Ok(Emission(target, bytes))
+    }
+
+    fn snapshot(trace: Option<CompilerTrace&>) -> Result<Vec<u8>, CodegenError> {
+        if self.phase != BackendPhase.Lowered && self.phase != BackendPhase.Generated {
+            return Result<Vec<u8>, CodegenError>.Err(CodegenError.invalid("LLVM snapshot is unavailable in this state"));
+        }
+        if self.phase == BackendPhase.Lowered { self.generate(trace)?; }
+        match self.session.llvm_module().try_ir_observed(llvm_observer(trace)) {
+            Ok(value) => Result<Vec<u8>, CodegenError>.Ok(value),
+            Err(message) => Result<Vec<u8>, CodegenError>.Err(CodegenError.llvm_error(message)),
+        }
+    }
+
+    pub fn compile(config: CompilerConfig&, output: AnalysisOutput&, trace: Option<CompilerTrace&>) -> bool {
+        for library in config.link_libraries {
+            let valid = !library.is_empty() && !library.as_str().starts_with("-");
+            for current in library.as_str().chars() {
+                if !is_alphanumeric(current) && !"_+.-".contains_char(current) { valid = false; }
+            }
+            if !valid { eprintln("error: invalid --link-lib name"); return false; }
+        }
+        let started = match trace { Some(value) => value.start_pass("cfg_pipeline", "cfg", "HIR to CFG", ProfileKind.Stage), None => 0u64 };
+        let lowered = self.lower(output, trace);
+        let cfg = match lowered {
+            Ok(value) => { match trace { Some(observer) => observer.finish("cfg_pipeline", started), None => {}, }; value },
+            Err(problem) => {
+                match trace { Some(observer) => observer.fail("cfg_pipeline", started), None => {}, }
+                report(&problem.diagnostic, Option<SourceManager&>.Some(self.session.analysis_session().source_manager()));
+                problem.drop();
+                return false;
+            },
+        };
+        if config.dump {
+            let dump_token = match trace { Some(value) => value.start_pass("io.dump", "io", "CFG dump", ProfileKind.Tool), None => 0u64 };
+            match cfg_dump(cfg) {
+                Ok(_) => match trace { Some(observer) => observer.finish("io.dump", dump_token), None => {}, },
+                Err(problem) => {
+                    match trace { Some(observer) => observer.fail("io.dump", dump_token), None => {}, }
+                    report(&problem.diagnostic, Option<SourceManager&>.Some(self.session.analysis_session().source_manager()));
+                    problem.drop();
+                    return false;
+                },
+            }
+        }
+        let pipeline_started = match trace { Some(value) => value.start_pass("llvm_pipeline", "llvm", "LLVM lowering and emission", ProfileKind.Stage), None => 0u64 };
+        if config.optimization == 0u8 { match trace { Some(value) => value.skip("llvm.optimize", "-O0 skips the LLVM IR optimization pipeline"), None => {}, } }
+        if config.target == OutputKind.Ll {
+            for pass_id in ["llvm.verify_before_optimization", "llvm.optimize", "llvm.verify_after_optimization", "llvm.emit_native", "llvm.serialize_bitcode"] {
+                match trace { Some(value) => value.skip(*pass_id, "target ll serializes IR without the native emission verification pipeline"), None => {}, }
+            }
+        } else {
+            if !config.dump { match trace { Some(value) => value.skip("llvm.serialize_ir", "LLVM IR serialization is only selected by target ll or --dump"), None => {}, } }
+            if config.target != OutputKind.Bc { match trace { Some(value) => value.skip("llvm.serialize_bitcode", "bitcode serialization is only selected by target bc"), None => {}, } }
+            if config.target != OutputKind.Exe { match trace { Some(value) => value.skip("llvm.emit_native", "selected target does not emit native object code"), None => {}, } }
+        }
+        if config.target != OutputKind.Exe {
+            for pass_id in ["native.prepare", "native.runtime_compile", "native.runtime_archive", "native.c_shim_compile", "native.link_flags", "native.link"] {
+                match trace { Some(value) => value.skip(*pass_id, "selected target does not invoke native linking"), None => {}, }
+            }
+        }
+        if config.dump {
+            let snapshot = self.snapshot(trace);
+            let ir = match snapshot {
+                Ok(value) => value,
+                Err(problem) => {
+                    match trace { Some(observer) => observer.fail("llvm_pipeline", pipeline_started), None => {}, }
+                    report(&problem.diagnostic, Option<SourceManager&>.Some(self.session.analysis_session().source_manager()));
+                    problem.drop();
+                    return false;
+                },
+            };
+            defer ir.drop();
+            let dump_token = match trace { Some(value) => value.start_pass("io.dump", "io", "LLVM IR dump", ProfileKind.Tool), None => 0u64 };
+            match write("build/ir.ll", ir.as_slice()) {
+                Ok(_) => match trace { Some(observer) => observer.finish("io.dump", dump_token), None => {}, },
+                Err(problem) => {
+                    match trace { Some(observer) => observer.fail("io.dump", dump_token), None => {}, }
+                    match trace { Some(observer) => observer.fail("llvm_pipeline", pipeline_started), None => {}, }
+                    eprintln(problem.msg());
+                    problem.drop();
+                    return false;
+                },
+            }
+        }
+        let emitted = self.emit(config.target, trace);
+        let emission = match emitted {
+            Ok(value) => { match trace { Some(observer) => observer.finish("llvm_pipeline", pipeline_started), None => {}, }; value },
+            Err(problem) => {
+                match trace { Some(observer) => observer.fail("llvm_pipeline", pipeline_started), None => {}, }
+                report(&problem.diagnostic, Option<SourceManager&>.Some(self.session.analysis_session().source_manager()));
+                problem.drop();
+                return false;
+            },
+        };
+        defer emission.drop();
+        let path = destination(config, self.session.analysis_session());
+        defer path.drop();
+        let publish_directory_token = match trace { Some(value) => value.start_pass("io.artifact_publish", "io", "prepare temporary artifact directory", ProfileKind.Tool), None => 0u64 };
+        let publish_directory_ready = false;
+        defer { if !publish_directory_ready { fail_publish(trace, publish_directory_token); } };
+        let parent = match Path.new(path.as_str()).parent() { Some(value) => if value.as_str() == "" { "." } else { value.as_str() }, None => ".", };
+        match create_dir_all(parent) { Ok(_) => {}, Err(problem) => { eprintln(problem.msg()); problem.drop(); return false; }, }
+        let directory = match temporary_directory(parent) {
+            Ok(value) => value,
+            Err(problem) => { eprintln(problem.msg()); problem.drop(); return false; },
+        };
+        match trace { Some(observer) => observer.finish("io.artifact_publish", publish_directory_token), None => {}, }
+        publish_directory_ready = true;
+        defer directory.drop();
+        let object = Path.new(directory.as_str()).join("input.o");
+        defer object.drop();
+        let temporary = Path.new(directory.as_str()).join("output");
+        defer temporary.drop();
+        defer cleanup_directory(directory.as_str(), object.as_str(), temporary.as_str());
+        let publish_token = match trace { Some(value) => value.start_pass("io.artifact_publish", "io", "write temporary compiler artifact", ProfileKind.Tool), None => 0u64 };
+        match write(object.as_str(), emission.bytes.as_slice()) {
+            Ok(_) => match trace { Some(observer) => observer.finish("io.artifact_publish", publish_token), None => {}, },
+            Err(problem) => {
+                match trace { Some(observer) => observer.fail("io.artifact_publish", publish_token), None => {}, }
+                eprintln(problem.msg());
+                problem.drop();
+                return false;
+            },
+        }
+        if config.target == OutputKind.Exe {
+            let native_started = match trace { Some(value) => value.start_pass("native_pipeline", "main", "native linking", ProfileKind.Stage), None => 0u64 };
+            let prepare_token = match trace { Some(value) => value.start_pass("native.prepare", "native", "native configuration", ProfileKind.Pass), None => 0u64 };
+            let root = match runtime_root(config) {
+                Ok(value) => value,
+                Err(problem) => {
+                    match trace { Some(observer) => observer.fail("native.prepare", prepare_token), None => {}, }
+                    match trace { Some(observer) => observer.fail("native_pipeline", native_started), None => {}, }
+                    report(&problem.diagnostic, Option<SourceManager&>.Some(self.session.analysis_session().source_manager()));
+                    problem.drop();
+                    return false;
+                },
+            };
+            defer root.drop();
+            let driver = match NativeDriver.new(root.as_str(), self.session.analysis_session().package_map()) {
+                Ok(value) => value,
+                Err(problem) => {
+                    match trace { Some(observer) => observer.fail("native.prepare", prepare_token), None => {}, }
+                    match trace { Some(observer) => observer.fail("native_pipeline", native_started), None => {}, }
+                    retain_object(object.as_str(), path.as_str());
+                    driver_error(&problem);
+                    problem.drop();
+                    return false;
+                },
+            };
+            match trace { Some(observer) => observer.finish("native.prepare", prepare_token), None => {}, }
+            defer driver.drop();
+            match driver.link_observed(object.as_str(), temporary.as_str(), config.optimization,
+                &config.link_libraries, &config.link_searches, trace) {
+                Ok(artifact) => artifact.drop(),
+                Err(problem) => {
+                    match trace { Some(observer) => observer.fail("native_pipeline", native_started), None => {}, }
+                    retain_object(object.as_str(), path.as_str());
+                    driver_error(&problem);
+                    problem.drop();
+                    return false;
+                },
+            }
+            match trace { Some(observer) => observer.finish("native_pipeline", native_started), None => {}, }
+            let publish_started = match trace { Some(value) => value.start_pass("io.artifact_publish", "io", "publish native artifact", ProfileKind.Tool), None => 0u64 };
+            match rename(temporary.as_str(), path.as_str()) {
+                Ok(_) => match trace { Some(observer) => observer.finish("io.artifact_publish", publish_started), None => {}, },
+                Err(problem) => {
+                    match trace { Some(observer) => observer.fail("io.artifact_publish", publish_started), None => {}, }
+                    eprintln(problem.msg());
+                    problem.drop();
+                    return false;
+                },
+            }
+        } else {
+            let publish_started = match trace { Some(value) => value.start_pass("io.artifact_publish", "io", "publish compiler artifact", ProfileKind.Tool), None => 0u64 };
+            match rename(object.as_str(), path.as_str()) {
+                Ok(_) => match trace { Some(observer) => observer.finish("io.artifact_publish", publish_started), None => {}, },
+                Err(problem) => {
+                    match trace { Some(observer) => observer.fail("io.artifact_publish", publish_started), None => {}, }
+                    eprintln(problem.msg());
+                    problem.drop();
+                    return false;
+                },
+            }
+        }
+        true
+    }
+}
+
+impl Drop for BackendDriver {
+    pub fn drop() {
+        match &self.cfg {
+            Some(value) => value.drop(),
+            None => {},
+        }
+        self.session.drop();
+    }
+}

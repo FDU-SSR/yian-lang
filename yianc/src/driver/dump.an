@@ -1,5 +1,4 @@
 from yianc.analysis.session.session import AnalysisSession;
-from yianc.analysis.session.prepare import PreparationObserver;
 from yianc.analysis.session.output import AnalysisOutput;
 from yianc.analysis.hir.node import HirNode;
 from yianc.analysis.hir.pattern import PatternNode;
@@ -14,6 +13,7 @@ from yianc.frontend.prepare import PreparationStage;
 from yianc.driver.trace import CompilerTrace;
 from yianc.driver.profile import ProfileKind;
 from yianc.frontend.observe import append_token_file;
+from yianc.frontend.session import FrontendSession, PreparationObserver;
 from yianc.frontend.ast.format import AstFormatter;
 from json.write import Writer;
 from std.core.drop import Drop;
@@ -51,7 +51,7 @@ impl PreparationObserver for StageDumps {
         }
     }
 
-    pub fn stage_complete(stage: PreparationStage, session: AnalysisSession&) -> Result<(), AnalysisError> {
+    pub fn stage_complete(stage: PreparationStage, session: FrontendSession&) -> Result<(), AnalysisError> {
         if !self.enabled { return Result<(), AnalysisError>.Ok(()); }
         let writes_dump = match stage { Lex | Desugar => true, Parse => false };
         if !writes_dump { return Result<(), AnalysisError>.Ok(()); }
@@ -73,7 +73,7 @@ impl PreparationObserver for StageDumps {
     }
 }
 
-fn tokens_dump(session: AnalysisSession&) -> Result<(), AnalysisError> {
+fn tokens_dump(session: FrontendSession&) -> Result<(), AnalysisError> {
     match create_dir_all("build") {
         Ok(_) => {},
         Err(problem) => { defer problem.drop(); return Result<(), AnalysisError>.Err(AnalysisError.internal(problem.msg())); },
@@ -90,7 +90,7 @@ fn tokens_dump(session: AnalysisSession&) -> Result<(), AnalysisError> {
     save(&tokens, "build/tokens.txt")
 }
 
-fn ast_dump(session: AnalysisSession&) -> Result<(), AnalysisError> {
+fn ast_dump(session: FrontendSession&) -> Result<(), AnalysisError> {
     let ast = Writer.with_max_depth(512u64);
     defer ast.drop();
     ast.begin_array();

@@ -146,8 +146,7 @@ class AnxProfileTests(unittest.TestCase):
         self.assertNotEqual(invocation["compiler_status"], 0)
         self.assertEqual(invocation["report_status"], "ok")
         compiler_report = _read_json(Path(invocation["profile_file"]))
-        passes = _by_pass(compiler_report["timings"])
-        self.assertGreater(passes["analysis.check_procedures"]["failed_calls"], 0)
+        self.assertFalse(compiler_report["ok"])
         self.assertFalse(
             any(item["pass_id"] == "llvm.emit_native" and item["calls"] for item in compiler_report["timings"])
         )
@@ -177,8 +176,7 @@ class AnxProfileTests(unittest.TestCase):
             self.assertNotEqual(invocation["compiler_status"], 0)
             self.assertEqual(invocation["report_status"], "ok")
             compiler_report = _read_json(Path(invocation["profile_file"]))
-            passes = _by_pass(compiler_report["timings"])
-            self.assertGreater(passes["analysis.check_procedures"]["failed_calls"], 0)
+            self.assertFalse(compiler_report["ok"])
             self.assertFalse(
                 any(item["pass_id"] == "native.link" and item["calls"] for item in compiler_report["timings"])
             )
@@ -216,7 +214,7 @@ fn main() {{
     let child = recorder.begin_at("fixture.child", ProfileKind.Pass, Option<i64>.Some(130i64));
     recorder.end_at(child, true, Option<i64>.Some(160i64));
     recorder.end_at(parent, true, Option<i64>.Some(200i64));
-    match recorder.write_report({parent_report_literal}, true, "none", 0u8, false) {{
+    match recorder.write_report({parent_report_literal}, true, "check", 0u8, false) {{
         Ok(_) => {{}}, Err(problem) => {{ problem.drop(); exit(31i32); }},
     }}
     recorder.drop();
@@ -224,7 +222,7 @@ fn main() {{
     let failed = ProfileRecorder.new();
     let failed_span = failed.begin_at("fixture.failed", ProfileKind.Pass, Option<i64>.Some(500i64));
     failed.end_at(failed_span, false, Option<i64>.Some(510i64));
-    match failed.write_report({failure_report_literal}, false, "none", 0u8, false) {{
+    match failed.write_report({failure_report_literal}, false, "check", 0u8, false) {{
         Ok(_) => {{}}, Err(problem) => {{ problem.drop(); exit(32i32); }},
     }}
     failed.drop();
@@ -232,12 +230,12 @@ fn main() {{
     let clock = ProfileRecorder.new();
     let clock_span = clock.begin_at("fixture.clock", ProfileKind.Pass, Option<i64>.None);
     clock.end_at(clock_span, false, Option<i64>.None);
-    match clock.write_report({clock_report_literal}, false, "none", 0u8, false) {{
+    match clock.write_report({clock_report_literal}, false, "check", 0u8, false) {{
         Ok(_) => {{}}, Err(problem) => {{ problem.drop(); exit(33i32); }},
     }}
     clock.drop();
 
-    let first = BuildProfile.new("test", "none", 0u8, "fat");
+    let first = BuildProfile.new("test", "check", 0u8, "fat");
     first.set_project_root({project_literal});
     let outer = first.begin_at("anx.project_load", Option<i64>.Some(10i64));
     let nested = first.begin_at("anx.test_discovery", Option<i64>.Some(40i64));
@@ -248,12 +246,12 @@ fn main() {{
     first.finalize(true, 0i32);
     first.drop();
 
-    let second = BuildProfile.new("test", "none", 0u8, "fat");
+    let second = BuildProfile.new("test", "check", 0u8, "fat");
     second.set_project_root({project_literal});
     second.finalize(true, 0i32);
     second.drop();
 
-    let blocked = BuildProfile.new("test", "none", 0u8, "fat");
+    let blocked = BuildProfile.new("test", "check", 0u8, "fat");
     blocked.set_project_root({blocked_literal});
     blocked.finalize(true, 0i32);
     blocked.drop();
@@ -315,8 +313,8 @@ fn main() {{
 
         report_io_failure = subprocess.run(
             [
-                str(self.yianc), "--compiler-root", str(ROOT), "--profile-output", str(compiler_output),
-                "-t", "none", str(ROOT / "lib" / "src"), str(report_io_source),
+                str(self.yianc), "--compiler-root", str(ROOT), "--check", "--profile-output", str(compiler_output),
+                str(ROOT / "lib" / "src"), str(report_io_source),
             ],
             cwd=ROOT,
             env=self.environment,

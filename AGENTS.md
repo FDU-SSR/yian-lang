@@ -92,7 +92,7 @@ scripts/refresh_toolchain.sh --anx "$HOME/.local/bin/anx" --yianc "$HOME/.local/
 
 ## Python recovery compiler CLI
 
-The commands below are for maintaining or diagnosing the explicitly invoked cold recovery compiler. Daily compilation, semantic analysis and formatting use native `yianc`; a Python CLI example does not define the daily tool workflow.
+The commands below are for maintaining or diagnosing the explicitly invoked cold recovery compiler. Daily compilation, semantic analysis and formatting use native `yianc`; a Python CLI example does not define the daily tool workflow. In particular, the native CLI uses `--check` for frontend/middle-end checking and `--format-check` for formatting checks, while the recovery CLI retains the older meanings listed below.
 
 For compilation and semantic analysis, always pass the standard library source root (`lib/src`) as a positional input, because the standard library is not implicit. Input paths may be files or directories; directories are searched recursively for `.an` files. Input-root order is preserved, with sorted files inside each directory. Formatting and frontend-only observation can use just the sources being inspected.
 
@@ -164,14 +164,14 @@ Ordinary `sizeof` expressions retain the queried type identity through HIR and C
 ```bash
 conda run --no-capture-output -n yian-env bash scripts/bootstrap_toolchain.sh --prefix "$HOME/.local" --python python
 "$HOME/.local/bin/anx" build -O2 yianc
-"$HOME/.local/bin/yianc" --frontend-json desugared yianc/src/main.an
-"$HOME/.local/bin/yianc" --analyze --json --compiler-root . lib/src tests/basic/array/access.an
+"$HOME/.local/bin/yianc" --check --compiler-root . lib/src tests/basic/array/access.an
 "$HOME/.local/bin/yianc" --compiler-root . -O2 -o build/access lib/src tests/basic/array/access.an
+"$HOME/.local/bin/yianc" --format --format-check yianc/src/main.an
 ```
 
-The native CLI supports `--frontend-json {tokens,ast,desugared}`, `--analyze`, `--format`, and compilation targets `none`, `exe`, `ll`, `bc`, `obj`, and `asm`. It also supports package maps, source-root configuration, raw-pointer mode, FFI permission, logging, profiling, stage dumps and native link options. The analysis JSON uses `format`, `ok`, `stage`, `summary`, and `diagnostics`. Successful analysis does not require `main`; a present entry is validated. Compilation targets that produce native artifacts require an entry.
+The native CLI has two compilation modes: `--check` runs the frontend and middle end (lexing through HIR verification, coverage and definite assignment) without CFG/LLVM/native output, and the default mode builds a native executable. `-t/--target` accepts `exe`, `ll` or `bc`; `--check` does not accept target, output or native link options. `--format` is the formatting action; `--format-check` reports files that need formatting and is valid only with `--format`. `--analyze`, `--json` and `--frontend-json` are not native options. `--dump` writes tokens/AST/HIR/CFG/IR for compilation and stops at HIR for `--check`; `--profile-output` writes a structured report with target `check` or the selected output kind. Package maps, source-root configuration, raw-pointer mode, FFI permission, logging and profiling are supported.
 
-The native compiler locates runtime resources through `--compiler-root`, nonempty `YIAN_ROOT`, or resources associated with the installed executable. `YIAN_LIB` or `YIAN_ROOT` also selects the standard-library trust root. Standalone compilation still requires `lib/src` as a positional input; package mode receives standard-library sources through its package map. Pass `--compiler-root` for deterministic checkout-local builds. `-t none` performs semantic analysis and CFG lowering; `--analyze` stops after semantic analysis and HIR checks. Both pointer modes are target options to the compiler. The mode used to build the compiler binary is a separate configuration.
+The native compiler locates runtime resources through `--compiler-root`, nonempty `YIAN_ROOT`, or resources associated with the installed executable. `YIAN_LIB` or `YIAN_ROOT` also selects the standard-library trust root. Standalone compilation still requires `lib/src` as a positional input; package mode receives standard-library sources through its package map. Pass `--compiler-root` for deterministic checkout-local builds. `--check` does not require `main`; a present entry is validated. Compilation targets require an entry. Both pointer modes are target options to the compiler. The mode used to build the compiler binary is a separate configuration.
 
 After concrete procedure type and result-context conversion, native analysis normalizes data-address operands and implicit storage consumers into existing places or local place blocks before HIR verification, match coverage, and definite-assignment checks. CFG address lowering only accepts normalized storage; it does not create a fallback local for arbitrary right values. Function addresses and slice-based element addresses retain their dedicated paths.
 
@@ -179,17 +179,17 @@ Tagged enums with an explicit tag word and payload area lower construction and f
 
 ### Pipeline and module boundaries
 
-`AnalysisSession.prepare(...)` collects and loads sources, lexes, parses and desugars them, classifies permissions, and retains the prepared units. `AnalysisSession.analyze(options)` checks restricted operations, registers primitive types and declaration identities, resolves explicit imports and injects prelude bindings, resolves definition signatures and impls, registers automatic implementations, finalizes and validates types, checks and lowers procedures, verifies HIR, checks pattern coverage, and checks definite assignment.
+`FrontendDriver` loads sources, classifies permissions, and runs lex/parse/desugar while owning the completed `FrontendSession`; it transfers that owner to `MiddleEndDriver`. `MiddleEndDriver` runs restricted-operation checks, primitive/declaration registration, import/prelude resolution, definition and impl resolution, automatic implementations, constant evaluation, type finalization/validation, procedure checking/lowering, address-storage normalization, HIR verification, coverage and definite assignment, and owns `AnalysisOutput`. `BackendDriver` owns the CFG and LLVM stages plus native link/publish. `yianc/src/main.an` references these three drivers directly.
 
 The middle end supports aggregate and pointer operations, generic types and procedures, trait/method lookup, closures, trait objects, FFI, patterns and compile-time branch selection. It checks root procedures and discovered concrete instances rather than limiting checks to calls reachable from `main`. An unused generic declaration is not evidence that every possible instantiation is valid.
 
 | Directory under `yianc/src/` | Responsibility |
 | --- | --- |
 | `common/` | Strong ID wrappers, source positions and traversal control |
-| `diagnostics/` | Owned diagnostic model, sink, text and JSON rendering |
+| `diagnostics/` | Owned diagnostic model, sink and text rendering |
 | `package/` | Package-map data, loading/validation and provenance queries |
-| `frontend/` | Source management, preparation, lexer/parser, AST and desugaring |
-| `analysis/session/` | Session ownership, preparation, analysis and output |
+| `frontend/` | `FrontendSession` ownership, source management, preparation, lexer/parser, AST and desugaring |
+| `analysis/session/` | Middle-end `AnalysisSession` ownership and `AnalysisOutput`/options |
 | `analysis/resolution/` | Declarations, imports, aliases, signatures and impl registration |
 | `analysis/ty/` | Type models/keys/stores, relations, substitution, inference and semantic queries |
 | `analysis/symbol/`, `analysis/definition/` | Symbols/scopes, callable bodies and instance worklist |
@@ -197,6 +197,7 @@ The middle end supports aggregate and pointer operations, generic types and proc
 | `analysis/lowering/` | Type checking with AST-to-HIR construction |
 | `analysis/constant/` | Values, integer/float operations, intervals and typed evaluation |
 | `analysis/passes/` | Restricted operations, procedure checking, HIR validation, coverage and assignment |
+| `driver/` | `FrontendDriver`, `MiddleEndDriver`, `BackendDriver`, CLI support, trace/profile, dumps and native linking |
 
 `common` does not depend on analysis. Package loading does not depend on AST or HIR. Diagnostic models and renderers are separate. HIR models do not depend on checkers, sessions or the constant evaluator. Constant arithmetic and interval tools do not depend on HIR; typed evaluation does. Keep reusable containers in the standard library and compiler-specific identity/ownership rules in the compiler.
 
@@ -226,7 +227,7 @@ conda run --no-capture-output -n yian-env python scripts/run_tests.py --no-run
 conda run --no-capture-output -n yian-env python scripts/run_tests.py --implementation native --prefix "$HOME/.local"
 ```
 
-`basic` is the default suite. `--pointer-mode both|fat|raw` selects target modes and defaults to both; safety raw cases are N/A with a reason and do not count as passes. An all-N/A selection exits nonzero. `-q` prints the summary, `-v` includes failure details, `-f` filters names, and `-x` includes each suite's experimental sources. Confirm the exact selected cases and nested package-test effects before any filtered run; a filter alone grants no permission. Native is the only supported implementation; `python` and `both` are rejected with exit status 2. No selection refreshes tools. `--prefix` or `YIAN_INSTALL_PREFIX` selects the native toolchain prefix. `--no-run` uses `-t none` for standalone sources and `anx check` for package fixtures; the bootstrap suite checks packages instead of running their package tests.
+`basic` is the default suite. `--pointer-mode both|fat|raw` selects target modes and defaults to both; safety raw cases are N/A with a reason and do not count as passes. An all-N/A selection exits nonzero. `-q` prints the summary, `-v` includes failure details, `-f` filters names, and `-x` includes each suite's experimental sources. Confirm the exact selected cases and nested package-test effects before any filtered run; a filter alone grants no permission. Native is the only supported implementation; `python` and `both` are rejected with exit status 2. No selection refreshes tools. `--prefix` or `YIAN_INSTALL_PREFIX` selects the native toolchain prefix. `--no-run` uses `--check` for standalone sources and `anx check` for package fixtures; the bootstrap suite checks packages instead of running their package tests.
 
 The `basic`, `package`, and `bootstrap` suites run the selected fat/raw modes; safety checks execute in fat mode and show raw as N/A because the suite tests fat-pointer runtime checks. Package fixture `anx test` commands receive one explicit mode from the outer runner, while `graph` runs once. Direct `anx test` defaults to Both and accepts `--pointer-mode {both,fat,raw}`; `--raw-pointers` remains a raw alias and conflicts with an explicit `--pointer-mode`. Each applicable suite uses the installed native `yianc`; package and bootstrap commands use installed native `anx`, configured with the selected compiler. `tests/input/package/<fixture>.command` can select `build`, `check`, `test`, or `graph` with extra arguments such as `graph --json`. `scripts/run_safety_tests.py` is a wrapper for the safety suite and uses native `yianc`. A selected package/bootstrap fixture can invoke package tests; inspect nested execution too. The LSP protocol tests and measurements start the installed native `yian-lsp`; source freshness and authorization rules apply to `scripts/refresh_toolchain.sh`, which rebuilds it with both compiler tools and shared resources.
 

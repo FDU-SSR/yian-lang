@@ -122,7 +122,7 @@ fn build_command(argv: Vec<String>&, command: str, end: u64, program_arguments: 
             let release = argument_bool(&matches, "release");
             let raw = argument_bool(&matches, "raw-pointers");
             let profiling = argument_bool(&matches, "profile");
-            let target = if command == "check" { "none" } else { "exe" };
+            let target = if command == "check" { "check" } else { "exe" };
             let mode = if raw { "raw" } else { "fat" };
             let profile = if profiling {
                 let level = match optimization { Some(value) => value, None => if release { 3u8 } else { 0u8 } };

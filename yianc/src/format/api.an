@@ -1,5 +1,5 @@
 from yianc.common.ids import SourceId;
-from yianc.config import FrontendPhase;
+from yianc.frontend.prepare import FrontendPhase;
 from yianc.diagnostics.model import AnalysisError;
 from yianc.format.layout import format_tokens;
 from yianc.frontend.prepare import prepare_file;

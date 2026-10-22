@@ -1,7 +1,8 @@
 from yianc.analysis.session.session import AnalysisSession;
-from yianc.analysis.session.prepare import PreparationObserver;
 from yianc.analysis.session.output import AnalysisOptions, AnalysisOutput;
 from yianc.codegen.session import BackendOptions, BackendSession;
+from yianc.driver.frontend import FrontendDriver;
+from yianc.driver.middle import MiddleEndDriver;
 from yianc.analysis.constant.evaluate import TypeSizeProvider;
 from yianc.common.location import SourceSpan;
 from yianc.diagnostics.model import AnalysisError, Diagnostic, DiagnosticCode, Severity;
@@ -62,9 +63,13 @@ fn failure_from_error(error: AnalysisError, session: Option<AnalysisSession&>) -
     match session {
         Some(value) => match detach(&copied, value.source_manager()) {
             Ok(_) => CompilerFailure.single(copied),
-            Err(problem) => { problem.drop(); copied.drop(); CompilerFailure.single(Diagnostic.new(
-                DiagnosticCode.Internal, Severity.Error, Option<SourceSpan>.None,
-                "could not detach the analysis diagnostic")) },
+            Err(problem) => {
+                problem.drop();
+                copied.drop();
+                CompilerFailure.single(Diagnostic.new(
+                    DiagnosticCode.Internal, Severity.Error, Option<SourceSpan>.None,
+                    "could not detach the analysis diagnostic"))
+            },
         },
         None => CompilerFailure.single(copied),
     }
@@ -73,16 +78,16 @@ fn failure_from_error(error: AnalysisError, session: Option<AnalysisSession&>) -
 // Strict analysis runs once at its normal semantic boundary and never enters CFG or LLVM emission.
 pub fn analyze(documents: Vec<SourceDocument>&, trust: SourceTrust, packages: Option<PackageMap>,
     raw_pointers: bool, allow_ffi: bool) -> Result<CompilerAnalysis, CompilerFailure> {
-    let session = match AnalysisSession.prepare_documents(documents, trust, packages, raw_pointers,
-        allow_ffi, Option<PreparationObserver&>.None) {
+    let frontend = match FrontendDriver.prepare_documents(documents, trust, packages, allow_ffi) {
         Ok(value) => value,
         Err(error) => return Result<CompilerAnalysis, CompilerFailure>.Err(
             failure_from_error(error, Option<AnalysisSession&>.None)),
     };
+    let middle = MiddleEndDriver.new(frontend.take_session(), raw_pointers);
     let transferred = false;
-    defer { if !transferred { session.drop(); } };
+    defer { if !transferred { middle.drop(); } };
 
-    let backend = match BackendSession.new(&session, BackendOptions(raw_pointers, 0u8)) {
+    let backend_value = match BackendSession.new(middle.analysis_session(), BackendOptions(raw_pointers, 0u8)) {
         Ok(value) => value,
         Err(error) => {
             error.drop();
@@ -91,20 +96,49 @@ pub fn analyze(documents: Vec<SourceDocument>&, trust: SourceTrust, packages: Op
                 "could not create the target layout provider")));
         },
     };
-    defer backend.drop();
+    let backend = Option<BackendSession>.Some(backend_value);
+    defer { match backend.take() { Some(value) => value.drop(), None => {}, } };
 
     let options = AnalysisOptions.new();
     options.require_entry = false;
     options.entry_optional = true;
     options.recover = false;
     options.verify_hir = true;
-    options.sizes = Option<TypeSizeProvider&>.Some(backend.size_provider());
-    match session.analyze(options) {
-        Ok(output) => {
+    options.sizes = Option<TypeSizeProvider&>.Some(match &backend { Some(value) => value.size_provider(), None => @panic("E599: backend session was released") });
+    match middle.run(options) {
+        Ok(report_value) => {
+            if !report_value.ok() {
+                let diagnostics = report_value.diagnostics.take();
+                for diagnostic in *diagnostics {
+                    match detach(diagnostic, middle.analysis_session().source_manager()) {
+                        Ok(_) => {},
+                        Err(problem) => problem.drop(),
+                    }
+                }
+                report_value.drop();
+                match backend.take() { Some(value) => value.drop(), None => {}, }
+                return Result<CompilerAnalysis, CompilerFailure>.Err(CompilerFailure(Option<Vec<Diagnostic>>.Some(diagnostics)));
+            }
+            let output = match report_value.output.take() {
+                Some(value) => value,
+                None => {
+                    report_value.drop();
+                    match backend.take() { Some(value) => value.drop(), None => {}, }
+                    return Result<CompilerAnalysis, CompilerFailure>.Err(CompilerFailure.single(Diagnostic.new(
+                        DiagnosticCode.Internal, Severity.Error, Option<SourceSpan>.None,
+                        "strict analysis returned no output")));
+                },
+            };
+            report_value.drop();
+            match backend.take() { Some(value) => value.drop(), None => {}, }
+            let session = middle.take_session();
             transferred = true;
             Result<CompilerAnalysis, CompilerFailure>.Ok(CompilerAnalysis(session, output))
         },
-        Err(error) => Result<CompilerAnalysis, CompilerFailure>.Err(
-            failure_from_error(error, Option<AnalysisSession&>.Some(&session))),
+        Err(error) => {
+            match backend.take() { Some(value) => value.drop(), None => {}, }
+            Result<CompilerAnalysis, CompilerFailure>.Err(
+                failure_from_error(error, Option<AnalysisSession&>.Some(middle.analysis_session())))
+        },
     }
 }

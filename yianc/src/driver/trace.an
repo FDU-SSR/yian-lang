@@ -30,7 +30,7 @@ pub struct CompilerTrace {
 }
 
 fn target_name(target: OutputKind) -> str {
-    match target { None => "none", Exe => "exe", Ll => "ll", Bc => "bc", Obj => "obj", Asm => "asm" }
+    match target { Exe => "exe", Ll => "ll", Bc => "bc" }
 }
 
 fn level(text: str) -> Option<u8> {
@@ -52,23 +52,22 @@ fn environment(name: str) -> Result<Option<String>, String> {
 }
 
 impl CompilerTrace {
-    static pub fn new(config: CompilerConfig&, analysis: bool) -> Result<Self, String> {
-        let terminal_profile = config.profile && !analysis;
+    static pub fn new(config: CompilerConfig&, check: bool) -> Result<Self, String> {
+        let terminal_profile = config.profile;
         let collect_profile = terminal_profile || config.profile_output.is_some();
         let recorder = if collect_profile { Option<ProfileRecorder>.Some(ProfileRecorder.new()) } else { Option<ProfileRecorder>.None };
         let profile_output = match &config.profile_output {
-            Some(value) if !analysis => Option<String>.Some(String.from(&value.as_str())),
+            Some(value) if !value.is_empty() => Option<String>.Some(String.from(&value.as_str())),
             _ => Option<String>.None,
         };
+        let target = if check { String.from(&"check") } else { String.from(&target_name(config.target)) };
         let trace = Self(Vec<LogRule>.new(), Vec<File>.new(), Vec<Timing>.new(), terminal_profile,
-            profile_output, recorder, String.from(&target_name(config.target)), config.optimization, config.raw_pointers);
+            profile_output, recorder, target, config.optimization, config.raw_pointers);
         let transferred = false;
         defer { if !transferred { trace.drop(); } };
         let spec = match &config.log_spec {
-            Some(value) => if !value.is_empty() { Option<String>.Some(String.from(&value.as_str())) } else {
-                if analysis { Option<String>.None } else { environment("YIAN_LOG")? }
-            },
-            None => if analysis { Option<String>.None } else { environment("YIAN_LOG")? },
+            Some(value) => if !value.is_empty() { Option<String>.Some(String.from(&value.as_str())) } else { environment("YIAN_LOG")? },
+            None => environment("YIAN_LOG")?,
         };
         match &spec {
             Some(value) => {
@@ -89,9 +88,10 @@ impl CompilerTrace {
             },
             None => {},
         }
-        if !analysis {
-            // An explicit empty path denotes the current directory, which cannot be a log file.
-            match &config.log_file { Some(value) => { trace.open(if value.is_empty() { "." } else { value.as_str() })?; }, None => { trace.open("build/compile.log")?; }, }
+        // Check mode has no default build log; an explicit --log-file is honored in both modes.
+        match &config.log_file {
+            Some(value) => { trace.open(if value.is_empty() { "." } else { value.as_str() })?; },
+            None => { if !check { trace.open("build/compile.log")?; } },
         }
         let file = environment("YIAN_LOG_FILE")?;
         match &file { Some(value) => { defer value.drop(); if !value.is_empty() { trace.open(value.as_str())?; } }, None => {}, }

@@ -58,11 +58,10 @@ yianc <path> [path...]
 | 值     | 说明                     |
 | ------ | ------------------------ |
 | `exe`  | 可执行文件（默认）       |
-| `none` | 完成语义分析与 CFG 下降，不发射 LLVM 或原生目标 |
 | `ll`   | LLVM IR 文本 (.ll)       |
 | `bc`   | LLVM bitcode (.bc)       |
-| `obj`  | 目标文件 (.o)            |
-| `asm`  | 汇编文件 (.s)            |
+
+`--check` 是独立的检查模式，不通过 `-t` 选择。
 
 ```bash
 yianc -t ll lib/src tests/basic/array/assign.an
@@ -70,15 +69,13 @@ yianc -t ll lib/src tests/basic/array/assign.an
 
 ### 2.3 `-o` / `--output` — 输出文件路径
 
-除汇编外，产物默认输出到 `build/` 目录。用 `-o` 覆盖：
+产物默认输出到 `build/` 目录。用 `-o` 覆盖：
 
 ```bash
 yianc -o my_prog lib/src tests/basic/array/assign.an
 ```
 
-默认路径：`build/a.out`（exe）、`build/<name>.ll`（ll）、`build/<name>.bc`（bc）、
-`build/<name>.o`（obj）；汇编为当前目录下的 `<name>.s`（asm）。`<name>` 是第一个输入文件的
-词干。
+默认路径：`build/a.out`（exe）、`build/<name>.ll`（ll）、`build/<name>.bc`（bc）。`<name>` 是第一个输入文件的词干。
 
 ### 2.4 `-O` — 优化等级
 
@@ -88,7 +85,7 @@ yianc -O2 lib/src tests/basic/array/assign.an
 
 可选值：`0`, `1`, `2`, `3`。默认 0。`-O` 同时作用于三个位置：
 
-1. **LLVM IR 级优化 pass**：对非 `-t ll` 目标（exe/bc/obj/asm），发射前按该等级运行 LLVM 优化 pipeline（`-O0` 不运行 IR pass）；
+1. **LLVM IR 级优化 pass**：对非 `-t ll` 目标（exe/bc），发射前按该等级运行 LLVM 优化 pipeline（`-O0` 不运行 IR pass）；
 2. **后端 target machine**：`create_target_machine(opt=N)`，`-O0` → 0；
 3. **链接 C 编译器**：按 `$YIAN_CC` → `clang` → `cc` 选择链接器，并加 `-O<N>`。
 
@@ -112,12 +109,9 @@ JSON，并在同目录写一个扩展名为 `.txt` 的可读汇总。两者可�
 
 计时覆盖输入收集/读取、词法/解析/desugar、语义解析与检查、地址存储归一化、HIR 验证/覆盖/赋值、CFG
 lower/验证/清理/check insertion、LLVM lowering/优化前后验证/优化/native emission 或 IR/bitcode 序列化，
-以及 runtime、C shim、链接参数、最终链接和产物发布。优化等级 `-O0` 不运行 LLVM 优化，`-t none` 在 CFG
-阶段结束；未执行项标为 `not_run`，不会伪造零耗时成功。原生链接阶段仅在 `exe` 和 `obj` 目标运行；
-`obj` 使用现有的 relocatable link 流程。
+以及 runtime、C shim、链接参数、最终链接和产物发布。优化等级 `-O0` 不运行 LLVM 优化；`--check` 在语义分析后结束，未执行项标为 `not_run`，不会伪造零耗时成功。原生链接阶段仅在 `exe` 目标运行。
 
-`--profile-output` 只接受编译模式及 `none`、`exe`、`ll`、`bc`、`obj`、`asm` 目标；与 `--analyze`、
-`--frontend-json` 或 `--format` 一起使用会报配置错误。报告写入失败只打印警告，不改变原编译结果。`anx`
+`--profile-output` 可用于编译模式与 `--check`；编译报告的目标为 `"exe"`、`"ll"` 或 `"bc"`，检查报告的目标为 `"check"`。与 `--format` 一起使用会报配置错误。报告写入失败只打印警告，不改变原编译结果。`anx`
 的四个编译命令 `build`、`run`、`check`、`test` 用该接口保存每次 compiler 调用的独立明细，并生成命令级
 报告；命令选项见[anx CLI](anx/03.cli.md)。`run` 或 `test` 启动产物后的执行时间不计入编译总计。Python
 恢复编译器的 `--profile` 属于其恢复 CLI 行为；它不支持 native `--profile-output`。
@@ -176,13 +170,12 @@ yianc --packages pkg.json files...
 yianc --dump lib/src tests/basic/array/assign.an
 ```
 
-把 `tokens.txt`、`ast.txt`、`hir.txt`、`cfg.txt` 写到 `build/`；运行代码生成时另写 `ir.ll`。
-默认关闭。
+编译模式把 `tokens.txt`、`ast.txt`、`hir.txt`、`cfg.txt` 写到 `build/`，运行代码生成时另写 `ir.ll`。`--check --dump` 只写 `tokens.txt`、`ast.txt` 和成功分析时的 `hir.txt`。默认关闭。
 
 ### 2.8 `--compiler-root` — 指定检出根
 
 ```bash
-yianc --compiler-root /path/to/yian lib/src main.an -t none
+yianc --check --compiler-root /path/to/yian lib/src main.an
 ```
 
 标准库取 `<PATH>/lib/src`。查找顺序是 `--compiler-root` → `YIAN_LIB`（标准库源码根本身）
@@ -197,29 +190,30 @@ yianc --raw-pointers lib/src main.an
 用裸 8 字节指针替换胖指针表示，不发射 fat 指针检查、锁槽与帧锁；固定数组边界检查仍可发射。这是诊断模式，不提供内存安全保证。
 `anx build --raw-pointers` 把该开关透传给编译器。
 
-### 2.10 `--analyze` / `--json` — 只做分析
+### 2.10 `--check` — 只做前端与中端检查
 
 ```bash
-yianc --analyze lib/src main.an
-yianc --analyze --json lib/src main.an
+yianc --check lib/src main.an
 ```
 
-运行完整语义分析：词法与语法分析、名称与类型解析、类型检查、编译期分支选择、模式覆盖与 definite-assignment
-检查；不运行 CFG/LLVM 代码生成，也不写 `build/`。
-`--json` 把诊断作为单个 JSON 对象写到 stdout（其余输出走 stderr）；退出码 `0` 表示成功，
-`1` 表示有错误；只有警告时仍返回 `0`。`--json` 必须与 `--analyze` 一起使用。
+运行前端与中端：词法、语法、desugar、名称与类型解析、类型检查、编译期分支选择、模式覆盖与
+definite-assignment 检查；不进入 CFG/LLVM，不生成编译器产物。诊断以文本写到 stderr；退出码
+`0` 表示成功，`1` 表示有错误；只有警告时仍返回 `0`。不要求 `main`，存在时校验其签名。
+`--check` 接受 `--packages`、`--compiler-root`、`--raw-pointers`、`--allow-ffi`、`-O`、`--dump`、
+`--profile`、`--profile-output` 和日志选项；显式 `-t`、`-o`、`--link-lib`、`--link-search` 会报配置错误。
+`--dump` 只写 `tokens.txt`、`ast.txt` 和成功分析时的 `hir.txt`。
 
-### 2.11 `--format` / `-w` / `--check` — 格式化源码
+### 2.11 `--format` / `-w` / `--format-check` — 格式化源码
 
 ```bash
-yianc --format main.an          # One file: print formatted source to stdout.
-yianc --format -w src           # Multiple files: rewrite in place.
-yianc --format --check src      # Report only files needing formatting.
+yianc --format main.an                 # One file: print formatted source to stdout.
+yianc --format -w src                  # Multiple files: rewrite in place.
+yianc --format --format-check src      # Report only files needing formatting.
 ```
 
 只做词法与语法分析，再按规范化空白、换行与注释位置重新发射。无法格式化的文件被跳过并在
-stderr 打印 `skip <path>: cannot be formatted`。`--check` 列出需要格式化的文件，有差异时
-退出 `1`。`anx fmt` 是同一格式化器在项目上的入口。
+stderr 打印 `skip <path>: cannot be formatted`。`--format-check` 列出需要格式化的文件，有差异时
+退出 `1`；它只能与 `--format` 一起使用，并且不能与 `-w` 组合。`anx fmt` 是同一格式化器在项目上的入口。
 
 ### 2.12 `--allow-ffi` / `--link-lib` / `--link-search` — FFI 与原生链接
 
@@ -227,21 +221,16 @@ stderr 打印 `skip <path>: cannot be formatted`。`--check` 列出需要格式�
 yianc --allow-ffi --link-lib m --link-search /path/to/libs lib/src main.an
 ```
 
-`--allow-ffi` 只授予独立编译源码 FFI 权限；包模式的权限由各包的 `ffi` 字段决定。`--link-lib NAME` 和 `--link-search DIR` 可重复，分别向生成可执行文件时的链接命令加入 `-lNAME` 和 `-LDIR`。它们不会自动执行在 `-t ll`、`-t bc` 或 `-t asm` 输出上；`-t obj` 保留待最终链接的外部符号。编译器会拒绝非法库名。
+`--allow-ffi` 只授予独立编译源码 FFI 权限；包模式的权限由各包的 `ffi` 字段决定。`--link-lib NAME` 和 `--link-search DIR` 可重复，分别向生成可执行文件时的链接命令加入 `-lNAME` 和 `-LDIR`。它们只在 `-t exe` 的最终链接步骤使用；`-t ll` 与 `-t bc` 保留外部符号。编译器会拒绝非法库名。
 
-声明 `[native.llvm]` 的包使用 LLVM 22 的 `llvm-config` 确定组件及系统库参数，要求 Linux x86-64 LP64 环境和 x86-64 Linux C 链接器。`-t exe` 编译并链接包内 C shim；`-t obj` 将 shim 和 YIAN 运行时合入可重定位目标文件，但仍需由最终链接器解析 LLVM 符号。语言层的 C ABI 限制与封送操作见 [FFI 参考](grammar/17.ffi.md)。
+声明 `[native.llvm]` 的包使用 LLVM 22 的 `llvm-config` 确定组件及系统库参数，要求 Linux x86-64 LP64 环境和 x86-64 Linux C 链接器。`-t exe` 编译并链接包内 C shim、YIAN 运行时、LLVM 组件及系统库。语言层的 C ABI 限制与封送操作见 [FFI 参考](grammar/17.ffi.md)。
 
-### 2.13 `--frontend-json` — 前端观察
+### 2.13 前端观察与 Python recovery CLI
 
-```bash
-yianc --frontend-json tokens tests/basic/array/access.an
-yianc --frontend-json ast tests/basic/array/access.an
-yianc --frontend-json desugared tests/basic/array/access.an
-```
-
-在 stdout 输出一个前端 JSON 对象，停在指定阶段，不进行名称与类型解析或代码生成，
-不写构建产物。前端观察无需标准库输入；它与 `--analyze --json` 的语义诊断出口不同。
-YIAN 实现的同名入口见[自举编译器](manual/30.bootstrap.md)。
+native `yianc` 不提供前端 JSON 观察入口；需要查看前端产物时使用 `--dump`，它会写出
+`tokens.txt`、`ast.txt`、`hir.txt` 等文件。Python recovery CLI 保留
+`--frontend-json {tokens,ast,desugared}`、`--analyze` 和 `--json`，其行为只属于恢复路径，
+见[自举编译器](manual/30.bootstrap.md)与 [Python CLI](manual/14.cli_build.md)。
 
 ## 3. 日志与调试输出
 
@@ -343,10 +332,10 @@ yianc --log-spec "main=DEBUG" lib/src tests/basic/array/assign.an
 [DEBUG][main        ]generated 5 CFG functions
 ```
 
-### 4.4 语义分析与 CFG 检查（不发射 LLVM）
+### 4.4 前端与中端检查（不发射 LLVM）
 
 ```bash
-yianc -t none lib/src tests/basic/array/assign.an
+yianc --check lib/src tests/basic/array/assign.an
 ```
 
 ### 4.5 导出 LLVM IR
@@ -357,7 +346,7 @@ yianc -t ll -o output.ll lib/src tests/basic/array/assign.an
 
 ## 5. 运行时库与链接
 
-`-t exe` 与 `-t obj` 的产物需要运行时库（`runtime/`）：进程级对象（参数、锁槽、键计数器、帧锁影子栈）、失败路径、C 入口包装 `main`，以及堆分配器。
+`-t exe` 的产物需要运行时库（`runtime/`）：进程级对象（参数、锁槽、键计数器、帧锁影子栈）、失败路径、C 入口包装 `main`，以及堆分配器。
 
 ```text
 yianc/src/codegen/abi/runtime.an 共享帧锁/块头常量与运行时消息
@@ -371,15 +360,14 @@ build/runtime/libyian_rt.{o,a}   产物（首次使用时构建并缓存）
 | 目标 | 处理 |
 | --- | --- |
 | `exe` | `clang <user>.o build/runtime/libyian_rt.a -o <out>` |
-| `obj` | `clang -r -nostdlib <user>.o libyian_rt.o -o <out>`，产物单文件自包含 |
-| `ll` / `bc` / `asm` | 运行时不并入：运行时符号是外部声明/未定义符号，需要自行链接运行时库 |
+| `ll` / `bc` | 运行时不并入：运行时符号是外部声明/未定义符号，需要自行链接运行时库 |
 
 原生 `yianc` 对模块内普通生成函数（`yian.fn.<TypeId>`，含方法、泛型实例与闭包生成函数）使用
-`internal` 链接性，对 `ll`、`bc`、`obj`、`asm`、`exe` 一致生效；入口 `__yian_main`、`extern "C"`
-声明与运行时符号保持外部名称。因此 `-t ll`/`bc`/`asm` 产物只留下运行时符号与 C 声明待链接，
+`internal` 链接性，对 `ll`、`bc`、`exe` 一致生效；入口 `__yian_main`、`extern "C"`
+声明与运行时符号保持外部名称。因此 `-t ll`/`bc` 产物只留下运行时符号与 C 声明待链接，
 未被引用的普通函数可被优化器和链接器删除。`pub` 是 YIAN 级可见性，不改变该分类。
 
-自行链接 `-t ll`/`bc`/`asm` 的产物时，需要满足下表这些符号（都在 `yian_rt.h` 里声明）：
+自行链接 `-t ll`/`bc` 的产物时，需要满足下表这些符号（都在 `yian_rt.h` 里声明）：
 
 | 类别 | 符号 |
 | --- | --- |

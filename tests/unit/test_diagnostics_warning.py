@@ -7,7 +7,6 @@ fixtures, or runs package suites.
 
 from __future__ import annotations
 
-import json
 import os
 import re
 import subprocess
@@ -121,29 +120,16 @@ class WarningDiagnosticTests(unittest.TestCase):
         self.assertEqual(ran.stdout, "")
         self.assertEqual(ran.stderr, "")
 
-    def test_warning_json(self) -> None:
+    def test_warning_text_check_mode(self) -> None:
         source = self.source("main.an", WARNING_SOURCE)
-        completed = self.compiler(source, "--analyze", "--json")
+        completed = self.compiler(source, "--check")
         self.assertEqual(completed.returncode, 0, completed.stderr)
-        payload = json.loads(completed.stdout)
-        self.assertEqual(payload["format"], 1)
-        self.assertIs(payload["ok"], True)
-        self.assertEqual(payload["summary"], {"errors": 0, "warnings": 1})
-        diagnostics = payload["diagnostics"]
-        self.assertEqual(len(diagnostics), 1)
-        diagnostic = diagnostics[0]
-        self.assertEqual(diagnostic["code"], "W502")
-        self.assertEqual(diagnostic["severity"], "warning")
-        self.assertEqual(
-            diagnostic["message"],
-            "unnecessary import of 'Option': the prelude already provides it",
-        )
-        self.assertEqual(diagnostic["range"]["start"], {"line": 0, "character": 28})
-        self.assertIs(diagnostic["recovered"], False)
+        self.assertEqual(completed.stdout, "")
+        self.assert_warning_block(completed.stderr, source)
 
     def test_error_block_uses_shared_layout(self) -> None:
         source = self.source("error.an", ERROR_SOURCE)
-        completed = self.compiler(source, "-t", "none")
+        completed = self.compiler(source, "--check")
         self.assertNotEqual(completed.returncode, 0)
         self.assert_error_block(completed.stderr, source)
 
@@ -169,7 +155,7 @@ fn main() {
         for name, text in cases.items():
             with self.subTest(name=name):
                 source = self.source(name, text)
-                completed = self.compiler(source, "-t", "none")
+                completed = self.compiler(source, "--check")
                 self.assertEqual(completed.returncode, 0, completed.stderr)
                 self.assertEqual(completed.stderr, "")
 
@@ -186,13 +172,13 @@ fn main() {
     assert option.value == 7;
 }
 """)
-        completed = self.compiler(main, other, "-t", "none")
+        completed = self.compiler(main, other, "--check")
         self.assertEqual(completed.returncode, 0, completed.stderr)
         self.assertEqual(completed.stderr, "")
 
     def test_stdlib_units_do_not_warn(self) -> None:
         source = self.source("empty.an", "fn main() {}\n")
-        completed = self.compiler(source, "-t", "none")
+        completed = self.compiler(source, "--check")
         self.assertEqual(completed.returncode, 0, completed.stderr)
         self.assertEqual(completed.stderr, "")
 

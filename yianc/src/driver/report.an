@@ -1,0 +1,58 @@
+from yianc.diagnostics.model import AnalysisError, Diagnostic;
+from yianc.diagnostics.render import render;
+from yianc.driver.native import DriverError;
+from yianc.frontend.source import SourceManager;
+from std.core.drop import Drop;
+from std.core.fmt import ToString;
+from std.core.io import Stderr, Write, eprint, eprintln;
+from std.core.process import ExitStatus;
+
+pub fn report(diagnostic: Diagnostic&, sources: Option<SourceManager&>) {
+    let text = match render(diagnostic, sources) {
+        Ok(value) => value,
+        Err(problem) => { problem.drop(); return; },
+    };
+    defer text.drop();
+    eprintln(text.as_str());
+}
+
+pub fn report_error(problem: AnalysisError&, sources: Option<SourceManager&>) {
+    report(&problem.diagnostic, sources);
+}
+
+// Render every diagnostic in order; a rendering failure is reported as a failed CLI operation.
+pub fn report_diagnostics(diagnostics: Vec<Diagnostic>&, sources: Option<SourceManager&>) -> bool {
+    for diagnostic in *diagnostics {
+        let text = match render(diagnostic, sources) {
+            Ok(value) => value,
+            Err(problem) => { problem.drop(); return false; },
+        };
+        defer text.drop();
+        eprintln(text.as_str());
+    }
+    true
+}
+
+pub fn driver_error(problem: DriverError&) {
+    let text = String.from(&"native tool ");
+    defer text.drop();
+    text.push_str(problem.tool.as_str());
+    text.push_str(": ");
+    text.push_str(problem.message.as_str());
+    match problem.status {
+        Some(status) => {
+            text.push_str(" (");
+            let number = match status {
+                Exited(code) => { text.push_str("exit "); code.to_string() },
+                Signaled(signal) => { text.push_str("signal "); signal.to_string() },
+            };
+            defer number.drop();
+            text.push_str(number.as_str());
+            text.push(')');
+        },
+        None => {},
+    }
+    text.push_str("\n");
+    eprint(text.as_str());
+    match Stderr.new().write_all(problem.stderr.as_slice()) { Ok(_) => {}, Err(error) => error.drop(), }
+}

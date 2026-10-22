@@ -1,175 +1,120 @@
-from yianc.frontend.diagnostics import lex_code, parse_code;
-from yianc.frontend.prepare import prepare_file, PreparationStage;
-from yianc.common.ids import SourceId;
+from yianc.analysis.session.output import AnalysisOptions;
+from yianc.analysis.constant.evaluate import TypeSizeProvider;
+from yianc.codegen.session import BackendOptions;
+from yianc.config import CompilerAction, CompilerConfig, parse_args;
+from yianc.driver.backend import BackendDriver;
+from yianc.driver.frontend import FrontendDriver;
+from yianc.driver.middle import MiddleEndDriver;
+from yianc.driver.profile import ProfileKind;
+from yianc.driver.report import report;
+from yianc.driver.trace import CompilerTrace;
+from yianc.format.cli import format_cli;
+from yianc.frontend.source import SourceManager;
 from std.core.drop import Drop;
 from std.core.env import exit;
-from std.core.io import IoError, eprint, eprintln;
-from yianc.config import FrontendPhase, parse_args;
-from yianc.analysis.cli import analyze_cli;
-from yianc.driver.compile import compile_cli;
-from yianc.frontend.source import SourceManager, collect_sources, Span;
-from json.write import Writer;
-from yianc.frontend.observe import append_token_file;
-from yianc.frontend.ast.format import AstFormatter;
-from yianc.format.cli import format_cli;
+from std.core.io import eprintln;
 
-fn release_paths(paths: Vec<String>&) {
-    let index: u64 = 0u64;
+fn check_cli(config: CompilerConfig&) -> bool {
+    let trace = match CompilerTrace.new(config, true) {
+        Ok(value) => value,
+        Err(problem) => { eprintln(problem.as_str()); problem.drop(); return false; },
+    };
+    defer trace.drop();
+    let profile_complete = false;
+    defer trace.finalize(profile_complete);
+    let total = trace.start_pass("compiler.total", "main", "compiler.total", ProfileKind.Stage);
 
-    while index < paths.len() {
-        paths[index].drop();
-        index += 1u64;
-    }
-
-    paths.drop();
-}
-
-fn emit_json(writer: Writer&) {
-    match writer.finish() {
-        Ok(text) => {
-            defer text.drop();
-            println(text.as_str());
-        },
-        Err(_) => {},
-    }
-}
-
-// The files array is open on entry; close it and open the sibling diagnostic object.
-fn diagnostic_start(writer: Writer&, stage: str, path: str) {
-    writer.end_array();
-
-    writer.key("diagnostic");
-    writer.begin_object();
-    writer.key("stage");
-    writer.write_string(stage);
-
-    writer.key("path");
-    writer.write_string(path);
-}
-
-// Close the diagnostic and outer response objects, then write the complete JSON response.
-fn diagnostic_end(writer: Writer&) {
-    writer.end_object();
-    writer.end_object();
-    emit_json(writer);
-}
-
-// Frontend observations expose the message; errno remains part of the internal I/O error.
-fn io_error_fields(writer: Writer&, problem: IoError&) {
-    writer.key("message");
-    writer.write_string(problem.msg());
-}
-
-fn source_diagnostic(output: Writer&, stage: str, path: str, message: str, span: Span) {
-    diagnostic_start(output, stage, path);
-
-    output.key("code");
-    output.write_string(if stage == "lex" {
-            lex_code(message).text()
-        } else {
-            parse_code(message).text()
-        });
-
-    output.key("severity");
-    output.write_string("error");
-
-    output.key("message");
-    output.write_string(message);
-    span.write_json(output);
-    diagnostic_end(output);
-}
-
-// Local scopes release per-file resources on success, parse failure, and desugaring failure.
-fn observe_file(output: Writer&, phase: FrontendPhase, id: SourceId, path: str, source: str) -> bool {
-    let prepared = match prepare_file(id, path, source, phase) {
+    let frontend = match FrontendDriver.prepare(config, Option<CompilerTrace&>.Some(&trace)) {
         Ok(value) => value,
         Err(problem) => {
-            defer problem.drop();
-            source_diagnostic(output, if problem.stage == PreparationStage.Lex {
-                    "lex"
-                } else {
-                    "parse"
-                }, path, problem.message.as_str(), problem.span);
+            report(&problem.diagnostic, Option<SourceManager&>.None);
+            problem.drop();
             return false;
         },
     };
-    defer prepared.drop();
+    let middle = MiddleEndDriver.new(frontend.take_session(), config.raw_pointers);
+    defer middle.drop();
 
-    if phase == FrontendPhase.Tokens {
-        append_token_file(output, path, &prepared.tokens);
-        return true;
-    }
-
-    let tree = prepared.tree.unwrap();
-
-    output.begin_object();
-    output.key("path");
-    output.write_string(path);
-
-    output.key("ast");
-    AstFormatter.new(output).append_program(tree.root);
-    output.end_object();
-    true
-}
-
-// Observe input files sequentially; the first failure ends observation and outputs a diagnostic with completed files.
-fn frontend(phase: FrontendPhase, inputs: Vec<String>&) -> bool {
-    let paths = match collect_sources(inputs) {
+    let backend = match BackendDriver.new(middle.analysis_session(), BackendOptions(config.raw_pointers, config.optimization), Option<CompilerTrace&>.Some(&trace)) {
         Ok(value) => value,
         Err(problem) => {
-            defer problem.drop();
-            // Input discovery precedes the observation response and reports CLI errors on stderr.
-            eprint("error: ");
-            eprintln(problem.msg());
+            report(&problem.diagnostic, Option<SourceManager&>.Some(middle.analysis_session().source_manager()));
+            problem.drop();
             return false;
         },
     };
-    defer release_paths(&paths);
+    defer backend.drop();
 
-    let sources = SourceManager.new();
-    defer sources.drop();
-    let output = Writer.with_max_depth(512u64);
-    output.begin_object();
-    output.key("version");
-    output.write_u64(1);
-
-    output.key("phase");
-    output.write_string(phase.name());
-
-    output.key("files");
-    output.begin_array();
-    defer output.drop();
-
-    let index = 0u64;
-
-    while index < paths.len() {
-        let id = match sources.load(paths[index].as_str()) {
-            Ok(value) => value,
-            Err(problem) => {
-                defer problem.drop();
-                diagnostic_start(&output, "io", paths[index].as_str());
-                io_error_fields(&output, &problem);
-                diagnostic_end(&output);
-                return false;
-            },
-        };
-
-        let source = sources.file(id);
-
-        if !observe_file(&output, phase, SourceId(id), source.path(), source.text()) {
-            return false;
-        }
-
-        index += 1u64;
+    let options = AnalysisOptions.new();
+    options.require_entry = false;
+    options.entry_optional = true;
+    options.recover = true;
+    options.verify_hir = true;
+    options.sizes = Option<TypeSizeProvider&>.Some(backend.size_provider());
+    options.trace = Option<CompilerTrace&>.Some(&trace);
+    let ok = middle.check(options, config.dump);
+    for pass_id in ["cfg_pipeline", "llvm_pipeline", "native_pipeline", "llvm.lower", "llvm.verify_before_optimization",
+        "llvm.optimize", "llvm.verify_after_optimization", "llvm.emit_native", "llvm.serialize_ir", "llvm.serialize_bitcode",
+        "native.prepare", "native.runtime_compile", "native.runtime_archive", "native.c_shim_compile", "native.link_flags", "native.link"] {
+        trace.skip(*pass_id, "check stops after semantic analysis");
     }
+    trace.finish("compiler.total", total);
+    profile_complete = ok;
+    ok
+}
 
-    output.end_array();
+fn compile_cli(config: CompilerConfig&) -> bool {
+    let trace = match CompilerTrace.new(config, false) {
+        Ok(value) => value,
+        Err(problem) => { eprintln(problem.as_str()); problem.drop(); return false; },
+    };
+    defer trace.drop();
+    let profile_complete = false;
+    defer trace.finalize(profile_complete);
+    let total = trace.start_pass("compiler.total", "main", "compiler.total", ProfileKind.Stage);
+    trace.event("main", 3, "compiling source inputs", Option<str>.None);
 
-    output.key("diagnostic");
-    output.write_null();
-    output.end_object();
-    emit_json(&output);
-    true
+    let started = trace.start_pass("source_preparation", "main", "source preparation", ProfileKind.Stage);
+    let frontend = match FrontendDriver.prepare(config, Option<CompilerTrace&>.Some(&trace)) {
+        Ok(value) => { trace.finish("source_preparation", started); value },
+        Err(problem) => {
+            trace.fail("source_preparation", started);
+            report(&problem.diagnostic, Option<SourceManager&>.None);
+            problem.drop();
+            return false;
+        },
+    };
+    let middle = MiddleEndDriver.new(frontend.take_session(), config.raw_pointers);
+    defer middle.drop();
+
+    let backend = match BackendDriver.new(middle.analysis_session(), BackendOptions(config.raw_pointers, config.optimization), Option<CompilerTrace&>.Some(&trace)) {
+        Ok(value) => value,
+        Err(problem) => {
+            report(&problem.diagnostic, Option<SourceManager&>.Some(middle.analysis_session().source_manager()));
+            problem.drop();
+            return false;
+        },
+    };
+    defer backend.drop();
+
+    let options = AnalysisOptions.new();
+    options.require_entry = true;
+    options.entry_optional = false;
+    options.recover = false;
+    options.verify_hir = true;
+    options.sizes = Option<TypeSizeProvider&>.Some(backend.size_provider());
+    options.trace = Option<CompilerTrace&>.Some(&trace);
+    let analyzed_at = trace.start_pass("semantic_analysis", "main", "semantic analysis", ProfileKind.Stage);
+    if !middle.analyze(options, config.dump) {
+        trace.fail("semantic_analysis", analyzed_at);
+        return false;
+    }
+    trace.finish("semantic_analysis", analyzed_at);
+
+    let ok = backend.compile(config, middle.output(), Option<CompilerTrace&>.Some(&trace));
+    trace.finish("compiler.total", total);
+    profile_complete = ok;
+    ok
 }
 
 fn main() {
@@ -179,16 +124,7 @@ fn main() {
 
             match &config.action {
                 Help(text) => { print(text.as_str()); 0i32 },
-                FrontendJson(phase) => if frontend(*phase, &config.inputs) {
-                    0i32
-                } else {
-                    1i32
-                },
-                Analyze(json) => if analyze_cli(&config, *json) {
-                    0i32
-                } else {
-                    1i32
-                },
+                Check => if check_cli(&config) { 0i32 } else { 1i32 },
                 Compile => if compile_cli(&config) { 0i32 } else { 1i32 },
                 Format(rewrite, check) => format_cli(&config, *rewrite, *check),
                 Invalid(message) => { eprintln(message.as_str()); 1i32 },
