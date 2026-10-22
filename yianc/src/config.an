@@ -36,6 +36,7 @@ pub struct CompilerConfig {
     pub dump: bool,
     pub profile: bool,
     pub profile_output: Option<String>,
+    pub runtime_profile_dir: Option<String>,
     pub log_spec: Option<String>,
     pub log_file: Option<String>,
     pub link_libraries: Vec<String>,
@@ -99,42 +100,56 @@ impl CompilerConfig {
             Ok(Some(value)) => Option<String>.Some(String.from(&value)),
             _ => Option<String>.None,
         };
+        let runtime_profile_dir = match matches.get_string("runtime-profile-dir") {
+            Ok(Some(value)) => Option<String>.Some(String.from(&value)),
+            _ => Option<String>.None,
+        };
         let log_spec = match matches.get_string("log-spec") { Ok(Some(value)) => Option<String>.Some(String.from(&value)), _ => Option<String>.None, };
         let log_file = match matches.get_string("log-file") { Ok(Some(value)) => Option<String>.Some(String.from(&value)), _ => Option<String>.None, };
         let link_libraries = string_values(matches, "link-lib");
         let link_searches = string_values(matches, "link-search");
 
+        let runtime_profile_error = match &runtime_profile_dir {
+            Some(value) if value.is_empty() => Option<String>.Some(String.from(&"error: --runtime-profile-dir PATH cannot be empty\n")),
+            Some(_) if format || check => Option<String>.Some(String.from(&"error: --runtime-profile-dir requires compilation without --check or --format\n")),
+            Some(_) if target != OutputKind.Exe => Option<String>.Some(String.from(&"error: --runtime-profile-dir requires target exe\n")),
+            Some(value) if !value.as_str().starts_with("/") => Option<String>.Some(String.from(&"error: --runtime-profile-dir PATH must be absolute\n")),
+            _ => Option<String>.None,
+        };
         let profile_error = match &profile_output {
             Some(value) if value.is_empty() => Option<String>.Some(String.from(&"error: --profile-output PATH cannot be empty\n")),
             Some(_) if format => Option<String>.Some(String.from(&"error: --profile-output cannot be combined with --format\n")),
             _ => Option<String>.None,
         };
-        let action = match profile_error {
+        let action = match runtime_profile_error {
             Some(message) => CompilerAction.Invalid(message),
-            None => if write && !format {
-                CompilerAction.Invalid(String.from(&"error: --write requires --format\n"))
-            } elif format && check {
-                CompilerAction.Invalid(String.from(&"error: --check cannot be combined with --format; use --format-check\n"))
-            } elif format_check && !format {
-                CompilerAction.Invalid(String.from(&"error: --format-check requires --format\n"))
-            } elif format && write && format_check {
-                CompilerAction.Invalid(String.from(&"error: --write and --format-check are mutually exclusive\n"))
-            } elif check && target_explicit {
-                CompilerAction.Invalid(String.from(&"error: --check does not accept --target\n"))
-            } elif check && output.is_some() {
-                CompilerAction.Invalid(String.from(&"error: --check does not accept --output\n"))
-            } elif check && (!link_libraries.is_empty() || !link_searches.is_empty()) {
-                CompilerAction.Invalid(String.from(&"error: --check does not accept native link options\n"))
-            } elif format {
-                CompilerAction.Format(write, format_check)
-            } elif check {
-                CompilerAction.Check
-            } else {
-                CompilerAction.Compile
+            None => match profile_error {
+                Some(message) => CompilerAction.Invalid(message),
+                None => if write && !format {
+                    CompilerAction.Invalid(String.from(&"error: --write requires --format\n"))
+                } elif format && check {
+                    CompilerAction.Invalid(String.from(&"error: --check cannot be combined with --format; use --format-check\n"))
+                } elif format_check && !format {
+                    CompilerAction.Invalid(String.from(&"error: --format-check requires --format\n"))
+                } elif format && write && format_check {
+                    CompilerAction.Invalid(String.from(&"error: --write and --format-check are mutually exclusive\n"))
+                } elif check && target_explicit {
+                    CompilerAction.Invalid(String.from(&"error: --check does not accept --target\n"))
+                } elif check && output.is_some() {
+                    CompilerAction.Invalid(String.from(&"error: --check does not accept --output\n"))
+                } elif check && (!link_libraries.is_empty() || !link_searches.is_empty()) {
+                    CompilerAction.Invalid(String.from(&"error: --check does not accept native link options\n"))
+                } elif format {
+                    CompilerAction.Format(write, format_check)
+                } elif check {
+                    CompilerAction.Check
+                } else {
+                    CompilerAction.Compile
+                },
             },
         };
         Result<Self, String>.Ok(Self(action, inputs, root, matches.get_string("compiler-root").unwrap().is_some(), packages, raw, ffi, target, target_explicit, output, optimization,
-            dump, profile, profile_output, log_spec, log_file, link_libraries, link_searches))
+            dump, profile, profile_output, runtime_profile_dir, log_spec, log_file, link_libraries, link_searches))
     }
 }
 
@@ -165,6 +180,7 @@ impl Drop for CompilerConfig {
         match &self.log_spec { Some(value) => value.drop(), None => {}, }
         match &self.log_file { Some(value) => value.drop(), None => {}, }
         match &self.profile_output { Some(value) => value.drop(), None => {}, }
+        match &self.runtime_profile_dir { Some(value) => value.drop(), None => {}, }
         for value in self.link_libraries { value.drop(); }
         for value in self.link_searches { value.drop(); }
         self.link_libraries.drop();
@@ -235,6 +251,10 @@ pub fn parse_args() -> Result<CompilerConfig, String> {
     .long("profile-output").metavar("PATH")
     .help("write structured compiler profile JSON to PATH");
 
+    parser.add_argument("runtime-profile-dir")
+    .long("runtime-profile-dir").metavar("PATH")
+    .help("build an instrumented executable that records runtime statistics to the absolute run directory PATH");
+
     parser.add_argument("log-spec")
     .long("log-spec")
     .help("channel=level logging configuration");
@@ -259,7 +279,7 @@ pub fn parse_args() -> Result<CompilerConfig, String> {
         Ok(outcome) => match outcome {
             Help(text) => Result<CompilerConfig, String>.Ok(
                 CompilerConfig(CompilerAction.Help(text), Vec<String>.new(), String.new(), false, Option<String>.None, false, false,
-                OutputKind.Exe, false, Option<String>.None, 0u8, false, false, Option<String>.None, Option<String>.None, Option<String>.None,
+                OutputKind.Exe, false, Option<String>.None, 0u8, false, false, Option<String>.None, Option<String>.None, Option<String>.None, Option<String>.None,
                 Vec<String>.new(), Vec<String>.new())),
             Parsed(matches) => {
                 defer matches.drop();

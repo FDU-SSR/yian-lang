@@ -87,7 +87,7 @@ pub fn analyze(documents: Vec<SourceDocument>&, trust: SourceTrust, packages: Op
     let transferred = false;
     defer { if !transferred { middle.drop(); } };
 
-    let backend_value = match BackendSession.new(middle.analysis_session(), BackendOptions(raw_pointers, 0u8)) {
+    let backend_value = match BackendSession.new(middle.analysis_session(), BackendOptions(raw_pointers, 0u8, Option<str>.None)) {
         Ok(value) => value,
         Err(error) => {
             error.drop();

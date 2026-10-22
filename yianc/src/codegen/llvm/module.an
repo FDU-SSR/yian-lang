@@ -31,11 +31,19 @@ pub struct LlvmLowering {
     globals: HashMap<str, Global>,
     thunks: HashMap<ThunkKey, Function>,
     entry: Option<TypeId>,
+    pub profile_dir: Option<String>,
+    pub program: String,
+    profile_ids: HashMap<TypeId, u64>,
+    profile_enter: Option<Function>,
+    profile_leave: Option<Function>,
 }
 
 impl LlvmLowering {
-    static pub fn new(session: AnalysisSession&, types: BackendTypes&, module: Module&, entry: Option<TypeId>) -> Self {
-        Self(session, types, module, HashMap<TypeId, Function>.new(), HashMap<NameId, TypeId>.new(), HashMap<str, Function>.new(), HashMap<str, Global>.new(), HashMap<ThunkKey, Function>.new(), entry)
+    static pub fn new(session: AnalysisSession&, types: BackendTypes&, module: Module&, entry: Option<TypeId>,
+        program: str, profile_dir: Option<str>) -> Self {
+        Self(session, types, module, HashMap<TypeId, Function>.new(), HashMap<NameId, TypeId>.new(), HashMap<str, Function>.new(), HashMap<str, Global>.new(), HashMap<ThunkKey, Function>.new(), entry,
+            match profile_dir { Some(value) => Option<String>.Some(String.from(&value)), None => Option<String>.None },
+            String.from(&program), HashMap<TypeId, u64>.new(), Option<Function>.None, Option<Function>.None)
     }
 
     // Runtime names are static text; language externs and runtime declarations share LLVM symbols.
@@ -150,6 +158,7 @@ impl LlvmLowering {
                 }
             }
         }
+        self.prepare_profile(cfg)?;
         for index in 0u64..cfg.len() {
             let function = *cfg.function(FunctionId(index)).unwrap();
             let body = FunctionLowering.new(self, function)?;
@@ -170,6 +179,9 @@ impl Drop for LlvmLowering {
         self.runtime.drop();
         self.globals.drop();
         self.thunks.drop();
+        match &self.profile_dir { Some(value) => value.drop(), None => {}, }
+        self.program.drop();
+        self.profile_ids.drop();
     }
 }
 
@@ -462,6 +474,7 @@ impl FunctionLowering {
                 if !visited.insert(id) { continue; }
                 let block = self.cfg.block(id)?;
                 self.builder.position_at_end(self.blocks[id.index]);
+                if id.index == 0u64 { self.call_profile_enter()?; }
                 for instruction in block.instructions {
                     match self.instruction(instruction) {
                         Ok(_) => {},
@@ -472,6 +485,7 @@ impl FunctionLowering {
                 match &*block.terminator.unwrap() {
                     Return(value) => {
                         self.end_frame();
+                        self.call_profile_leave()?;
                         match value {
                             Some(id) => { self.builder.ret(self.get(*id)?); },
                             None => { self.builder.ret_void(); },

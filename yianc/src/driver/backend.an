@@ -22,7 +22,7 @@ from yianc.common.ids import UnitId;
 from llvm.observation import OperationObserver;
 from std.core.convert import From;
 from std.core.drop import Drop;
-from std.core.fs import create_dir_all, write, rename, remove_dir, remove_file;
+from std.core.fs import create_dir_all, write, rename, remove_dir, remove_file, resolve;
 from std.core.io import eprintln;
 from std.core.iter import Iterator, IntoIterator;
 from std.core.path import Path;
@@ -101,11 +101,12 @@ fn finish_analysis_observed(types: BackendTypes&, trace: Option<CompilerTrace&>)
 }
 
 fn lower_llvm(analysis: AnalysisSession&, types: BackendTypes&, module: Module&,
-    cfg: CfgModule&, trace: Option<CompilerTrace&>) -> Result<(), CodegenError> {
+    cfg: CfgModule&, program: str, runtime_profile_dir: Option<str>,
+    trace: Option<CompilerTrace&>) -> Result<(), CodegenError> {
     let token = start_profile(trace, "llvm.lower", ProfileKind.Pass);
     let success = false;
     defer end_profile(trace, "llvm.lower", token, success);
-    let lowering = LlvmLowering.new(analysis, types, module, cfg.entry);
+    let lowering = LlvmLowering.new(analysis, types, module, cfg.entry, program, runtime_profile_dir);
     defer lowering.drop();
     lowering.lower(cfg)?;
     success = true;
@@ -161,12 +162,15 @@ pub struct BackendDriver {
     session: BackendSession,
     cfg: Option<CfgModule>,
     phase: BackendPhase,
+    program: String,
+    runtime_profile_dir: Option<String>,
 }
 
 impl BackendDriver {
     static pub fn new(analysis: AnalysisSession&, options: BackendOptions, trace: Option<CompilerTrace&>) -> Result<Self, CodegenError> {
         let backend = BackendSession.new_observed(analysis, options, trace)?;
-        Result<Self, CodegenError>.Ok(Self(backend, Option<CfgModule>.None, BackendPhase.Created))
+        Result<Self, CodegenError>.Ok(Self(backend, Option<CfgModule>.None, BackendPhase.Created,
+            String.new(), Option<String>.None))
     }
 
     pub fn size_provider() -> TypeSizeProvider& {
@@ -180,11 +184,16 @@ impl BackendDriver {
         }
     }
 
-    fn lower(output: AnalysisOutput&, trace: Option<CompilerTrace&>) -> Result<CfgModule&, CodegenError> {
+    fn lower(output: AnalysisOutput&, program: str, runtime_profile_dir: Option<str>,
+        trace: Option<CompilerTrace&>) -> Result<CfgModule&, CodegenError> {
         if self.phase != BackendPhase.Created {
             return Result<CfgModule&, CodegenError>.Err(CodegenError.invalid("backend lowering has already started"));
         }
         self.phase = BackendPhase.Failed;
+        self.program.drop();
+        self.program = String.from(&program);
+        match &self.runtime_profile_dir { Some(value) => value.drop(), None => {}, }
+        self.runtime_profile_dir = match runtime_profile_dir { Some(value) => Option<String>.Some(String.from(&value)), None => Option<String>.None };
         finish_analysis_observed(self.session.backend_types(), trace);
         let cfg = lower_cfg(self.session.analysis_session(), self.session.backend_types(), output, trace)?;
         let accepted = false;
@@ -205,7 +214,9 @@ impl BackendDriver {
         verify_cfg_observed(cfg, self.session.backend_types(), trace)?;
         insert_checks_observed(cfg, self.session.backend_types(), trace)?;
         verify_cfg_observed(cfg, self.session.backend_types(), trace)?;
-        lower_llvm(self.session.analysis_session(), self.session.backend_types(), self.session.llvm_module(), cfg, trace)?;
+        let profile_dir = match &self.runtime_profile_dir { Some(value) => Option<str>.Some(value.as_str()), None => Option<str>.None };
+        lower_llvm(self.session.analysis_session(), self.session.backend_types(), self.session.llvm_module(), cfg,
+            self.program.as_str(), profile_dir, trace)?;
         self.phase = BackendPhase.Generated;
         Result<(), CodegenError>.Ok(())
     }
@@ -261,7 +272,15 @@ impl BackendDriver {
             if !valid { eprintln("error: invalid --link-lib name"); return false; }
         }
         let started = match trace { Some(value) => value.start_pass("cfg_pipeline", "cfg", "HIR to CFG", ProfileKind.Stage), None => 0u64 };
-        let lowered = self.lower(output, trace);
+        let destination_path = destination(config, self.session.analysis_session());
+        defer destination_path.drop();
+        let program = match resolve(destination_path.as_str()) {
+            Ok(value) => { let text = String.from(&value.as_str()); value.drop(); text },
+            Err(problem) => { problem.drop(); String.from(&destination_path.as_str()) },
+        };
+        defer program.drop();
+        let runtime_profile_dir = match &config.runtime_profile_dir { Some(value) => Option<str>.Some(value.as_str()), None => Option<str>.None };
+        let lowered = self.lower(output, program.as_str(), runtime_profile_dir, trace);
         let cfg = match lowered {
             Ok(value) => { match trace { Some(observer) => observer.finish("cfg_pipeline", started), None => {}, }; value },
             Err(problem) => {
@@ -391,7 +410,7 @@ impl BackendDriver {
             match trace { Some(observer) => observer.finish("native.prepare", prepare_token), None => {}, }
             defer driver.drop();
             match driver.link_observed(object.as_str(), temporary.as_str(), config.optimization,
-                &config.link_libraries, &config.link_searches, trace) {
+                &config.link_libraries, &config.link_searches, config.runtime_profile_dir.is_some(), trace) {
                 Ok(artifact) => artifact.drop(),
                 Err(problem) => {
                     match trace { Some(observer) => observer.fail("native_pipeline", native_started), None => {}, }
@@ -434,6 +453,8 @@ impl Drop for BackendDriver {
             Some(value) => value.drop(),
             None => {},
         }
+        self.program.drop();
+        match &self.runtime_profile_dir { Some(value) => value.drop(), None => {}, }
         self.session.drop();
     }
 }

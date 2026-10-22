@@ -111,10 +111,34 @@ JSON，并在同目录写一个扩展名为 `.txt` 的可读汇总。两者可�
 lower/验证/清理/check insertion、LLVM lowering/优化前后验证/优化/native emission 或 IR/bitcode 序列化，
 以及 runtime、C shim、链接参数、最终链接和产物发布。优化等级 `-O0` 不运行 LLVM 优化；`--check` 在语义分析后结束，未执行项标为 `not_run`，不会伪造零耗时成功。原生链接阶段仅在 `exe` 目标运行。
 
-`--profile-output` 可用于编译模式与 `--check`；编译报告的目标为 `"exe"`、`"ll"` 或 `"bc"`，检查报告的目标为 `"check"`。与 `--format` 一起使用会报配置错误。报告写入失败只打印警告，不改变原编译结果。`anx`
-的四个编译命令 `build`、`run`、`check`、`test` 用该接口保存每次 compiler 调用的独立明细，并生成命令级
-报告；命令选项见[anx CLI](anx/03.cli.md)。`run` 或 `test` 启动产物后的执行时间不计入编译总计。Python
-恢复编译器的 `--profile` 属于其恢复 CLI 行为；它不支持 native `--profile-output`。
+`--profile-output` 可用于编译模式与 `--check`；编译报告的目标为 `"exe"`、`"ll"` 或 `"bc"`，检查报告的目标为 `"check"`。与 `--format` 一起使用会报配置错误。报告写入失败只打印警告，不改变原编译结果。`anx
+build profile` 用该接口保存每次 compiler 调用的独立明细并生成命令级报告；命令选项见
+[anx CLI](anx/03.cli.md)。`anx run profile` 启动产物后的执行不计入编译计时；它使用下节的运行时插桩接口，
+不读取编译报告。Python 恢复编译器的 `--profile` 属于其恢复 CLI 行为；它不支持 native
+`--profile-output`。
+
+### 2.5.1 `--runtime-profile-dir PATH` — 运行时插桩构建
+
+```bash
+yianc --runtime-profile-dir /abs/run/dir -O2 -o build/app lib/src main.an
+```
+
+该 native 选项只用于生成插桩可执行文件。`PATH` 必须是非空绝对路径，目标必须是 `exe`；与 `--check`、
+`--format`、`-t ll`/`-t bc` 一起使用会报配置错误。`anx run profile` 自动分配本次 run 目录并传入该选项，
+普通构建不传。
+
+编译为本次构建中的每个生成 callable 分配 `function_id`，输出只读的描述符表与
+`__yian_profile_config`，并在函数真实入口和每个正常 `ret` 前调用 `__yian_profile_enter(uint64_t)` /
+`__yian_profile_leave(uint64_t)`；extern、头文件声明和 ABI thunk 不单独插桩。描述符包含包、模块、
+规范源码路径、从 1 开始的行列号（列按 Unicode scalar value 计数）、函数/方法/闭包类别、方法所属类型、
+具体泛型实参和生成来源。插桩函数加 `noinline`、`nomerge` 与 `"disable-tail-calls"="true"` 字符串属性，
+profiling session 将 `MergeFunctions` 设为 `false`；优化级别仍按 `-O`/`--release` 保留，不降级到 `-O0`。
+
+配置结构含 ABI 版本、报告目录、run id、程序绝对路径、指针模式、优化级别、描述符数量和描述符指针。
+所有字符串是 UTF-8 字节切片，带显式长度，不需要 NUL 结尾。报告目录由运行环境创建；collector 在
+`main` 正常返回后写 `profile.json` 与 `summary.txt`。格式、计时口径和正常返回保证见
+[anx CLI 的 `run profile`](anx/03.cli.md)。report 目录缺失、时钟或分配故障属于 profiling 故障边界，
+不改变普通编译或既有安全错误协议；普通编译既不定义 collector，也不引用插桩符号。
 
 ### 2.6 `--packages` — 包名导入解析
 
@@ -201,6 +225,7 @@ definite-assignment 检查；不进入 CFG/LLVM，不生成编译器产物。诊
 `0` 表示成功，`1` 表示有错误；只有警告时仍返回 `0`。不要求 `main`，存在时校验其签名。
 `--check` 接受 `--packages`、`--compiler-root`、`--raw-pointers`、`--allow-ffi`、`-O`、`--dump`、
 `--profile`、`--profile-output` 和日志选项；显式 `-t`、`-o`、`--link-lib`、`--link-search` 会报配置错误。
+`--runtime-profile-dir` 只用于插桩 `exe` 构建，与 `--check` 组合会报配置错误。
 `--dump` 只写 `tokens.txt`、`ast.txt` 和成功分析时的 `hir.txt`。
 
 ### 2.11 `--format` / `-w` / `--format-check` — 格式化源码

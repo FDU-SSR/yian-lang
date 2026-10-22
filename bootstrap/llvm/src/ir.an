@@ -12,6 +12,7 @@ from llvm.target_raw import LLVMCreateTargetDataLayout, LLVMSetModuleDataLayout,
 from llvm.target_raw import LLVMABISizeOfType, LLVMABIAlignmentOfType;
 from llvm.target_raw import LLVMSetTarget, LLVMCreatePassBuilderOptions, LLVMDisposePassBuilderOptions;
 from llvm.target_raw import LLVMRunPasses, LLVMGetErrorMessage, LLVMDisposeErrorMessage;
+from llvm.target_raw import LLVMPassBuilderOptionsSetMergeFunctions;
 from llvm.target_raw import LLVMTargetMachineEmitToMemoryBuffer;
 from llvm.observation import OperationKind, OperationObserver;
 
@@ -31,6 +32,7 @@ pub struct IrSession {
     target_layout: cptr<LLVMOpaqueTargetData>,
     target_triple: cptr<c_char>,
     optimization_level: u8,
+    merge_functions: bool,
 }
 
 pub struct IrType {
@@ -103,6 +105,7 @@ extern "C" {
     fn LLVMConstStringInContext2(context: cptr<LLVMOpaqueContext>, data: cptr<c_char>, length: c_size, dont_null_terminate: c_int) -> cptr<LLVMOpaqueValue>;
     fn LLVMConstArray2(ty: cptr<LLVMOpaqueType>, values: cptr<cptr<LLVMOpaqueValue>>, count: u64) -> cptr<LLVMOpaqueValue>;
     fn LLVMConstStructInContext(context: cptr<LLVMOpaqueContext>, values: cptr<cptr<LLVMOpaqueValue>>, count: c_uint, packed: c_int) -> cptr<LLVMOpaqueValue>;
+    fn LLVMConstBitCast(value: cptr<LLVMOpaqueValue>, ty: cptr<LLVMOpaqueType>) -> cptr<LLVMOpaqueValue>;
 
     fn LLVMAddFunction(module: cptr<LLVMOpaqueModule>, name: cptr<c_char>, ty: cptr<LLVMOpaqueType>) -> cptr<LLVMOpaqueValue>;
     fn LLVMGetParam(function: cptr<LLVMOpaqueValue>, index: c_uint) -> cptr<LLVMOpaqueValue>;
@@ -115,6 +118,7 @@ extern "C" {
     fn LLVMSetVolatile(instruction: cptr<LLVMOpaqueValue>, is_volatile: c_int);
     fn LLVMGetEnumAttributeKindForName(name: cptr<c_char>, length: c_size) -> c_uint;
     fn LLVMCreateEnumAttribute(context: cptr<LLVMOpaqueContext>, kind: c_uint, value: u64) -> cptr<LLVMOpaqueAttribute>;
+    fn LLVMCreateStringAttribute(context: cptr<LLVMOpaqueContext>, key: cptr<c_char>, key_length: c_uint, value: cptr<c_char>, value_length: c_uint) -> cptr<LLVMOpaqueAttribute>;
     fn LLVMAddAttributeAtIndex(function: cptr<LLVMOpaqueValue>, index: c_uint, attribute: cptr<LLVMOpaqueAttribute>);
 
     fn LLVMBuildRet(builder: cptr<LLVMOpaqueBuilder>, value: cptr<LLVMOpaqueValue>) -> cptr<LLVMOpaqueValue>;
@@ -340,7 +344,7 @@ pub(ffi) ffi fn try_new_session(name: str, optimization_level: u8) -> Result<IrS
     return Result<IrSession, Vec<u8>>.Ok(val=IrSession(
         context=context, module=module, builder=builder,
         target_machine=machine, target_layout=layout,
-        target_triple=triple, optimization_level=optimization_level
+        target_triple=triple, optimization_level=optimization_level, merge_functions=true
         ));
 }
 
@@ -541,6 +545,10 @@ pub(ffi) ffi fn const_array(session: IrSession&, element: IrType, values: IrValu
     return wrap_value(session, LLVMConstArray2(element_type, data, length));
 }
 
+pub(ffi) ffi fn const_bitcast(session: IrSession&, value: IrValue, ty: IrType) -> IrValue {
+    return wrap_value(session, LLVMConstBitCast(checked_value(session, value), checked_type(session, ty)));
+}
+
 pub(ffi) ffi fn const_struct(session: IrSession&, values: IrValue[], packed: bool) -> IrValue {
     checked_session(session);
     let native = Vec<cptr<LLVMOpaqueValue>>.new();
@@ -663,6 +671,35 @@ ffi fn add_enum_attribute(session: IrSession&, function: IrValue, index: u32, na
 
 pub(ffi) ffi fn add_function_attribute(session: IrSession&, function: IrValue, name: str) {
     add_enum_attribute(session, function, 4294967295u32, name);
+}
+
+pub(ffi) ffi fn add_string_attribute(session: IrSession&, function: IrValue, key: str, value: str) {
+    let native_function = checked_value(session, function);
+    let c_key = checked_c_string(key);
+    defer c_key.drop();
+    let c_value = checked_c_string(value);
+    defer c_value.drop();
+    let key_parts = @ffi_parts(c_key.as_slice());
+    let value_parts = @ffi_parts(c_value.as_slice());
+    let key_length = key_parts[1] - 1u64;
+    let value_length = value_parts[1] - 1u64;
+    if key_length > 4294967295u64 || value_length > 4294967295u64 {
+        @panic("LLVM string attribute exceeds the C API length range");
+    }
+    let attribute = LLVMCreateStringAttribute(session.context, @ffi_ptr_cast<c_char>(key_parts[0]),
+        c_uint(key_length), @ffi_ptr_cast<c_char>(value_parts[0]), c_uint(value_length));
+    if attribute == @ffi_null<LLVMOpaqueAttribute>() {
+        @panic("LLVM string attribute creation failed");
+    }
+    LLVMAddAttributeAtIndex(native_function, c_uint(4294967295u32), attribute);
+}
+
+pub(ffi) ffi fn set_merge_functions(session: IrSession&, enabled: bool) {
+    session.merge_functions = enabled;
+}
+
+pub(ffi) ffi fn session_optimization_level(session: IrSession&) -> u8 {
+    session.optimization_level
 }
 
 pub(ffi) ffi fn add_parameter_attribute(session: IrSession&, function: IrValue, parameter: u32, name: str) {
@@ -1080,27 +1117,30 @@ ffi fn optimize_observed(session: IrSession&, observer: Option<OperationObserver
     let token = operation_begin(observer, OperationKind.Optimize);
     let success = false;
     defer operation_end(observer, OperationKind.Optimize, token, success);
-        let pipeline = match session.optimization_level {
-            1u8 => checked_c_string("default<O1>"),
-            2u8 => checked_c_string("default<O2>"),
-            _ => checked_c_string("default<O3>"),
-        };
-        defer pipeline.drop();
-        let pipeline_data = @ffi_parts(pipeline.as_slice())[0];
-        let options = LLVMCreatePassBuilderOptions();
-        if options == @ffi_null<LLVMOpaquePassBuilderOptions>() {
-            return Result<(), Vec<u8>>.Err(msg=error_bytes("LLVM pass builder creation failed"));
+    let pipeline = match session.optimization_level {
+        1u8 => checked_c_string("default<O1>"),
+        2u8 => checked_c_string("default<O2>"),
+        _ => checked_c_string("default<O3>"),
+    };
+    defer pipeline.drop();
+    let pipeline_data = @ffi_parts(pipeline.as_slice())[0];
+    let options = LLVMCreatePassBuilderOptions();
+    if options == @ffi_null<LLVMOpaquePassBuilderOptions>() {
+        return Result<(), Vec<u8>>.Err(msg=error_bytes("LLVM pass builder creation failed"));
+    }
+    defer LLVMDisposePassBuilderOptions(options);
+    if !session.merge_functions {
+        LLVMPassBuilderOptionsSetMergeFunctions(options, c_int(0));
+    }
+    let error = LLVMRunPasses(session.module, @ffi_ptr_cast<c_char>(pipeline_data), session.target_machine, options);
+    if error != @ffi_null<LLVMOpaqueError>() {
+        let message = LLVMGetErrorMessage(error);
+        let bytes = copy_llvm_message(message);
+        if message != @ffi_null<c_char>() {
+            LLVMDisposeErrorMessage(message);
         }
-        defer LLVMDisposePassBuilderOptions(options);
-        let error = LLVMRunPasses(session.module, @ffi_ptr_cast<c_char>(pipeline_data), session.target_machine, options);
-        if error != @ffi_null<LLVMOpaqueError>() {
-            let message = LLVMGetErrorMessage(error);
-            let bytes = copy_llvm_message(message);
-            if message != @ffi_null<c_char>() {
-                LLVMDisposeErrorMessage(message);
-            }
-            return Result<(), Vec<u8>>.Err(msg=bytes);
-        }
+        return Result<(), Vec<u8>>.Err(msg=bytes);
+    }
     success = true;
     Result<(), Vec<u8>>.Ok(val= ())
 }

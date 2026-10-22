@@ -1,0 +1,343 @@
+from yianc.codegen.llvm.module import LlvmLowering, FunctionLowering;
+from yianc.codegen.cfg.model import CfgModule;
+from yianc.codegen.cfg.ids import FunctionId;
+from yianc.codegen.error import CodegenError;
+from yianc.analysis.ty.model import NominalKind;
+from yianc.analysis.ty.display import stored_type_text;
+from yianc.common.ids import TypeId;
+from yianc.package.provenance import within;
+from llvm.object import Function, Module;
+from llvm.ir import IrValue, IrType;
+from std.collections.hash_map import HashMap;
+from std.core.ops import Index;
+from std.core.convert import From;
+from std.core.drop import Drop;
+from std.core.iter import Iterator, IntoIterator;
+
+// One descriptor is immutable run metadata for a generated source callable. The
+// compiler emits it as static data; the C collector only borrows it while running.
+struct ProfileDescriptor {
+    id: u64,
+    display_name: String,
+    package: String,
+    module: String,
+    source_path: String,
+    line: u32,
+    column: u32,
+    kind: u32,
+    owner_type: String,
+    concrete_arguments: String,
+    origin: String,
+}
+
+impl Drop for ProfileDescriptor {
+    pub fn drop() {
+        self.display_name.drop();
+        self.package.drop();
+        self.module.drop();
+        self.source_path.drop();
+        self.owner_type.drop();
+        self.concrete_arguments.drop();
+        self.origin.drop();
+    }
+}
+
+fn release_descriptors(values: Vec<ProfileDescriptor>&) {
+    for value in *values { value.drop(); }
+    values.drop();
+}
+
+fn leaf(path: str) -> String {
+    let bytes = path.as_slice();
+    let start = 0u64;
+    let index = 0u64;
+    while index < bytes.len() {
+        if bytes[index] == b'/' { start = index + 1u64; }
+        index += 1u64;
+    }
+    String.from(&str.from_slice_unchecked(bytes[start..bytes.len()]))
+}
+
+fn text_type(module: Module&) -> IrType {
+    let fields = Vec<IrType>.new();
+    defer fields.drop();
+    fields.push(module.pointer_type(0u32));
+    fields.push(module.int_type(64u32));
+    module.struct_type(fields.as_slice(), false)
+}
+
+fn text_value(module: Module&, text: str) -> IrValue {
+    let source = text.as_slice();
+    let length = source.len();
+    let bytes = source.to_vec();
+    if bytes.len() == 0u64 { bytes.push(0u8); }
+    let array = module.array_type(module.int_type(8u32), bytes.len());
+    let global = module.add_global("", array);
+    global.set_initializer(module.const_bytes(bytes.as_slice(), false));
+    global.set_constant(true);
+    global.set_private_linkage();
+    let pointer = module.const_bitcast(global.value(), module.pointer_type(0u32));
+    let fields = Vec<IrValue>.new();
+    defer fields.drop();
+    fields.push(pointer);
+    fields.push(module.const_int(module.int_type(64u32), length));
+    module.const_struct(fields.as_slice(), false)
+}
+
+impl LlvmLowering {
+    pub fn profile_enabled() -> bool {
+        self.profile_dir.is_some()
+    }
+
+    pub fn profile_id(callable: TypeId) -> Option<u64> {
+        match self.profile_ids.get(&callable) {
+            Some(value) => Option<u64>.Some(*value),
+            None => Option<u64>.None,
+        }
+    }
+
+    pub fn profile_enter_hook() -> Option<Function> {
+        self.profile_enter
+    }
+
+    pub fn profile_leave_hook() -> Option<Function> {
+        self.profile_leave
+    }
+
+    fn descriptor(type_id: TypeId, id: u64) -> Result<ProfileDescriptor, CodegenError> {
+        let required = self.session.types.require(type_id)?;
+        let(definition, arguments) = match required {
+            Nominal(definition, arguments) => (*definition, arguments),
+            _ => return Result<ProfileDescriptor, CodegenError>.Err(CodegenError.invalid("runtime profile callable is not nominal")),
+        };
+        let record = match self.session.types.definition(definition) {
+            Some(value) => value,
+            None => return Result<ProfileDescriptor, CodegenError>.Err(CodegenError.invalid("runtime profile callable definition is missing")),
+        };
+        let header = record.header();
+        let source_path = match self.session.source(header.span.source) {
+            Some(value) => String.from(&value.canonical_path()),
+            None => String.new(),
+        };
+        let package = String.new();
+        let module = String.from(&source_path.as_str());
+        let source_root = String.new();
+        match self.session.package_map() {
+            Some(map) => match map.package_of(source_path.as_str()) {
+                Some(spec) => {
+                    package.drop();
+                    package = String.from(&spec.name.as_str());
+                    source_root.drop();
+                    source_root = String.from(&spec.source_root.as_str());
+                },
+                None => {},
+            },
+            None => {},
+        }
+        defer source_root.drop();
+        if !source_root.is_empty() && within(source_path.as_str(), source_root.as_str()) {
+            module.drop();
+            module = String.from(&str.from_slice_unchecked(
+                source_path.as_slice()[(source_root.as_slice().len() + 1u64)..source_path.as_slice().len()]));
+        }
+        let receiver = Option<TypeId>.None;
+        let method = match record.body()? {
+            Method(value) => {
+                receiver = value.receiver;
+                true
+            },
+            _ => false,
+        };
+        let owner_type = match receiver {
+            Some(value) => stored_type_text(&self.session.types, &self.session.names, value),
+            None => String.new(),
+        };
+        let name = self.session.names.text(header.name);
+        let closure = name == "%closure_call";
+        let display_name = if closure {
+            String.from(&"closure")
+        } elif method && !owner_type.is_empty() {
+            let text = String.from(&owner_type.as_str());
+            text.push('.');
+            text.push_str(name);
+            text
+        } else {
+            String.from(&name)
+        };
+        let concrete_arguments = String.new();
+        let argument_index = 0u64;
+        while argument_index < arguments.len() {
+            if argument_index != 0u64 { concrete_arguments.push_str(", "); }
+            let rendered = stored_type_text(&self.session.types, &self.session.names, arguments[argument_index]);
+            defer rendered.drop();
+            concrete_arguments.push_str(rendered.as_str());
+            argument_index += 1u64;
+        }
+        let origin = if closure { String.from(&"closure literal") } else { String.new() };
+        let kind = if closure { 2u32 } elif method { 1u32 } else { 0u32 };
+        Result<ProfileDescriptor, CodegenError>.Ok(ProfileDescriptor(
+            id=id,
+            display_name=display_name,
+            package=package,
+            module=module,
+            source_path=source_path,
+            line=u32(header.span.span.start.row + 1u64),
+            column=u32(header.span.span.start.column + 1u64),
+            kind=kind,
+            owner_type=owner_type,
+            concrete_arguments=concrete_arguments,
+            origin=origin,
+            ))
+    }
+
+    fn descriptor_value(descriptor: ProfileDescriptor&, text: IrType) -> IrValue {
+        let fields = Vec<IrValue>.new();
+        defer fields.drop();
+        fields.push(self.module.const_int(self.module.int_type(64u32), descriptor.id));
+        fields.push(text_value(self.module, descriptor.display_name.as_str()));
+        fields.push(text_value(self.module, descriptor.package.as_str()));
+        fields.push(text_value(self.module, descriptor.module.as_str()));
+        fields.push(text_value(self.module, descriptor.source_path.as_str()));
+        fields.push(self.module.const_int(self.module.int_type(32u32), u64(descriptor.line)));
+        fields.push(self.module.const_int(self.module.int_type(32u32), u64(descriptor.column)));
+        fields.push(self.module.const_int(self.module.int_type(32u32), u64(descriptor.kind)));
+        fields.push(self.module.const_int(self.module.int_type(32u32), 0u64));
+        fields.push(text_value(self.module, descriptor.owner_type.as_str()));
+        fields.push(text_value(self.module, descriptor.concrete_arguments.as_str()));
+        fields.push(text_value(self.module, descriptor.origin.as_str()));
+        self.module.const_struct(fields.as_slice(), false)
+    }
+
+    // prepare_profile assigns stable per-build IDs, emits the read-only descriptor
+    // table and config, declares the runtime hooks, and constrains the profiled bodies.
+    pub fn prepare_profile(cfg: CfgModule&) -> Result<(), CodegenError> {
+        if !self.profile_enabled() { return Result<(), CodegenError>.Ok(val= ()) }
+        let descriptors = Vec<ProfileDescriptor>.new();
+        defer release_descriptors(&descriptors);
+        let index = 0u64;
+        while index < cfg.len() {
+            let function = *cfg.function(FunctionId(index)).unwrap();
+            if self.profile_ids.get(&function.callable).is_none() {
+                let id = u64(self.profile_ids.len()) + 1u64;
+                descriptors.push(self.descriptor(function.callable, id)?);
+                self.profile_ids.insert(function.callable, id);
+            }
+            index += 1u64;
+        }
+        let text = text_type(self.module);
+        let function_fields = Vec<IrType>.new();
+        defer function_fields.drop();
+        function_fields.push(self.module.int_type(64u32));
+        function_fields.push(text);
+        function_fields.push(text);
+        function_fields.push(text);
+        function_fields.push(text);
+        function_fields.push(self.module.int_type(32u32));
+        function_fields.push(self.module.int_type(32u32));
+        function_fields.push(self.module.int_type(32u32));
+        function_fields.push(self.module.int_type(32u32));
+        function_fields.push(text);
+        function_fields.push(text);
+        function_fields.push(text);
+        let function_type = self.module.struct_type(function_fields.as_slice(), false);
+        let values = Vec<IrValue>.new();
+        defer values.drop();
+        let descriptor_index = 0u64;
+        while descriptor_index < descriptors.len() {
+            values.push(self.descriptor_value(&descriptors[descriptor_index], text));
+            descriptor_index += 1u64;
+        }
+        let array = self.module.array_type(function_type, u64(values.len()));
+        let table = self.module.add_global("", array);
+        table.set_initializer(self.module.const_array(function_type, values.as_slice()));
+        table.set_constant(true);
+        table.set_private_linkage();
+        let table_pointer = self.module.const_bitcast(table.value(), self.module.pointer_type(0u32));
+
+        let directory = match &self.profile_dir { Some(value) => value.as_str(), None => "" };
+        let run_id = leaf(directory);
+        defer run_id.drop();
+        let pointer_mode = if self.types.raw_pointers() { "raw" } else { "fat" };
+        let config_fields = Vec<IrValue>.new();
+        defer config_fields.drop();
+        config_fields.push(self.module.const_int(self.module.int_type(64u32), 1u64));
+        config_fields.push(text_value(self.module, directory));
+        config_fields.push(text_value(self.module, run_id.as_str()));
+        config_fields.push(text_value(self.module, self.program.as_str()));
+        config_fields.push(text_value(self.module, pointer_mode));
+        config_fields.push(self.module.const_int(self.module.int_type(32u32), u64(self.module.optimization_level())));
+        config_fields.push(self.module.const_int(self.module.int_type(32u32), u64(descriptors.len())));
+        config_fields.push(table_pointer);
+        let config_field_types = Vec<IrType>.new();
+        defer config_field_types.drop();
+        config_field_types.push(self.module.int_type(64u32));
+        config_field_types.push(text);
+        config_field_types.push(text);
+        config_field_types.push(text);
+        config_field_types.push(text);
+        config_field_types.push(self.module.int_type(32u32));
+        config_field_types.push(self.module.int_type(32u32));
+        config_field_types.push(self.module.pointer_type(0u32));
+        let config_type = self.module.struct_type(config_field_types.as_slice(), false);
+        let config = self.module.add_global("__yian_profile_config", config_type);
+        config.set_initializer(self.module.const_struct(config_fields.as_slice(), false));
+        config.set_constant(true);
+
+        let hook_parameters = Vec<IrType>.new();
+        defer hook_parameters.drop();
+        hook_parameters.push(self.module.int_type(64u32));
+        let hook_type = self.module.function_type(self.module.void_type(), hook_parameters.as_slice());
+        let enter = match self.module.declare_function("__yian_profile_enter", hook_type) {
+            Ok(value) => value,
+            Err(message) => return Result<(), CodegenError>.Err(CodegenError.llvm_error(message)),
+        };
+        let leave = match self.module.declare_function("__yian_profile_leave", hook_type) {
+            Ok(value) => value,
+            Err(message) => return Result<(), CodegenError>.Err(CodegenError.llvm_error(message)),
+        };
+        self.profile_enter = Option<Function>.Some(enter);
+        self.profile_leave = Option<Function>.Some(leave);
+
+        let body_index = 0u64;
+        while body_index < cfg.len() {
+            let function = *cfg.function(FunctionId(body_index)).unwrap();
+            let declared = self.declare(function.callable)?;
+            declared.add_attribute("noinline");
+            declared.add_attribute("nomerge");
+            declared.add_string_attribute("disable-tail-calls", "true");
+            body_index += 1u64;
+        }
+        Result<(), CodegenError>.Ok(val= ())
+    }
+}
+
+impl FunctionLowering {
+    fn profile_hook(enter: bool) -> Result<(), CodegenError> {
+        let id = match self.owner.profile_id(self.cfg.callable) {
+            Some(value) => value,
+            None => return Result<(), CodegenError>.Ok(val= ()),
+        };
+        let hook = if enter { self.owner.profile_enter_hook() } else { self.owner.profile_leave_hook() };
+        let function = match hook {
+            Some(value) => value,
+            None => return Result<(), CodegenError>.Ok(val= ()),
+        };
+        let parameters = Vec<IrType>.new();
+        defer parameters.drop();
+        parameters.push(self.owner.module.int_type(64u32));
+        let signature = self.owner.module.function_type(self.owner.module.void_type(), parameters.as_slice());
+        let arguments = Vec<IrValue>.new();
+        defer arguments.drop();
+        arguments.push(self.owner.module.const_int(self.owner.module.int_type(64u32), id));
+        self.builder.call(signature, function.value(), arguments.as_slice(), "");
+        Result<(), CodegenError>.Ok(val= ())
+    }
+
+    pub fn call_profile_enter() -> Result<(), CodegenError> {
+        self.profile_hook(true)
+    }
+
+    pub fn call_profile_leave() -> Result<(), CodegenError> {
+        self.profile_hook(false)
+    }
+}

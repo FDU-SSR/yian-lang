@@ -150,7 +150,8 @@ fn status_code(status: ExitStatus) -> i32 {
 }
 
 fn compiler_command(program: str, project: Project&, target: str, level: Option<u8>, release: bool,
-    raw_pointers: bool, map_path: str, executable: Option<PathBuf>, profile: Option<BuildProfile&>) -> bool {
+    raw_pointers: bool, map_path: str, executable: Option<PathBuf>, runtime_profile_dir: Option<str>,
+    profile: Option<BuildProfile&>) -> bool {
     let command = Command.new(program);
     defer command.drop();
     command.interruptible(true);
@@ -181,6 +182,10 @@ fn compiler_command(program: str, project: Project&, target: str, level: Option<
         None => if release { command.arg("-O"); command.arg("3"); },
     }
     if raw_pointers { command.arg("--raw-pointers"); }
+    match runtime_profile_dir {
+        Some(directory) => { command.arg("--runtime-profile-dir"); command.arg(directory); },
+        None => {},
+    }
     let optimization = match level { Some(value) => value, None => if release { 3u8 } else { 0u8 } };
     let mode = if raw_pointers { "raw" } else { "fat" };
     let invocation = match profile {
@@ -243,14 +248,23 @@ pub fn compile_project(start: str, target: str, level: Option<u8>, release: bool
 
 pub fn compile_project_profiled(start: str, target: str, level: Option<u8>, release: bool,
     raw_pointers: bool, executable_out: Option<PathBuf>&, profile: Option<BuildProfile&>) -> bool {
+    let loaded = load_project_for_build(start, profile);
+    let project = match loaded { Some(value) => value, None => return false };
+    defer project.drop();
+    compile_loaded(&project, target, level, release, raw_pointers, executable_out,
+        Option<str>.None, Option<str>.None, profile)
+}
+
+// compile_loaded builds an already loaded root package. output_override selects the artifact
+// path, and runtime_profile_dir enables the instrumented build in the compiler.
+pub fn compile_loaded(project: Project&, target: str, level: Option<u8>, release: bool,
+    raw_pointers: bool, executable_out: Option<PathBuf>&, output_override: Option<str>,
+    runtime_profile_dir: Option<str>, profile: Option<BuildProfile&>) -> bool {
     let compiler = match compiler_program() {
         Ok(value) => value,
         Err(message) => { eprint("error: "); eprintln(message.as_str()); message.drop(); return false; },
     };
     defer compiler.drop();
-    let loaded = load_project_for_build(start, profile);
-    let project = match loaded { Some(value) => value, None => return false };
-    defer project.drop();
 
     let root_index = match project.package_index(project.root_package()) {
         Some(value) => value,
@@ -262,23 +276,25 @@ pub fn compile_project_profiled(start: str, target: str, level: Option<u8>, rele
         return false;
     }
     let map_token = profile_begin(profile, "anx.package_map");
-    let map_result = package_map_path(&project);
+    let map_result = package_map_path(project);
     let map = match map_result {
-        Ok(value) => value,
+        Ok(value) => { profile_finish(profile, map_token, true); value },
         Err(message) => { profile_finish(profile, map_token, false); eprint("error: "); eprintln(message.as_str()); message.drop(); return false; },
     };
-    profile_finish(profile, map_token, true);
     defer map.drop();
     let project_root = project.package(root_index).root();
     let output = if target == "exe" {
-        Option<PathBuf>.Some(Path.new(project_root).join("build/app"))
+        match &output_override {
+            Some(value) => Option<PathBuf>.Some(PathBuf.from(*value)),
+            None => Option<PathBuf>.Some(Path.new(project_root).join("build/app")),
+        }
     } else { Option<PathBuf>.None };
     let command_output = match &output {
         Some(path) => Option<PathBuf>.Some(PathBuf.from(path.as_str())),
         None => Option<PathBuf>.None,
     };
-    let succeeded = compiler_command(compiler.as_str(), &project, target, level, release, raw_pointers,
-        map.as_str(), command_output, profile);
+    let succeeded = compiler_command(compiler.as_str(), project, target, level, release, raw_pointers,
+        map.as_str(), command_output, runtime_profile_dir, profile);
     if !succeeded {
         match output.take() { Some(path) => path.drop(), None => {}, }
         return false;

@@ -17,6 +17,7 @@ pub(ffi) extern "C" {
     fn LLVMSetTarget(module: cptr<LLVMOpaqueModule>, triple: cptr<c_char>);
     fn LLVMCreatePassBuilderOptions() -> cptr<LLVMOpaquePassBuilderOptions>;
     fn LLVMDisposePassBuilderOptions(options: cptr<LLVMOpaquePassBuilderOptions>);
+    fn LLVMPassBuilderOptionsSetMergeFunctions(options: cptr<LLVMOpaquePassBuilderOptions>, merge: c_int);
     fn LLVMRunPasses(module: cptr<LLVMOpaqueModule>, passes: cptr<c_char>, machine: cptr<LLVMOpaqueTargetMachine>, options: cptr<LLVMOpaquePassBuilderOptions>) -> cptr<LLVMOpaqueError>;
     fn LLVMGetErrorMessage(error: cptr<LLVMOpaqueError>) -> cptr<c_char>;
     fn LLVMDisposeErrorMessage(message: cptr<c_char>);

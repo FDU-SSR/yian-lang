@@ -1,0 +1,122 @@
+from std.core.drop import Drop;
+from std.core.fs import canonicalize, create_dir_all, try_exists;
+from std.core.io import eprint, eprintln;
+from std.core.path import Path, PathBuf;
+from std.core.process import temporary_directory;
+from anx.driver.build import compile_loaded, run_executable;
+from anx.driver.profile import BuildProfile;
+from anx.driver.support import load_project;
+from anx.project.model import Project;
+
+fn report_root(root: str, override_path: str) -> Result<PathBuf, String> {
+    if override_path.as_slice().len() == 0u64 {
+        return Result<PathBuf, String>.Ok(Path.new(root).join("build/runtime-profile"));
+    }
+    if override_path.starts_with("/") {
+        return Result<PathBuf, String>.Ok(PathBuf.from(override_path));
+    }
+    Result<PathBuf, String>.Ok(Path.new(root).join(override_path))
+}
+
+fn warn(message: str) {
+    eprint("anx run profile: warning: ");
+    eprintln(message);
+}
+
+// One invocation allocates an exclusive report directory and an exclusive artifact
+// directory, so earlier runs and the ordinary build/app are never replaced.
+pub fn run_runtime_profile(start: str, level: Option<u8>, release: bool, raw_pointers: bool,
+    profile_root: str, program_arguments: Vec<String>&) -> i32 {
+    let project = match load_project(start) {
+        Some(value) => value,
+        None => return 1i32,
+    };
+    defer project.drop();
+    let root_index = match project.package_index(project.root_package()) {
+        Some(value) => value,
+        None => { eprintln("anx run profile: error: project root package is missing"); return 1i32; },
+    };
+    let root = project.package(root_index).root();
+    let base = match report_root(root, profile_root) {
+        Ok(value) => value,
+        Err(message) => { eprintln(message.as_str()); message.drop(); return 1i32; },
+    };
+    defer base.drop();
+    match create_dir_all(base.as_str()) {
+        Ok(_) => {},
+        Err(problem) => {
+            eprint("anx run profile: error: cannot create report root: ");
+            eprintln(problem.msg());
+            problem.drop();
+            return 1i32;
+        },
+    }
+    let report_root_path = match canonicalize(base.as_str()) {
+        Ok(value) => value,
+        Err(problem) => {
+            eprint("anx run profile: error: cannot resolve report root: ");
+            eprintln(problem.msg());
+            problem.drop();
+            return 1i32;
+        },
+    };
+    defer report_root_path.drop();
+    let run_directory = match temporary_directory(report_root_path.as_str()) {
+        Ok(value) => value,
+        Err(problem) => {
+            eprint("anx run profile: error: cannot create report directory: ");
+            eprintln(problem.msg());
+            problem.drop();
+            return 1i32;
+        },
+    };
+    defer run_directory.drop();
+    let artifact_base = Path.new(root).join("build/runtime-profile-artifacts");
+    defer artifact_base.drop();
+    match create_dir_all(artifact_base.as_str()) {
+        Ok(_) => {},
+        Err(problem) => {
+            eprint("anx run profile: error: cannot create artifact root: ");
+            eprintln(problem.msg());
+            problem.drop();
+            return 1i32;
+        },
+    }
+    let artifact_directory = match temporary_directory(artifact_base.as_str()) {
+        Ok(value) => value,
+        Err(problem) => {
+            eprint("anx run profile: error: cannot create artifact directory: ");
+            eprintln(problem.msg());
+            problem.drop();
+            return 1i32;
+        },
+    };
+    defer artifact_directory.drop();
+    let artifact = Path.new(artifact_directory.as_str()).join("app");
+    defer artifact.drop();
+
+    let executable = Option<PathBuf>.None;
+    let succeeded = compile_loaded(&project, "exe", level, release, raw_pointers, &executable,
+        Option<str>.Some(artifact.as_str()), Option<str>.Some(run_directory.as_str()),
+        Option<BuildProfile&>.None);
+    match executable.take() { Some(path) => path.drop(), None => {}, }
+    if !succeeded { return 1i32; }
+
+    let program = PathBuf.from(artifact.as_str());
+    let status = run_executable(program, program_arguments);
+    if status == 0i32 {
+        let json_path = Path.new(run_directory.as_str()).join("profile.json");
+        defer json_path.drop();
+        let text_path = Path.new(run_directory.as_str()).join("summary.txt");
+        defer text_path.drop();
+        let json_ready = match try_exists(json_path.as_str()) { Ok(value) => value, Err(problem) => { problem.drop(); false } };
+        let text_ready = match try_exists(text_path.as_str()) { Ok(value) => value, Err(problem) => { problem.drop(); false } };
+        if json_ready && text_ready {
+            eprint("anx run profile: report written to ");
+            eprintln(run_directory.as_str());
+        } else {
+            warn("the expected runtime report files are missing");
+        }
+    }
+    status
+}

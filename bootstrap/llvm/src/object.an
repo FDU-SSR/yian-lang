@@ -9,6 +9,7 @@ from llvm.ir import undef_value, const_bytes, const_array, const_struct;
 from llvm.ir import add_function, declare_function, function_param, append_block, add_global;
 from llvm.ir import set_initializer, set_global_constant, set_internal_linkage, set_private_linkage;
 from llvm.ir import set_alignment, set_volatile, add_function_attribute, add_parameter_attribute;
+from llvm.ir import add_string_attribute, set_merge_functions, const_bitcast, session_optimization_level;
 from llvm.ir import position_at_end, insertion_block, build_ret, build_ret_void, build_br, build_cond_br;
 from llvm.ir import build_switch, add_switch_case, build_unreachable, build_phi, add_incoming;
 from llvm.ir import build_call, build_select, build_alloca, build_load, build_store;
@@ -157,6 +158,18 @@ impl Module {
         return const_array(&self.session, element, values);
     }
 
+    pub ffi fn const_bitcast(value: IrValue, ty: IrType) -> IrValue {
+        return const_bitcast(&self.session, value, ty);
+    }
+
+    pub ffi fn set_merge_functions(enabled: bool) {
+        set_merge_functions(&self.session, enabled);
+    }
+
+    pub ffi fn optimization_level() -> u8 {
+        session_optimization_level(&self.session)
+    }
+
     pub ffi fn const_struct(values: IrValue[], packed: bool) -> IrValue {
         return const_struct(&self.session, values, packed);
     }
@@ -228,6 +241,10 @@ impl Function {
 
     pub ffi fn add_attribute(name: str) {
         add_function_attribute(&self.session, self.value, name);
+    }
+
+    pub ffi fn add_string_attribute(key: str, value: str) {
+        add_string_attribute(&self.session, self.value, key, value);
     }
 
     pub ffi fn add_parameter_attribute(parameter: u32, name: str) {

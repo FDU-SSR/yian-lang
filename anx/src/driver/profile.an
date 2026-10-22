@@ -6,7 +6,7 @@ from std.core.drop import Drop;
 from std.core.fmt import ToString;
 from std.core.fs import canonicalize, create_dir_all, read_to_string, write_atomic;
 from std.core.io import eprint, eprintln;
-from std.core.path import Path;
+from std.core.path import Path, PathBuf;
 from std.core.process import temporary_directory;
 from std.core.time import monotonic_now;
 
@@ -85,6 +85,7 @@ pub struct BuildProfile {
     target: String,
     optimization: u8,
     pointer_mode: String,
+    profile_root: String,
     project_root: String,
     run_id: String,
     run_dir: String,
@@ -283,7 +284,13 @@ fn valid_compiler_profile(text: str) -> Result<(Vec<CompilerTiming>, String, Opt
 
 impl BuildProfile {
     static pub fn new(command: str, target: str, optimization: u8, pointer_mode: str) -> Self {
-        Self(String.from(&command), String.from(&target), optimization, String.from(&pointer_mode), String.new(), String.new(), String.new(), false,
+        Self.new_with_root(command, target, optimization, pointer_mode, "")
+    }
+
+    // profile_root is empty for the default build/profile location, an absolute path,
+    // or a path interpreted relative to the project root when the report directory is allocated.
+    static pub fn new_with_root(command: str, target: str, optimization: u8, pointer_mode: str, profile_root: str) -> Self {
+        Self(String.from(&command), String.from(&target), optimization, String.from(&pointer_mode), String.from(&profile_root), String.new(), String.new(), String.new(), false,
             Vec<AnxTiming>.new(), Vec<ActiveSpan>.new(), Vec<Invocation>.new(), Vec<PassTotal>.new(), Vec<String>.new(),
             0u64, 1u64, 1u64, 0u8, false)
     }
@@ -296,7 +303,15 @@ impl BuildProfile {
         };
         self.project_root = String.from(&canonical.as_str());
         canonical.drop();
-        let base = Path.new(self.project_root.as_str()).join("build/profile");
+        let base = if self.profile_root.is_empty() {
+            Path.new(self.project_root.as_str()).join("build/profile")
+        } elif self.profile_root.as_str().starts_with("/") {
+            let absolute = PathBuf.new();
+            absolute.push(self.profile_root.as_str());
+            absolute
+        } else {
+            Path.new(self.project_root.as_str()).join(self.profile_root.as_str())
+        };
         defer base.drop();
         match create_dir_all(base.as_str()) {
             Ok(_) => {},
@@ -315,6 +330,10 @@ impl BuildProfile {
             Ok(_) => self.compiler_dir_ready = true,
             Err(problem) => { self.warning(problem.msg()); problem.drop(); },
         }
+    }
+
+    pub fn report_dir() -> str {
+        self.run_dir.as_str()
     }
 
     fn warning(message: str) {
@@ -794,6 +813,7 @@ impl Drop for BuildProfile {
         self.command.drop();
         self.target.drop();
         self.pointer_mode.drop();
+        self.profile_root.drop();
         self.project_root.drop();
         self.run_id.drop();
         self.run_dir.drop();

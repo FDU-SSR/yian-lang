@@ -6,10 +6,11 @@ from std.core.path import PathBuf;
 from std.cli import ArgumentParser, Action, ArgMatches, Nargs, ParseOutcome, ValueType, CliError;
 from anx.diagnostics.model import AX_NO_PROJECT_ROOT, Diagnostic, release_diagnostics;
 from anx.driver.build import compile_project, compile_project_profiled, run_executable;
+from anx.driver.runtime_profile import run_runtime_profile;
 from anx.driver.fmt import format_project;
 from anx.driver.new import scaffold;
-from anx.driver.support import load_project, load_project_profiled;
-from anx.driver.test import PointerMode, run as run_tests, run_profiled as run_tests_profiled;
+from anx.driver.support import load_project;
+from anx.driver.test import PointerMode, run as run_tests;
 from anx.driver.profile import BuildProfile;
 from anx.project.graph import graph_json, graph_text;
 from anx.project.load import discover, load;
@@ -23,7 +24,7 @@ fn release_args(values: Vec<String>&) {
 }
 
 fn help_text() -> str {
-    "Usage: anx <command> [options]\n\nCommands:\n  new <name>       Create a package\n  build [project]  Build an executable package\n  run [project]    Build and run a package\n  check [project]  Check a package\n  test [project]   Run package tests\n  fmt [project]    Format package sources\n  graph [project]  Show the dependency graph\n"
+    "Usage: anx <command> [options]\n\nCommands:\n  new <name>              Create a package\n  build [project]         Build an executable package\n  build profile [project] Build and write compile statistics\n  run [project]           Build and run a package\n  run profile [project]   Build, run, and record runtime statistics\n  check [project]         Check a package\n  test [project]          Run package tests\n  fmt [project]           Format package sources\n  graph [project]         Show the dependency graph\n"
 }
 
 fn release_strings(values: Vec<String>&) {
@@ -78,12 +79,17 @@ fn argument_level(matches: ArgMatches&, name: str) -> Option<u8> {
     }
 }
 
-fn build_parser(command: str) -> ArgumentParser {
+fn build_parser(command: str, profile_mode: bool) -> ArgumentParser {
     let name = String.from(&"anx ");
     name.push_str(command);
+    if profile_mode { name.push_str(" profile"); }
     let parser = ArgumentParser.new(name.as_str());
     name.drop();
-    parser.description("Build an executable and pass compiler options through to yianc.");
+    if profile_mode {
+        parser.description("Build an executable package and write compile statistics.");
+    } else {
+        parser.description("Build an executable and pass compiler options through to yianc.");
+    }
     parser.add_argument("project").nargs(Nargs.Optional).default_value(".")
     .help("Project root directory (default: cwd)");
     parser.add_argument("optimization").short('O').value_type(ValueType.U64)
@@ -93,15 +99,56 @@ fn build_parser(command: str) -> ArgumentParser {
     .help("Shorthand for -O3");
     parser.add_argument("raw-pointers").long("raw-pointers").action(Action.StoreTrue)
     .help("Build with bare pointers; for anx test, this selects raw mode");
-    parser.add_argument("profile").long("profile").action(Action.StoreTrue)
-    .help("Write a structured timing report under build/profile");
+    if profile_mode {
+        parser.add_argument("profile-dir").long("profile-dir").metavar("PATH")
+        .help("Report root directory (default: build/profile; relative paths resolve from the project root)");
+    }
     parser
 }
 
-fn build_command(argv: Vec<String>&, command: str, end: u64, program_arguments: Vec<String>&) -> i32 {
-    let parser = build_parser(command);
+fn runtime_profile_parser() -> ArgumentParser {
+    let parser = ArgumentParser.new("anx run profile");
+    parser.description("Build, run, and record runtime statistics.");
+    parser.add_argument("project").nargs(Nargs.Optional).default_value(".")
+    .help("Project root directory (default: cwd)");
+    parser.add_argument("optimization").short('O').value_type(ValueType.U64)
+    .choices(["0", "1", "2", "3"].as_slice()).metavar("{0,1,2,3}")
+    .help("Optimization level forwarded to the compiler");
+    parser.add_argument("release").long("release").action(Action.StoreTrue)
+    .help("Shorthand for -O3");
+    parser.add_argument("raw-pointers").long("raw-pointers").action(Action.StoreTrue)
+    .help("Build with bare pointers");
+    parser.add_argument("profile-dir").long("profile-dir").metavar("PATH")
+    .help("Report root directory (default: build/runtime-profile; relative paths resolve from the project root)");
+    parser
+}
+
+fn legacy_profile_argument(argv: Vec<String>&, start: u64, end: u64, command: str) -> bool {
+    let index = start;
+    while index < end {
+        if argv[index].as_str() == "--profile" {
+            eprint("anx ");
+            eprint(command);
+            eprintln(": --profile was removed; use 'anx build profile' for compile statistics");
+            return true;
+        }
+        index += 1u64;
+    }
+    false
+}
+
+fn nonempty_option(matches: ArgMatches&, name: str) -> Option<String> {
+    match matches.get_string(name) {
+        Ok(Some(value)) => if value.as_slice().len() == 0u64 { Option<String>.None } else { Option<String>.Some(String.from(&value)) },
+        _ => Option<String>.None,
+    }
+}
+
+fn build_command(argv: Vec<String>&, command: str, start: u64, end: u64, profile_mode: bool,
+    program_arguments: Vec<String>&) -> i32 {
+    let parser = build_parser(command, profile_mode);
     defer parser.drop();
-    let views = argument_views(argv, 2u64, end);
+    let views = argument_views(argv, start, end);
     defer views.drop();
     let outcome = match parser.parse_args(views.as_slice()) {
         Ok(value) => value,
@@ -121,38 +168,57 @@ fn build_command(argv: Vec<String>&, command: str, end: u64, program_arguments: 
             let optimization = argument_level(&matches, "optimization");
             let release = argument_bool(&matches, "release");
             let raw = argument_bool(&matches, "raw-pointers");
-            let profiling = argument_bool(&matches, "profile");
-            let target = if command == "check" { "check" } else { "exe" };
             let mode = if raw { "raw" } else { "fat" };
-            let profile = if profiling {
+            if profile_mode {
+                let provided = match matches.was_provided("profile-dir") { Ok(value) => value, Err(_) => false };
+                let root_value = nonempty_option(&matches, "profile-dir");
+                defer { match root_value.take() { Some(value) => value.drop(), None => {}, } };
+                if provided && root_value.is_none() {
+                    eprintln("anx build profile: --profile-dir requires a non-empty path");
+                    return 2i32;
+                }
+                let root = match &root_value { Some(value) => value.as_str(), None => "" };
                 let level = match optimization { Some(value) => value, None => if release { 3u8 } else { 0u8 } };
-                Option<BuildProfile>.Some(BuildProfile.new(command, target, level, mode))
-            } else { Option<BuildProfile>.None };
-            defer { match profile.take() { Some(value) => value.drop(), None => {}, } };
-            let executable = Option<PathBuf>.None;
-            let succeeded = match &profile {
-                Some(observer) => compile_project_profiled(project.as_str(), target, optimization, release, raw, &executable, Option<BuildProfile&>.Some(observer)),
-                None => compile_project(project.as_str(), target, optimization, release, raw, &executable),
-            };
-            if !succeeded {
-                match &profile { Some(observer) => observer.finalize(false, 1i32), None => {}, }
-                return 1i32;
+                let profile = BuildProfile.new_with_root("build", "exe", level, mode, root);
+                defer profile.drop();
+                let executable = Option<PathBuf>.None;
+                let succeeded = compile_project_profiled(project.as_str(), "exe", optimization, release, raw,
+                    &executable, Option<BuildProfile&>.Some(&profile));
+                match executable.take() { Some(path) => path.drop(), None => {}, }
+                if !succeeded {
+                    profile.finalize(false, 1i32);
+                    let directory = String.from(&profile.report_dir());
+                    defer directory.drop();
+                    if !directory.is_empty() {
+                        eprint("anx build profile: report written to ");
+                        eprintln(directory.as_str());
+                    }
+                    return 1i32;
+                }
+                profile.finalize(true, 0i32);
+                let directory = String.from(&profile.report_dir());
+                defer directory.drop();
+                if !directory.is_empty() {
+                    eprint("anx build profile: report written to ");
+                    eprintln(directory.as_str());
+                }
+                return 0i32;
             }
+            let target = if command == "check" { "check" } else { "exe" };
+            let executable = Option<PathBuf>.None;
+            let succeeded = compile_project(project.as_str(), target, optimization, release, raw, &executable);
+            if !succeeded { return 1i32; }
             if command == "run" {
                 let path = match executable.take() {
                     Some(value) => value,
                     None => {
                         eprintln("error: no executable was produced");
-                        match &profile { Some(observer) => observer.finalize(true, 1i32), None => {}, }
                         return 1i32;
                     },
                 };
-                let status = run_executable(path, program_arguments);
-                match &profile { Some(observer) => observer.finalize(true, status), None => {}, }
-                return status;
+                return run_executable(path, program_arguments);
             }
             match executable.take() { Some(path) => path.drop(), None => {}, }
-            match &profile { Some(observer) => observer.finalize(true, 0i32), None => {}, }
             0i32
         },
     }
@@ -188,7 +254,8 @@ fn format_command(argv: Vec<String>&) -> i32 {
 }
 
 fn test_command(argv: Vec<String>&) -> i32 {
-    let parser = build_parser("test");
+    if legacy_profile_argument(argv, 2u64, argv.len(), "test") { return 2i32; }
+    let parser = build_parser("test", false);
     defer parser.drop();
     parser.description("Run the root package's tests.");
     parser.add_argument("pointer-mode").long("pointer-mode")
@@ -229,33 +296,13 @@ fn test_command(argv: Vec<String>&) -> i32 {
             };
             let project_path = argument_string(&matches, "project", ".");
             defer project_path.drop();
-            let profiling = argument_bool(&matches, "profile");
-            let profile = if profiling {
-                let level = match argument_level(&matches, "optimization") { Some(value) => value, None => if argument_bool(&matches, "release") { 3u8 } else { 0u8 } };
-                let mode_name = match pointer_mode { Both => "both", Fat => "fat", Raw => "raw" };
-                Option<BuildProfile>.Some(BuildProfile.new("test", "mixed", level, mode_name))
-            } else { Option<BuildProfile>.None };
-            defer { match profile.take() { Some(value) => value.drop(), None => {}, } };
-            let loaded = match &profile {
-                Some(observer) => load_project_profiled(project_path.as_str(), Option<BuildProfile&>.Some(observer)),
-                None => load_project(project_path.as_str()),
-            };
-            let project = match loaded {
+            let project = match load_project(project_path.as_str()) {
                 Some(value) => value,
-                None => {
-                    match &profile { Some(observer) => observer.finalize(false, 1i32), None => {}, }
-                    return 1i32;
-                },
+                None => return 1i32,
             };
             defer project.drop();
-            let status = match &profile {
-                Some(observer) => run_tests_profiled(&project, pointer_mode,
-                    argument_level(&matches, "optimization"), argument_bool(&matches, "release"), Option<BuildProfile&>.Some(observer)),
-                None => run_tests(&project, pointer_mode,
-                    argument_level(&matches, "optimization"), argument_bool(&matches, "release")),
-            };
-            match &profile { Some(observer) => observer.finalize(status == 0i32, status), None => {}, }
-            status
+            run_tests(&project, pointer_mode,
+                argument_level(&matches, "optimization"), argument_bool(&matches, "release"))
         },
     }
 }
@@ -373,9 +420,11 @@ fn graph_command(argv: Vec<String>&) -> i32 {
 fn build_dispatch(argv: Vec<String>&, command: str) -> i32 {
     let program_arguments = Vec<String>.new();
     defer release_strings(&program_arguments);
+    let profile_mode = command == "build" && argv.len() > 2u64 && argv[2].as_str() == "profile";
+    let start = if profile_mode { 3u64 } else { 2u64 };
     let end = argv.len();
     if command == "run" {
-        let index = 2u64;
+        let index = start;
         while index < argv.len() {
             if argv[index].as_str() == "--" {
                 end = index;
@@ -389,7 +438,37 @@ fn build_dispatch(argv: Vec<String>&, command: str) -> i32 {
             index += 1u64;
         }
     }
-    build_command(argv, command, end, &program_arguments)
+    if legacy_profile_argument(argv, start, end, command) { return 2i32; }
+    if command == "run" && argv.len() > 2u64 && argv[2].as_str() == "profile" {
+        let parser = runtime_profile_parser();
+        defer parser.drop();
+        let views = argument_views(argv, 3u64, end);
+        defer views.drop();
+        let outcome = match parser.parse_args(views.as_slice()) {
+            Ok(value) => value,
+            Err(problem) => return report_argument_error("run profile", &parser, problem),
+        };
+        match outcome {
+            Help(text) => { print(text.as_str()); text.drop(); 0i32 },
+            Parsed(matches) => {
+                defer matches.drop();
+                let project = argument_string(&matches, "project", ".");
+                defer project.drop();
+                let provided = match matches.was_provided("profile-dir") { Ok(value) => value, Err(_) => false };
+                let root_value = nonempty_option(&matches, "profile-dir");
+                defer { match root_value.take() { Some(value) => value.drop(), None => {}, } };
+                if provided && root_value.is_none() {
+                    eprintln("anx run profile: --profile-dir requires a non-empty path");
+                    return 2i32;
+                }
+                let root = match &root_value { Some(value) => value.as_str(), None => "" };
+                return run_runtime_profile(project.as_str(), argument_level(&matches, "optimization"),
+                    argument_bool(&matches, "release"), argument_bool(&matches, "raw-pointers"),
+                    root, &program_arguments);
+            },
+        }
+    }
+    build_command(argv, command, start, end, profile_mode, &program_arguments)
 }
 
 fn run(argv: Vec<String>&) -> i32 {

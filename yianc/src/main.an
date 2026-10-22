@@ -35,7 +35,8 @@ fn check_cli(config: CompilerConfig&) -> bool {
     let middle = MiddleEndDriver.new(frontend.take_session(), config.raw_pointers);
     defer middle.drop();
 
-    let backend = match BackendDriver.new(middle.analysis_session(), BackendOptions(config.raw_pointers, config.optimization), Option<CompilerTrace&>.Some(&trace)) {
+    let runtime_profile_dir = match &config.runtime_profile_dir { Some(value) => Option<str>.Some(value.as_str()), None => Option<str>.None };
+    let backend = match BackendDriver.new(middle.analysis_session(), BackendOptions(config.raw_pointers, config.optimization, runtime_profile_dir), Option<CompilerTrace&>.Some(&trace)) {
         Ok(value) => value,
         Err(problem) => {
             report(&problem.diagnostic, Option<SourceManager&>.Some(middle.analysis_session().source_manager()));
@@ -87,7 +88,8 @@ fn compile_cli(config: CompilerConfig&) -> bool {
     let middle = MiddleEndDriver.new(frontend.take_session(), config.raw_pointers);
     defer middle.drop();
 
-    let backend = match BackendDriver.new(middle.analysis_session(), BackendOptions(config.raw_pointers, config.optimization), Option<CompilerTrace&>.Some(&trace)) {
+    let runtime_profile_dir = match &config.runtime_profile_dir { Some(value) => Option<str>.Some(value.as_str()), None => Option<str>.None };
+    let backend = match BackendDriver.new(middle.analysis_session(), BackendOptions(config.raw_pointers, config.optimization, runtime_profile_dir), Option<CompilerTrace&>.Some(&trace)) {
         Ok(value) => value,
         Err(problem) => {
             report(&problem.diagnostic, Option<SourceManager&>.Some(middle.analysis_session().source_manager()));

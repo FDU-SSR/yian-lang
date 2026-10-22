@@ -6,6 +6,10 @@
 
 #include "yian_rt.h"
 
+#ifdef YIAN_RUNTIME_PROFILE
+#include "yian_profile.h"
+#endif
+
 #include <unistd.h>
 
 int32_t __yian_argc = 0;
@@ -60,6 +64,12 @@ int main(int argc, char **argv) {
     }
     __yian_argc = (int32_t)argc;
     __yian_argv = argv;
+#ifdef YIAN_RUNTIME_PROFILE
+    __yian_profile_init();
     __yian_main();
+    __yian_profile_finish();
+#else
+    __yian_main();
+#endif
     return 0;
 }

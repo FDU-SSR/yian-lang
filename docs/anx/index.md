@@ -33,7 +33,8 @@ anx new demo              # Create a bin project skeleton.
 cd demo
 
 anx run                   # Build build/app and execute it.
-anx build --profile       # Save compiler pass timings under build/profile/<run-id>/.
+anx build profile         # Save compiler pass timings under build/profile/<run-id>/.
+anx run profile           # Run with function and call-path statistics.
 anx test                  # Run project tests; the skeleton includes a passing case.
 anx graph                 # Inspect dependencies and file ownership.
 ```
@@ -63,7 +64,8 @@ demo/
 | 构建并运行（转发参数与 stdin） | `anx run -- alpha beta` |
 | 分析项目、不生成可执行文件或 LLVM 目标 | `anx check` |
 | 跑项目自己的测试 | `anx test` |
-| 保存编译耗时报告 | `anx build --profile` / `anx test --profile` |
+| 保存编译耗时报告 | `anx build profile` |
+| 运行并保存逐函数统计 | `anx run profile` |
 | 格式化根包源码 | `anx fmt` / `anx fmt --check` |
 | 打印依赖图 | `anx graph` / `anx graph --json` |
 | 提高优化级别 | `anx build --release` 或 `anx build -O 3` |

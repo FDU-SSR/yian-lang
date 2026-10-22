@@ -459,16 +459,18 @@ impl NativeDriver {
     // Runtime and C-shim objects belong to one temporary build directory.
     pub fn link(object: str, output: str, level: u8,
         libraries: Vec<String>&, searches: Vec<String>&) -> Result<Artifact, DriverError> {
-        self.link_inner(object, output, level, libraries, searches, Option<CompilerTrace&>.None)
+        self.link_inner(object, output, level, libraries, searches, false, Option<CompilerTrace&>.None)
     }
 
     pub fn link_observed(object: str, output: str, level: u8,
-        libraries: Vec<String>&, searches: Vec<String>&, trace: Option<CompilerTrace&>) -> Result<Artifact, DriverError> {
-        self.link_inner(object, output, level, libraries, searches, trace)
+        libraries: Vec<String>&, searches: Vec<String>&, runtime_profile: bool,
+        trace: Option<CompilerTrace&>) -> Result<Artifact, DriverError> {
+        self.link_inner(object, output, level, libraries, searches, runtime_profile, trace)
     }
 
     fn link_inner(object: str, output: str, level: u8,
-        libraries: Vec<String>&, searches: Vec<String>&, trace: Option<CompilerTrace&>) -> Result<Artifact, DriverError> {
+        libraries: Vec<String>&, searches: Vec<String>&, runtime_profile: bool,
+        trace: Option<CompilerTrace&>) -> Result<Artifact, DriverError> {
         if level > 3u8 {
             return Result<Artifact, DriverError>.Err(DriverError.message("link", "invalid optimization level"));
         }
@@ -521,6 +523,7 @@ impl NativeDriver {
         arguments.push(String.from(&include_flag.as_str()));
         arguments.push(String.from(&"-r"));
         arguments.push(String.from(&"-nostdlib"));
+        if runtime_profile { arguments.push(String.from(&"-DYIAN_RUNTIME_PROFILE")); }
         for source in sources { arguments.push(String.from(&source.as_str())); }
         arguments.push(String.from(&"-o"));
         arguments.push(String.from(&runtime_object.as_str()));

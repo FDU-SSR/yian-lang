@@ -12,6 +12,7 @@ from std.core.drop import Drop;
 pub struct BackendOptions {
     pub raw_pointers: bool,
     pub optimization: u8,
+    pub runtime_profile_dir: Option<str>,
 }
 
 pub struct EmitOptions {
@@ -119,6 +120,9 @@ impl BackendSession {
             Ok(value) => value,
             Err(message) => return Result<Self, CodegenError>.Err(CodegenError.llvm_error(message)),
         };
+        if options.runtime_profile_dir.is_some() {
+            value.set_merge_functions(false);
+        }
         let accepted = false;
         defer { if !accepted { value.close(); } };
         let target_bytes = value.target_triple();

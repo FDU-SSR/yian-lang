@@ -8,7 +8,6 @@ from anx.driver.compiler import compiler_program;
 from anx.manifest.model import PackageKind;
 from anx.project.model import Project;
 from anx.project.package_map import test_package_map_json;
-from anx.driver.profile import BuildProfile, InvocationHandle;
 
 pub enum PointerMode { Both, Fat, Raw }
 
@@ -417,17 +416,8 @@ fn append_bin_root_hint(detail: String&, project: Project&, output: str) {
     detail.push_str("' has kind 'bin', so its modules are not visible to tests.\n      Declare kind = \"hybrid\" to expose a library interface, or move the\n      reusable code into a lib dependency.\n");
 }
 
-fn profile_begin(profile: Option<BuildProfile&>, pass_id: str) -> u64 {
-    match profile { Some(value) => value.begin(pass_id), None => 0u64 }
-}
-
-fn profile_finish(profile: Option<BuildProfile&>, token: u64, success: bool) {
-    match profile { Some(value) => value.finish(token, success), None => {}, }
-}
-
 fn run_one(program: str, project: Project&, test: ProjectTest&, build_dir: str, map_path: str,
-    raw_pointers: bool, mode_name: str, optimization: Option<u8>, release: bool,
-    profile: Option<BuildProfile&>) -> Option<String> {
+    raw_pointers: bool, optimization: Option<u8>, release: bool) -> Option<String> {
     if !test.load_error.is_empty() { return Option<String>.Some(String.from(&test.load_error.as_str())); }
 
     let executable_leaf = executable_name(test.name.as_str());
@@ -441,14 +431,12 @@ fn run_one(program: str, project: Project&, test: ProjectTest&, build_dir: str, 
         },
     };
     let test_root = Path.new(project.package(root_index).root()).join("tests");
-    let map_token = profile_begin(profile, "anx.test_package_map");
     let map = test_package_map_json(project, test_root.as_str(), test.source.as_str());
     test_root.drop();
     defer map.drop();
     match write_string(map_path, map.as_str()) {
-        Ok(_) => profile_finish(profile, map_token, true),
+        Ok(_) => {},
         Err(problem) => {
-            profile_finish(profile, map_token, false);
             let detail = String.from(&"could not write test package map: ");
             detail.push_str(problem.msg());
             problem.drop();
@@ -463,30 +451,10 @@ fn run_one(program: str, project: Project&, test: ProjectTest&, build_dir: str, 
     command.interruptible(true);
     let output_path = if test.expect_error { Option<PathBuf>.None } else { Option<PathBuf>.Some(PathBuf.from(executable.as_str())) };
     compiler_args(&command, project, test, map_path, output_path, raw_pointers, optimization, release);
-    let target = if test.expect_error { "check" } else { "exe" };
-    let level = match optimization { Some(value) => value, None => if release { 3u8 } else { 0u8 } };
-    let invocation = match profile {
-        Some(observer) => Option<InvocationHandle>.Some(observer.begin_invocation(Option<str>.Some(test.name.as_str()), mode_name,
-            target, level, program)),
-        None => Option<InvocationHandle>.None,
-    };
-    match &invocation {
-        Some(value) => if !value.profile_path.is_empty() { command.arg("--profile-output"); command.arg(value.profile_path.as_str()); },
-        None => {},
-    }
-    let wait_token = profile_begin(profile, "anx.compiler_wait");
     let compiled_result = command.output();
     let compiled = match compiled_result {
         Ok(value) => value,
         Err(problem) => {
-            profile_finish(profile, wait_token, false);
-            match invocation.take() {
-                Some(handle) => match profile {
-                    Some(observer) => observer.finish_invocation(handle, Option<i32>.None),
-                    None => { handle.drop(); Option<i64>.None },
-                },
-                None => Option<i64>.None,
-            }
             let detail = String.from(&"could not start YIAN compiler: ");
             detail.push_str(problem.msg());
             problem.drop();
@@ -494,22 +462,6 @@ fn run_one(program: str, project: Project&, test: ProjectTest&, build_dir: str, 
             return Option<String>.Some(detail);
         },
     };
-    let report_requested = match &invocation { Some(handle) => !handle.profile_path.is_empty(), None => false };
-    let work_finished_at_ns = match invocation.take() {
-        Some(handle) => match profile {
-            Some(observer) => observer.finish_invocation(handle, Option<i32>.Some(status_code(compiled.status))),
-            None => { handle.drop(); Option<i64>.None },
-        },
-        None => Option<i64>.None,
-    };
-    match profile {
-        Some(observer) => if report_requested {
-            observer.finish_at(wait_token, compiled.status.success(), work_finished_at_ns);
-        } else {
-            observer.finish(wait_token, compiled.status.success())
-        },
-        None => {},
-    }
     let compiler_output = combine_output(&compiled);
     let compile_succeeded = compiled.status.success();
     compiled.drop();
@@ -610,8 +562,7 @@ fn run_one(program: str, project: Project&, test: ProjectTest&, build_dir: str, 
 }
 
 fn run_pointer_mode(project: Project&, tests: Vec<ProjectTest>&, compiler: str,
-    mode_name: str, raw_pointers: bool, optimization: Option<u8>, release: bool,
-    profile: Option<BuildProfile&>) -> i32 {
+    mode_name: str, raw_pointers: bool, optimization: Option<u8>, release: bool) -> i32 {
     let root_index = match project.package_index(project.root_package()) {
         Some(value) => value,
         None => { println("error: project root package is missing"); return 1i32; },
@@ -641,7 +592,7 @@ fn run_pointer_mode(project: Project&, tests: Vec<ProjectTest>&, compiler: str,
     while index < tests.len() {
         let test = &tests[index];
         let detail = run_one(compiler, project, test, build_dir.as_str(), map_path.as_str(), raw_pointers,
-            mode_name, optimization, release, profile);
+            optimization, release);
         match detail {
             Some(problem) => {
                 print("  [FAIL] ");
@@ -683,11 +634,6 @@ fn run_pointer_mode(project: Project&, tests: Vec<ProjectTest>&, compiler: str,
 }
 
 pub fn run(project: Project&, mode: PointerMode, optimization: Option<u8>, release: bool) -> i32 {
-    run_profiled(project, mode, optimization, release, Option<BuildProfile&>.None)
-}
-
-pub fn run_profiled(project: Project&, mode: PointerMode, optimization: Option<u8>, release: bool,
-    profile: Option<BuildProfile&>) -> i32 {
     let root_index = match project.package_index(project.root_package()) {
         Some(value) => value,
         None => { println("error: project root package is missing"); return 1i32; },
@@ -695,9 +641,7 @@ pub fn run_profiled(project: Project&, mode: PointerMode, optimization: Option<u
     let root = project.package(root_index).root();
     let tests_root = Path.new(root).join("tests");
     defer tests_root.drop();
-    let discovery_token = profile_begin(profile, "anx.test_discovery");
     let tests = discover_tests(root);
-    profile_finish(profile, discovery_token, !tests.is_empty());
     defer release_tests(&tests);
     if tests.is_empty() {
         print("No tests found under ");
@@ -722,11 +666,11 @@ pub fn run_profiled(project: Project&, mode: PointerMode, optimization: Option<u
 
     match mode {
         PointerMode.Both => {
-            let fat_status = run_pointer_mode(project, &tests, compiler.as_str(), "fat", false, optimization, release, profile);
-            let raw_status = run_pointer_mode(project, &tests, compiler.as_str(), "raw", true, optimization, release, profile);
+            let fat_status = run_pointer_mode(project, &tests, compiler.as_str(), "fat", false, optimization, release);
+            let raw_status = run_pointer_mode(project, &tests, compiler.as_str(), "raw", true, optimization, release);
             if fat_status != 0i32 || raw_status != 0i32 { 1i32 } else { 0i32 }
         },
-        PointerMode.Fat => run_pointer_mode(project, &tests, compiler.as_str(), "fat", false, optimization, release, profile),
-        PointerMode.Raw => run_pointer_mode(project, &tests, compiler.as_str(), "raw", true, optimization, release, profile),
+        PointerMode.Fat => run_pointer_mode(project, &tests, compiler.as_str(), "fat", false, optimization, release),
+        PointerMode.Raw => run_pointer_mode(project, &tests, compiler.as_str(), "raw", true, optimization, release),
     }
 }
