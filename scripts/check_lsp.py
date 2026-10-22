@@ -469,10 +469,6 @@ def __observe(client: StdioSession, scenario: Scenario) -> dict[str, Json]:
             },
             "context": {"diagnostics": []},
         }),
-        "formatting": ("textDocument/formatting", {
-            "textDocument": document,
-            "options": {"tabSize": 4, "insertSpaces": True},
-        }),
     }
     result["closed_methods"] = {
         name: client.request_message(method, params).get("error")
@@ -486,6 +482,10 @@ def __observe(client: StdioSession, scenario: Scenario) -> dict[str, Json]:
         "contentChanges": [{"text": unsaved}],
     })
     client.wait_diagnostics(uri, 2)
+    result["formatting"] = client.request("textDocument/formatting", {
+        "textDocument": document,
+        "options": {"tabSize": 4, "insertSpaces": True},
+    })
     client.request("textDocument/documentSymbol", {"textDocument": document})
     invalid = "fn main() { let value = ; }\n"
     client.notify("textDocument/didChange", {

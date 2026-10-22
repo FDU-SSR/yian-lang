@@ -1,0 +1,62 @@
+from std.core.io import eprintln;
+from std.core.text import LineIndex;
+from json.value import Value, Number, Object;
+from yianc.format.api import format_text;
+
+// One formatting request becomes one whole-document edit. The formatter re-emits
+// tokens and preserves comments, so applying the edit is a single undo step.
+// Text that does not lex or parse yields no edit: leaving the buffer untouched
+// is better than rewriting part of it.
+pub fn document_edits(text: str, path: str) -> Value {
+    let formatted = match format_text(text, path) {
+        Ok(Some(value)) => value,
+        Ok(None) => return no_edits(),
+        Err(problem) => {
+            problem.drop();
+            eprintln("yian-lsp: formatter failed");
+            return no_edits();
+        },
+    };
+    defer formatted.drop();
+    if formatted.as_str() == text { return no_edits(); }
+
+    let new_text = formatted.as_str();
+    let edit = Object.new();
+    put(&edit, "range", document_range(text));
+    put(&edit, "newText", Value.String(String.from(&new_text)));
+
+    let edits = Vec<Value>.new();
+    edits.push(Value.Object(edit));
+    Value.Array(edits)
+}
+
+// The edit replaces the whole buffer, including a trailing line break. A range
+// that stopped at the last character would leave the old newline behind and the
+// buffer would grow a blank line after every format.
+fn document_range(text: str) -> Value {
+    let index = LineIndex.new(text);
+    defer index.drop();
+    let end = index.utf16_position(text.as_slice().len());
+
+    let start_object = Object.new();
+    put(&start_object, "line", Value.Number(Number.Unsigned(0u64)));
+    put(&start_object, "character", Value.Number(Number.Unsigned(0u64)));
+
+    let end_object = Object.new();
+    put(&end_object, "line", Value.Number(Number.Unsigned(end.row)));
+    put(&end_object, "character", Value.Number(Number.Unsigned(end.column)));
+
+    let range = Object.new();
+    put(&range, "start", Value.Object(start_object));
+    put(&range, "end", Value.Object(end_object));
+    Value.Object(range)
+}
+
+fn no_edits() -> Value { Value.Array(Vec<Value>.new()) }
+
+fn put(object: Object&, key: str, value: Value) {
+    match object.insert(key, value) {
+        Some(previous) => previous.drop(),
+        None => {},
+    }
+}

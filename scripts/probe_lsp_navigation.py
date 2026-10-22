@@ -2,9 +2,10 @@
 """Minimal end-to-end probe for strict-analysis LSP reading navigation.
 
 The probe opens one two-file fixture, verifies definitions, references, hover,
-document symbols, semantic tokens, closed editing methods and the valid to
-invalid to repaired transition. It intentionally calls only the public
-StdioSession helper and never runs the full protocol matrix.
+document symbols, semantic tokens, closed editing methods, whole-document
+formatting of an unsaved buffer and the valid to invalid to repaired transition.
+It intentionally calls only the public StdioSession helper and never runs the
+full protocol matrix.
 """
 
 from __future__ import annotations
@@ -164,6 +165,7 @@ def run_probe(lsp: Path, compiler_root: Path, timeout: float) -> dict[str, Any]:
                 "documentHighlightProvider",
                 "semanticTokensProvider",
                 "inlayHintProvider",
+                "documentFormattingProvider",
             ):
                 require(capabilities.get(retained) is not None, f"missing retained capability {retained}")
             for closed in (
@@ -171,7 +173,6 @@ def run_probe(lsp: Path, compiler_root: Path, timeout: float) -> dict[str, Any]:
                 "signatureHelpProvider",
                 "renameProvider",
                 "codeActionProvider",
-                "documentFormattingProvider",
             ):
                 require(closed not in capabilities, f"closed capability {closed} is still declared")
             report["capabilities"] = sorted(capabilities)
@@ -323,10 +324,6 @@ def run_probe(lsp: Path, compiler_root: Path, timeout: float) -> dict[str, Any]:
                     "range": {"start": at(6, "a"), "end": {"line": 6, "character": 9}},
                     "context": {"diagnostics": []},
                 }),
-                "formatting": ("textDocument/formatting", {
-                    "textDocument": document,
-                    "options": {"tabSize": 4, "insertSpaces": True},
-                }),
             }
             report["closed_methods"] = {}
             for name, (method, params) in closed.items():
@@ -335,6 +332,32 @@ def run_probe(lsp: Path, compiler_root: Path, timeout: float) -> dict[str, Any]:
                 require(isinstance(error, dict) and error.get("code") == -32601,
                         f"closed method {name} was not rejected with MethodNotFound")
                 report["closed_methods"][name] = error["code"]
+
+            format_uri = (source_root / "format.an").as_uri()
+            format_source = "fn main(){\nlet x:i32=1;\nx;\n}\n"
+            client.notify("textDocument/didOpen", {
+                "textDocument": {
+                    "uri": format_uri,
+                    "languageId": "yian",
+                    "version": 1,
+                    "text": format_source,
+                }
+            })
+            formatted = request("textDocument/formatting", {
+                "textDocument": {"uri": format_uri},
+                "options": {"tabSize": 4, "insertSpaces": True},
+            })
+            require(
+                formatted == [{
+                    "range": {
+                        "start": {"line": 0, "character": 0},
+                        "end": {"line": 4, "character": 0},
+                    },
+                    "newText": "fn main() {\n    let x: i32 = 1;\n    x;\n}\n",
+                }],
+                f"formatting did not return the canonical whole-document edit: {formatted!r}",
+            )
+            report["formatting_edits"] = len(formatted)
 
             broken = PROVIDER.replace("pub typedef A = i32;", "pub typedef A = Missing;")
             client.notify("textDocument/didChange", {

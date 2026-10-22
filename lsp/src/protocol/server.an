@@ -10,6 +10,7 @@ from json.write import stringify;
 from jsonrpc.frame import FrameDecoder, FrameError, WriteQueue;
 from jsonrpc.message import Message, ProtocolError, RequestId, RpcError, encode, parse;
 from lsp.config import Config;
+from lsp.formatting import document_edits;
 from lsp.workspace.documents import Documents;
 from lsp.workspace.units import UnitRevisions, WorkspaceUnits;
 from lsp_protocol.sync import DidOpenParams, DidChangeParams, DidSaveParams, DidCloseParams;
@@ -1075,6 +1076,7 @@ impl ServerState {
         put(&capabilities, "referencesProvider", Value.Boolean(true));
         put(&capabilities, "documentHighlightProvider", Value.Boolean(true));
         put(&capabilities, "inlayHintProvider", Value.Boolean(true));
+        put(&capabilities, "documentFormattingProvider", Value.Boolean(true));
         let legend = Object.new();
         let token_types = Vec<Value>.new();
         for token_type in ["type", "struct", "enum", "interface", "typeParameter", "function", "method", "property", "enumMember", "variable", "parameter"] {
@@ -1400,6 +1402,46 @@ impl ServerState {
         Result<(), IoError>.Ok(())
     }
 
+    // Formatting reads the open document and the formatter only; it never waits
+    // for analysis, so a semantic failure does not block it. Text that does not
+    // parse produces no edit.
+    fn process_formatting(id: RequestId, params: Option<Value>) -> Result<(), IoError> {
+        if !self.initialized { return self.error(id, -32002i64, "server is not initialized"); }
+        let value = match params {
+            Some(value) => value,
+            None => return self.error(id, -32602i64, "formatting params are missing"),
+        };
+        defer value.drop();
+        let object = match value.as_object() {
+            Some(value) => value,
+            None => return self.error(id, -32602i64, "formatting params must be an object"),
+        };
+        let document = match object.get("textDocument") {
+            Some(value) => value,
+            None => return self.error(id, -32602i64, "formatting params are missing textDocument"),
+        };
+        let text_document = match document.as_object() {
+            Some(value) => value,
+            None => return self.error(id, -32602i64, "formatting textDocument must be an object"),
+        };
+        let uri = match field_string(text_document, "uri") {
+            Some(value) => value,
+            None => return self.error(id, -32602i64, "formatting textDocument is missing uri"),
+        };
+        let index = match self.documents.find(uri) {
+            Some(value) => value,
+            None => return self.success(id, empty_array()),
+        };
+        let text = String.from(&self.documents.at(index).text.as_str());
+        defer text.drop();
+        let path = match uri_to_path(uri) {
+            Ok(value) => value,
+            Err(_) => String.from(&uri),
+        };
+        defer path.drop();
+        self.success(id, document_edits(text.as_str(), path.as_str()))
+    }
+
     fn handle_request(id: RequestId, method: String, params: Option<Value>)
     -> Result<(), IoError> {
         match method.as_str() {
@@ -1438,6 +1480,7 @@ impl ServerState {
                 self.shutdown_received = true;
                 self.success(id, Value.Null)
             },
+            "textDocument/formatting" => self.process_formatting(id, params),
             "textDocument/definition" | "textDocument/hover" | "textDocument/documentSymbol" |
             "textDocument/semanticTokens/full" | "textDocument/references" |
             "textDocument/documentHighlight" | "textDocument/inlayHint" => {

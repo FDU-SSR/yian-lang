@@ -212,7 +212,7 @@ class StdioClient:
 
 
 class LspProtocolTests(unittest.TestCase):
-    def __initialize(self, client: StdioClient, root: Path) -> None:
+    def __initialize(self, client: StdioClient, root: Path) -> JsonObject:
         client.send({
             "jsonrpc": "2.0",
             "id": 1,
@@ -228,8 +228,10 @@ class LspProtocolTests(unittest.TestCase):
                 },
             },
         })
-        client.until(lambda message: message.get("id") == 1)
+        response = client.until(lambda message: message.get("id") == 1)
         client.send({"jsonrpc": "2.0", "method": "initialized", "params": {}})
+        result = response.get("result")
+        return result if isinstance(result, dict) else {}
 
     def test_configured_lsp_wrapper_is_rejected_without_execution(self) -> None:
         with tempfile.TemporaryDirectory(prefix="native lsp identity ") as temporary:
@@ -568,9 +570,13 @@ class LspProtocolTests(unittest.TestCase):
             source.write_text("fn main() {}\n", encoding="utf-8")
             client = StdioClient()
             uri = source.as_uri()
-            text = "fn main(){let x:i32=1;x;}\n"
+            text = "fn main(){\nlet x:i32=1;\nx;\n}\n"
             try:
-                self.__initialize(client, root)
+                initialized = self.__initialize(client, root)
+                capabilities = initialized.get("capabilities")
+                self.assertIsInstance(capabilities, dict)
+                self.assertIs(capabilities.get("documentFormattingProvider"), True,
+                              "the server must declare document formatting")
                 client.send({
                     "jsonrpc": "2.0",
                     "method": "textDocument/didOpen",
@@ -597,11 +603,97 @@ class LspProtocolTests(unittest.TestCase):
                     [{
                         "range": {
                             "start": {"line": 0, "character": 0},
-                            "end": {"line": 1, "character": 0},
+                            "end": {"line": 4, "character": 0},
                         },
                         "newText": "fn main() {\n    let x: i32 = 1;\n    x;\n}\n",
                     }],
                     "formatting must use the unsaved document and return the exact native output",
+                )
+
+                formatted = "fn main() {\n    let x: i32 = 1;\n    x;\n}\n"
+                client.send({
+                    "jsonrpc": "2.0",
+                    "method": "textDocument/didChange",
+                    "params": {
+                        "textDocument": {"uri": uri, "version": 2},
+                        "contentChanges": [{"text": formatted}],
+                    },
+                })
+                client.send({
+                    "jsonrpc": "2.0",
+                    "id": 4,
+                    "method": "textDocument/formatting",
+                    "params": {"textDocument": {"uri": uri}, "options": {"tabSize": 4, "insertSpaces": True}},
+                })
+                unchanged = client.until(lambda message: message.get("id") == 4)
+                self.assertEqual(unchanged.get("result"), [],
+                                 "an already formatted buffer must produce no edit")
+
+                client.send({
+                    "jsonrpc": "2.0",
+                    "method": "textDocument/didChange",
+                    "params": {
+                        "textDocument": {"uri": uri, "version": 3},
+                        "contentChanges": [{"text": "fn main() { let value = ; }\n"}],
+                    },
+                })
+                client.send({
+                    "jsonrpc": "2.0",
+                    "id": 5,
+                    "method": "textDocument/formatting",
+                    "params": {"textDocument": {"uri": uri}, "options": {"tabSize": 4, "insertSpaces": True}},
+                })
+                unparseable = client.until(lambda message: message.get("id") == 5)
+                self.assertEqual(unparseable.get("result"), [],
+                                 "text that cannot be parsed must produce no edit")
+
+                client.send({
+                    "jsonrpc": "2.0",
+                    "id": 6,
+                    "method": "textDocument/formatting",
+                    "params": {"textDocument": {}},
+                })
+                malformed = client.until(lambda message: message.get("id") == 6)
+                self.assertEqual(malformed.get("error", {}).get("code"), -32602)
+
+                unknown_uri = (root / "missing.an").as_uri()
+                client.send({
+                    "jsonrpc": "2.0",
+                    "id": 7,
+                    "method": "textDocument/formatting",
+                    "params": {"textDocument": {"uri": unknown_uri},
+                               "options": {"tabSize": 4, "insertSpaces": True}},
+                })
+                unknown = client.until(lambda message: message.get("id") == 7)
+                self.assertEqual(unknown.get("result"), [],
+                                 "an unopened document must produce no edit")
+
+                typed_error = "fn main(){ let value: Missing = 1; }\n"
+                client.send({
+                    "jsonrpc": "2.0",
+                    "method": "textDocument/didChange",
+                    "params": {
+                        "textDocument": {"uri": uri, "version": 4},
+                        "contentChanges": [{"text": typed_error}],
+                    },
+                })
+                client.send({
+                    "jsonrpc": "2.0",
+                    "id": 8,
+                    "method": "textDocument/formatting",
+                    "params": {"textDocument": {"uri": uri}, "options": {"tabSize": 4, "insertSpaces": True}},
+                })
+                type_failure = client.until(lambda message: message.get("id") == 8)
+                self.assertEqual(
+                    type_failure.get("result"),
+                    [{
+                        "range": {
+                            "start": {"line": 0, "character": 0},
+                            "end": {"line": 1, "character": 0},
+                        },
+                        "newText": "fn main() { let value: Missing = 1; }\n",
+                    }],
+                    "formatting must not depend on a successful analysis",
                 )
             finally:
                 client.shutdown()

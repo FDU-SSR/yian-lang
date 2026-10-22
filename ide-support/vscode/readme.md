@@ -50,12 +50,13 @@ scripts/refresh_toolchain.sh --anx "$HOME/.local/bin/anx" --yianc "$HOME/.local/
 
 ## 功能
 
-- 诊断、定义、悬停、文档符号、语义 token、引用、文档高亮和无注解变量的类型提示（inlay hints）。
+- 诊断、定义、悬停、文档符号、语义 token、引用、文档高亮、无注解变量的类型提示（inlay hints）和整文件格式化。
 - 类型提示覆盖简单 `let`、解构 `let`、`for`、`match`、`if let`/`while let`、闭包捕获和闭包变量；显式注解与形参不重复提示，不可展示的字面量类型不提示。提示只读，不修改源码。
 - 提示使用 VS Code 内建的 `editor.inlayHints.enabled`；可按语言设置 `"[yian]": {"editor.inlayHints.enabled": "off"}` 关闭。
 - 工作区文档同步和文件变更更新。
 - 未保存文本优先参与一次严格前端与语义分析；过期分析结果不会覆盖新版本。
-- 不声明补全、签名帮助、重命名、代码操作或格式化；这些请求由服务器以 `MethodNotFound` 拒绝。
+- Format Document 使用当前未保存文本，返回整文档编辑；已格式化或无法解析的文本不产生修改。
+- 不声明补全、签名帮助、重命名或代码操作；这些请求由服务器以 `MethodNotFound` 拒绝。
 - 任一输入错误使当前分析单元不可导航并发布首错；修复后重新分析自动恢复，不返回旧导航。
 
 ## 打包扩展
@@ -74,7 +75,7 @@ npm run package
 1. 安装上面的 VSIX，并把 `yian.languageServer.command` 配置为 `yian-lsp` 的绝对路径。
 2. 打开单文件工作区和带 `package.anx` 的多文件项目，检查版本信息和诊断。
 3. 修改但不保存文件，检查悬停、定义、引用、文档高亮和语义高亮是否反映当前缓冲区；确认无注解变量显示 `: 类型` 提示、注解变量不重复，并用 `editor.inlayHints.enabled` 验证开关。
-4. 在多文件项目中检查跨文件定义与引用；确认补全、重命名和格式化请求被拒绝。
+4. 在多文件项目中检查跨文件定义与引用；确认补全、重命名和代码操作请求被拒绝，Format Document 反映当前未保存的缓冲区。
 5. 连续输入、保存、新增/删除源码并修复无效清单，确认诊断更新、失败期间没有旧导航，且修复后导航恢复。
 6. 将 `yian.languageServer.args` 改为 `["--raw-pointers"]`，重启服务并重复代表性操作。
 7. 关闭窗口后运行 `ps -eo pid,ppid,args | grep '[y]ian-lsp'`，确认该工作区的服务进程和 worker 已退出。
