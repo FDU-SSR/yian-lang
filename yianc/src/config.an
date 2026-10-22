@@ -176,30 +176,83 @@ impl Drop for CompilerConfig {
 pub fn parse_args() -> Result<CompilerConfig, String> {
     let parser = ArgumentParser.new("compiler");
     defer parser.drop();
+
     parser.description("YIAN compiler");
-    parser.add_argument("check").long("check").action(Action.StoreTrue)
+
+    parser.add_argument("check")
+    .long("check").action(Action.StoreTrue)
     .help("type-check sources without generating an artifact");
-    parser.add_argument("format").long("format").action(Action.StoreTrue).help("format validated sources");
-    parser.add_argument("write").long("write").short('w').action(Action.StoreTrue).help("rewrite formatted sources in place");
-    parser.add_argument("format-check").long("format-check").action(Action.StoreTrue)
+
+    parser.add_argument("format")
+    .long("format").action(Action.StoreTrue)
+    .help("format validated sources");
+
+    parser.add_argument("write")
+    .long("write").short('w').action(Action.StoreTrue)
+    .help("rewrite formatted sources in place");
+
+    parser.add_argument("format-check")
+    .long("format-check").action(Action.StoreTrue)
     .help("list sources requiring formatting (with --format)");
-    parser.add_argument("compiler-root").long("compiler-root").metavar("PATH").help("checkout root used for standard-library trust");
-    parser.add_argument("packages").long("packages").metavar("PATH").help("v2 package map");
-    parser.add_argument("raw-pointers").long("raw-pointers").action(Action.StoreTrue).help("analyze sources for raw-pointer mode");
-    parser.add_argument("allow-ffi").long("allow-ffi").action(Action.StoreTrue).help("allow FFI in standalone sources");
-    parser.add_argument("target").long("target").short('t').choices(["exe", "ll", "bc"].as_slice())
-    .default_value("exe").metavar("TARGET").help("output kind");
-    parser.add_argument("output").long("output").short('o').metavar("PATH").help("output path");
-    parser.add_argument("optimization").short('O').choices(["0", "1", "2", "3"].as_slice()).default_value("0").help("optimization level");
-    parser.add_argument("dump").long("dump").action(Action.StoreTrue).help("write completed stage observations");
-    parser.add_argument("profile").long("profile").action(Action.StoreTrue).help("report actual stage timings");
-    parser.add_argument("profile-output").long("profile-output").metavar("PATH")
+
+    parser.add_argument("compiler-root")
+    .long("compiler-root").metavar("PATH")
+    .help("checkout root used for standard-library trust");
+
+    parser.add_argument("packages")
+    .long("packages").metavar("PATH")
+    .help("v2 package map");
+
+    parser.add_argument("raw-pointers")
+    .long("raw-pointers").action(Action.StoreTrue)
+    .help("analyze sources for raw-pointer mode");
+
+    parser.add_argument("allow-ffi")
+    .long("allow-ffi").action(Action.StoreTrue)
+    .help("allow FFI in standalone sources");
+
+    parser.add_argument("target")
+    .long("target").short('t').choices(["exe", "ll", "bc"].as_slice()).default_value("exe").metavar("TARGET")
+    .help("output kind");
+
+    parser.add_argument("output")
+    .long("output").short('o').metavar("PATH")
+    .help("output path");
+
+    parser.add_argument("optimization")
+    .short('O').choices(["0", "1", "2", "3"].as_slice()).default_value("0")
+    .help("optimization level");
+
+    parser.add_argument("dump")
+    .long("dump").action(Action.StoreTrue)
+    .help("write completed stage observations");
+
+    parser.add_argument("profile")
+    .long("profile").action(Action.StoreTrue)
+    .help("report actual stage timings");
+
+    parser.add_argument("profile-output")
+    .long("profile-output").metavar("PATH")
     .help("write structured compiler profile JSON to PATH");
-    parser.add_argument("log-spec").long("log-spec").help("channel=level logging configuration");
-    parser.add_argument("log-file").long("log-file").help("additional logging output file");
-    parser.add_argument("link-lib").long("link-lib").action(Action.Append).help("native library name");
-    parser.add_argument("link-search").long("link-search").action(Action.Append).help("native library directory");
-    parser.add_argument("inputs").nargs(Nargs.ZeroOrMore).metavar("INPUT")
+
+    parser.add_argument("log-spec")
+    .long("log-spec")
+    .help("channel=level logging configuration");
+
+    parser.add_argument("log-file")
+    .long("log-file")
+    .help("additional logging output file");
+
+    parser.add_argument("link-lib")
+    .long("link-lib").action(Action.Append)
+    .help("native library name");
+
+    parser.add_argument("link-search")
+    .long("link-search").action(Action.Append)
+    .help("native library directory");
+
+    parser.add_argument("inputs")
+    .nargs(Nargs.ZeroOrMore).metavar("INPUT")
     .help("input files or directories");
 
     match parser.parse_env() {
