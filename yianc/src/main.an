@@ -14,90 +14,86 @@ from std.core.drop import Drop;
 from std.core.env import exit;
 from std.core.io import eprintln;
 
-fn check_cli(config: CompilerConfig&) -> bool {
-    let trace = match CompilerTrace.new(config, true) {
-        Ok(value) => value,
-        Err(problem) => { eprintln(problem.as_str()); problem.drop(); return false; },
-    };
-    defer trace.drop();
-    let profile_complete = false;
-    defer trace.finalize(profile_complete);
-    let total = trace.start_pass("compiler.total", "main", "compiler.total", ProfileKind.Stage);
+const EXIT_FAILURE: i32 = 1;
+const EXIT_USAGE_ERROR: i32 = 2;
 
-    let frontend = match FrontendDriver.prepare(config, Option<CompilerTrace&>.Some(&trace)) {
+fn main() {
+    // Parse arguments, then handle help and invalid invocations before compilation.
+    let config = match parse_args() {
         Ok(value) => value,
-        Err(problem) => {
-            report(&problem.diagnostic, Option<SourceManager&>.None);
-            problem.drop();
-            return false;
+        Err(message) => {
+            eprintln(message.as_str());
+            exit(EXIT_USAGE_ERROR);
         },
     };
-    let middle = MiddleEndDriver.new(frontend.take_session(), config.raw_pointers);
-    defer middle.drop();
+    defer config.drop();
 
-    let runtime_profile_dir = match &config.runtime_profile_dir { Some(value) => Option<str>.Some(value.as_str()), None => Option<str>.None };
-    let backend = match BackendDriver.new(middle.analysis_session(), BackendOptions(config.raw_pointers, config.optimization, runtime_profile_dir), Option<CompilerTrace&>.Some(&trace)) {
-        Ok(value) => value,
-        Err(problem) => {
-            report(&problem.diagnostic, Option<SourceManager&>.Some(middle.analysis_session().source_manager()));
-            problem.drop();
-            return false;
-        },
-    };
-    defer backend.drop();
-
-    let options = AnalysisOptions.new();
-    options.require_entry = false;
-    options.entry_optional = true;
-    options.recover = true;
-    options.verify_hir = true;
-    options.sizes = Option<TypeSizeProvider&>.Some(backend.size_provider());
-    options.trace = Option<CompilerTrace&>.Some(&trace);
-    let ok = middle.check(options, config.dump);
-    for pass_id in ["cfg_pipeline", "llvm_pipeline", "native_pipeline", "llvm.lower", "llvm.verify_before_optimization",
-        "llvm.optimize", "llvm.verify_after_optimization", "llvm.emit_native", "llvm.serialize_ir", "llvm.serialize_bitcode",
-        "native.prepare", "native.runtime_compile", "native.runtime_archive", "native.c_shim_compile", "native.link_flags", "native.link"] {
-        trace.skip(*pass_id, "check stops after semantic analysis");
+    match &config.action {
+        Help(text) => { print(text.as_str()); return; },
+        Invalid(message) => { eprintln(message.as_str()); exit(EXIT_FAILURE); },
+        Format(rewrite, check) => { format_cli(&config, *rewrite, *check); return; },
+        Check => {},
+        Compile => {},
     }
-    trace.finish("compiler.total", total);
-    profile_complete = ok;
-    ok
-}
 
-fn compile_cli(config: CompilerConfig&) -> bool {
-    let trace = match CompilerTrace.new(config, false) {
+    let check = match &config.action { Check => true, _ => false, };
+    let trace = match CompilerTrace.new(&config, check) {
         Ok(value) => value,
-        Err(problem) => { eprintln(problem.as_str()); problem.drop(); return false; },
+        Err(problem) => { eprintln(problem.as_str()); exit(EXIT_FAILURE); },
     };
     defer trace.drop();
     let profile_complete = false;
     defer trace.finalize(profile_complete);
-    let total = trace.start_pass("compiler.total", "main", "compiler.total", ProfileKind.Stage);
-    trace.event("main", 3, "compiling source inputs", Option<str>.None);
 
-    let started = trace.start_pass("source_preparation", "main", "source preparation", ProfileKind.Stage);
-    let frontend = match FrontendDriver.prepare(config, Option<CompilerTrace&>.Some(&trace)) {
-        Ok(value) => { trace.finish("source_preparation", started); value },
+    let total = trace.start_pass("compiler.total", "main", "compiler.total", ProfileKind.Stage);
+    if !check { trace.event("main", 3, "compiling source inputs", Option<str>.None); }
+
+    // Compile mode times source preparation; check mode stops before backend compilation.
+    let source_started = if check { 0u64 } else { trace.start_pass("source_preparation", "main", "source preparation", ProfileKind.Stage) };
+    let frontend = match FrontendDriver.prepare(&config, Option<CompilerTrace&>.Some(&trace)) {
+        Ok(value) => value,
         Err(problem) => {
-            trace.fail("source_preparation", started);
+            if !check { trace.fail("source_preparation", source_started); }
             report(&problem.diagnostic, Option<SourceManager&>.None);
-            problem.drop();
-            return false;
+            exit(EXIT_FAILURE);
         },
     };
+    if !check { trace.finish("source_preparation", source_started); }
+
     let middle = MiddleEndDriver.new(frontend.take_session(), config.raw_pointers);
     defer middle.drop();
 
     let runtime_profile_dir = match &config.runtime_profile_dir { Some(value) => Option<str>.Some(value.as_str()), None => Option<str>.None };
+    // Analysis needs the target layout provider from the initialized backend session.
     let backend = match BackendDriver.new(middle.analysis_session(), BackendOptions(config.raw_pointers, config.optimization, runtime_profile_dir), Option<CompilerTrace&>.Some(&trace)) {
         Ok(value) => value,
         Err(problem) => {
             report(&problem.diagnostic, Option<SourceManager&>.Some(middle.analysis_session().source_manager()));
-            problem.drop();
-            return false;
+            exit(EXIT_FAILURE);
         },
     };
     defer backend.drop();
+
+    if check {
+        let options = AnalysisOptions.new();
+        options.require_entry = false;
+        options.entry_optional = true;
+        options.recover = true;
+        options.verify_hir = true;
+        options.sizes = Option<TypeSizeProvider&>.Some(backend.size_provider());
+        options.trace = Option<CompilerTrace&>.Some(&trace);
+        let ok = middle.check(options, config.dump);
+
+        for pass_id in ["cfg_pipeline", "llvm_pipeline", "native_pipeline", "llvm.lower", "llvm.verify_before_optimization",
+            "llvm.optimize", "llvm.verify_after_optimization", "llvm.emit_native", "llvm.serialize_ir", "llvm.serialize_bitcode",
+            "native.prepare", "native.runtime_compile", "native.runtime_archive", "native.c_shim_compile", "native.link_flags", "native.link"] {
+            trace.skip(*pass_id, "check stops after semantic analysis");
+        }
+        trace.finish("compiler.total", total);
+        profile_complete = ok;
+        if !ok { exit(EXIT_FAILURE); }
+        return;
+    }
 
     let options = AnalysisOptions.new();
     options.require_entry = true;
@@ -109,37 +105,12 @@ fn compile_cli(config: CompilerConfig&) -> bool {
     let analyzed_at = trace.start_pass("semantic_analysis", "main", "semantic analysis", ProfileKind.Stage);
     if !middle.analyze(options, config.dump) {
         trace.fail("semantic_analysis", analyzed_at);
-        return false;
+        exit(EXIT_FAILURE);
     }
     trace.finish("semantic_analysis", analyzed_at);
 
-    let ok = backend.compile(config, middle.output(), Option<CompilerTrace&>.Some(&trace));
+    let ok = backend.compile(&config, middle.output(), Option<CompilerTrace&>.Some(&trace));
     trace.finish("compiler.total", total);
     profile_complete = ok;
-    ok
-}
-
-fn main() {
-    let status = match parse_args() {
-        Ok(config) => {
-            defer config.drop();
-
-            match &config.action {
-                Help(text) => { print(text.as_str()); 0i32 },
-                Check => if check_cli(&config) { 0i32 } else { 1i32 },
-                Compile => if compile_cli(&config) { 0i32 } else { 1i32 },
-                Format(rewrite, check) => format_cli(&config, *rewrite, *check),
-                Invalid(message) => { eprintln(message.as_str()); 1i32 },
-            }
-        },
-        Err(message) => {
-            defer message.drop();
-            eprintln(message.as_str());
-            2i32
-        },
-    };
-
-    if status != 0i32 {
-        exit(status);
-    }
+    if !ok { exit(EXIT_FAILURE); }
 }

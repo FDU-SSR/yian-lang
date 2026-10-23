@@ -57,6 +57,12 @@ fn string_values(matches: ArgMatches&, name: str) -> Vec<String> {
 }
 
 impl CompilerConfig {
+    static fn help(text: String) -> Self {
+        Self(CompilerAction.Help(text), Vec<String>.new(), String.new(), false, Option<String>.None, false, false,
+            OutputKind.Exe, false, Option<String>.None, 0u8, false, false, Option<String>.None, Option<String>.None, Option<String>.None, Option<String>.None,
+            Vec<String>.new(), Vec<String>.new())
+    }
+
     static fn from_matches(matches: ArgMatches&) -> Result<Self, String> {
         let check = *matches.get_bool("check").unwrap().unwrap();
         let format = *matches.get_bool("format").unwrap().unwrap();
@@ -277,10 +283,7 @@ pub fn parse_args() -> Result<CompilerConfig, String> {
 
     match parser.parse_env() {
         Ok(outcome) => match outcome {
-            Help(text) => Result<CompilerConfig, String>.Ok(
-                CompilerConfig(CompilerAction.Help(text), Vec<String>.new(), String.new(), false, Option<String>.None, false, false,
-                OutputKind.Exe, false, Option<String>.None, 0u8, false, false, Option<String>.None, Option<String>.None, Option<String>.None, Option<String>.None,
-                Vec<String>.new(), Vec<String>.new())),
+            Help(text) => Result<CompilerConfig, String>.Ok(CompilerConfig.help(text)),
             Parsed(matches) => {
                 defer matches.drop();
                 CompilerConfig.from_matches(&matches)

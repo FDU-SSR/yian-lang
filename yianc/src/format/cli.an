@@ -6,6 +6,9 @@ from std.core.fs import write;
 from std.core.io import eprint, eprintln;
 from std.core.iter import Iterator, IntoIterator;
 from std.core.fmt import ToString;
+from std.core.env import exit;
+
+const EXIT_FAILURE: i32 = 1;
 
 fn drop_paths(paths: Vec<String>&) {
     for path in *paths { path.drop(); }
@@ -13,18 +16,18 @@ fn drop_paths(paths: Vec<String>&) {
 }
 
 // Validate before rendering. A parse failure never writes a partially formatted source.
-pub fn format_cli(config: CompilerConfig&, rewrite: bool, check: bool) -> i32 {
+pub fn format_cli(config: CompilerConfig&, rewrite: bool, check: bool) {
     let paths = match collect_sources(&config.inputs) {
         Ok(value) => value,
-        Err(problem) => { defer problem.drop(); eprint(problem.msg()); return 1; },
+        Err(problem) => { eprint(problem.msg()); exit(EXIT_FAILURE); },
     };
     defer drop_paths(&paths);
-    if paths.is_empty() { eprintln("error: --format needs at least one source file"); return 1; }
-    if !rewrite && !check && paths.len() != 1 { eprintln("error: --format prints one file; add -w or --format-check"); return 1; }
+    if paths.is_empty() { eprintln("error: --format needs at least one source file"); exit(EXIT_FAILURE); }
+    if !rewrite && !check && paths.len() != 1 { eprintln("error: --format prints one file; add -w or --format-check"); exit(EXIT_FAILURE); }
 
     let changed = 0u64;
     for path in paths {
-        let source = match read_source(path.as_str()) { Ok(value) => value, Err(problem) => { defer problem.drop(); eprint(problem.msg()); return 1; }, };
+        let source = match read_source(path.as_str()) { Ok(value) => value, Err(problem) => { eprint(problem.msg()); exit(EXIT_FAILURE); }, };
         defer source.drop();
         let formatted = match format_text(source.as_str(), path.as_str()) {
             Ok(Some(value)) => value,
@@ -35,16 +38,15 @@ pub fn format_cli(config: CompilerConfig&, rewrite: bool, check: bool) -> i32 {
                 continue;
             },
             Err(problem) => {
-                defer problem.drop();
                 eprintln("error: formatter failed");
-                return 1;
+                exit(EXIT_FAILURE);
             },
         };
         defer formatted.drop();
         if formatted.as_str() == source.as_str() { continue; }
         changed += 1;
         if check { println(path.as_str()); } elif rewrite {
-            match write(path.as_str(), formatted.as_slice()) { Ok(_) => {}, Err(problem) => { defer problem.drop(); eprint(problem.msg()); return 1; }, }
+            match write(path.as_str(), formatted.as_slice()) { Ok(_) => {}, Err(problem) => { eprint(problem.msg()); exit(EXIT_FAILURE); }, }
         } else { print(formatted.as_str()); }
     }
     let total = paths.len().to_string();
@@ -56,7 +58,7 @@ pub fn format_cli(config: CompilerConfig&, rewrite: bool, check: bool) -> i32 {
         print(" of ");
         print(total.as_str());
         println(" file(s) need formatting");
-        return if changed > 0 { 1 } else { 0 };
+        if changed > 0 { exit(EXIT_FAILURE); }
     }
     if rewrite {
         print(total.as_str());
@@ -64,5 +66,4 @@ pub fn format_cli(config: CompilerConfig&, rewrite: bool, check: bool) -> i32 {
         print(count.as_str());
         println(" rewritten");
     }
-    0
 }
