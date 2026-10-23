@@ -365,23 +365,48 @@ impl<W> Write for BufWriter<W> if W: Write {
     pub fn flush() -> Result<(), IoError> { self.drain()?; self.inner.flush() }
 }
 impl<W> Drop for BufWriter<W> { pub fn drop() { self.buffer.drop(); } }
-fn write_stdout(text: str) {
-    match Stdout.new().write_str(text) {
-        Ok(_) => {},
-        Err(error) => { error.drop(); @panic("stdout write failed"); },
+// Convenience printing buffers a fixed number of bytes and drains them before returning.
+// The buffer never owns the stream, and a failed drain remains observable to the caller.
+struct PrintTarget<W> { stream: W, buffer: Vec<u8> }
+impl<W> PrintTarget<W> if W: Write {
+    static fn wrap(stream: W) -> Self {
+        Self(stream=stream, buffer=Vec<u8>.with_capacity(1024u64))
+    }
+
+    fn drain() -> Result<(), IoError> {
+        let offset = 0u64;
+        while offset < self.buffer.len() {
+            let count = self.stream.write(self.buffer.as_slice()[offset..self.buffer.len()])?;
+            if count == 0u64 { return Result<(), IoError>.Err(msg=IoError.new(IoErrorKind.WriteZero, "write made no progress")); }
+            offset += count;
+        }
+        self.buffer.clear();
+        Result<(), IoError>.Ok(val=())
+    }
+
+    // Printing owns its buffer, so the entry drains it explicitly instead of relying on drop.
+    fn finish() -> Result<(), IoError> {
+        self.drain()
     }
 }
-// stderr carries diagnostics; a failed diagnostic write must not abort the process.
-fn write_stderr(text: str) {
-    match Stderr.new().write_str(text) {
-        Ok(_) => {},
-        Err(error) => error.drop(),
+impl<W> Write for PrintTarget<W> if W: Write {
+    pub fn write(data: u8[]) -> Result<u64, IoError> {
+        if data.len() == 0u64 { return Result<u64, IoError>.Ok(val=0u64); }
+        if self.buffer.len() == 1024u64 { self.drain()?; }
+        let count = 1024u64 - self.buffer.len();
+        if count > data.len() { count = data.len(); }
+        self.buffer.extend_from_slice(data[0u64..count]);
+        Result<u64, IoError>.Ok(val=count)
+    }
+
+    pub fn flush() -> Result<(), IoError> {
+        self.drain()
     }
 }
-pub fn print(text: str) { write_stdout(text); }
-pub fn println(text: str) { write_stdout(text); write_stdout("\n"); }
-pub fn eprint(text: str) { write_stderr(text); }
-pub fn eprintln(text: str) { write_stderr(text); write_stderr("\n"); }
+impl<W> Drop for PrintTarget<W> { pub fn drop() { self.buffer.drop(); } }
+fn stdout_printer() -> PrintTarget<Stdout> { PrintTarget<Stdout>.wrap(Stdout.new()) }
+fn stderr_printer() -> PrintTarget<Stderr> { PrintTarget<Stderr>.wrap(Stderr.new()) }
+
 pub fn open_rdonly(path: str) -> Result<File, IoError> { File.open(path, OpenMode.Read) }
 pub fn open_wronly(path: str) -> Result<File, IoError> { File.open(path, OpenMode.Write) }
 pub fn open_append(path: str) -> Result<File, IoError> { File.open(path, OpenMode.Append) }

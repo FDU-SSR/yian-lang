@@ -1,4 +1,4 @@
-from yianc.frontend.ast.node import Expr, ExprData, Block, BlockData, Argument, ArgumentData, Identifier, IdentifierData, GenericArgument, TypeSyntax, TypeData, Condition, LetConditionData, ElifBranch, ElifBranchData, MatchArm, MatchArmData, PatternLet, PatternLetData, CaptureItem, CaptureItemData, Literal, StrLiteralData, Parameter;
+from yianc.frontend.ast.node import Expr, ExprData, Block, BlockData, Argument, ArgumentData, Identifier, IdentifierData, GenericArgument, TypeSyntax, TypeData, Condition, LetConditionData, ElifBranch, ElifBranchData, MatchArm, MatchArmData, PatternLet, PatternLetData, CaptureItem, CaptureItemData, Literal, StrLiteralData, Parameter, FormatPart;
 from yianc.frontend.ast.atoms import BuiltinKind, MatchArmOrigin;
 from yianc.frontend.ast.operator import BinaryOperator, UnaryOperator;
 from yianc.frontend.lex.token import KeywordKind, PunctuatorKind;
@@ -678,22 +678,22 @@ fn method(parser: Parser&, receiver: Expr&, name: str) -> Expr& {
 fn fstring(parser: Parser&) -> Option<Expr&> {
     let span = parser.peek().span;
     parser.advance();
-    let segments = Vec<Expr&>.new();
-    defer segments.drop();
+    let parts = Vec<FormatPart>.new();
+    defer parts.drop();
 
     loop {
         let token = parser.peek();
         match token.kind() {
             FStrLiteral(_) => {
-                let literal = parser.arena.alloc_str_literal(StrLiteralData(value=String.from(&token.value()), raw=String.from(&token.value())), token.span);
-                segments.push(parser.arena.alloc_expr(ExprData.Literal(literal=Literal.StringLiteral(value=literal)), token.span));
+                // The lexer decodes escapes; the template keeps only the decoded text and source span.
+                parts.push(FormatPart.Literal(text=String.from(&token.value()), span=token.span));
                 parser.advance();
             },
             FStrExprBegin => {
                 parser.advance();
                 let value = parse_expr(parser)?;
                 parser.advance();
-                segments.push(method(parser, value, "to_string"));
+                parts.push(FormatPart.Value(expr=value, span=value.span));
             },
             FStrEnd => {
                 parser.advance();
@@ -706,17 +706,7 @@ fn fstring(parser: Parser&) -> Option<Expr&> {
         }
     }
 
-    let name = parser.named_identifier(span, "String", false);
-    let ty = parser.arena.alloc_expr(ExprData.TypeItem(name=name, generics=Vec<GenericArgument>.new()), span);
-    let result = method(parser, ty, "new");
-    let i: u64 = 0;
-
-    while i < segments.len() {
-        result = parser.arena.alloc_expr(ExprData.Binary(op=BinaryOperator.Add, left=result, right=segments[i]), span);
-        i += 1;
-    }
-
-    Option<Expr&>.Some(val=result)
+    Option<Expr&>.Some(val=parser.arena.alloc_expr(ExprData.FormatTemplate(parts=parts.take()), span))
 }
 
 // Capture initializers use binding power above bitwise OR to avoid consuming the closing capture-list pipe.

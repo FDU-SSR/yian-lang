@@ -3,5 +3,5 @@ pub fn double(x: i32) -> i32 {
 }
 
 pub fn banner() {
-    print("from demo\n");
+    @print("from demo\n");
 }

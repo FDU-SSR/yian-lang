@@ -267,6 +267,23 @@ pub enum TypeSource {
     CallableReturnType,
 }
 
+// Formatted template parts keep decoded literal text and borrow interpolation expressions from the arena.
+pub enum FormatPart {
+    Literal { text: String, span: Span },
+    Value { expr: Expr&, span: Span },
+}
+
+impl Drop for FormatPart {
+    pub fn drop() {
+        match self {
+            Literal(text, span) => {
+                text.drop();
+            },
+            Value(expr, span) => {},
+        }
+    }
+}
+
 // Expression and statement syntax data; all child expressions refer to Expr nodes.
 pub enum ExprData {
     Identifier { name: Identifier& },
@@ -303,6 +320,7 @@ pub enum ExprData {
     Semi { expr: Expr& },
     ClosureExpr { captures: Vec<CaptureItem&>, params: Vec<Parameter>, return_type: Option<TypeSyntax&>, body: Block& },
     CompileConfig { name: String },
+    FormatTemplate { parts: Vec<FormatPart> },
 }
 
 impl Drop for ExprData {
@@ -367,6 +385,12 @@ impl Drop for ExprData {
             },
             CompileConfig(name) => {
                 name.drop();
+            },
+            FormatTemplate(parts) => {
+                for part in *parts {
+                    part.drop();
+                }
+                parts.drop();
             },
         }
     }

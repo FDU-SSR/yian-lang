@@ -12,7 +12,7 @@ from yianc.format.cli import format_cli;
 from yianc.frontend.source import SourceManager;
 from std.core.drop import Drop;
 from std.core.env import exit;
-from std.core.io import eprintln;
+
 
 const EXIT_FAILURE: i32 = 1;
 const EXIT_USAGE_ERROR: i32 = 2;
@@ -22,15 +22,15 @@ fn main() {
     let config = match parse_args() {
         Ok(value) => value,
         Err(message) => {
-            eprintln(message.as_str());
+            @eprintln(f"{message.as_str()}");
             exit(EXIT_USAGE_ERROR);
         },
     };
     defer config.drop();
 
     match &config.action {
-        Help(text) => { print(text.as_str()); return; },
-        Invalid(message) => { eprintln(message.as_str()); exit(EXIT_FAILURE); },
+        Help(text) => { @print(f"{text.as_str()}"); return; },
+        Invalid(message) => { @eprintln(f"{message.as_str()}"); exit(EXIT_FAILURE); },
         Format(rewrite, check) => { format_cli(&config, *rewrite, *check); return; },
         Check => {},
         Compile => {},
@@ -39,7 +39,7 @@ fn main() {
     let check = match &config.action { Check => true, _ => false, };
     let trace = match CompilerTrace.new(&config, check) {
         Ok(value) => value,
-        Err(problem) => { eprintln(problem.as_str()); exit(EXIT_FAILURE); },
+        Err(problem) => { @eprintln(f"{problem.as_str()}"); exit(EXIT_FAILURE); },
     };
     defer trace.drop();
     let profile_complete = false;

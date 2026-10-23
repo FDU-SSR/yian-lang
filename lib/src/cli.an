@@ -532,7 +532,7 @@ impl ArgumentParser {
         if spec.takes_value() {
             match &spec.arity {
                 Optional => output.push('?'), ZeroOrMore => output.push_str("..."), OneOrMore => output.push_str("..."),
-                Exact(count) => { let text = f" x{*count}"; defer text.drop(); output.push_str(text.as_str()); }, _ => {},
+                Exact(count) => { @append(output, f" x{*count}"); }, _ => {},
             }
         }
     }

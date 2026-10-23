@@ -4,7 +4,7 @@ from yianc.driver.native import DriverError;
 from yianc.frontend.source import SourceManager;
 from std.core.drop import Drop;
 from std.core.fmt import ToString;
-from std.core.io import Stderr, Write, eprint, eprintln;
+from std.core.io import Stderr, Write;
 from std.core.process import ExitStatus;
 
 pub fn report(diagnostic: Diagnostic&, sources: Option<SourceManager&>) {
@@ -13,7 +13,7 @@ pub fn report(diagnostic: Diagnostic&, sources: Option<SourceManager&>) {
         Err(problem) => { problem.drop(); return; },
     };
     defer text.drop();
-    eprintln(text.as_str());
+    @eprintln(f"{text.as_str()}");
 }
 
 pub fn report_error(problem: AnalysisError&, sources: Option<SourceManager&>) {
@@ -28,7 +28,7 @@ pub fn report_diagnostics(diagnostics: Vec<Diagnostic>&, sources: Option<SourceM
             Err(problem) => { problem.drop(); return false; },
         };
         defer text.drop();
-        eprintln(text.as_str());
+        @eprintln(f"{text.as_str()}");
     }
     true
 }
@@ -53,6 +53,6 @@ pub fn driver_error(problem: DriverError&) {
         None => {},
     }
     text.push_str("\n");
-    eprint(text.as_str());
+    @eprint(f"{text.as_str()}");
     match Stderr.new().write_all(problem.stderr.as_slice()) { Ok(_) => {}, Err(error) => error.drop(), }
 }

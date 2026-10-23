@@ -110,5 +110,5 @@ fn main() {
 
     let res: i32 = i32(checksum % 256);
     assert res == 128: "revcomp: checksum is not correct";
-    print("revcomp pass\n");
+    @print("revcomp pass\n");
 }

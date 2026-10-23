@@ -9,5 +9,5 @@ fn main() {
     assert Pair<i32>.of(1, 2).swapped().first == 2: "generic struct method";
     assert area(Shape.Rect(width=2.0, height=5.0)) == 10.0: "enum match";
     assert max(3, 9) == 9: "generic function";
-    print("library ok\n");
+    @print("library ok\n");
 }

@@ -1,0 +1,127 @@
+// Test recursive standard-library formatting for containers and tuples.
+
+from std.core.fmt import Format, Formatter;
+from std.core.io import Write, IoError, IoErrorKind;
+from std.collections.hash_map import HashMap;
+from std.collections.hash_set import HashSet;
+
+struct Point { x: i32, y: i32 }
+
+impl Format for Point {
+    fn fmt(out: Formatter&) -> Result<(), IoError> {
+        out.write_str("P(")?;
+        out.write_value(&self.x)?;
+        out.write_str(", ")?;
+        out.write_value(&self.y)?;
+        out.write_str(")")
+    }
+}
+
+// Counts member formatting calls to show recursive dispatch.
+struct Counted { value: i32, count: u64& }
+
+impl Format for Counted {
+    fn fmt(out: Formatter&) -> Result<(), IoError> {
+        *self.count += 1u64;
+        out.write_value(&self.value)
+    }
+}
+
+// A failing member must stop the container loop and propagate through the target.
+struct Failing { attempts: u64& }
+
+impl Format for Failing {
+    fn fmt(out: Formatter&) -> Result<(), IoError> {
+        *self.attempts += 1u64;
+        Result<(), IoError>.Err(msg=IoError.new(IoErrorKind.Other, "member failed"))
+    }
+}
+
+struct Sink {}
+impl Write for Sink {
+    fn write(data: u8[]) -> Result<u64, IoError> {
+        Result<u64, IoError>.Ok(val=u64(data.len()))
+    }
+    fn flush() -> Result<(), IoError> { Result<(), IoError>.Ok(val=()) }
+}
+
+fn main() {
+    let one = Point(x=1, y=2);
+    let two = Point(x=3, y=4);
+
+    let array: Point[2] = [one, two];
+    assert f"{array}" == "[P(1, 2), P(3, 4)]": "array";
+    assert f"{array.as_slice()}" == "[P(1, 2), P(3, 4)]": "slice";
+    let empty_array: Point[0] = [one; 0];
+    assert f"{empty_array}" == "[]": "empty array";
+
+    let vector = Vec<Point>.new();
+    vector.push(one);
+    vector.push(two);
+    assert f"{vector}" == "[P(1, 2), P(3, 4)]": "Vec";
+    vector.drop();
+    let empty_vector = Vec<Point>.new();
+    assert f"{empty_vector}" == "[]": "empty Vec";
+    empty_vector.drop();
+
+    assert f"{Option<Point>.Some(one)}" == "Some(P(1, 2))": "Option Some";
+    assert f"{Option<Point>.None}" == "None": "Option None";
+
+    let success: Result<Point, i32> = Result<Point, i32>.Ok(val=one);
+    let failure: Result<Point, i32> = Result<Point, i32>.Err(msg=9);
+    assert f"{success}" == "Ok(P(1, 2))": "Result Ok";
+    assert f"{failure}" == "Err(9)": "Result Err";
+
+    assert f"{()}" == "()": "unit tuple";
+    let single = (one,);
+    assert f"{single}" == "(P(1, 2),)": "one tuple";
+    let pair = (one, 7);
+    assert f"{pair}" == "(P(1, 2), 7)": "two tuple";
+    let triple = (1, 2, 3);
+    assert f"{triple}" == "(1, 2, 3)": "three tuple";
+    let quadruple = (1, 2, 3, 4);
+    assert f"{quadruple}" == "(1, 2, 3, 4)": "four tuple";
+
+    let map = HashMap<i32, Point>.new();
+    map.insert(7, one);
+    assert f"{map}" == "{7: P(1, 2)}": "map entry";
+    map.drop();
+    let empty_map = HashMap<i32, Point>.new();
+    assert f"{empty_map}" == "{}": "empty map";
+    empty_map.drop();
+
+    let set = HashSet<i32>.new();
+    set.insert(5);
+    assert f"{set}" == "{5}": "set entry";
+    set.drop();
+    let empty_set = HashSet<i32>.new();
+    assert f"{empty_set}" == "{}": "empty set";
+    empty_set.drop();
+
+    let counter: u64 = 0u64;
+    let counted = Counted(value=3, count=&counter);
+    let counted_vec = Vec<Counted>.new();
+    counted_vec.push(counted);
+    counted_vec.push(counted);
+    assert f"{counted_vec}" == "[3, 3]": "recursive members";
+    assert counter == 2u64: "member formatting count";
+    counted_vec.drop();
+
+    let attempts: u64 = 0u64;
+    let failing = Vec<Failing>.new();
+    failing.push(Failing(attempts=&attempts));
+    failing.push(Failing(attempts=&attempts));
+    let sink = Sink();
+    let result = @write(&sink, f"{failing}");
+    match result {
+        Ok(_) => @panic("failing member must propagate"),
+        Err(error) => {
+            defer error.drop();
+            assert error.msg() == "member failed": "member error text";
+        },
+    }
+    assert attempts == 1u64: "container stops after the first error";
+    failing.drop();
+
+    @println("containers ok");
+}

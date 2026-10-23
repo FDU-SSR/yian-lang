@@ -1,12 +1,14 @@
 from std.core.hash import Hash, Murmur3Hasher;
 from std.core.raw_vec import RawVec;
-
 from std.core.ops import Index, PartialEq, Deref, Add;
 from std.core.clone import Clone;
 from std.core.option import Option;
 from std.core.convert import From, Into;
 from std.core.drop import Drop;
 from std.core.range import Range;
+from std.core.fmt import Format, Formatter;
+from std.core.result import Result;
+from std.core.io import IoError;
 
 pub struct Vec<T> {
     raw_vec: RawVec<T>,
@@ -285,4 +287,17 @@ impl<T> Drop for Vec<T> {
 
 impl<T> Hash<Murmur3Hasher> for Vec<T> {
     fn hash(hasher: Murmur3Hasher&) { self.as_slice().hash(hasher); }
+}
+
+impl<T> Format for Vec<T> if T: Format {
+    fn fmt(out: Formatter&) -> Result<(), IoError> {
+        out.write_str("[")?;
+        let index: u64 = 0;
+        while index < self.len() {
+            if index != 0u64 { out.write_str(", ")?; }
+            out.write_value(&self.as_slice()[index])?;
+            index += 1u64;
+        }
+        out.write_str("]")
+    }
 }

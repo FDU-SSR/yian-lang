@@ -4,7 +4,8 @@ from yianc.analysis.hir.node import HirKind, Builtin;
 from yianc.analysis.ty.model import TypeData;
 from yianc.analysis.ty.validation import validate_value;
 from yianc.common.ids import TypeId, HirId;
-from yianc.frontend.ast.node import TypeSyntax, Argument;
+from yianc.frontend.ast.node import TypeSyntax, Argument, ExprData, Literal, FormatPart;
+from yianc.analysis.lowering.format import FormatDestination, lower_format;
 from yianc.frontend.ast.atoms import BuiltinKind;
 from yianc.frontend.source import Span;
 from yianc.diagnostics.model import AnalysisError, DiagnosticCode;
@@ -24,6 +25,9 @@ fn arity(kind: BuiltinKind) -> (u64, u64) {
         ArgBytes => (0u64, 1u64),
         FfiAddr => (0u64, 1u64), FfiParts => (0u64, 1u64), FfiNull => (1u64, 0u64),
         FfiPtrCast => (1u64, 1u64),
+        Append => (0u64, 2u64), Write => (0u64, 2u64),
+        Print => (0u64, 1u64), Println => (0u64, 1u64),
+        Eprint => (0u64, 1u64), Eprintln => (0u64, 1u64),
     }
 }
 
@@ -70,6 +74,10 @@ impl ExprChecker {
             message.push_str(provided.as_str());
             let code = if !generic && expected != 1 { DiagnosticCode.GenericArguments } else { DiagnosticCode.Type };
             return Result<HirId, AnalysisError>.Err(self.ctx.error(self.unit, span, code, message.as_str()));
+        }
+
+        if kind == BuiltinKind.Append || kind == BuiltinKind.Write || kind == BuiltinKind.Print || kind == BuiltinKind.Println || kind == BuiltinKind.Eprint || kind == BuiltinKind.Eprintln {
+            return self.format_builtin(span, kind, args);
         }
 
         let ffi = kind == BuiltinKind.FfiAddr || kind == BuiltinKind.FfiParts || kind == BuiltinKind.FfiNull || kind == BuiltinKind.FfiPtrCast;
@@ -244,8 +252,47 @@ impl ExprChecker {
                 self.c_element(span, types[0], true)?;
                 self.ctx.session.types.c_pointer(types[0])
             },
+            Append | Write | Print | Println | Eprint | Eprintln => {
+                return Result<HirId, AnalysisError>.Err(AnalysisError.internal("formatting builtins lower through lower_format"));
+            },
         };
         accepted = true;
         Result<HirId, AnalysisError>.Ok(self.node(span, result, false, HirKind.Builtin(Builtin(kind, types, values))))
+    }
+
+    // Formatting entries take static templates, so the template argument is never evaluated as a value.
+    fn format_builtin(span: Span, kind: BuiltinKind, args: Vec<Argument&>&) -> Result<HirId, AnalysisError> {
+        for argument in *args {
+            if argument.data.name.is_some() {
+                return Result<HirId, AnalysisError>.Err(self.error(argument.span, "formatting arguments cannot be named"));
+            }
+        }
+
+        let literal_only = kind == BuiltinKind.Print || kind == BuiltinKind.Println || kind == BuiltinKind.Eprint || kind == BuiltinKind.Eprintln;
+        let destination = match &kind {
+            Append => FormatDestination.Append(target=args[0].data.value),
+            Write => FormatDestination.Writer(target=args[0].data.value),
+            Print => FormatDestination.Stdout(newline=false),
+            Println => FormatDestination.Stdout(newline=true),
+            Eprint => FormatDestination.Stderr(newline=false),
+            Eprintln => FormatDestination.Stderr(newline=true),
+            _ => return Result<HirId, AnalysisError>.Err(AnalysisError.internal("not a formatting builtin")),
+        };
+        let template = if literal_only { args[0] } else { args[1] };
+        return match &template.data.value.data {
+            FormatTemplate(parts) => lower_format(self, span, destination, parts),
+            Literal(value) => match value {
+                StringLiteral(text) => {
+                    let temporary = Vec<FormatPart>.new();
+                    temporary.push(FormatPart.Literal(text=String.from(&text.data.value.as_str()), span=template.span));
+                    let result = lower_format(self, span, destination, &temporary);
+                    for part in temporary { part.drop(); }
+                    temporary.drop();
+                    result
+                },
+                _ => Result<HirId, AnalysisError>.Err(self.error(template.span, "format template must be an f-string or string literal")),
+            },
+            _ => Result<HirId, AnalysisError>.Err(self.error(template.span, "format template must be an f-string or string literal")),
+        };
     }
 }

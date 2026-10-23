@@ -27,8 +27,8 @@ impl bool {
 
 impl str {
     pub fn println() {
-        print(*self);
-        print("\n");
+        @print(f"{*self}");
+        @print("\n");
     }
 }
 
@@ -110,9 +110,9 @@ impl ImplMethodCommand {
 
     pub fn execute() {
         match *self {
-            Start => { print("Command: Start\n"); },
-            Stop => { print("Command: Stop\n"); },
-            Pause => { print("Command: Pause\n"); },
+            Start => { @print("Command: Start\n"); },
+            Stop => { @print("Command: Stop\n"); },
+            Pause => { @print("Command: Pause\n"); },
         }
     }
 }

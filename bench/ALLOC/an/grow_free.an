@@ -35,5 +35,5 @@ fn main() {
 
     del seed;
     assert checksum == i64(chunk_count) * i64(cycles) * 7: "grow/free checksum";
-    print("grow pass\n");
+    @print("grow pass\n");
 }

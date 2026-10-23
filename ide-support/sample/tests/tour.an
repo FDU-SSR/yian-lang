@@ -44,5 +44,5 @@ fn main() {
 
     assert pointer_bytes() > 0: "comptime if picks a value per pointer mode";
 
-    print("tour ok\n");
+    @print("tour ok\n");
 }

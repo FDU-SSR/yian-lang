@@ -1,4 +1,4 @@
-from std.core.io import eprintln;
+
 from std.core.text import LineIndex;
 from json.value import Value, Number, Object;
 from yianc.format.api import format_text;
@@ -13,7 +13,7 @@ pub fn document_edits(text: str, path: str) -> Value {
         Ok(None) => return no_edits(),
         Err(problem) => {
             problem.drop();
-            eprintln("yian-lsp: formatter failed");
+            @eprintln("yian-lsp: formatter failed");
             return no_edits();
         },
     };

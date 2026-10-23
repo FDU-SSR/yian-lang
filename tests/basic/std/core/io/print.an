@@ -1,14 +1,12 @@
-// Test print, println, eprint and eprintln convenience functions.
+// Test the @print/@println/@eprint/@eprintln formatting entries.
 //
 // Expected stdout:
 // stdout ok
 // println ok
 
-from std.core.io import eprint, eprintln;
-
 fn main() {
-    print("stdout ok\n");
-    println("println ok");
-    eprint("stderr eprint\n");
-    eprintln("stderr eprintln");
+    @print("stdout ok\n");
+    @println("println ok");
+    @eprint("stderr eprint\n");
+    @eprintln("stderr eprintln");
 }

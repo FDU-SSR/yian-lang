@@ -90,7 +90,7 @@ fn case_struct_allocations() {
     assert p3[0].get_age() == 22;
     assert p3[1].get_age() == 28;
 
-    print(p3[0].get_name());
+    @print(f"{p3[0].get_name()}");
 
 }
 

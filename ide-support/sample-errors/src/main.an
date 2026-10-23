@@ -5,7 +5,7 @@
 from sample_errors.helper import double;
 
 fn main() {
-    print("this project is meant to fail compiling\n");
+    @print("this project is meant to fail compiling\n");
     let value: i32 = double(21);
     assert value == 42;
 }

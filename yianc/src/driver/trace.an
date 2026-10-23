@@ -6,7 +6,7 @@ from std.core.convert import From;
 from std.core.drop import Drop;
 from std.core.fmt import ToString;
 from std.core.fs import create_dir_all;
-from std.core.io import File, OpenMode, Write, eprint, eprintln;
+from std.core.io import File, OpenMode, Write;
 from std.core.iter import Iterator, IntoIterator;
 from std.core.ops import Index;
 from std.core.path import Path;
@@ -134,7 +134,7 @@ impl CompilerTrace {
         text.push_str("] ");
         text.push_str(message);
         text.push('\n');
-        eprint(text.as_str());
+        @eprint(f"{text.as_str()}");
         for file in self.files { match file.write_all(text.as_slice()) { Ok(_) => {}, Err(problem) => problem.drop(), } }
     }
 
@@ -200,11 +200,11 @@ impl CompilerTrace {
         for timing in self.timings {
             let elapsed = (f64(timing.elapsed) / 1000000.0f64).to_string();
             defer elapsed.drop();
-            eprint("[profile] ");
-            eprint(timing.name);
-            eprint(": ");
-            eprint(elapsed.as_str());
-            eprintln(" ms");
+            @eprint("[profile] ");
+            @eprint(f"{timing.name}");
+            @eprint(": ");
+            @eprint(f"{elapsed.as_str()}");
+            @eprintln(" ms");
         }
     }
 
@@ -221,7 +221,7 @@ impl CompilerTrace {
                         warning.push('\n');
                         defer warning.drop();
                         problem.drop();
-                        eprint(warning.as_str());
+                        @eprint(f"{warning.as_str()}");
                     },
                 },
                 None => {},

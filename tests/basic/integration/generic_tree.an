@@ -67,6 +67,6 @@ fn main() {
     let opt2: Option<i32> = Calculator.try_get_positive(-5);
     assert opt2.is_none(): "should be None";
 
-    print("success: 84\n");
-    print("doubled\n");
+    @print("success: 84\n");
+    @print("doubled\n");
 }

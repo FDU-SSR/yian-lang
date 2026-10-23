@@ -194,8 +194,7 @@ fn inject_prelude(ctx: ResolutionContext&) -> Result<(), AnalysisError> {
     let entries = [("core/option", "Option"), ("core/result", "Result"), ("core/vec", "Vec"),
         ("core/string", "String"), ("core/range", "Range"), ("core/ops", "Ordering"),
         ("core/clone", "Clone"), ("core/builtin_types", "Ptr"), ("core/builtin_types", "Slice"),
-        ("core/builtin_types", "Array"), ("core/builtin_types", "Never"),
-        ("core/io", "print"), ("core/io", "println")];
+        ("core/builtin_types", "Array"), ("core/builtin_types", "Never")];
     let has_stdlib = false;
     let index = 0u64;
 

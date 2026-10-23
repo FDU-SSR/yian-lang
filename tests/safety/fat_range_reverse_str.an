@@ -3,5 +3,5 @@
 fn main() {
     let text: str = "abcd";
     let s: str = text[3u64..1];
-    print(s);
+    @print(f"{s}");
 }

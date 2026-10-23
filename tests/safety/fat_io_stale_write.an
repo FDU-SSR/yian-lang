@@ -8,5 +8,5 @@ fn main() {
     p[3] = 10u8;
     let text: str = str.from(&p[0u64..4]);
     del p;
-    print(text);
+    @print(f"{text}");
 }

@@ -95,5 +95,5 @@ fn main() {
     let n: u64 = 11;
     let result: i32 = fannkuchredux(n);
     assert result == 51: "fann: max_flips_count is not correct";
-    print("fann pass\n");
+    @print("fann pass\n");
 }

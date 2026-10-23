@@ -4,7 +4,7 @@
 // Short circuit works correctly
 
 fn false_func() -> bool {
-    print("false_func called\n");
+    @print("false_func called\n");
     return false;
 }
 
@@ -38,7 +38,7 @@ fn case_short_circuit_evaluation() {
     }
 
     if true || true_func() {
-        print("Short circuit works correctly\n");
+        @print("Short circuit works correctly\n");
     }
 
     let a: bool;

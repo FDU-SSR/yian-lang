@@ -105,5 +105,5 @@ fn main() {
 
     let res: i32 = i32(checksum) % 256;
     assert res == -71: "fasta: checksum is not correct";
-    print("fasta pass\n");
+    @print("fasta pass\n");
 }

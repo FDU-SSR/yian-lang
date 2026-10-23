@@ -1,7 +1,6 @@
 from std.core.drop import Drop;
 from std.core.env import args, exit;
 from std.core.fs import resolve;
-from std.core.io import eprint, eprintln;
 from std.core.path import PathBuf;
 from std.cli import ArgumentParser, Action, ArgMatches, Nargs, ParseOutcome, ValueType, CliError;
 from anx.diagnostics.model import AX_NO_PROJECT_ROOT, Diagnostic, release_diagnostics;
@@ -45,14 +44,14 @@ fn argument_views(argv: Vec<String>&, start: u64, end: u64) -> Vec<str> {
 
 fn report_argument_error(command: str, parser: ArgumentParser&, problem: CliError) -> i32 {
     match parser.format_usage() {
-        Ok(usage) => { eprint(usage.as_str()); usage.drop(); },
+        Ok(usage) => { @eprint(f"{usage.as_str()}"); usage.drop(); },
         Err(error) => error.drop(),
     }
     let message = problem.format();
-    eprint("anx ");
-    eprint(command);
-    eprint(": ");
-    eprintln(message.as_str());
+    @eprint("anx ");
+    @eprint(f"{command}");
+    @eprint(": ");
+    @eprintln(f"{message.as_str()}");
     message.drop();
     problem.drop();
     2i32
@@ -127,9 +126,9 @@ fn legacy_profile_argument(argv: Vec<String>&, start: u64, end: u64, command: st
     let index = start;
     while index < end {
         if argv[index].as_str() == "--profile" {
-            eprint("anx ");
-            eprint(command);
-            eprintln(": --profile was removed; use 'anx build profile' for compile statistics");
+            @eprint("anx ");
+            @eprint(f"{command}");
+            @eprintln(": --profile was removed; use 'anx build profile' for compile statistics");
             return true;
         }
         index += 1u64;
@@ -157,7 +156,7 @@ fn build_command(argv: Vec<String>&, command: str, start: u64, end: u64, profile
 
     match outcome {
         Help(text) => {
-            print(text.as_str());
+            @print(f"{text.as_str()}");
             text.drop();
             0i32
         },
@@ -174,7 +173,7 @@ fn build_command(argv: Vec<String>&, command: str, start: u64, end: u64, profile
                 let root_value = nonempty_option(&matches, "profile-dir");
                 defer { match root_value.take() { Some(value) => value.drop(), None => {}, } };
                 if provided && root_value.is_none() {
-                    eprintln("anx build profile: --profile-dir requires a non-empty path");
+                    @eprintln("anx build profile: --profile-dir requires a non-empty path");
                     return 2i32;
                 }
                 let root = match &root_value { Some(value) => value.as_str(), None => "" };
@@ -190,8 +189,8 @@ fn build_command(argv: Vec<String>&, command: str, start: u64, end: u64, profile
                     let directory = String.from(&profile.report_dir());
                     defer directory.drop();
                     if !directory.is_empty() {
-                        eprint("anx build profile: report written to ");
-                        eprintln(directory.as_str());
+                        @eprint("anx build profile: report written to ");
+                        @eprintln(f"{directory.as_str()}");
                     }
                     return 1i32;
                 }
@@ -199,8 +198,8 @@ fn build_command(argv: Vec<String>&, command: str, start: u64, end: u64, profile
                 let directory = String.from(&profile.report_dir());
                 defer directory.drop();
                 if !directory.is_empty() {
-                    eprint("anx build profile: report written to ");
-                    eprintln(directory.as_str());
+                    @eprint("anx build profile: report written to ");
+                    @eprintln(f"{directory.as_str()}");
                 }
                 return 0i32;
             }
@@ -212,7 +211,7 @@ fn build_command(argv: Vec<String>&, command: str, start: u64, end: u64, profile
                 let path = match executable.take() {
                     Some(value) => value,
                     None => {
-                        eprintln("error: no executable was produced");
+                        @eprintln("error: no executable was produced");
                         return 1i32;
                     },
                 };
@@ -240,7 +239,7 @@ fn format_command(argv: Vec<String>&) -> i32 {
     };
     match outcome {
         Help(text) => {
-            print(text.as_str());
+            @print(f"{text.as_str()}");
             text.drop();
             0i32
         },
@@ -269,7 +268,7 @@ fn test_command(argv: Vec<String>&) -> i32 {
     };
     match outcome {
         Help(text) => {
-            print(text.as_str());
+            @print(f"{text.as_str()}");
             text.drop();
             0i32
         },
@@ -283,7 +282,7 @@ fn test_command(argv: Vec<String>&) -> i32 {
             };
             let legacy_raw = argument_bool(&matches, "raw-pointers");
             if legacy_raw && selected_mode.is_some() {
-                eprintln("anx test: --raw-pointers cannot be combined with --pointer-mode");
+                @eprintln("anx test: --raw-pointers cannot be combined with --pointer-mode");
                 return 2i32;
             }
             let pointer_mode = if legacy_raw {
@@ -324,7 +323,7 @@ fn new_command(argv: Vec<String>&) -> i32 {
     };
     match outcome {
         Help(text) => {
-            print(text.as_str());
+            @print(f"{text.as_str()}");
             text.drop();
             0i32
         },
@@ -364,8 +363,8 @@ fn render_graph(project_arg: String, json: bool) -> i32 {
     let std_root = match standard_library_root() {
         Ok(value) => value,
         Err(message) => {
-            eprint("error: ");
-            eprintln(message.as_str());
+            @eprint("error: ");
+            @eprintln(f"{message.as_str()}");
             message.drop();
             return 1i32;
         },
@@ -383,8 +382,8 @@ fn render_graph(project_arg: String, json: bool) -> i32 {
 
     let status = if report.clean() && report.project().is_some() { 0i32 } else { 1i32 };
     let output = if json { graph_json(&report) } else { graph_text(&report) };
-    print(output.as_str());
-    println("");
+    @print(f"{output.as_str()}");
+    @println("");
     output.drop();
     report.drop();
     status
@@ -406,7 +405,7 @@ fn graph_command(argv: Vec<String>&) -> i32 {
     };
     match outcome {
         Help(text) => {
-            print(text.as_str());
+            @print(f"{text.as_str()}");
             text.drop();
             0i32
         },
@@ -449,7 +448,7 @@ fn build_dispatch(argv: Vec<String>&, command: str) -> i32 {
             Err(problem) => return report_argument_error("run profile", &parser, problem),
         };
         match outcome {
-            Help(text) => { print(text.as_str()); text.drop(); 0i32 },
+            Help(text) => { @print(f"{text.as_str()}"); text.drop(); 0i32 },
             Parsed(matches) => {
                 defer matches.drop();
                 let project = argument_string(&matches, "project", ".");
@@ -458,7 +457,7 @@ fn build_dispatch(argv: Vec<String>&, command: str) -> i32 {
                 let root_value = nonempty_option(&matches, "profile-dir");
                 defer { match root_value.take() { Some(value) => value.drop(), None => {}, } };
                 if provided && root_value.is_none() {
-                    eprintln("anx run profile: --profile-dir requires a non-empty path");
+                    @eprintln("anx run profile: --profile-dir requires a non-empty path");
                     return 2i32;
                 }
                 let root = match &root_value { Some(value) => value.as_str(), None => "" };
@@ -473,12 +472,12 @@ fn build_dispatch(argv: Vec<String>&, command: str) -> i32 {
 
 fn run(argv: Vec<String>&) -> i32 {
     if argv.len() < 2u64 {
-        print(help_text());
+        @print(f"{help_text()}");
         return 1i32;
     }
     let command = argv[1].as_str();
     if command == "-h" || command == "--help" || command == "help" {
-        print(help_text());
+        @print(f"{help_text()}");
         return 0i32;
     }
     if command == "graph" { return graph_command(argv); }
@@ -488,7 +487,7 @@ fn run(argv: Vec<String>&) -> i32 {
     if command == "fmt" { return format_command(argv); }
     if command == "new" { return new_command(argv); }
     if command == "test" { return test_command(argv); }
-    eprintln("anx: unknown command");
+    @eprintln("anx: unknown command");
     2i32
 }
 

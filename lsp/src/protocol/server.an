@@ -1,6 +1,6 @@
 from std.core.drop import Drop;
 from std.core.fs import append;
-from std.core.io import IoError, IoErrorKind, NonblockingGuard, Read, Stderr, Stdin, Stdout, Write, eprint, eprintln;
+from std.core.io import IoError, IoErrorKind, NonblockingGuard, Read, Stderr, Stdin, Stdout, Write;
 from std.core.path import Path;
 from std.core.process import Command, Child, SpawnOptions, StdioMode, executable_path;
 from std.core.time import Instant, monotonic_now;
@@ -470,7 +470,7 @@ impl ServerState {
         if self.watcher_patterns.len() == 0u64 { return Result<(), IoError>.Ok(()); }
 
         if !self.supports_relative_watchers {
-            eprintln("yian-lsp: client lacks relative watcher support; external input roots are not monitored");
+            @eprintln("yian-lsp: client lacks relative watcher support; external input roots are not monitored");
         }
         let registrations_array = Vec<Value>.new();
         let watcher_index = 0u64;
@@ -1560,7 +1560,7 @@ impl ServerState {
             self.watchers_registered = accepted;
             self.watchers_rejected = !accepted;
             if !accepted {
-                eprintln("yian-lsp: client rejected watched-file registration; external input changes may remain stale until another event or restart");
+                @eprintln("yian-lsp: client rejected watched-file registration; external input changes may remain stale until another event or restart");
             }
         }
         id.drop();
@@ -1861,8 +1861,8 @@ impl ServerState {
                             pending.topology_revision == self.topology_revision {
                             self.topology_retry_blocked = true;
                         }
-                        eprint("[yian-lsp ERROR] worker sync failed: ");
-                        eprintln(message.as_str());
+                        @eprint("[yian-lsp ERROR] worker sync failed: ");
+                        @eprintln(f"{message.as_str()}");
                         self.flush_deferred(false, pending.unit_key.as_str(), pending.unit_revision)?;
                     },
                     ClientRequest => match pending.client_id {
@@ -2124,15 +2124,15 @@ impl ServerState {
         let deadline_ns = self.startup_started_ns + 10000000000i64;
         loop {
             if let Err(problem) = self.schedule_due_work() {
-                eprint("yian-lsp: ");
-                eprintln(problem.msg());
+                @eprint("yian-lsp: ");
+                @eprintln(f"{problem.msg()}");
                 problem.drop();
                 return 1i32;
             }
 
             if let Err(problem) = self.update_write_registrations(output_guard) {
-                eprint("yian-lsp: ");
-                eprintln(problem.msg());
+                @eprint("yian-lsp: ");
+                @eprintln(f"{problem.msg()}");
                 problem.drop();
                 return 1i32;
             }
@@ -2146,12 +2146,12 @@ impl ServerState {
             };
             let events = match self.poller.wait(Option<Instant>.Some(deadline)) {
                 Ok(value) => value,
-                Err(problem) => { eprint("yian-lsp: "); eprintln(problem.msg()); problem.drop(); return 1i32; },
+                Err(problem) => { @eprint("yian-lsp: "); @eprintln(f"{problem.msg()}"); problem.drop(); return 1i32; },
             };
             for event in events {
                 if let Err(problem) = self.handle_event(*event) {
-                    eprint("yian-lsp: ");
-                    eprintln(problem.msg());
+                    @eprint("yian-lsp: ");
+                    @eprintln(f"{problem.msg()}");
                     problem.drop();
                     self.exit_status = 1i32;
                     self.exiting = true;
@@ -2164,14 +2164,14 @@ impl ServerState {
                 match monotonic_now() {
                     Ok(now) => {
                         if now.nanoseconds() >= deadline_ns {
-                            eprintln("yian-lsp: worker readiness timed out");
+                            @eprintln("yian-lsp: worker readiness timed out");
                             return 1i32;
                         }
                     },
                     Err(problem) => { problem.drop(); return 1i32; },
                 }
                 match self.child.try_wait() {
-                    Ok(Some(_)) => { eprintln("yian-lsp: worker exited before readiness"); return 1i32; },
+                    Ok(Some(_)) => { @eprintln("yian-lsp: worker exited before readiness"); return 1i32; },
                     Ok(None) => {},
                     Err(problem) => { problem.drop(); return 1i32; },
                 }
@@ -2217,22 +2217,22 @@ impl Drop for ServerState {
 pub fn run_server(config: Config&) -> i32 {
     let input_guard = match Stdin.new().nonblocking() {
         Ok(value) => value,
-        Err(problem) => { eprint("yian-lsp: "); eprintln(problem.msg()); problem.drop(); return 1i32; },
+        Err(problem) => { @eprint("yian-lsp: "); @eprintln(f"{problem.msg()}"); problem.drop(); return 1i32; },
     };
     defer input_guard.drop();
     let output_guard = match Stdout.new().nonblocking() {
         Ok(value) => value,
-        Err(problem) => { eprint("yian-lsp: "); eprintln(problem.msg()); problem.drop(); return 1i32; },
+        Err(problem) => { @eprint("yian-lsp: "); @eprintln(f"{problem.msg()}"); problem.drop(); return 1i32; },
     };
     defer output_guard.drop();
 
     let child = match worker_command(config) {
         Ok(value) => value,
-        Err(problem) => { eprint("yian-lsp: "); eprintln(problem.msg()); problem.drop(); return 1i32; },
+        Err(problem) => { @eprint("yian-lsp: "); @eprintln(f"{problem.msg()}"); problem.drop(); return 1i32; },
     };
     let server = match ServerState.new(child, &input_guard, &output_guard, config) {
         Ok(value) => value,
-        Err(problem) => { eprint("yian-lsp: "); eprintln(problem.msg()); problem.drop(); return 1i32; },
+        Err(problem) => { @eprint("yian-lsp: "); @eprintln(f"{problem.msg()}"); problem.drop(); return 1i32; },
     };
     let status = server.run(&output_guard);
 

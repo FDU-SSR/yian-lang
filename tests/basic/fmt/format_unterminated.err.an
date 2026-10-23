@@ -1,0 +1,4 @@
+fn main() {
+    let text = f"unterminated;
+    @print(f"{text}");
+}

@@ -4,3 +4,5 @@ empty: []
 { 3 }
 10 + 20 = 30
 if: pos!
+pre:p=Point(1, 2)
+three targets ok

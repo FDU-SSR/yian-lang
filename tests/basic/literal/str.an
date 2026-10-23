@@ -2,11 +2,11 @@
 
 fn case_string_literals() {
     let hello: str = "Hello, World!";
-    print(hello);
+    @print(f"{hello}");
     let chinese: str = "你好，世界！";
-    print(chinese);
+    @print(f"{chinese}");
     let escape: str = "Line1\nLine2\tTabbed";
-    print(escape);
+    @print(f"{escape}");
 }
 
 fn case_boolean_literals() {

@@ -471,6 +471,9 @@ impl Lowering {
                 transferred = true;
                 self.emit(node.span, node.type_id, Operation.Builtin(value.kind, types, args))
             },
+            Append | Write | Print | Println | Eprint | Eprintln => {
+                return Result<ValueId, CodegenError>.Err(CodegenError.invalid("formatting builtin has no HIR node"));
+            },
         }
     }
 

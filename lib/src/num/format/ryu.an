@@ -1,9 +1,10 @@
 // Copyright 2018 Ulf Adams. Adapted under the Boost Software License 1.0;
 // see licenses/ryu-boost.txt. Both IEEE formats use their own rounding interval.
 from std.num.format.powers import pow5, inv_pow5;
+from std.core.fmt import Format, Formatter, ToString;
 from std.core.string import String;
-from std.core.convert import From;
-from std.core.drop import Drop;
+from std.core.io import IoError;
+from std.core.result import Result;
 from std.core.ops import Index;
 from std.core.range import Range;
 from std.num.f64 import to_bits;
@@ -127,60 +128,115 @@ fn shortest(mantissa: u64, exponent: u64, width: u64, bias: i32) -> Decimal {
     Decimal(vr, e10 + removed)
 }
 
-fn render(decimal: Decimal, negative: bool) -> String {
-    let digits = decimal.coefficient.to_string_radix(10);
-    defer digits.drop();
-    let bytes = digits.as_slice();
-    let point = i32(bytes.len()) + decimal.exponent;
-    let scientific = point - 1i32;
-    let out = String.new();
-    if negative { out.push('-'); }
-    if scientific < -6i32 || scientific >= 21i32 {
-        out.push(char(bytes[0]));
-        if bytes.len() > 1u64 {
-            out.push('.');
-            out.push_str(str.from_slice_unchecked(bytes[1u64..bytes.len()]));
-        }
-        out.push('e');
-        let magnitude = scientific;
-        if magnitude < 0i32 { out.push('-'); magnitude = -magnitude; }
-        let text = u64(magnitude).to_string_radix(10);
-        out.push_str(text.as_str()); text.drop();
-    } elif point <= 0i32 {
-        out.push_str("0.");
-        let zeros: i32 = -point;
-        while zeros > 0i32 { out.push('0'); zeros -= 1i32; }
-        out.push_str(digits.as_str());
-    } elif point >= i32(bytes.len()) {
-        out.push_str(digits.as_str());
-        let zeros = point - i32(bytes.len());
-        while zeros > 0i32 { out.push('0'); zeros -= 1i32; }
+// Decimal digits are produced in a fixed stack buffer; no intermediate String or radix call is involved.
+fn decimal_digits(buffer: u8[], value: u64) -> u64 {
+    let pos: u64 = 20;
+    let v: u64 = value;
+    if v == 0u64 {
+        pos = 19;
+        buffer[19] = b'0';
     } else {
-        out.push_str(str.from_slice_unchecked(bytes[0u64..u64(point)]));
-        out.push('.');
-        out.push_str(str.from_slice_unchecked(bytes[u64(point)..bytes.len()]));
+        while v > 0u64 {
+            pos -= 1;
+            buffer[pos] = b'0' + u8(v % 10u64);
+            v /= 10u64;
+        }
     }
-    out
+    pos
 }
 
-fn format_bits(bits: u64, width: u64, exponent_bits: u64, bias: i32) -> String {
+fn write_zeros(out: Formatter&, count: i32) -> Result<(), IoError> {
+    let remaining: i32 = count;
+    let block = "00000000";
+    while remaining >= 8i32 {
+        out.write_str(block)?;
+        remaining -= 8i32;
+    }
+    while remaining > 0i32 {
+        out.write_str("0")?;
+        remaining -= 1i32;
+    }
+    Result<(), IoError>.Ok(val=())
+}
+
+fn write_digits(out: Formatter&, coefficient: u64, exponent: i32, negative: bool) -> Result<(), IoError> {
+    let buffer: u8[20] = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+    let start = decimal_digits(buffer.as_slice(), coefficient);
+    let length = 20u64 - start;
+    let point = i32(length) + exponent;
+    let scientific = point - 1i32;
+    if negative { out.write_str("-")?; }
+    if scientific < -6i32 || scientific >= 21i32 {
+        out.write_str(str.from_slice_unchecked(buffer[start..(start + 1u64)]))?;
+        if length > 1u64 {
+            out.write_str(".")?;
+            out.write_str(str.from_slice_unchecked(buffer[(start + 1u64)..20u64]))?;
+        }
+        out.write_str("e")?;
+        let magnitude = scientific;
+        if magnitude < 0i32 {
+            out.write_str("-")?;
+            magnitude = -magnitude;
+        }
+        let exp_buffer: u8[20] = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+        let exp_start = decimal_digits(exp_buffer.as_slice(), u64(magnitude));
+        out.write_str(str.from_slice_unchecked(exp_buffer[exp_start..20u64]))?;
+    } elif point <= 0i32 {
+        out.write_str("0.")?;
+        write_zeros(out, -point)?;
+        out.write_str(str.from_slice_unchecked(buffer[start..20u64]))?;
+    } elif point >= i32(length) {
+        out.write_str(str.from_slice_unchecked(buffer[start..20u64]))?;
+        write_zeros(out, point - i32(length))?;
+    } else {
+        let split = start + u64(point);
+        out.write_str(str.from_slice_unchecked(buffer[start..split]))?;
+        out.write_str(".")?;
+        out.write_str(str.from_slice_unchecked(buffer[split..20u64]))?;
+    }
+    Result<(), IoError>.Ok(val=())
+}
+
+fn write_bits(out: Formatter&, bits: u64, width: u64, exponent_bits: u64, bias: i32) -> Result<(), IoError> {
     let negative = bits >> (width + exponent_bits) != 0u64;
     let mantissa = bits & ((1u64 << width) - 1u64);
     let maximum = (1u64 << exponent_bits) - 1u64;
     let exponent = (bits >> width) & maximum;
     if exponent == maximum {
-        if mantissa != 0u64 { return String.from(&"NaN"); }
-        return String.from(if negative { &"-inf" } else { &"inf" });
+        if mantissa != 0u64 { return out.write_str("NaN"); }
+        return out.write_str(if negative { "-inf" } else { "inf" });
     }
     if exponent == 0u64 && mantissa == 0u64 {
-        return String.from(if negative { &"-0" } else { &"0" });
+        return out.write_str(if negative { "-0" } else { "0" });
     }
-    render(shortest(mantissa, exponent, width, bias), negative)
+    let decimal = shortest(mantissa, exponent, width, bias);
+    write_digits(out, decimal.coefficient, decimal.exponent, negative)
 }
 
-pub fn format_f64(value: f64) -> String { format_bits(to_bits(value), 52u64, 11u64, 1023i32) }
-pub fn format_f32(value: f32) -> String {
-    let bits: u32 = 0;
-    @memcpy(&bits, &value, 4u64);
-    format_bits(u64(bits), 23u64, 8u64, 127i32)
+impl Format for f16 {
+    fn fmt(out: Formatter&) -> Result<(), IoError> {
+        let value: f16 = *self;
+        let bits: u16 = 0;
+        @memcpy(&bits, &value, 2u64);
+        write_bits(out, u64(bits), 10u64, 5u64, 15i32)
+    }
 }
+
+impl Format for f32 {
+    fn fmt(out: Formatter&) -> Result<(), IoError> {
+        let value: f32 = *self;
+        let bits: u32 = 0;
+        @memcpy(&bits, &value, 4u64);
+        write_bits(out, u64(bits), 23u64, 8u64, 127i32)
+    }
+}
+
+impl Format for f64 {
+    fn fmt(out: Formatter&) -> Result<(), IoError> {
+        write_bits(out, to_bits(*self), 52u64, 11u64, 1023i32)
+    }
+}
+
+// The owning wrappers keep their published signatures and route through the shared writer.
+pub fn format_f64(value: f64) -> String { value.to_string() }
+pub fn format_f32(value: f32) -> String { value.to_string() }

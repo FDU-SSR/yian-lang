@@ -27,6 +27,12 @@ class BuiltinKind(Enum):
     FfiParts = "ffi_parts"
     FfiNull = "ffi_null"
     FfiPtrCast = "ffi_ptr_cast"
+    Append = "append"
+    Write = "write"
+    Print = "print"
+    Println = "println"
+    Eprint = "eprint"
+    Eprintln = "eprintln"
 
     @property
     def spelling(self) -> str:

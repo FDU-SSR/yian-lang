@@ -4,6 +4,9 @@ from std.core.iter import Iterator, IntoIterator;
 from std.core.hash import Murmur3BuildHasher, Murmur3Hasher;
 from std.core.drop import Drop;
 from std.core.clone import Clone;
+from std.core.fmt import Format, Formatter;
+from std.core.result import Result;
+from std.core.io import IoError;
 
 pub struct HashSet<T> {
     map: HashMap<T, void>,
@@ -97,5 +100,24 @@ pub typedef HashSetIter<T> = HashMapKeyIter<T, void>;
 impl<T> IntoIterator<HashSetIter<T>> for HashSet<T> {
     pub fn into_iter() -> HashSetIter<T> {
         self.map.into_iter()
+    }
+}
+
+impl<T> Format for HashSet<T> if T: Format {
+    fn fmt(out: Formatter&) -> Result<(), IoError> {
+        out.write_str("{")?;
+        let entries = self.map.entries();
+        let first = true;
+        loop {
+            match entries.next() {
+                Some(entry) => {
+                    if !first { out.write_str(", ")?; }
+                    first = false;
+                    out.write_value(entry[0])?;
+                },
+                None => { break; },
+            }
+        }
+        out.write_str("}")
     }
 }

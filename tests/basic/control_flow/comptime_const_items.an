@@ -32,7 +32,7 @@ fn case_constant_items_and_arguments() {
         0
     };
     assert selected == 7: "constant reference in comptime if";
-    print(MESSAGE);
+    @print(f"{MESSAGE}");
 }
 
 fn choose<const N: u64>() -> i32 {

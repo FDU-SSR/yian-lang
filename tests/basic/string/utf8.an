@@ -36,9 +36,9 @@ fn main() {
     "rows beyond empty text clamp to the end of the document";
     empty_positions.drop();
 
-    print("你好易安!\n");
-    print("Hello Yian!\n");
-    print("こんにちは、イアン！\n");
-    print("안녕하세요, 이안!\n");
-    print("🤣🤣🤣🤣🤣🤣🤣🤣🤣\n");
+    @print("你好易安!\n");
+    @print("Hello Yian!\n");
+    @print("こんにちは、イアン！\n");
+    @print("안녕하세요, 이안!\n");
+    @print("🤣🤣🤣🤣🤣🤣🤣🤣🤣\n");
 }

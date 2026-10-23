@@ -1,6 +1,5 @@
 from std.core.drop import Drop;
 from std.core.fs import resolve;
-from std.core.io import eprint, eprintln;
 from std.core.path import PathBuf;
 from anx.diagnostics.model import AX_NO_PROJECT_ROOT, Diagnostic;
 from anx.project.load import discover, load;
@@ -8,20 +7,20 @@ from anx.project.model import Project;
 from anx.project.paths import standard_library_root;
 
 fn print_diagnostic(item: Diagnostic&) {
-    eprint("error[");
-    eprint(item.code());
-    eprint("]: ");
-    match item.path() { Some(path) => { eprint(path); eprint(": "); }, None => {}, }
-    eprintln(item.message());
-    match item.hint() { Some(hint) => { eprint("  hint: "); eprintln(hint); }, None => {}, }
+    @eprint("error[");
+    @eprint(f"{item.code()}");
+    @eprint("]: ");
+    match item.path() { Some(path) => { @eprint(f"{path}"); @eprint(": "); }, None => {}, }
+    @eprintln(f"{item.message()}");
+    match item.hint() { Some(hint) => { @eprint("  hint: "); @eprintln(f"{hint}"); }, None => {}, }
 }
 
 pub fn load_project(start: str) -> Option<Project> {
     let std_root = match standard_library_root() {
         Ok(value) => value,
         Err(message) => {
-            eprint("error: ");
-            eprintln(message.as_str());
+            @eprint("error: ");
+            @eprintln(f"{message.as_str()}");
             message.drop();
             return Option<Project>.None;
         },
@@ -59,7 +58,7 @@ pub fn load_project(start: str) -> Option<Project> {
     match report.take_project() {
         Some(project) => Option<Project>.Some(project),
         None => {
-            eprintln("error: could not load project");
+            @eprintln("error: could not load project");
             Option<Project>.None
         },
     }

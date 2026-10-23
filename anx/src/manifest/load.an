@@ -409,15 +409,8 @@ fn read_failure(path: str, problem: IoError) -> ManifestReport {
 
 fn parse_failure(path: str, problem: ParseError) -> ManifestReport {
     let diagnostics = Vec<Diagnostic>.new();
-    let message = String.from(&"Could not parse manifest at line ");
-    let row = problem.row().to_string();
-    let column = problem.column().to_string();
-    defer { message.drop(); row.drop(); column.drop(); };
-    message.push_str(row.as_str());
-    message.push_str(", column ");
-    message.push_str(column.as_str());
-    message.push_str(": ");
-    message.push_str(problem.message());
+    let message = f"Could not parse manifest at line {problem.row()}, column {problem.column()}: {problem.message()}";
+    defer message.drop();
     problem.drop();
     diagnostic(&diagnostics, AX_BAD_MANIFEST, message.as_str(), path, Option<str>.None);
     ManifestReport.new(Option<Manifest>.None, diagnostics)

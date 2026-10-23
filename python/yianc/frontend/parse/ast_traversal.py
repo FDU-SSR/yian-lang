@@ -148,6 +148,10 @@ class AstVisitor:
             case AST.ArrayRepeat():
                 self.visit_expr(expr.element)
                 self.visit_expr(expr.count)
+            case AST.FormatTemplate():
+                for part in expr.parts:
+                    if isinstance(part, AST.FormatValuePart):
+                        self.visit_expr(part.expr)
             case AST.Recovery():
                 for child in expr.children:
                     self.visit_expr(child)
@@ -382,6 +386,12 @@ class AstRewriter:
             case AST.ArrayRepeat():
                 expr.element = self.rewrite_expr(expr.element)
                 expr.count = self.rewrite_expr(expr.count)
+            case AST.FormatTemplate():
+                expr.parts = [
+                    AST.FormatValuePart(span=part.span, expr=self.rewrite_expr(part.expr))
+                    if isinstance(part, AST.FormatValuePart) else part
+                    for part in expr.parts
+                ]
             case AST.Recovery():
                 expr.children = [self.rewrite_expr(child) for child in expr.children]
                 for name in expr.bindings:

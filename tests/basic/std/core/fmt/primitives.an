@@ -73,8 +73,44 @@ fn case_float_formatting() {
     assert f64z.to_string() == "0": "f64 zero";
 }
 
+// Template formatting shares the direct-write float layer with the owning conversion.
+fn case_float_templates() {
+    let tenth: f16 = 0.1;
+    assert f"{tenth}" == "0.1": "f16 0.1";
+    assert tenth.to_string() == "0.1": "f16 0.1 conversion";
+
+    // Re-reading the printed decimal as a half literal recovers the same bit pattern.
+    let small: f16 = 5.960464477539063e-8;
+    assert f"{small}" == "6e-8": "f16 minimum subnormal";
+    let small_roundtrip: f16 = 6e-8;
+    assert small_roundtrip == small: "f16 subnormal roundtrip";
+
+    let normal: f16 = 6.103515625e-5;
+    assert f"{normal}" == "0.00006104": "f16 minimum normal";
+    let normal_roundtrip: f16 = 0.00006104;
+    assert normal_roundtrip == normal: "f16 normal roundtrip";
+
+    let maximum: f16 = 65504.0;
+    assert f"{maximum}" == "65500": "f16 maximum finite";
+    let maximum_roundtrip: f16 = 65500.0;
+    assert maximum_roundtrip == maximum: "f16 maximum roundtrip";
+    assert f"{maximum}" == maximum.to_string(): "f16 conversion agrees";
+
+    assert f"{-0.0_f16}" == "-0": "f16 negative zero";
+    assert f"{1.0_f16 / 0.0_f16}" == "inf": "f16 infinity";
+    assert f"{-1.0_f16 / 0.0_f16}" == "-inf": "f16 negative infinity";
+    assert f"{0.0_f16 / 0.0_f16}" == "NaN": "f16 NaN";
+
+    assert f"{0.3_f32}" == "0.3": "f32 default spelling";
+    assert f"{0.3_f32}" == 0.3_f32.to_string(): "f32 conversion agrees";
+    assert f"{1.2345678901234567}" == "1.2345678901234567": "f64 high precision";
+    assert f"{0.000001}" == "0.000001": "f64 lower scientific threshold";
+    assert f"{0.0000001}" == "1e-7": "f64 scientific threshold";
+}
+
 fn main() {
     case_primitive_formatting();
     case_integer_formatting();
     case_float_formatting();
+    case_float_templates();
 }

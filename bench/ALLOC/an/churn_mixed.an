@@ -43,5 +43,5 @@ fn main() {
 
     del seed;
     assert checksum == expected: "mixed churn checksum";
-    print("mixed pass\n");
+    @print("mixed pass\n");
 }

@@ -74,7 +74,7 @@ fn case_multi_value_patterns() {
     let b: char = 'b';
     match b {
         'a' => { @panic("Matched a"); },
-        'b' => { print("b matched\n"); },
+        'b' => { @print("b matched\n"); },
         'c', 'd' => { @panic("Matched c || d"); },
         _ => { @panic("Matched default case"); },
     }
@@ -91,10 +91,10 @@ fn case_multi_value_patterns() {
     assert test_enum(Color.Red) == "option_a\n": "multi enum pattern failed";
     assert test_enum(Color.Green) == "option_b\n": "multi enum pattern failed";
 
-    print(test_char('a'));
-    print(test_char('7'));
-    print(test_int(2));
-    print(test_enum(Color.Red));
+    @print(f"{test_char('a')}");
+    @print(f"{test_char('7')}");
+    @print(f"{test_int(2)}");
+    @print(f"{test_enum(Color.Red)}");
 }
 
 fn case_enum_value_patterns() {
@@ -111,10 +111,10 @@ fn case_enum_value_patterns() {
     assert match_enum_scene(c3) == 3: "Match enum failed on LOOK";
     assert match_enum_scene(c4) == 3: "Match enum failed on MOVE";
 
-    print(match_scene_multi(EnumSceneColor.BLUE));
-    print(match_scene_multi(EnumSceneColor.GREEN));
-    print(match_scene_multi(EnumSceneColor.BLACK));
-    print("payload\n");
+    @print(f"{match_scene_multi(EnumSceneColor.BLUE)}");
+    @print(f"{match_scene_multi(EnumSceneColor.GREEN)}");
+    @print(f"{match_scene_multi(EnumSceneColor.BLACK)}");
+    @print("payload\n");
 }
 
 fn case_integer_patterns() {
@@ -136,9 +136,9 @@ fn test_string_match(s: str) -> str {
 }
 
 fn case_string_patterns() {
-    print(test_string_match("hello"));
-    print(test_string_match("world"));
-    print(test_string_match("unknown"));
+    @print(f"{test_string_match("hello")}");
+    @print(f"{test_string_match("world")}");
+    @print(f"{test_string_match("unknown")}");
 }
 
 fn main() {

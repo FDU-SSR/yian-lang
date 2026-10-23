@@ -71,7 +71,7 @@ fn case_aggregate_and_early_returns() {
 
 fn do_work(flag: bool) {
     if flag {
-        print("done");
+        @print("done");
         return;
     }
     @panic("should not reach here");

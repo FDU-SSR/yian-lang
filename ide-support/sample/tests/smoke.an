@@ -2,5 +2,5 @@
 // Expected output lives in tests/output/<name>.an.ans.
 
 fn main() {
-    print("smoke ok\n");
+    @print("smoke ok\n");
 }

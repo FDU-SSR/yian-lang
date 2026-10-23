@@ -76,6 +76,6 @@ fn main() {
     let sum_n: i64 = calls * b + calls * (calls - 1) / 2;
     let per_round: i64 = 193 * sum_n + 3744 * calls;
     assert acc == i64(ROUNDS) * per_round: "call_abi checksum";
-    print("call_abi pass\n");
+    @print("call_abi pass\n");
     del p;
 }

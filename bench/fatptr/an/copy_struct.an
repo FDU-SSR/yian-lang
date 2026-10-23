@@ -61,7 +61,7 @@ fn main() {
         i += 1;
     }
     assert check == 3 * (i64(ITEMS) * (i64(ITEMS) - 1) / 2): "copy_struct dst";
-    print("copy_struct pass\n");
+    @print("copy_struct pass\n");
     del dst;
     del src;
     del payloads;

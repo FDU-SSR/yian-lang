@@ -1,0 +1,4 @@
+fn main() {
+    let pattern = "text";
+    @print(pattern);
+}

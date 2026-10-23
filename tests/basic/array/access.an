@@ -65,7 +65,7 @@ fn case_inline_index() {
     assert sub[0] == 99: "range slice first element failed";
     assert sub[1] == 55: "range slice second element failed";
 
-    print("inline-index pass\n");
+    @print("inline-index pass\n");
 }
 
 fn main() {

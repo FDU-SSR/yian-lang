@@ -1,13 +1,91 @@
-from std.core.range import Range;
 from std.core.string import String;
-from std.num.format.ryu import format_f32, format_f64;
+from std.core.io import Write, IoError, IoErrorKind;
+from std.core.range import Range;
+from std.core.result import Result;
+from std.core.option import Option;
+
+// Types provide one textual representation through the shared target writer.
+pub trait Format {
+    fn fmt(out: Formatter&) -> Result<(), IoError>;
+}
+
+// A formatter borrows its target; it never owns, flushes or closes that target.
+pub struct Formatter {
+    writer: Write&,
+}
+
+impl Formatter {
+    pub fn write_str(text: str) -> Result<(), IoError> {
+        self.writer.write_str(text)
+    }
+
+    // Dispatch through the Format trait object so an inherent method named fmt cannot intercept members.
+    pub fn write_value<T>(value: T&) -> Result<(), IoError> {
+        let object: Format& = value;
+        object.fmt(self)
+    }
+}
+
+// The builtins and the standard library construct formatted output through this private factory.
+fn formatter_for(writer: Write&) -> Formatter {
+    Formatter(writer=writer)
+}
+
+// A string target accepts the formatted bytes directly and has no external state to flush.
+struct StringWriter {
+    target: String&,
+}
+
+impl StringWriter {
+    static fn over(target: String&) -> Self {
+        Self(target=target)
+    }
+}
+
+impl Write for StringWriter {
+    fn write(data: u8[]) -> Result<u64, IoError> {
+        let text = match str.from_slice(data) {
+            Some(value) => value,
+            None => return Result<u64, IoError>.Err(msg=IoError.new(IoErrorKind.InvalidData, "formatted text is not valid UTF-8")),
+        };
+        self.target.push_str(text);
+        Result<u64, IoError>.Ok(val=u64(data.len()))
+    }
+
+    fn flush() -> Result<(), IoError> {
+        Result<(), IoError>.Ok(val=())
+    }
+}
+
+fn string_writer(target: String&) -> StringWriter {
+    StringWriter.over(target)
+}
 
 pub trait ToString {
     fn to_string() -> String;
 }
 
-fn append_unsigned_digits(out: String&, value: u64) {
-    // Write decimal digits into a stack buffer from least to most significant, then append them with one push_str.
+// Every value that can write itself into a Formatter also offers the owning string conversion.
+impl<T> ToString for T if T: Format {
+    fn to_string() -> String {
+        let out = String.new();
+        let writer = string_writer(&out);
+        let formatter = formatter_for(&writer);
+        let object: Format& = self;
+        match object.fmt(&formatter) {
+            Ok(_) => {},
+            Err(error) => {
+                error.drop();
+                out.drop();
+                @panic("formatting failed");
+            },
+        };
+        out
+    }
+}
+
+fn write_unsigned(out: Formatter&, value: u64) -> Result<(), IoError> {
+    // The widest decimal u64 needs 20 digits, so the buffer holds the complete value.
     let buf: u8[20] = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
     let pos: u64 = 20;
     let v: u64 = value;
@@ -21,105 +99,202 @@ fn append_unsigned_digits(out: String&, value: u64) {
             v /= 10u64;
         }
     }
-    out.push_str(str.from_slice_unchecked(buf[pos..20]));
+    out.write_str(str.from_slice_unchecked(buf[pos..20]))
 }
 
-fn unsigned_to_string(value: u64) -> String {
-    let out = String.new();
-    append_unsigned_digits(&out, value);
-    out
-}
-
-fn signed_to_string(value: i64) -> String {
+fn write_signed(out: Formatter&, value: i64) -> Result<(), IoError> {
     if value >= 0 {
-        return unsigned_to_string(u64(value));
+        return write_unsigned(out, u64(value));
     }
 
-    let out = String.new();
-    out.push('-');
-
-    let mag: u64 = u64(value);
-    mag = 0u64 - mag;
-    append_unsigned_digits(&out, mag);
-    out
+    out.write_str("-")?;
+    let magnitude: u64 = u64(value);
+    write_unsigned(out, 0u64 - magnitude)
 }
 
-impl ToString for u8 {
-    fn to_string() -> String {
-        unsigned_to_string(u64(*self))
+fn write_character(out: Formatter&, value: char) -> Result<(), IoError> {
+    // A Unicode scalar value occupies at most four UTF-8 bytes.
+    let buffer: u8[4] = [0, 0, 0, 0];
+    let code: u32 = u32(value);
+    let count: u64 = 4;
+    if code <= 0x7F {
+        count = 1;
+    } elif code <= 0x7FF {
+        count = 2;
+    } elif code <= 0xFFFF {
+        count = 3;
     }
-}
 
-impl ToString for u16 {
-    fn to_string() -> String {
-        unsigned_to_string(u64(*self))
+    if count == 1 {
+        buffer[0] = u8(code);
+    } elif count == 2 {
+        buffer[0] = u8(0xC0 | (code >> 6));
+        buffer[1] = u8(0x80 | (code & 0x3F));
+    } elif count == 3 {
+        buffer[0] = u8(0xE0 | (code >> 12));
+        buffer[1] = u8(0x80 | ((code >> 6) & 0x3F));
+        buffer[2] = u8(0x80 | (code & 0x3F));
+    } else {
+        buffer[0] = u8(0xF0 | (code >> 18));
+        buffer[1] = u8(0x80 | ((code >> 12) & 0x3F));
+        buffer[2] = u8(0x80 | ((code >> 6) & 0x3F));
+        buffer[3] = u8(0x80 | (code & 0x3F));
     }
+
+    out.write_str(str.from_slice_unchecked(buffer[0u64..count]))
 }
 
-impl ToString for u32 {
-    fn to_string() -> String {
-        unsigned_to_string(u64(*self))
-    }
-}
-
-impl ToString for u64 {
-    fn to_string() -> String {
-        unsigned_to_string(*self)
-    }
-}
-
-impl ToString for i8 {
-    fn to_string() -> String {
-        signed_to_string(i64(*self))
-    }
-}
-
-impl ToString for i16 {
-    fn to_string() -> String {
-        signed_to_string(i64(*self))
+impl Format for u8 {
+    fn fmt(out: Formatter&) -> Result<(), IoError> {
+        write_unsigned(out, u64(*self))
     }
 }
 
-impl ToString for i32 {
-    fn to_string() -> String {
-        signed_to_string(i64(*self))
+impl Format for u16 {
+    fn fmt(out: Formatter&) -> Result<(), IoError> {
+        write_unsigned(out, u64(*self))
     }
 }
 
-impl ToString for i64 {
-    fn to_string() -> String {
-        signed_to_string(*self)
+impl Format for u32 {
+    fn fmt(out: Formatter&) -> Result<(), IoError> {
+        write_unsigned(out, u64(*self))
     }
 }
 
-impl ToString for f32 {
-    fn to_string() -> String {
-        format_f32(*self)
+impl Format for u64 {
+    fn fmt(out: Formatter&) -> Result<(), IoError> {
+        write_unsigned(out, *self)
     }
 }
 
-impl ToString for f64 {
-    fn to_string() -> String {
-        format_f64(*self)
+impl Format for i8 {
+    fn fmt(out: Formatter&) -> Result<(), IoError> {
+        write_signed(out, i64(*self))
     }
 }
 
-impl ToString for bool {
-    fn to_string() -> String {
-        if *self { String.from(&"true") } else { String.from(&"false") }
+impl Format for i16 {
+    fn fmt(out: Formatter&) -> Result<(), IoError> {
+        write_signed(out, i64(*self))
     }
 }
 
-impl ToString for char {
-    fn to_string() -> String {
-        let out = String.new();
-        out.push(*self);
-        out
+impl Format for i32 {
+    fn fmt(out: Formatter&) -> Result<(), IoError> {
+        write_signed(out, i64(*self))
     }
 }
 
-impl ToString for void {
-    fn to_string() -> String {
-        String.from(&"void")
+impl Format for i64 {
+    fn fmt(out: Formatter&) -> Result<(), IoError> {
+        write_signed(out, *self)
+    }
+}
+
+impl Format for bool {
+    fn fmt(out: Formatter&) -> Result<(), IoError> {
+        out.write_str(if *self { "true" } else { "false" })
+    }
+}
+
+impl Format for char {
+    fn fmt(out: Formatter&) -> Result<(), IoError> {
+        write_character(out, *self)
+    }
+}
+
+impl Format for str {
+    fn fmt(out: Formatter&) -> Result<(), IoError> {
+        out.write_str(*self)
+    }
+}
+
+impl Format for String {
+    fn fmt(out: Formatter&) -> Result<(), IoError> {
+        out.write_str(self.as_str())
+    }
+}
+
+impl Format for void {
+    fn fmt(out: Formatter&) -> Result<(), IoError> {
+        out.write_str("void")
+    }
+}
+
+// The zero-item tuple and the void type have distinct textual and type identities.
+impl Format for () {
+    fn fmt(out: Formatter&) -> Result<(), IoError> {
+        out.write_str("()")
+    }
+}
+
+impl<T1> Format for (T1,) if T1: Format {
+    fn fmt(out: Formatter&) -> Result<(), IoError> {
+        out.write_str("(")?;
+        out.write_value(&(*self)[0])?;
+        out.write_str(",)")
+    }
+}
+
+impl<T1, T2> Format for (T1, T2) if T1: Format, T2: Format {
+    fn fmt(out: Formatter&) -> Result<(), IoError> {
+        out.write_str("(")?;
+        out.write_value(&(*self)[0])?;
+        out.write_str(", ")?;
+        out.write_value(&(*self)[1])?;
+        out.write_str(")")
+    }
+}
+
+impl<T1, T2, T3> Format for (T1, T2, T3) if T1: Format, T2: Format, T3: Format {
+    fn fmt(out: Formatter&) -> Result<(), IoError> {
+        out.write_str("(")?;
+        out.write_value(&(*self)[0])?;
+        out.write_str(", ")?;
+        out.write_value(&(*self)[1])?;
+        out.write_str(", ")?;
+        out.write_value(&(*self)[2])?;
+        out.write_str(")")
+    }
+}
+
+impl<T1, T2, T3, T4> Format for (T1, T2, T3, T4) if T1: Format, T2: Format, T3: Format, T4: Format {
+    fn fmt(out: Formatter&) -> Result<(), IoError> {
+        out.write_str("(")?;
+        out.write_value(&(*self)[0])?;
+        out.write_str(", ")?;
+        out.write_value(&(*self)[1])?;
+        out.write_str(", ")?;
+        out.write_value(&(*self)[2])?;
+        out.write_str(", ")?;
+        out.write_value(&(*self)[3])?;
+        out.write_str(")")
+    }
+}
+
+impl<T, const N: u64> Format for T[N] if T: Format {
+    fn fmt(out: Formatter&) -> Result<(), IoError> {
+        out.write_str("[")?;
+        let index: u64 = 0;
+        while index < N {
+            if index != 0u64 { out.write_str(", ")?; }
+            out.write_value(&(*self)[index])?;
+            index += 1u64;
+        }
+        out.write_str("]")
+    }
+}
+
+impl<T> Format for T[] if T: Format {
+    fn fmt(out: Formatter&) -> Result<(), IoError> {
+        out.write_str("[")?;
+        let index: u64 = 0;
+        while index < self.len() {
+            if index != 0u64 { out.write_str(", ")?; }
+            out.write_value(&(*self)[index])?;
+            index += 1u64;
+        }
+        out.write_str("]")
     }
 }

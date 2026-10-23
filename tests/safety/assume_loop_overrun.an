@@ -14,5 +14,5 @@ fn main() {
     for i in 0.. (s.len() + 5) {
         s[i] = 0;
     }
-    print("unreachable\n");
+    @print("unreachable\n");
 }

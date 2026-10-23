@@ -43,10 +43,10 @@ fn case_named_struct_constructor() {
     assert point.y == 20: "named arg y failed";
     assert point.label == "origin": "named arg label failed";
 
-    print(p1.name);
-    print("\n");
-    print(p2.name);
-    print("\n");
+    @print(f"{p1.name}");
+    @print("\n");
+    @print(f"{p2.name}");
+    @print("\n");
 }
 
 enum ConstructorCommand {

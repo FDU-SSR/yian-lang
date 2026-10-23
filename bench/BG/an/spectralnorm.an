@@ -118,5 +118,5 @@ fn main() {
     del u;
     del v;
     del tmp;
-    print("spectralnorm pass\n");
+    @print("spectralnorm pass\n");
 }

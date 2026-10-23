@@ -1,4 +1,5 @@
 from yianc.analysis.lowering.checker import ExprChecker, LoopContext;
+from yianc.analysis.lowering.format import FormatDestination, lower_format;
 from yianc.analysis.resolution.types import resolve_type, apply_arguments, builtin_constructor;
 from yianc.analysis.ty.substitution import has_generic;
 from yianc.analysis.ty.relations import compatible, default_type;
@@ -91,6 +92,7 @@ impl ExprChecker {
 
                 Result<HirId, AnalysisError>.Ok(self.node(span, self.ctx.primitives.boolean, false, HirKind.BoolLiteral(self.ctx.session.raw_pointers)))
             },
+            FormatTemplate(parts) => lower_format(self, span, FormatDestination.OwnedString, parts),
             Block(value) => self.block(*value),
             Semi(value) => {
                 let lowered = self.expression(*value)?;

@@ -9,15 +9,15 @@ struct Person {
 
 fn main() {
     let s1: str = "Alice";
-    print(s1);
+    @print(f"{s1}");
 
     let p: Person = Person("Bob", 30);
-    print(p.name);
+    @print(f"{p.name}");
 
     let p_ptr: Person* = &p;
-    print(p_ptr.name);
+    @print(f"{p_ptr.name}");
 
     let p_heap: Person* = dyn Person("Charlie", 25);
-    print(p_heap.name);
+    @print(f"{p_heap.name}");
 
 }

@@ -41,7 +41,7 @@ fn main() {
         round += 1;
     }
     assert acc == i64(ROUNDS) * (i64(NODES) * (i64(NODES) + 1) / 2): "chase checksum";
-    print("chase pass\n");
+    @print("chase pass\n");
     while true {
         match head {
             None => { break; },

@@ -3,7 +3,6 @@ from yianc.frontend.source import collect_sources, read_source;
 from yianc.format.api import format_text;
 from std.core.drop import Drop;
 from std.core.fs import write;
-from std.core.io import eprint, eprintln;
 from std.core.iter import Iterator, IntoIterator;
 from std.core.fmt import ToString;
 from std.core.env import exit;
@@ -19,51 +18,41 @@ fn drop_paths(paths: Vec<String>&) {
 pub fn format_cli(config: CompilerConfig&, rewrite: bool, check: bool) {
     let paths = match collect_sources(&config.inputs) {
         Ok(value) => value,
-        Err(problem) => { eprint(problem.msg()); exit(EXIT_FAILURE); },
+        Err(problem) => { @eprint(f"{problem.msg()}"); exit(EXIT_FAILURE); },
     };
     defer drop_paths(&paths);
-    if paths.is_empty() { eprintln("error: --format needs at least one source file"); exit(EXIT_FAILURE); }
-    if !rewrite && !check && paths.len() != 1 { eprintln("error: --format prints one file; add -w or --format-check"); exit(EXIT_FAILURE); }
+    if paths.is_empty() { @eprintln("error: --format needs at least one source file"); exit(EXIT_FAILURE); }
+    if !rewrite && !check && paths.len() != 1 { @eprintln("error: --format prints one file; add -w or --format-check"); exit(EXIT_FAILURE); }
 
     let changed = 0u64;
     for path in paths {
-        let source = match read_source(path.as_str()) { Ok(value) => value, Err(problem) => { eprint(problem.msg()); exit(EXIT_FAILURE); }, };
+        let source = match read_source(path.as_str()) { Ok(value) => value, Err(problem) => { @eprint(f"{problem.msg()}"); exit(EXIT_FAILURE); }, };
         defer source.drop();
         let formatted = match format_text(source.as_str(), path.as_str()) {
             Ok(Some(value)) => value,
             Ok(None) => {
-                eprint("skip ");
-                eprint(path.as_str());
-                eprintln(": cannot be formatted");
+                @eprint("skip ");
+                @eprint(f"{path.as_str()}");
+                @eprintln(": cannot be formatted");
                 continue;
             },
             Err(problem) => {
-                eprintln("error: formatter failed");
+                @eprintln("error: formatter failed");
                 exit(EXIT_FAILURE);
             },
         };
         defer formatted.drop();
         if formatted.as_str() == source.as_str() { continue; }
         changed += 1;
-        if check { println(path.as_str()); } elif rewrite {
-            match write(path.as_str(), formatted.as_slice()) { Ok(_) => {}, Err(problem) => { eprint(problem.msg()); exit(EXIT_FAILURE); }, }
-        } else { print(formatted.as_str()); }
+        if check { @println(f"{path.as_str()}"); } elif rewrite {
+            match write(path.as_str(), formatted.as_slice()) { Ok(_) => {}, Err(problem) => { @eprint(f"{problem.msg()}"); exit(EXIT_FAILURE); }, }
+        } else { @print(f"{formatted.as_str()}"); }
     }
-    let total = paths.len().to_string();
-    defer total.drop();
-    let count = changed.to_string();
-    defer count.drop();
     if check {
-        print(count.as_str());
-        print(" of ");
-        print(total.as_str());
-        println(" file(s) need formatting");
+        @println(f"{changed} of {paths.len()} file(s) need formatting");
         if changed > 0 { exit(EXIT_FAILURE); }
     }
     if rewrite {
-        print(total.as_str());
-        print(" file(s) checked, ");
-        print(count.as_str());
-        println(" rewritten");
+        @println(f"{paths.len()} file(s) checked, {changed} rewritten");
     }
 }

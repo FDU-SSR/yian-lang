@@ -1,5 +1,7 @@
 from std.core.option import Option;
 from std.core.clone import Clone;
+from std.core.fmt import Format, Formatter;
+from std.core.io import IoError;
 
 pub enum Result<T, E> {
     Ok { val: T },
@@ -71,6 +73,23 @@ impl<T, E> Clone for Result<T, E> {
         match self {
             Ok(val) => Result<T, E>.Ok((*val).clone()),
             Err(err) => Result<T, E>.Err((*err).clone()),
+        }
+    }
+}
+
+impl<T, E> Format for Result<T, E> if T: Format, E: Format {
+    fn fmt(out: Formatter&) -> Result<(), IoError> {
+        match self {
+            Ok(val) => {
+                out.write_str("Ok(")?;
+                out.write_value(val)?;
+                out.write_str(")")
+            },
+            Err(err) => {
+                out.write_str("Err(")?;
+                out.write_value(err)?;
+                out.write_str(")")
+            },
         }
     }
 }

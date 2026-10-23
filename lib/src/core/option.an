@@ -2,6 +2,9 @@
 // It is used to represent an optional value that may || may ! be present.
 
 from std.core.clone import Clone;
+from std.core.fmt import Format, Formatter;
+from std.core.result import Result;
+from std.core.io import IoError;
 
 pub enum Option<T> {
     None,
@@ -70,6 +73,19 @@ impl<T> Clone for Option<T> {
         match self {
             None => Option<T>.None,
             Some(val) => Option<T>.Some((*val).clone()),
+        }
+    }
+}
+
+impl<T> Format for Option<T> if T: Format {
+    fn fmt(out: Formatter&) -> Result<(), IoError> {
+        match self {
+            Some(val) => {
+                out.write_str("Some(")?;
+                out.write_value(val)?;
+                out.write_str(")")
+            },
+            None => out.write_str("None"),
         }
     }
 }

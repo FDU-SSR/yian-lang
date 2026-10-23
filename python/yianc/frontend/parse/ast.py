@@ -845,6 +845,42 @@ class ClosureExpr(ExpressionSyntax):
 
 
 @dataclass
+class FormatLiteralPart:
+    """Decoded literal text inside a formatted template."""
+
+    span: SrcSpan
+    text: str
+
+    def __repr__(self) -> str:
+        return repr(self.text)
+
+
+@dataclass
+class FormatValuePart:
+    """Interpolation expression inside a formatted template."""
+
+    span: SrcSpan
+    expr: Expr
+
+    def __repr__(self) -> str:
+        return f"{{{self.expr}}}"
+
+
+FormatPart: TypeAlias = FormatLiteralPart | FormatValuePart
+
+
+@dataclass
+class FormatTemplate(ExpressionSyntax):
+    """A source formatted string kept as ordered literal and interpolation parts."""
+
+    span: SrcSpan
+    parts: list[FormatPart]
+
+    def __repr__(self) -> str:
+        return "f{" + ", ".join(repr(part) for part in self.parts) + "}"
+
+
+@dataclass
 class Recovery(ExpressionSyntax):
     """Unfinished editor syntax owns only already parsed children, never a fake name."""
 
@@ -865,7 +901,7 @@ Expr: TypeAlias = (
     | Return | Break | Continue | Defer | Assert
     | Delete
     | Semi
-    | ClosureExpr | CompileConfig | Recovery
+    | ClosureExpr | CompileConfig | FormatTemplate | Recovery
 )
 
 Pattern: TypeAlias = (

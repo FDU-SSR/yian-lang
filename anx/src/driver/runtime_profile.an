@@ -1,6 +1,5 @@
 from std.core.drop import Drop;
 from std.core.fs import canonicalize, create_dir_all, try_exists;
-from std.core.io import eprint, eprintln;
 from std.core.path import Path, PathBuf;
 from std.core.process import temporary_directory;
 from anx.driver.build import compile_loaded, run_executable;
@@ -19,8 +18,8 @@ fn report_root(root: str, override_path: str) -> Result<PathBuf, String> {
 }
 
 fn warn(message: str) {
-    eprint("anx run profile: warning: ");
-    eprintln(message);
+    @eprint("anx run profile: warning: ");
+    @eprintln(f"{message}");
 }
 
 // One invocation allocates an exclusive report directory and an exclusive artifact
@@ -34,19 +33,19 @@ pub fn run_runtime_profile(start: str, level: Option<u8>, release: bool, raw_poi
     defer project.drop();
     let root_index = match project.package_index(project.root_package()) {
         Some(value) => value,
-        None => { eprintln("anx run profile: error: project root package is missing"); return 1i32; },
+        None => { @eprintln("anx run profile: error: project root package is missing"); return 1i32; },
     };
     let root = project.package(root_index).root();
     let base = match report_root(root, profile_root) {
         Ok(value) => value,
-        Err(message) => { eprintln(message.as_str()); message.drop(); return 1i32; },
+        Err(message) => { @eprintln(f"{message.as_str()}"); message.drop(); return 1i32; },
     };
     defer base.drop();
     match create_dir_all(base.as_str()) {
         Ok(_) => {},
         Err(problem) => {
-            eprint("anx run profile: error: cannot create report root: ");
-            eprintln(problem.msg());
+            @eprint("anx run profile: error: cannot create report root: ");
+            @eprintln(f"{problem.msg()}");
             problem.drop();
             return 1i32;
         },
@@ -54,8 +53,8 @@ pub fn run_runtime_profile(start: str, level: Option<u8>, release: bool, raw_poi
     let report_root_path = match canonicalize(base.as_str()) {
         Ok(value) => value,
         Err(problem) => {
-            eprint("anx run profile: error: cannot resolve report root: ");
-            eprintln(problem.msg());
+            @eprint("anx run profile: error: cannot resolve report root: ");
+            @eprintln(f"{problem.msg()}");
             problem.drop();
             return 1i32;
         },
@@ -64,8 +63,8 @@ pub fn run_runtime_profile(start: str, level: Option<u8>, release: bool, raw_poi
     let run_directory = match temporary_directory(report_root_path.as_str()) {
         Ok(value) => value,
         Err(problem) => {
-            eprint("anx run profile: error: cannot create report directory: ");
-            eprintln(problem.msg());
+            @eprint("anx run profile: error: cannot create report directory: ");
+            @eprintln(f"{problem.msg()}");
             problem.drop();
             return 1i32;
         },
@@ -76,8 +75,8 @@ pub fn run_runtime_profile(start: str, level: Option<u8>, release: bool, raw_poi
     match create_dir_all(artifact_base.as_str()) {
         Ok(_) => {},
         Err(problem) => {
-            eprint("anx run profile: error: cannot create artifact root: ");
-            eprintln(problem.msg());
+            @eprint("anx run profile: error: cannot create artifact root: ");
+            @eprintln(f"{problem.msg()}");
             problem.drop();
             return 1i32;
         },
@@ -85,8 +84,8 @@ pub fn run_runtime_profile(start: str, level: Option<u8>, release: bool, raw_poi
     let artifact_directory = match temporary_directory(artifact_base.as_str()) {
         Ok(value) => value,
         Err(problem) => {
-            eprint("anx run profile: error: cannot create artifact directory: ");
-            eprintln(problem.msg());
+            @eprint("anx run profile: error: cannot create artifact directory: ");
+            @eprintln(f"{problem.msg()}");
             problem.drop();
             return 1i32;
         },
@@ -112,8 +111,8 @@ pub fn run_runtime_profile(start: str, level: Option<u8>, release: bool, raw_poi
         let json_ready = match try_exists(json_path.as_str()) { Ok(value) => value, Err(problem) => { problem.drop(); false } };
         let text_ready = match try_exists(text_path.as_str()) { Ok(value) => value, Err(problem) => { problem.drop(); false } };
         if json_ready && text_ready {
-            eprint("anx run profile: report written to ");
-            eprintln(run_directory.as_str());
+            @eprint("anx run profile: report written to ");
+            @eprintln(f"{run_directory.as_str()}");
         } else {
             warn("the expected runtime report files are missing");
         }

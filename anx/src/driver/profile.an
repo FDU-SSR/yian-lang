@@ -5,7 +5,6 @@ from std.core.convert import From;
 from std.core.drop import Drop;
 from std.core.fmt import ToString;
 from std.core.fs import canonicalize, create_dir_all, read_to_string, write_atomic;
-from std.core.io import eprint, eprintln;
 from std.core.path import Path, PathBuf;
 from std.core.process import temporary_directory;
 from std.core.time import monotonic_now;
@@ -129,8 +128,8 @@ fn is_build_work(pass_id: str) -> bool {
 }
 
 fn write_warning(message: str) {
-    eprint("[profile] warning: ");
-    eprintln(message);
+    @eprint("[profile] warning: ");
+    @eprintln(f"{message}");
 }
 
 fn number(value: Value&) -> Option<u64> {

@@ -1,5 +1,5 @@
 from yianc.common.traversal import WalkControl;
-from yianc.frontend.ast.node import Identifier, IntLiteral, FloatLiteral, CharLiteral, StrLiteral, BoolLiteral, Program, Block, Argument, VarInfo, PatternParam, PatternLet, LetCondition, ElifBranch, MatchArm, Attr, TypeGenericParam, ConstGenericParam, FieldInfo, VariantInfo, MethodDecl, MethodDef, ExternFuncDecl, ImplCondition, CaptureItem, FieldPattern, Expr, TypeSyntax, ConstExpr, Pattern, Item, Literal, RangeBounds, Condition, GenericArgument, GenericParam, Parameter, TraitMember, PatternArguments, TypeSource;
+from yianc.frontend.ast.node import Identifier, IntLiteral, FloatLiteral, CharLiteral, StrLiteral, BoolLiteral, Program, Block, Argument, VarInfo, PatternParam, PatternLet, LetCondition, ElifBranch, MatchArm, Attr, TypeGenericParam, ConstGenericParam, FieldInfo, VariantInfo, MethodDecl, MethodDef, ExternFuncDecl, ImplCondition, CaptureItem, FieldPattern, Expr, TypeSyntax, ConstExpr, Pattern, Item, Literal, RangeBounds, Condition, GenericArgument, GenericParam, Parameter, TraitMember, PatternArguments, TypeSource, FormatPart;
 from std.core.ops import Index;
 
 // Each callback and child edge propagates failure before visiting later children.
@@ -930,6 +930,20 @@ pub fn try_walk_expr<E>(node: Expr&, visitor: TryAstVisitor<E>&) -> Result<(), E
             try_walk_block(*body, visitor)?;
         },
         CompileConfig(name) => {},
+        FormatTemplate(parts) => {
+            let index: u64 = 0;
+
+            while index < (*parts).len() {
+                match &(*parts)[index] {
+                    Value(expr, span) => {
+                        try_walk_expr(*expr, visitor)?;
+                    },
+                    Literal(text, span) => {},
+                }
+
+                index += 1;
+            }
+        },
     };
 
     visitor.leave_expr(node)?;

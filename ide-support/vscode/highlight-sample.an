@@ -98,9 +98,9 @@ fn control(value: i32, items: i32[]) -> i32 {
 }
 
 fn main() {
-    print("highlight sample\n");
+    @print("highlight sample\n");
     assert control(1, [1, 2, 3]) > 0: "always true";
     defer {
-        print("done\n");
+        @print("done\n");
     }
 }

@@ -27,5 +27,5 @@ fn main() {
     }
 
     assert checksum == i64(cycles) * 7: "varied-size checksum";
-    print("varied pass\n");
+    @print("varied pass\n");
 }

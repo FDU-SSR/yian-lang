@@ -1,5 +1,5 @@
 fn main() {
     defer {
-        defer print("nested");
+        defer @print("nested");
     };
 }

@@ -1,4 +1,4 @@
-from yianc.frontend.ast.node import Identifier, IntLiteral, FloatLiteral, CharLiteral, StrLiteral, BoolLiteral, Program, Block, Argument, VarInfo, PatternParam, PatternLet, LetCondition, ElifBranch, MatchArm, Attr, TypeGenericParam, ConstGenericParam, FieldInfo, VariantInfo, MethodDecl, MethodDef, ExternFuncDecl, ImplCondition, CaptureItem, FieldPattern, Expr, TypeSyntax, ConstExpr, Pattern, Item, Literal, RangeBounds, Condition, GenericArgument, GenericParam, Parameter, TraitMember, PatternArguments;
+from yianc.frontend.ast.node import Identifier, IntLiteral, FloatLiteral, CharLiteral, StrLiteral, BoolLiteral, Program, Block, Argument, VarInfo, PatternParam, PatternLet, LetCondition, ElifBranch, MatchArm, Attr, TypeGenericParam, ConstGenericParam, FieldInfo, VariantInfo, MethodDecl, MethodDef, ExternFuncDecl, ImplCondition, CaptureItem, FieldPattern, Expr, TypeSyntax, ConstExpr, Pattern, Item, Literal, RangeBounds, Condition, GenericArgument, GenericParam, Parameter, TraitMember, PatternArguments, FormatPart;
 from yianc.frontend.source import Span;
 from std.num.f64 import to_bits;
 from json.write import Writer;
@@ -1053,6 +1053,42 @@ impl AstFormatter {
 
                 self.field("name");
                 self.output.write_string((*name).as_str());
+
+                self.node_end();
+            },
+            FormatTemplate(parts) => {
+                self.node_start("FormatTemplate", node.span);
+
+                self.field("parts");
+                self.output.begin_array();
+                let index: u64 = 0;
+
+                while index < (*parts).len() {
+                    self.append_format_part(&((*parts)[index]));
+                    index += 1;
+                }
+                self.output.end_array();
+
+                self.node_end();
+            },
+        }
+    }
+
+    fn append_format_part(part: FormatPart&) {
+        match part {
+            Literal(text, span) => {
+                self.node_start("FormatLiteralPart", *span);
+
+                self.field("text");
+                self.output.write_string((*text).as_str());
+
+                self.node_end();
+            },
+            Value(expr, span) => {
+                self.node_start("FormatValuePart", *span);
+
+                self.field("expr");
+                self.append_expr(*expr);
 
                 self.node_end();
             },

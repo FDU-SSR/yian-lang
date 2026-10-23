@@ -73,7 +73,9 @@ class GenericInference:
             self.constrain(expected_ty.element_type, actual_ty.pointee_type)
             return
 
-        if isinstance(expected_ty, Type.RefType) and not self.__type_ctx.contains_generic(expected_type_id) and isinstance(actual_ty, Type.PointerType):
+        # A borrowed parameter accepts an explicit `&value` pointer; infer the
+        # pointee in both the concrete and the generic `T&` form.
+        if isinstance(expected_ty, Type.RefType) and isinstance(actual_ty, Type.PointerType):
             self.constrain(expected_ty.pointee_type, actual_ty.pointee_type)
             return
 

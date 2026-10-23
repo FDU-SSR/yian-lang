@@ -1,43 +1,159 @@
-// Test f-string basic variable interpolation
+// Test formatted-string templates and the shared formatting targets.
+
+from std.core.fmt import Format, Formatter;
+from std.core.io import Write, IoError;
+
+struct Point { x: i32, y: i32 }
+
+impl Format for Point {
+    fn fmt(out: Formatter&) -> Result<(), IoError> {
+        out.write_str("Point(")?;
+        out.write_value(&self.x)?;
+        out.write_str(", ")?;
+        out.write_value(&self.y)?;
+        out.write_str(")")
+    }
+}
+
+// An inherent method with the trait's name must not intercept trait dispatch.
+struct Sneaky { value: i32 }
+impl Sneaky {
+    fn fmt() -> str { "inherent" }
+}
+impl Format for Sneaky {
+    fn fmt(out: Formatter&) -> Result<(), IoError> {
+        out.write_str("trait")
+    }
+}
+
+struct Counter {
+    first_calls: u64,
+    first_formats: u64,
+    second_calls: u64,
+    second_formats: u64,
+    order_ok: bool,
+}
+
+struct Mark { counter: Counter&, first: bool }
+
+impl Format for Mark {
+    fn fmt(out: Formatter&) -> Result<(), IoError> {
+        if self.first { self.counter.first_formats += 1; } else { self.counter.second_formats += 1; }
+        out.write_str("M")
+    }
+}
+
+impl Counter {
+    static fn new() -> Self {
+        Self(first_calls=0, first_formats=0, second_calls=0, second_formats=0, order_ok=false)
+    }
+    fn first() -> Mark {
+        self.first_calls += 1;
+        Mark(counter=self, first=true)
+    }
+    fn second() -> Mark {
+        self.second_calls += 1;
+        if self.first_formats == 1 { self.order_ok = true; }
+        Mark(counter=self, first=false)
+    }
+}
+
+// A recording target accepts partial writes and counts flushes.
+struct Recorder { text: String, flushes: u64 }
+impl Recorder {
+    static fn new() -> Self { Self(text=String.new(), flushes=0) }
+}
+impl Write for Recorder {
+    fn write(data: u8[]) -> Result<u64, IoError> {
+        let count: u64 = 2;
+        if count > data.len() { count = data.len(); }
+        self.text.push_str(str.from_slice_unchecked(data[0u64..count]));
+        Result<u64, IoError>.Ok(val=count)
+    }
+    fn flush() -> Result<(), IoError> {
+        self.flushes += 1;
+        Result<(), IoError>.Ok(val=())
+    }
+}
 
 fn case_fstring_basic() {
     let name = "Yian";
     let ver = 1;
     let msg = f"Welcome to {name} v{ver}!";
-    print(msg.as_str());
-    print("\n");
+    @print(f"{msg.as_str()}");
+    @print("\n");
 }
 
 fn case_fstring_empty() {
     let e = f"";
-    print(f"empty: [{e}]\n".as_str());
+    @print(f"empty: [{e}]\n");
 }
 
 // Escaped braces must stay literal while embedded expressions are formatted.
 fn case_fstring_escaped_braces() {
     let s = f"\{not an expr\}";
-    print(s.as_str());
-    print("\n");
+    @print(f"{s.as_str()}");
+    @print("\n");
 
     let x = 3;
     let t = f"\{ {x} \}";
-    print(t.as_str());
-    print("\n");
+    @print(f"{t.as_str()}");
+    @print("\n");
 }
 
 fn case_fstring_expressions() {
     let a = 10;
     let b = 20;
     let msg = f"{a} + {b} = {a + b}";
-    print(msg.as_str());
-    print("\n");
+    @print(f"{msg.as_str()}");
+    @print("\n");
 }
 
 fn case_fstring_nested_expression() {
     let x = 5;
     let s = f"if: {if x > 0 { "pos" } else { "neg" }}!";
-    print(s.as_str());
-    print("\n");
+    @print(f"{s.as_str()}");
+    @print("\n");
+}
+
+fn case_three_targets() {
+    let point = Point(x=1, y=2);
+    let text = f"point={point}";
+    assert text.as_str() == "point=Point(1, 2)";
+
+    let conversion = point.to_string();
+    assert conversion.as_str() == "Point(1, 2)";
+    conversion.drop();
+
+    let buffer = String.with_capacity(64u64);
+    let capacity = buffer.capacity();
+    buffer.push_str("pre:");
+    @append(&buffer, f"p={point}");
+    assert buffer.as_str() == "pre:p=Point(1, 2)";
+    assert buffer.capacity() == capacity;
+    @print(f"{buffer.as_str()}\n");
+    buffer.drop();
+    text.drop();
+
+    let sneaky = Sneaky(value=4);
+    let formatted = f"{sneaky}";
+    assert formatted.as_str() == "trait";
+    formatted.drop();
+    assert sneaky.fmt() == "inherent";
+
+    let counter = Counter.new();
+    let recorder = Recorder.new();
+    let result = @write(&recorder, f"A{counter.first()}B{counter.second()}");
+    assert result.is_ok();
+    assert recorder.text.as_str() == "AMBM";
+    assert recorder.flushes == 0u64;
+    assert counter.first_calls == 1u64;
+    assert counter.first_formats == 1u64;
+    assert counter.second_calls == 1u64;
+    assert counter.second_formats == 1u64;
+    assert counter.order_ok;
+    recorder.text.drop();
+    @println("three targets ok");
 }
 
 fn main() {
@@ -47,4 +163,5 @@ fn main() {
     case_fstring_escaped_braces();
     case_fstring_expressions();
     case_fstring_nested_expression();
+    case_three_targets();
 }

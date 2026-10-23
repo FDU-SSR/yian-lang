@@ -101,5 +101,5 @@ fn main() {
     DeleteTree(longLivedTree);
 
     assert check % 256 == 176: "binarytree: check % 256 mismatch";
-    print("binarytree pass\n");
+    @print("binarytree pass\n");
 }

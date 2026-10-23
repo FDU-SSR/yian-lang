@@ -5,6 +5,9 @@ from std.core.iter import Iterator, IntoIterator;
 from std.core.range import Range;
 from std.core.drop import Drop;
 from std.core.clone import Clone;
+from std.core.fmt import Format, Formatter;
+from std.core.result import Result;
+from std.core.io import IoError;
 
 pub struct HashMap<K, V> {
     buckets: Bucket<K, V>*,
@@ -392,5 +395,26 @@ impl<K, V> IntoIterator<HashMapKeyIter<K, V>> for HashMap<K, V> {
             capacity=self.capacity,
             index=0
         )
+    }
+}
+
+impl<K, V> Format for HashMap<K, V> if K: Format, V: Format {
+    fn fmt(out: Formatter&) -> Result<(), IoError> {
+        out.write_str("{")?;
+        let entries = self.entries();
+        let first = true;
+        loop {
+            match entries.next() {
+                Some(entry) => {
+                    if !first { out.write_str(", ")?; }
+                    first = false;
+                    out.write_value(entry[0])?;
+                    out.write_str(": ")?;
+                    out.write_value(entry[1])?;
+                },
+                None => { break; },
+            }
+        }
+        out.write_str("}")
     }
 }

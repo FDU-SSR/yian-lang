@@ -36,7 +36,7 @@ fn main() {
         }
 
         if op_idx.is_none() {
-            print("Invalid expression: no operator found")
+            @print("Invalid expression: no operator found")
             continue
         }
         let idx: u64 = *op_idx.unwrap()
@@ -55,15 +55,15 @@ fn main() {
             '*' => { result = left_num * right_num }
             '/' => { result = left_num / right_num }
             _ => {
-                print("Invalid operator")
+                @print("Invalid operator")
                 continue
             }
         }
 
-        print("Result: ")
+        @print("Result: ")
         let result_text: String = result.to_string()
-        print(result_text.as_str())
-        print("\n")
+        @print(f"{result_text.as_str()}")
+        @print("\n")
     }
 
 }

@@ -22,6 +22,12 @@ impl TryAstVisitor<AnalysisError> for RestrictedVisitor {
                     FfiParts => false,
                     FfiNull => false,
                     FfiPtrCast => false,
+                    Append => false,
+                    Write => false,
+                    Print => false,
+                    Println => false,
+                    Eprint => false,
+                    Eprintln => false,
                     _ => true,
                 };
 

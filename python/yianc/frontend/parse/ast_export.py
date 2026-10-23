@@ -353,6 +353,15 @@ class AstTreeFormatter(TreeFormatter):
                 return self.__export_closure_expr(expr, guides, is_last)
             case AST.CompileConfig():
                 return self.__export_compile_config(expr, guides, is_last)
+            case AST.FormatTemplate():
+                res = self.render_line(guides, is_last, "FormatTemplate")
+                for index, part in enumerate(expr.parts):
+                    last = index == len(expr.parts) - 1
+                    if isinstance(part, AST.FormatLiteralPart):
+                        res += self.render_line(guides, last, f"Literal: {part.text}")
+                    else:
+                        res += self.__export_expr_child("Value", part.expr, guides, last, True)
+                return res
             case AST.Recovery():
                 res = self.render_line(guides, is_last, "Recovery")
                 for index, child in enumerate(expr.children):

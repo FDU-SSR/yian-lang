@@ -56,6 +56,12 @@ pub enum BuiltinKind {
     FfiParts,
     FfiNull,
     FfiPtrCast,
+    Append,
+    Write,
+    Print,
+    Println,
+    Eprint,
+    Eprintln,
 }
 
 impl BuiltinKind {
@@ -82,6 +88,12 @@ impl BuiltinKind {
             FfiParts => "ffi_parts",
             FfiNull => "ffi_null",
             FfiPtrCast => "ffi_ptr_cast",
+            Append => "append",
+            Write => "write",
+            Print => "print",
+            Println => "println",
+            Eprint => "eprint",
+            Eprintln => "eprintln",
         }
     }
 
@@ -108,6 +120,12 @@ impl BuiltinKind {
             "ffi_parts" => Option<Self>.Some(val=Self.FfiParts),
             "ffi_null" => Option<Self>.Some(val=Self.FfiNull),
             "ffi_ptr_cast" => Option<Self>.Some(val=Self.FfiPtrCast),
+            "append" => Option<Self>.Some(val=Self.Append),
+            "write" => Option<Self>.Some(val=Self.Write),
+            "print" => Option<Self>.Some(val=Self.Print),
+            "println" => Option<Self>.Some(val=Self.Println),
+            "eprint" => Option<Self>.Some(val=Self.Eprint),
+            "eprintln" => Option<Self>.Some(val=Self.Eprintln),
             _ => Option<Self>.None,
         };
     }

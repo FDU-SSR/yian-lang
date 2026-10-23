@@ -8,5 +8,5 @@ fn make_text() -> str {
 
 fn main() {
     let text: str = make_text();
-    print(text);
+    @print(f"{text}");
 }

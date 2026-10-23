@@ -21,7 +21,7 @@ fn case_elif_chain() {
     assert test_elif(3) == "C": "elif branch 3 failed";
     assert test_elif(99) == "other": "elif else branch failed";
 
-    print(test_elif(2));
+    @print(f"{test_elif(2)}");
 }
 
 fn case_if_else() {

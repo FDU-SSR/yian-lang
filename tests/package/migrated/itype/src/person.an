@@ -24,6 +24,6 @@ impl Walkable for Person {
         self.age += 1
         self.height += 1.0
 
-        print("Person is walking.\n");
+        @print("Person is walking.\n");
     }
 }

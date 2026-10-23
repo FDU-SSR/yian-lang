@@ -3,9 +3,9 @@ fn source(ok: bool) -> Result<i32, i32> {
 }
 
 fn cleanup(ok: bool, calls: i32&) -> Result<i32, i32> {
-    defer { *calls += 1; print("outer\n"); };
+    defer { *calls += 1; @print("outer\n"); };
     {
-        defer { *calls += 1; print("inner\n"); };
+        defer { *calls += 1; @print("inner\n"); };
         let value = source(ok)?;
         Result<i32, i32>.Ok(value)
     }
@@ -13,7 +13,7 @@ fn cleanup(ok: bool, calls: i32&) -> Result<i32, i32> {
 
 fn closure_body() -> i32 {
     let run = || () -> Result<i32, i32> {
-        defer print("closure\n");
+        defer @print("closure\n");
         Result<i32, i32>.Ok(source(false)?)
     };
     assert *run().unwrap_err() == 3;
@@ -37,6 +37,6 @@ fn main() {
     defer {
         let run = || () -> Option<i32> { Option<i32>.Some(Option<i32>.None?) };
         assert run().is_none();
-        print("deferred closure\n");
+        @print("deferred closure\n");
     };
 }

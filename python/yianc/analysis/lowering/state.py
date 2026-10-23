@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from pathlib import Path
 from enum import Enum
 from typing import Callable
 
@@ -71,6 +72,10 @@ class DefinitionState:
         # callback to report discovered reachable definition type ids
         self.__def_reporter: Callable[[int], None] | None = None
         self.editor_errors: list[AnalysisError] = []
+
+    @property
+    def stdlib_root(self) -> Path | None:
+        return self.__semantic.stdlib_root
 
     @property
     def editor_recovery(self) -> bool:

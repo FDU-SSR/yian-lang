@@ -35,5 +35,5 @@ fn main() {
 
     del seed;
     assert checksum == i64(batch_count) * i64(rounds) * 2: "single-size churn checksum";
-    print("single pass\n");
+    @print("single pass\n");
 }

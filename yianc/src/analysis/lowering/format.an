@@ -1,0 +1,662 @@
+from yianc.analysis.lowering.checker import ExprChecker;
+from yianc.analysis.ty.method_lookup import lookup_method_args, implements;
+from yianc.analysis.ty.substitution import substitute;
+from yianc.analysis.ty.relations import default_type;
+from yianc.analysis.ty.aggregate import payload_fields;
+from yianc.analysis.ty.display import type_text;
+from yianc.analysis.ty.model import EnumVariant;
+from yianc.analysis.ty.callable import instance_substitutions;
+from yianc.analysis.hir.node import HirKind, Block as HirBlock, Let as HirLet, Match as HirMatch, MatchArm as HirMatchArm, Unary as HirUnary, VariantConstruct, Builtin as HirBuiltin, Tuple as HirTuple, Binary as HirBinary;
+from yianc.analysis.symbol.model import SymbolKind;
+from yianc.frontend.ast.node import Expr, FormatPart, IdentifierData, PatternData, PatternArguments, Pattern, TypeSyntax;
+from yianc.frontend.ast.atoms import BuiltinKind, MatchArmOrigin;
+from yianc.frontend.ast.operator import BinaryOperator, UnaryOperator;
+from yianc.frontend.source import Span;
+from yianc.common.ids import UnitId, HirId, TypeId, SymbolId, PatternId, ScopeId, NameId, DefId;
+from yianc.common.location import SourceSpan;
+from yianc.diagnostics.model import AnalysisError, DiagnosticCode, AnalysisErrorKind;
+from std.core.drop import Drop;
+from std.core.iter import Iterator, IntoIterator;
+from std.core.convert import From;
+from std.core.ops import Index;
+
+// The lowering target selects the outer owner and where a write failure goes.
+pub enum FormatDestination {
+    OwnedString,
+    Append { target: Expr& },
+    Writer { target: Expr& },
+    Stdout { newline: bool },
+    Stderr { newline: bool },
+}
+
+// Write failures either become the expression's Result value or panic for entries without one.
+enum FormatFailure {
+    Propagate,
+    Panic,
+}
+
+// Standard-library formatter identities are bound by canonical unit, not by user-visible names.
+struct FormatLibrary {
+    formatter_type: TypeId,
+    format_trait: TypeId,
+    string_type: TypeId,
+    io_error_type: TypeId,
+    unit_type: TypeId,
+    result_instance: TypeId,
+    formatter_for: SymbolId,
+    string_writer: SymbolId,
+    stdout_printer: SymbolId,
+    stderr_printer: SymbolId,
+    vec_definition: DefId,
+    option_definition: DefId,
+    result_definition: DefId,
+    map_definition: DefId,
+    set_definition: DefId,
+}
+
+fn standard_unit(checker: ExprChecker&, relative: str) -> Result<UnitId, AnalysisError> {
+    let expected = String.from(&checker.ctx.session.stdlib_root());
+    defer expected.drop();
+    expected.push_str("/");
+    expected.push_str(relative);
+    let index = 0u64;
+
+    while index < checker.ctx.session.len() {
+        let id = UnitId(index);
+        let unit = checker.ctx.session.unit(id).unwrap();
+
+        if unit.is_stdlib && checker.ctx.session.source(unit.source).unwrap().canonical_path() == expected.as_str() {
+            return Result<UnitId, AnalysisError>.Ok(id);
+        }
+
+        index += 1;
+    }
+
+    let message = String.from(&"standard library module '");
+    defer message.drop();
+    message.push_str(relative);
+    message.push_str("' is absent from the compilation inputs");
+    Result<UnitId, AnalysisError>.Err(AnalysisError.internal(message.as_str()))
+}
+
+fn unit_symbol(checker: ExprChecker&, unit: UnitId, name: str) -> Result<SymbolId, AnalysisError> {
+    let interned = checker.ctx.session.names.intern(name);
+    match checker.ctx.session.symbols.lookup(checker.ctx.scopes[unit.index], interned) {
+        Some(value) => Result<SymbolId, AnalysisError>.Ok(value),
+        None => Result<SymbolId, AnalysisError>.Err(AnalysisError.named(DiagnosticCode.Undefined,
+            Option<SourceSpan>.None, "standard library symbol '", name, "' is missing")),
+    }
+}
+
+fn symbol_type(checker: ExprChecker&, symbol: SymbolId) -> TypeId {
+    checker.ctx.session.symbols.get(symbol).unwrap().type_id
+}
+
+fn nominal_definition(checker: ExprChecker&, symbol: SymbolId, what: str) -> Result<DefId, AnalysisError> {
+    match checker.ctx.session.types.require(symbol_type(checker, symbol))? {
+        Nominal(value, _) => Result<DefId, AnalysisError>.Ok(*value),
+        _ => {
+            let message = String.from(&what);
+            defer message.drop();
+            message.push_str(" is not a nominal type");
+            Result<DefId, AnalysisError>.Err(AnalysisError.internal(message.as_str()))
+        },
+    }
+}
+
+fn load_library(checker: ExprChecker&) -> Result<FormatLibrary, AnalysisError> {
+    let fmt_unit = standard_unit(checker, "core/fmt.an")?;
+    let string_unit = standard_unit(checker, "core/string.an")?;
+    let io_unit = standard_unit(checker, "core/io.an")?;
+    let result_unit = standard_unit(checker, "core/result.an")?;
+    let formatter_symbol = unit_symbol(checker, fmt_unit, "Formatter")?;
+    let format_symbol = unit_symbol(checker, fmt_unit, "Format")?;
+    let string_symbol = unit_symbol(checker, string_unit, "String")?;
+    let io_error_symbol = unit_symbol(checker, io_unit, "IoError")?;
+    let result_symbol = unit_symbol(checker, result_unit, "Result")?;
+    let formatter_for = unit_symbol(checker, fmt_unit, "formatter_for")?;
+    let string_writer = unit_symbol(checker, fmt_unit, "string_writer")?;
+    let stdout_printer = unit_symbol(checker, io_unit, "stdout_printer")?;
+    let stderr_printer = unit_symbol(checker, io_unit, "stderr_printer")?;
+    let vec_symbol = unit_symbol(checker, standard_unit(checker, "core/vec.an")?, "Vec")?;
+    let option_symbol = unit_symbol(checker, standard_unit(checker, "core/option.an")?, "Option")?;
+    let map_unit = standard_unit(checker, "collections/hash_map.an")?;
+    let set_unit = standard_unit(checker, "collections/hash_set.an")?;
+    let map_symbol = unit_symbol(checker, map_unit, "HashMap")?;
+    let set_symbol = unit_symbol(checker, set_unit, "HashSet")?;
+    let formatter_type = symbol_type(checker, formatter_symbol);
+    let format_trait = symbol_type(checker, format_symbol);
+    let string_type = symbol_type(checker, string_symbol);
+    let io_error_type = symbol_type(checker, io_error_symbol);
+    let result_type = symbol_type(checker, result_symbol);
+    let result_definition = match checker.ctx.session.types.require(result_type)? {
+        Nominal(value, _) => *value,
+        _ => return Result<FormatLibrary, AnalysisError>.Err(AnalysisError.internal("standard Result is not a nominal type")),
+    };
+    let vec_definition = nominal_definition(checker, vec_symbol, "standard Vec")?;
+    let option_definition = nominal_definition(checker, option_symbol, "standard Option")?;
+    let map_definition = nominal_definition(checker, map_symbol, "standard HashMap")?;
+    let set_definition = nominal_definition(checker, set_symbol, "standard HashSet")?;
+    let empty_types = Vec<TypeId>.new();
+    defer empty_types.drop();
+    let unit_type = checker.ctx.session.types.tuple(&empty_types);
+    let arguments = Vec<TypeId>.new();
+    defer arguments.drop();
+    arguments.push(unit_type);
+    arguments.push(io_error_type);
+    let result_instance = checker.ctx.session.types.instance(result_definition, &arguments)?;
+    Result<FormatLibrary, AnalysisError>.Ok(FormatLibrary(formatter_type, format_trait, string_type,
+        io_error_type, unit_type, result_instance, formatter_for, string_writer, stdout_printer, stderr_printer,
+        vec_definition, option_definition, result_definition, map_definition, set_definition))
+}
+
+fn hidden_name(span: Span, role: str) -> String {
+    let name = String.from(&"%fmt_");
+    let row = span.start.row.to_string();
+    defer row.drop();
+    let column = span.start.column.to_string();
+    defer column.drop();
+    name.push_str(row.as_str());
+    name.push_str("_");
+    name.push_str(column.as_str());
+    name.push_str("_");
+    name.push_str(role);
+    name
+}
+
+// Declarations bind a hidden local and return the statement that initializes it.
+fn declare(checker: ExprChecker&, span: Span, role: str, init: HirId) -> Result<(HirId, SymbolId), AnalysisError> {
+    let name = hidden_name(span, role);
+    defer name.drop();
+    let type_id = checker.type_of(init);
+    let symbol = checker.bind(name.as_str(), type_id, span, SymbolKind.Variable)?;
+    let statement = checker.node(span, checker.ctx.primitives.void, false, HirKind.Let(HirLet(Option<HirId>.Some(init), Option<SymbolId>.Some(symbol))));
+    Result<(HirId, SymbolId), AnalysisError>.Ok((statement, symbol))
+}
+
+fn variable(checker: ExprChecker&, span: Span, symbol: SymbolId, place: bool) -> HirId {
+    let type_id = symbol_type(checker, symbol);
+    checker.node(span, type_id, place, HirKind.Var(symbol))
+}
+
+// Borrow syntax and reference values share the same addressee; both denote a borrowed target.
+fn borrowed_inner(checker: ExprChecker&, type_id: TypeId) -> Result<Option<TypeId>, AnalysisError> {
+    match checker.ctx.session.types.require(type_id)? {
+        Pointer(inner) => Result<Option<TypeId>, AnalysisError>.Ok(Option<TypeId>.Some(*inner)),
+        Reference(inner) => Result<Option<TypeId>, AnalysisError>.Ok(Option<TypeId>.Some(*inner)),
+        _ => Result<Option<TypeId>, AnalysisError>.Ok(Option<TypeId>.None),
+    }
+}
+
+fn reference_of(checker: ExprChecker&, span: Span, value: HirId) -> HirId {
+    let inner = checker.type_of(value);
+    let type_id = checker.ctx.session.types.reference(inner);
+    checker.node(span, type_id, false, HirKind.Unary(HirUnary(UnaryOperator.AddrOf, value)))
+}
+
+// Borrow a local as the formatter receiver; the formatter itself is never copied or transferred.
+fn formatter_receiver(checker: ExprChecker&, span: Span, formatter: SymbolId) -> HirId {
+    reference_of(checker, span, variable(checker, span, formatter, true))
+}
+
+fn call_function(checker: ExprChecker&, span: Span, symbol: SymbolId, values: Vec<HirId>&) -> Result<HirId, AnalysisError> {
+    let function = symbol_type(checker, symbol);
+    checker.call_values(span, function, values, Option<HirId>.None, Option<Span>.None)
+}
+
+fn call_function0(checker: ExprChecker&, span: Span, symbol: SymbolId) -> Result<HirId, AnalysisError> {
+    let values = Vec<HirId>.new();
+    defer values.drop();
+    call_function(checker, span, symbol, &values)
+}
+
+fn call_function1(checker: ExprChecker&, span: Span, symbol: SymbolId, value: HirId) -> Result<HirId, AnalysisError> {
+    let values = Vec<HirId>.new();
+    defer values.drop();
+    values.push(value);
+    call_function(checker, span, symbol, &values)
+}
+
+fn string_new(checker: ExprChecker&, span: Span, string_type: TypeId) -> Result<HirId, AnalysisError> {
+    let arguments = Vec<TypeId>.new();
+    defer arguments.drop();
+    let name = checker.ctx.session.names.intern("new");
+    let method = lookup_method_args(checker.ctx, string_type, name, Option<TypeId>.None,
+        Option<Vec<TypeId>&>.Some(&arguments), checker.ctx.span(checker.unit, span))?;
+    let empty = Vec<HirId>.new();
+    defer empty.drop();
+    checker.call_values(span, method, &empty, Option<HirId>.None, Option<Span>.None)
+}
+
+fn drop_call(checker: ExprChecker&, span: Span, string_type: TypeId, symbol: SymbolId) -> Result<HirId, AnalysisError> {
+    let arguments = Vec<TypeId>.new();
+    defer arguments.drop();
+    let name = checker.ctx.session.names.intern("drop");
+    let method = lookup_method_args(checker.ctx, string_type, name, Option<TypeId>.None,
+        Option<Vec<TypeId>&>.Some(&arguments), checker.ctx.span(checker.unit, span))?;
+    let receiver = reference_of(checker, span, variable(checker, span, symbol, true));
+    let empty = Vec<HirId>.new();
+    defer empty.drop();
+    checker.call_values(span, method, &empty, Option<HirId>.Some(receiver), Option<Span>.None)
+}
+
+fn message_call(checker: ExprChecker&, span: Span, io_error_type: TypeId, value: HirId) -> Result<HirId, AnalysisError> {
+    let arguments = Vec<TypeId>.new();
+    defer arguments.drop();
+    let name = checker.ctx.session.names.intern("msg");
+    let method = lookup_method_args(checker.ctx, io_error_type, name, Option<TypeId>.None,
+        Option<Vec<TypeId>&>.Some(&arguments), checker.ctx.span(checker.unit, span))?;
+    let receiver = reference_of(checker, span, value);
+    let empty = Vec<HirId>.new();
+    defer empty.drop();
+    checker.call_values(span, method, &empty, Option<HirId>.Some(receiver), Option<Span>.None)
+}
+
+fn panic_call(checker: ExprChecker&, span: Span, message: HirId) -> HirId {
+    let types = Vec<TypeId>.new();
+    let values = Vec<HirId>.new();
+    values.push(message);
+    checker.node(span, checker.ctx.primitives.never, false, HirKind.Builtin(HirBuiltin(BuiltinKind.Panic, types, values)))
+}
+
+fn unit_value(checker: ExprChecker&, span: Span, unit_type: TypeId) -> HirId {
+    checker.node(span, unit_type, false, HirKind.Tuple(HirTuple(Vec<HirId>.new())))
+}
+
+// A void continuation differs from the empty tuple value.
+fn void_value(checker: ExprChecker&, span: Span) -> HirId {
+    checker.node(span, checker.ctx.primitives.void, false, HirKind.Block(HirBlock(Vec<HirId>.new())))
+}
+
+fn write_str_call(checker: ExprChecker&, span: Span, text_span: Span, receiver: HirId,
+    formatter_type: TypeId, text: str) -> Result<HirId, AnalysisError> {
+    let arguments = Vec<TypeId>.new();
+    defer arguments.drop();
+    arguments.push(checker.ctx.primitives.string);
+    let name = checker.ctx.session.names.intern("write_str");
+    let method = lookup_method_args(checker.ctx, formatter_type, name, Option<TypeId>.None,
+        Option<Vec<TypeId>&>.Some(&arguments), checker.ctx.span(checker.unit, span))?;
+    let values = Vec<HirId>.new();
+    defer values.drop();
+    let interned = checker.ctx.session.names.intern(text);
+    values.push(checker.node(text_span, checker.ctx.primitives.string, false, HirKind.StrLiteral(interned)));
+    checker.call_values(span, method, &values, Option<HirId>.Some(receiver), Option<Span>.None)
+}
+
+fn standard_container(library: FormatLibrary&, definition: DefId) -> bool {
+    definition == library.vec_definition || definition == library.option_definition
+        || definition == library.result_definition || definition == library.map_definition
+        || definition == library.set_definition
+}
+
+// Report the innermost standard container member that lacks Format, so the diagnostic names the member constraint.
+fn missing_format_member(checker: ExprChecker&, library: FormatLibrary&, type_id: TypeId,
+    span: Span) -> Result<Option<TypeId>, AnalysisError> {
+    if implements(checker.ctx, type_id, library.format_trait, checker.ctx.span(checker.unit, span))? {
+        return Result<Option<TypeId>, AnalysisError>.Ok(Option<TypeId>.None);
+    }
+
+    match checker.ctx.session.types.require(type_id)? {
+        Tuple(elements) => {
+            for element in *elements {
+                if let Some(member) = missing_format_member(checker, library, *element, span)? {
+                    return Result<Option<TypeId>, AnalysisError>.Ok(Option<TypeId>.Some(member));
+                }
+            }
+        },
+        Array(element, _) => {
+            return missing_format_member(checker, library, *element, span);
+        },
+        Slice(element) => {
+            return missing_format_member(checker, library, *element, span);
+        },
+        Nominal(definition, arguments) => {
+            if standard_container(library, *definition) {
+                for argument in *arguments {
+                    match checker.ctx.session.types.require(*argument)? {
+                        LiteralValue(_, _, _) | ConstGeneric(_, _) | ConstUnary(_, _) | ConstBinary(_, _, _) => {},
+                        _ => match missing_format_member(checker, library, *argument, span)? {
+                            Some(member) => return Result<Option<TypeId>, AnalysisError>.Ok(Option<TypeId>.Some(member)),
+                            None => {},
+                        },
+                    }
+                }
+            }
+        },
+        _ => {},
+    }
+
+    Result<Option<TypeId>, AnalysisError>.Ok(Option<TypeId>.Some(type_id))
+}
+
+fn write_value_call(checker: ExprChecker&, span: Span, receiver: HirId, library: FormatLibrary&,
+    value: HirId) -> Result<HirId, AnalysisError> {
+    let formatter_type = library.formatter_type;
+    let format_trait = library.format_trait;
+    let defaulted = default_type(checker.ctx, checker.type_of(value));
+    let value = checker.coerce(value, defaulted)?;
+    let value_type = checker.type_of(value);
+    let choice: (TypeId, HirId) = match checker.ctx.session.types.require(value_type)? {
+        Reference(inner) => (*inner, value),
+        _ => (value_type, reference_of(checker, span, value)),
+    };
+    let actual = choice[0];
+    let argument = choice[1];
+
+    // Report a missing implementation at the interpolation expression before instantiating the adapter.
+    let format_arguments = Vec<TypeId>.new();
+    defer format_arguments.drop();
+    format_arguments.push(checker.ctx.session.types.reference(formatter_type));
+    let format_name = checker.ctx.session.names.intern("fmt");
+    match lookup_method_args(checker.ctx, actual, format_name, Option<TypeId>.Some(format_trait),
+        Option<Vec<TypeId>&>.Some(&format_arguments), checker.ctx.span(checker.unit, span)) {
+        Ok(_) => {},
+        Err(problem) => {
+            if problem.kind == AnalysisErrorKind.NoCandidate {
+                let name = type_text(checker.ctx, actual);
+                defer name.drop();
+                let message = String.from(&"type '");
+                defer message.drop();
+                message.push_str(name.as_str());
+                message.push_str("' does not implement 'Format'");
+                match missing_format_member(checker, library, actual, span)? {
+                    Some(member) => {
+                        if member != actual {
+                            let member_name = type_text(checker.ctx, member);
+                            defer member_name.drop();
+                            message.push_str(" because member type '");
+                            message.push_str(member_name.as_str());
+                            message.push_str("' does not implement 'Format'");
+                        }
+                    },
+                    None => {},
+                }
+                return Result<HirId, AnalysisError>.Err(checker.ctx.error(checker.unit, span, DiagnosticCode.Type, message.as_str()));
+            }
+            return Result<HirId, AnalysisError>.Err(problem);
+        },
+    }
+
+    let arguments = Vec<TypeId>.new();
+    defer arguments.drop();
+    arguments.push(checker.type_of(argument));
+    let name = checker.ctx.session.names.intern("write_value");
+    let method = lookup_method_args(checker.ctx, formatter_type, name, Option<TypeId>.None,
+        Option<Vec<TypeId>&>.Some(&arguments), checker.ctx.span(checker.unit, span))?;
+    let values = Vec<HirId>.new();
+    defer values.drop();
+    values.push(argument);
+    checker.call_values(span, method, &values, Option<HirId>.Some(receiver), Option<Span>.None)
+}
+
+// The synthetic pattern nodes live in the current unit's arena for the duration of the analysis.
+fn ok_pattern(checker: ExprChecker&, span: Span, expected: TypeId) -> Result<PatternId, AnalysisError> {
+    let tree = checker.ctx.session.unit(checker.unit).unwrap().prepared.tree.unwrap();
+    let name = tree.arena.alloc_identifier(IdentifierData(name=String.from(&"Ok"), synthetic=true), span);
+    let values = Vec<Pattern&>.new();
+    values.push(tree.arena.alloc_pattern(PatternData.WildcardPattern, span));
+    let syntax = tree.arena.alloc_pattern(PatternData.ConstructPattern(name=name,
+        qualifier=Option<TypeSyntax&>.None, arguments=PatternArguments.Positional(values), rest=false), span);
+    checker.test_pattern(syntax, expected)
+}
+
+fn error_pattern(checker: ExprChecker&, span: Span, expected: TypeId, symbol_name: str) -> Result<PatternId, AnalysisError> {
+    let tree = checker.ctx.session.unit(checker.unit).unwrap().prepared.tree.unwrap();
+    let variant = tree.arena.alloc_identifier(IdentifierData(name=String.from(&"Err"), synthetic=true), span);
+    let binding = tree.arena.alloc_identifier(IdentifierData(name=String.from(&symbol_name), synthetic=true), span);
+    let values = Vec<Pattern&>.new();
+    values.push(tree.arena.alloc_pattern(PatternData.NamePattern(name=binding), span));
+    let syntax = tree.arena.alloc_pattern(PatternData.ConstructPattern(name=variant,
+        qualifier=Option<TypeSyntax&>.None, arguments=PatternArguments.Positional(values), rest=false), span);
+    checker.test_pattern(syntax, expected)
+}
+
+fn result_variant(checker: ExprChecker&, span: Span, library: FormatLibrary&, variant_name: str, value: HirId) -> Result<HirId, AnalysisError> {
+    let definition = match checker.ctx.session.types.require(library.result_instance)? {
+        Nominal(id, _) => *id,
+        _ => return Result<HirId, AnalysisError>.Err(AnalysisError.internal("standard Result instance is not nominal")),
+    };
+    let interned = checker.ctx.session.names.intern(variant_name);
+    let substitutions = instance_substitutions(checker.ctx, library.result_instance)?;
+    defer substitutions.drop();
+    let selected = Option<EnumVariant>.None;
+
+    match checker.ctx.session.types.complete_definition(definition)? {
+        Enum(body) => {
+            for variant in body.variants {
+                if variant.name == interned {
+                    selected = Option<EnumVariant>.Some(*variant);
+                }
+            }
+        },
+        _ => return Result<HirId, AnalysisError>.Err(AnalysisError.internal("standard Result is not an enum")),
+    }
+
+    if selected.is_none() {
+        return Result<HirId, AnalysisError>.Err(AnalysisError.internal("standard Result variant is missing"));
+    }
+
+    let variant = *selected.unwrap();
+    let fields = payload_fields(checker.ctx, variant.payload)?;
+    defer fields.drop();
+
+    if fields.len() != 1u64 {
+        return Result<HirId, AnalysisError>.Err(AnalysisError.internal("standard Result variant has an unexpected payload"));
+    }
+
+    let concrete = substitute(&checker.ctx.session.types, fields[0].type_id, &substitutions)?;
+    let arguments = Vec<(NameId, HirId)>.new();
+    arguments.push((fields[0].name, checker.coerce(value, concrete)?));
+    let spans = Vec<Option<SourceSpan>>.new();
+    spans.push(Option<SourceSpan>.None);
+    let payload = match &variant.payload {
+        Some(value) => Option<TypeId>.Some(substitute(&checker.ctx.session.types, *value, &substitutions)?),
+        None => Option<TypeId>.None,
+    };
+    let concrete_variant = EnumVariant(variant.name, payload, variant.discriminant, variant.span);
+    Result<HirId, AnalysisError>.Ok(checker.node(span, library.result_instance, false,
+        HirKind.VariantConstruct(VariantConstruct(library.result_instance, concrete_variant,
+            Option<Vec<(NameId, HirId)>>.Some(arguments), Option<SourceSpan>.None, spans))))
+}
+
+fn match_write(checker: ExprChecker&, span: Span, library: FormatLibrary&, write: HirId,
+    next: HirId, result_type: TypeId, failure: FormatFailure) -> Result<HirId, AnalysisError> {
+    let ok = ok_pattern(checker, span, library.result_instance)?;
+    let ok_body = checker.coerce(next, result_type)?;
+    let name = hidden_name(span, "error");
+    defer name.drop();
+    let previous = checker.scope;
+    let scope = checker.ctx.session.symbols.create_scope(Option<ScopeId>.Some(previous))?;
+    checker.scope = scope;
+    let failed = error_pattern(checker, span, library.result_instance, name.as_str())?;
+    let interned = checker.ctx.session.names.intern(name.as_str());
+    let symbol = match checker.ctx.session.symbols.lookup(scope, interned) {
+        Some(value) => value,
+        None => {
+            checker.scope = previous;
+            return Result<HirId, AnalysisError>.Err(AnalysisError.internal("format error binding is missing"));
+        },
+    };
+    let held = variable(checker, span, symbol, true);
+    let error_body = match &failure {
+        Panic => {
+            let message = message_call(checker, span, library.io_error_type, held)?;
+            panic_call(checker, span, message)
+        },
+        Propagate => result_variant(checker, span, library, "Err", held)?,
+    };
+    checker.scope = previous;
+    let coerced_error = checker.coerce(error_body, result_type)?;
+    let arms = Vec<HirMatchArm>.new();
+    arms.push(HirMatchArm(checker.ctx.span(checker.unit, span), ok, Option<HirId>.None, ok_body, MatchArmOrigin.Synthetic));
+    arms.push(HirMatchArm(checker.ctx.span(checker.unit, span), failed, Option<HirId>.None, coerced_error, MatchArmOrigin.Synthetic));
+    Result<HirId, AnalysisError>.Ok(checker.node(span, result_type, false, HirKind.Match(HirMatch(write, arms, false))))
+}
+
+fn chain(checker: ExprChecker&, library: FormatLibrary&, receiver: HirId, parts: Vec<FormatPart>&,
+    index: u64, tail: HirId, tail_type: TypeId, failure: FormatFailure) -> Result<HirId, AnalysisError> {
+    if index >= parts.len() {
+        return Result<HirId, AnalysisError>.Ok(tail);
+    }
+
+    let write_span = match &(*parts)[index] {
+        Literal(text, span) => *span,
+        Value(expr, span) => *span,
+    };
+    let write = match &(*parts)[index] {
+        Literal(text, span) => write_str_call(checker, *span, *span, receiver, library.formatter_type, text.as_str())?,
+        Value(expr, span) => {
+            let value = checker.expression(*expr)?;
+
+            if checker.type_of(value) == checker.ctx.primitives.never {
+                // A non-returning interpolation skips its own formatting call and all later positions.
+                let statements = Vec<HirId>.new();
+                statements.push(value);
+                return Result<HirId, AnalysisError>.Ok(checker.node(*span, checker.ctx.primitives.never, false, HirKind.Block(HirBlock(statements))));
+            }
+
+            write_value_call(checker, *span, receiver, library, value)?
+        },
+    };
+    let next = chain(checker, library, receiver, parts, index + 1u64, tail, tail_type, failure)?;
+    match_write(checker, write_span, library, write, next, tail_type, failure)
+}
+
+fn block(checker: ExprChecker&, span: Span, statements: Vec<HirId>, type_id: TypeId) -> HirId {
+    checker.node(span, type_id, false, HirKind.Block(HirBlock(statements)))
+}
+
+// A single writable text expression lowers to one match that continues on success.
+fn single_write(checker: ExprChecker&, span: Span, library: FormatLibrary&, write: HirId,
+    next: HirId, failure: FormatFailure) -> Result<HirId, AnalysisError> {
+    match_write(checker, span, library, write, next, checker.ctx.primitives.void, failure)
+}
+
+fn owned_string(checker: ExprChecker&, span: Span, library: FormatLibrary&, parts: Vec<FormatPart>&) -> Result<HirId, AnalysisError> {
+    let statements = Vec<HirId>.new();
+    let owned = string_new(checker, span, library.string_type)?;
+    let (declaration, value) = declare(checker, span, "value", owned)?;
+    statements.push(declaration);
+    let cleanup = drop_call(checker, span, library.string_type, value)?;
+    statements.push(checker.node(span, checker.ctx.primitives.void, false, HirKind.Defer(cleanup)));
+    let writer = call_function1(checker, span, library.string_writer, reference_of(checker, span, variable(checker, span, value, true)))?;
+    let (writer_declaration, writer_symbol) = declare(checker, span, "writer", writer)?;
+    statements.push(writer_declaration);
+    let formatter = call_function1(checker, span, library.formatter_for, reference_of(checker, span, variable(checker, span, writer_symbol, true)))?;
+    let (formatter_declaration, formatter_symbol) = declare(checker, span, "formatter", formatter)?;
+    statements.push(formatter_declaration);
+    let receiver = formatter_receiver(checker, span, formatter_symbol);
+    let unit = void_value(checker, span);
+    statements.push(chain(checker, library, receiver, parts, 0u64, unit, checker.ctx.primitives.void, FormatFailure.Panic)?);
+    let (result_declaration, result_symbol) = declare(checker, span, "result", variable(checker, span, value, false))?;
+    statements.push(result_declaration);
+    let replacement = string_new(checker, span, library.string_type)?;
+    let assignment = checker.node(span, checker.ctx.primitives.void, false,
+        HirKind.Binary(HirBinary(BinaryOperator.Assign, variable(checker, span, value, true), checker.coerce(replacement, library.string_type)?)));
+    statements.push(assignment);
+    statements.push(variable(checker, span, result_symbol, false));
+    Result<HirId, AnalysisError>.Ok(block(checker, span, statements, library.string_type))
+}
+
+fn append_target(checker: ExprChecker&, span: Span, library: FormatLibrary&, target: Expr&, parts: Vec<FormatPart>&) -> Result<HirId, AnalysisError> {
+    let target_span = target.span;
+    let value = checker.expression(target)?;
+    let target_type = checker.type_of(value);
+    let inner = borrowed_inner(checker, target_type)?;
+    let valid = match &inner {
+        Some(inner_type) => *inner_type == library.string_type,
+        None => false,
+    };
+
+    if !valid {
+        return Result<HirId, AnalysisError>.Err(checker.ctx.error(checker.unit, target_span, DiagnosticCode.Type, "'@append' requires a 'String&' target"));
+    }
+
+    let statements = Vec<HirId>.new();
+    let (declaration, symbol) = declare(checker, span, "append_target", value)?;
+    statements.push(declaration);
+    let borrowed = checker.coerce(variable(checker, span, symbol, false), checker.ctx.session.types.reference(library.string_type))?;
+    let writer = call_function1(checker, span, library.string_writer, borrowed)?;
+    let (writer_declaration, writer_symbol) = declare(checker, span, "append_writer", writer)?;
+    statements.push(writer_declaration);
+    let formatter = call_function1(checker, span, library.formatter_for, reference_of(checker, span, variable(checker, span, writer_symbol, true)))?;
+    let (formatter_declaration, formatter_symbol) = declare(checker, span, "append_formatter", formatter)?;
+    statements.push(formatter_declaration);
+    let receiver = formatter_receiver(checker, span, formatter_symbol);
+    let unit = void_value(checker, span);
+    statements.push(chain(checker, library, receiver, parts, 0u64, unit, checker.ctx.primitives.void, FormatFailure.Panic)?);
+    Result<HirId, AnalysisError>.Ok(block(checker, span, statements, checker.ctx.primitives.void))
+}
+
+fn writer_target(checker: ExprChecker&, span: Span, library: FormatLibrary&, target: Expr&, parts: Vec<FormatPart>&) -> Result<HirId, AnalysisError> {
+    let target_span = target.span;
+    let value = checker.expression(target)?;
+    let target_type = checker.type_of(value);
+    let inner = borrowed_inner(checker, target_type)?;
+    let statements = Vec<HirId>.new();
+    let (declaration, symbol) = declare(checker, span, "write_target", value)?;
+    statements.push(declaration);
+    let receiver: HirId = HirId(0);
+
+    if inner.is_none() {
+        return Result<HirId, AnalysisError>.Err(checker.ctx.error(checker.unit, target_span, DiagnosticCode.Type, "'@write' requires a borrowed target"));
+    }
+
+    let borrowed_type = *inner.unwrap();
+    let borrowed = checker.coerce(variable(checker, span, symbol, false), checker.ctx.session.types.reference(borrowed_type))?;
+
+    if borrowed_type == library.formatter_type {
+        receiver = borrowed;
+    } else {
+        let formatter = call_function1(checker, span, library.formatter_for, borrowed)?;
+        let (formatter_declaration, formatter_symbol) = declare(checker, span, "write_formatter", formatter)?;
+        statements.push(formatter_declaration);
+        receiver = formatter_receiver(checker, span, formatter_symbol);
+    }
+
+    let tail = result_variant(checker, span, library, "Ok", unit_value(checker, span, library.unit_type))?;
+    statements.push(chain(checker, library, receiver, parts, 0u64, tail, library.result_instance, FormatFailure.Propagate)?);
+    Result<HirId, AnalysisError>.Ok(block(checker, span, statements, library.result_instance))
+}
+
+fn printer(checker: ExprChecker&, span: Span, library: FormatLibrary&, parts: Vec<FormatPart>&, standard_output: bool, newline: bool) -> Result<HirId, AnalysisError> {
+    let statements = Vec<HirId>.new();
+    let factory = if standard_output { library.stdout_printer } else { library.stderr_printer };
+    let target = call_function0(checker, span, factory)?;
+    let (target_declaration, target_symbol) = declare(checker, span, "print_target", target)?;
+    statements.push(target_declaration);
+    let formatter = call_function1(checker, span, library.formatter_for, reference_of(checker, span, variable(checker, span, target_symbol, true)))?;
+    let (formatter_declaration, formatter_symbol) = declare(checker, span, "print_formatter", formatter)?;
+    statements.push(formatter_declaration);
+    let receiver = formatter_receiver(checker, span, formatter_symbol);
+    let finish_name = checker.ctx.session.names.intern("finish");
+    let arguments = Vec<TypeId>.new();
+    defer arguments.drop();
+    let method = lookup_method_args(checker.ctx, checker.type_of(target), finish_name, Option<TypeId>.None,
+        Option<Vec<TypeId>&>.Some(&arguments), checker.ctx.span(checker.unit, span))?;
+    let finish_receiver = reference_of(checker, span, variable(checker, span, target_symbol, true));
+    let finish_values = Vec<HirId>.new();
+    defer finish_values.drop();
+    let finish = checker.call_values(span, method, &finish_values, Option<HirId>.Some(finish_receiver), Option<Span>.None)?;
+    let unit = void_value(checker, span);
+    let finish_tail = single_write(checker, span, library, finish, unit, FormatFailure.Panic)?;
+    let tail = if newline {
+        let line = write_str_call(checker, span, span, receiver, library.formatter_type, "\n")?;
+        single_write(checker, span, library, line, finish_tail, FormatFailure.Panic)?
+    } else {
+        finish_tail
+    };
+    statements.push(chain(checker, library, receiver, parts, 0u64, tail, checker.ctx.primitives.void, FormatFailure.Panic)?);
+    Result<HirId, AnalysisError>.Ok(block(checker, span, statements, checker.ctx.primitives.void))
+}
+
+pub fn lower_format(checker: ExprChecker&, span: Span, destination: FormatDestination, parts: Vec<FormatPart>&) -> Result<HirId, AnalysisError> {
+    let library = load_library(checker)?;
+    match &destination {
+        OwnedString => owned_string(checker, span, &library, parts),
+        Append(target) => append_target(checker, span, &library, *target, parts),
+        Writer(target) => writer_target(checker, span, &library, *target, parts),
+        Stdout(newline) => printer(checker, span, &library, parts, true, *newline),
+        Stderr(newline) => printer(checker, span, &library, parts, false, *newline),
+    }
+}

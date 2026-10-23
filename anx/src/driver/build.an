@@ -1,6 +1,6 @@
 from std.core.drop import Drop;
 from std.core.fs import create_dir_all, read_to_string, resolve, write_string;
-from std.core.io import IoErrorKind, eprint, eprintln;
+from std.core.io import IoErrorKind;
 from std.core.path import Path, PathBuf;
 from std.core.process import Command, ExitStatus;
 from anx.diagnostics.model import Diagnostic;
@@ -19,13 +19,13 @@ fn release_paths(values: Vec<PathBuf>&) {
 }
 
 fn write_diagnostic(item: Diagnostic&) {
-    eprint("error[");
-    eprint(item.code());
-    eprint("]: ");
-    match item.path() { Some(path) => { eprint(path); eprint(": "); }, None => {}, }
-    eprintln(item.message());
+    @eprint("error[");
+    @eprint(f"{item.code()}");
+    @eprint("]: ");
+    match item.path() { Some(path) => { @eprint(f"{path}"); @eprint(": "); }, None => {}, }
+    @eprintln(f"{item.message()}");
     match item.hint() {
-        Some(hint) => { eprint("  hint: "); eprintln(hint); },
+        Some(hint) => { @eprint("  hint: "); @eprintln(f"{hint}"); },
         None => {},
     }
 }
@@ -100,8 +100,8 @@ fn load_project_for_build(start: str, profile: Option<BuildProfile&>) -> Option<
     let std_root = match standard_library_root() {
         Ok(value) => value,
         Err(message) => {
-            eprint("error: ");
-            eprintln(message.as_str());
+            @eprint("error: ");
+            @eprintln(f"{message.as_str()}");
             message.drop();
             return Option<Project>.None;
         },
@@ -118,7 +118,7 @@ fn load_project_for_build(start: str, profile: Option<BuildProfile&>) -> Option<
             let message = String.from(&"error[AX001]: no package.anx found in ");
             message.push_str(resolved.as_str());
             message.push_str(" or any parent directory\n");
-            eprint(message.as_str());
+            @eprint(f"{message.as_str()}");
             message.drop();
             resolved.drop();
             return Option<Project>.None;
@@ -131,7 +131,7 @@ fn load_project_for_build(start: str, profile: Option<BuildProfile&>) -> Option<
     if report_diagnostics(&report) { return Option<Project>.None; }
     let project = match report.take_project() {
         Some(value) => value,
-        None => { eprintln("error: could not load project"); return Option<Project>.None; },
+        None => { @eprintln("error: could not load project"); return Option<Project>.None; },
     };
     loaded = true;
     Option<Project>.Some(project)
@@ -157,7 +157,7 @@ fn compiler_command(program: str, project: Project&, target: str, level: Option<
     command.interruptible(true);
     let root_index = match project.package_index(project.root_package()) {
         Some(value) => value,
-        None => { eprintln("error: project root package is missing"); return false; },
+        None => { @eprintln("error: project root package is missing"); return false; },
     };
     command.current_dir(project.package(root_index).root());
     command.arg("--packages");
@@ -216,8 +216,8 @@ fn compiler_command(program: str, project: Project&, target: str, level: Option<
                 },
                 None => Option<i64>.None,
             }
-            eprint("error: could not start YIAN compiler: ");
-            eprintln(problem.msg());
+            @eprint("error: could not start YIAN compiler: ");
+            @eprintln(f"{problem.msg()}");
             problem.drop();
             return false;
         },
@@ -262,24 +262,24 @@ pub fn compile_loaded(project: Project&, target: str, level: Option<u8>, release
     runtime_profile_dir: Option<str>, profile: Option<BuildProfile&>) -> bool {
     let compiler = match compiler_program() {
         Ok(value) => value,
-        Err(message) => { eprint("error: "); eprintln(message.as_str()); message.drop(); return false; },
+        Err(message) => { @eprint("error: "); @eprintln(f"{message.as_str()}"); message.drop(); return false; },
     };
     defer compiler.drop();
 
     let root_index = match project.package_index(project.root_package()) {
         Some(value) => value,
-        None => { eprintln("error: project root package is missing"); return false; },
+        None => { @eprintln("error: project root package is missing"); return false; },
     };
     let root_package = project.package(root_index);
     if root_package.kind() == PackageKind.Lib && target == "exe" {
-        eprintln("error: 'anx build' is not supported for kind 'lib' packages: this stage produces no library artifact");
+        @eprintln("error: 'anx build' is not supported for kind 'lib' packages: this stage produces no library artifact");
         return false;
     }
     let map_token = profile_begin(profile, "anx.package_map");
     let map_result = package_map_path(project);
     let map = match map_result {
         Ok(value) => { profile_finish(profile, map_token, true); value },
-        Err(message) => { profile_finish(profile, map_token, false); eprint("error: "); eprintln(message.as_str()); message.drop(); return false; },
+        Err(message) => { profile_finish(profile, map_token, false); @eprint("error: "); @eprintln(f"{message.as_str()}"); message.drop(); return false; },
     };
     defer map.drop();
     let project_root = project.package(root_index).root();
@@ -323,8 +323,8 @@ pub fn run_executable(executable: PathBuf, arguments: Vec<String>&) -> i32 {
                 problem.drop();
                 return 130i32;
             }
-            eprint("error: could not start program: ");
-            eprintln(problem.msg());
+            @eprint("error: could not start program: ");
+            @eprintln(f"{problem.msg()}");
             problem.drop();
             return 1i32;
         },

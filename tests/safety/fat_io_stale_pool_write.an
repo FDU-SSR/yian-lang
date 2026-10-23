@@ -12,5 +12,5 @@ fn main() {
 
     let replacement: u8* = dyn[4] 0u8;
     replacement[0] = 88u8;
-    print(stale);
+    @print(f"{stale}");
 }

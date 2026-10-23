@@ -23,7 +23,6 @@ from llvm.observation import OperationObserver;
 from std.core.convert import From;
 from std.core.drop import Drop;
 from std.core.fs import create_dir_all, write, rename, remove_dir, remove_file, resolve;
-from std.core.io import eprintln;
 from std.core.iter import Iterator, IntoIterator;
 from std.core.path import Path;
 from std.core.process import temporary_directory;
@@ -269,7 +268,7 @@ impl BackendDriver {
             for current in library.as_str().chars() {
                 if !is_alphanumeric(current) && !"_+.-".contains_char(current) { valid = false; }
             }
-            if !valid { eprintln("error: invalid --link-lib name"); return false; }
+            if !valid { @eprintln("error: invalid --link-lib name"); return false; }
         }
         let started = match trace { Some(value) => value.start_pass("cfg_pipeline", "cfg", "HIR to CFG", ProfileKind.Stage), None => 0u64 };
         let destination_path = destination(config, self.session.analysis_session());
@@ -336,7 +335,7 @@ impl BackendDriver {
                 Err(problem) => {
                     match trace { Some(observer) => observer.fail("io.dump", dump_token), None => {}, }
                     match trace { Some(observer) => observer.fail("llvm_pipeline", pipeline_started), None => {}, }
-                    eprintln(problem.msg());
+                    @eprintln(f"{problem.msg()}");
                     problem.drop();
                     return false;
                 },
@@ -359,10 +358,10 @@ impl BackendDriver {
         let publish_directory_ready = false;
         defer { if !publish_directory_ready { fail_publish(trace, publish_directory_token); } };
         let parent = match Path.new(path.as_str()).parent() { Some(value) => if value.as_str() == "" { "." } else { value.as_str() }, None => ".", };
-        match create_dir_all(parent) { Ok(_) => {}, Err(problem) => { eprintln(problem.msg()); problem.drop(); return false; }, }
+        match create_dir_all(parent) { Ok(_) => {}, Err(problem) => { @eprintln(f"{problem.msg()}"); problem.drop(); return false; }, }
         let directory = match temporary_directory(parent) {
             Ok(value) => value,
-            Err(problem) => { eprintln(problem.msg()); problem.drop(); return false; },
+            Err(problem) => { @eprintln(f"{problem.msg()}"); problem.drop(); return false; },
         };
         match trace { Some(observer) => observer.finish("io.artifact_publish", publish_directory_token), None => {}, }
         publish_directory_ready = true;
@@ -377,7 +376,7 @@ impl BackendDriver {
             Ok(_) => match trace { Some(observer) => observer.finish("io.artifact_publish", publish_token), None => {}, },
             Err(problem) => {
                 match trace { Some(observer) => observer.fail("io.artifact_publish", publish_token), None => {}, }
-                eprintln(problem.msg());
+                @eprintln(f"{problem.msg()}");
                 problem.drop();
                 return false;
             },
@@ -426,7 +425,7 @@ impl BackendDriver {
                 Ok(_) => match trace { Some(observer) => observer.finish("io.artifact_publish", publish_started), None => {}, },
                 Err(problem) => {
                     match trace { Some(observer) => observer.fail("io.artifact_publish", publish_started), None => {}, }
-                    eprintln(problem.msg());
+                    @eprintln(f"{problem.msg()}");
                     problem.drop();
                     return false;
                 },
@@ -437,7 +436,7 @@ impl BackendDriver {
                 Ok(_) => match trace { Some(observer) => observer.finish("io.artifact_publish", publish_started), None => {}, },
                 Err(problem) => {
                     match trace { Some(observer) => observer.fail("io.artifact_publish", publish_started), None => {}, }
-                    eprintln(problem.msg());
+                    @eprintln(f"{problem.msg()}");
                     problem.drop();
                     return false;
                 },

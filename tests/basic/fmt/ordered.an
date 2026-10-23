@@ -1,0 +1,92 @@
+from std.core.fmt import Format, Formatter;
+from std.core.io import Write, IoError, IoErrorKind;
+
+struct Tracker {
+    first_calls: u64,
+    first_formats: u64,
+    second_calls: u64,
+    second_formats: u64,
+    after: bool,
+}
+
+struct Item { tracker: Tracker&, first: bool }
+
+impl Format for Item {
+    fn fmt(out: Formatter&) -> Result<(), IoError> {
+        if self.first { self.tracker.first_formats += 1; } else { self.tracker.second_formats += 1; }
+        out.write_str("M")
+    }
+}
+
+impl Tracker {
+    static fn new() -> Self {
+        Self(first_calls=0, first_formats=0, second_calls=0, second_formats=0, after=false)
+    }
+
+    fn first() -> Item {
+        self.first_calls += 1;
+        Item(tracker=self, first=true)
+    }
+
+    fn second() -> Item {
+        self.second_calls += 1;
+        self.after = true;
+        Item(tracker=self, first=false)
+    }
+}
+
+struct Sink {
+    data: String,
+    limit: u64,
+    fail_after: u64,
+    flushed: u64,
+}
+impl Sink {
+    static fn new(limit: u64, fail_after: u64) -> Self {
+        Self(data=String.new(), limit=limit, fail_after=fail_after, flushed=0)
+    }
+}
+impl Write for Sink {
+    fn write(data: u8[]) -> Result<u64, IoError> {
+        if self.data.len() >= self.fail_after {
+            return Result<u64, IoError>.Err(msg=IoError.new(IoErrorKind.BrokenPipe, "boom"));
+        }
+        let count = if self.limit < data.len() { self.limit } else { data.len() };
+        self.data.push_str(str.from_slice_unchecked(data[0u64..count]));
+        Result<u64, IoError>.Ok(val=count)
+    }
+    fn flush() -> Result<(), IoError> {
+        self.flushed += 1;
+        Result<(), IoError>.Ok(val=())
+    }
+}
+
+fn main() {
+    let tracker = Tracker.new();
+    let sink = Sink.new(2, 1);
+    let result = @write(&sink, f"A{tracker.first()}B{tracker.second()}");
+    match result {
+        Ok(_) => @panic("expected failure"),
+        Err(error) => {
+            defer error.drop();
+            assert error.kind() == IoErrorKind.BrokenPipe: "error kind";
+            assert error.msg() == "boom": "error message";
+        },
+    }
+    assert sink.data.as_str() == "A": "written prefix";
+    assert tracker.first_calls == 1: "first evaluated once";
+    assert tracker.first_formats == 1: "first formatted once";
+    assert tracker.second_calls == 0: "second not evaluated";
+    assert tracker.second_formats == 0: "second not formatted";
+    assert !tracker.after: "later expression skipped";
+    assert sink.flushed == 0: "no implicit flush";
+
+    // A successful write keeps its exact value and flush count.
+    let ok_sink = Sink.new(2, 100);
+    let ok = @write(&ok_sink, f"A{tracker.first()}B");
+    assert ok.is_ok(): "write success";
+    assert ok_sink.data.as_str() == "AMB": "partial writes complete";
+    assert ok_sink.flushed == 0: "success does not flush";
+
+    @println("ordered ok");
+}
