@@ -1,0 +1,12 @@
+// A runtime str is written as-is; interpolated references require an explicit dereference.
+fn main() {
+    let value: i32 = 41;
+    let reference: i32& = &value;
+    let text: str = "runtime {braces}";
+    @println(f"{*reference}");
+    @print(text);
+    @println("");
+    let owned: String = String.from(&"owned");
+    @print(owned.as_str());
+    @println("");
+}

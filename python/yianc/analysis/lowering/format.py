@@ -24,6 +24,7 @@ from yianc.analysis.unit import hir as HIR
 from yianc.analysis.unit.unit_data import UnitData
 from yianc.builtins import BuiltinKind
 from yianc.error import CompilerError
+from yianc.frontend.lex import token as Tok
 from yianc.frontend.lex.position import SrcSpan
 from yianc.frontend.parse import ast as AST
 from yianc.frontend.parse.operator import BinaryOperator, UnaryOperator
@@ -180,9 +181,11 @@ class FormatLowering:
     def __write_str(self, span: SrcSpan, receiver: HIR.Expr, text: str) -> HIR.Expr:
         return self.__expr.call_method(receiver, "write_str", None, [self.__str_literal(span, text)])
 
+    def __write_str_value(self, span: SrcSpan, receiver: HIR.Expr, value: HIR.Expr) -> HIR.Expr:
+        return self.__expr.call_method(receiver, "write_str", None, [value])
+
     def __write_value(self, span: SrcSpan, receiver: HIR.Expr, value: HIR.Expr) -> HIR.Expr:
-        argument = value if isinstance(self.__ctx.type_ctx[value.type_id], Type.RefType) else self.__address(span, value)
-        return self.__expr.call_method(receiver, "write_value", None, [argument])
+        return self.__expr.call_method(receiver, "write_value", None, [self.__address(span, value)])
 
     def __panicking(self, span: SrcSpan, error: HIR.Expr) -> HIR.Expr:
         message = self.__expr.call_method(error, "msg", None, [])
@@ -376,6 +379,24 @@ class FormatLowering:
         statements.append(self.__chain(receiver, parts, 0, tail, TypeCtx.void_id, FormatFailure.PANIC))
         return self.__block(span, statements, TypeCtx.void_id)
 
+    def __printer_str(self, span: SrcSpan, value: HIR.Expr, standard_output: bool, newline: bool) -> HIR.Expr:
+        library = self.__library
+        statements: list[HIR.Expr] = []
+        factory = library.stdout_printer if standard_output else library.stderr_printer
+        target_value = self.__call(span, factory, [])
+        target = self.__declare(span, "print_target", target_value)
+        statements.append(target[0])
+        formatter_value = self.__call(span, library.formatter_for, [self.__address(span, self.__var(span, target[1], target_value.type_id))])
+        formatter = self.__declare(span, "print_formatter", formatter_value)
+        statements.append(formatter[0])
+        receiver = self.__var(span, formatter[1], formatter_value.type_id)
+        finish = self.__expr.call_method(self.__var(span, target[1], target_value.type_id), "finish", None, [])
+        tail = self.__match(span, finish, self.__void(span), TypeCtx.void_id, FormatFailure.PANIC)
+        if newline:
+            tail = self.__match(span, self.__write_str(span, receiver, "\n"), tail, TypeCtx.void_id, FormatFailure.PANIC)
+        statements.append(self.__match(span, self.__write_str_value(span, receiver, value), tail, TypeCtx.void_id, FormatFailure.PANIC))
+        return self.__block(span, statements, TypeCtx.void_id)
+
     # ------------------------------------------------------------------
     # public entry points
     # ------------------------------------------------------------------
@@ -397,9 +418,14 @@ class FormatLowering:
             raise AnalysisError(f"named arguments are not supported for '{kind.spelling}'", node.span)
         if kind in (BuiltinKind.Print, BuiltinKind.Println, BuiltinKind.Eprint, BuiltinKind.Eprintln):
             template = node.args[0].value
-            parts = self.__template_parts(template)
-            return self.__printer(node.span, parts, kind in (BuiltinKind.Print, BuiltinKind.Println),
-                                  kind in (BuiltinKind.Println, BuiltinKind.Eprintln))
+            standard_output = kind in (BuiltinKind.Print, BuiltinKind.Println)
+            newline = kind in (BuiltinKind.Println, BuiltinKind.Eprintln)
+            if isinstance(template, AST.FormatTemplate):
+                return self.__printer(node.span, template.parts, standard_output, newline)
+            value = self.__expr.value(template)
+            if value.type_id != TypeCtx.str_id:
+                raise AnalysisError("format template must be an f-string or a 'str' value", template.span)
+            return self.__printer_str(node.span, value, standard_output, newline)
         target = node.args[0].value
         template = node.args[1].value
         parts = self.__template_parts(template)
@@ -412,8 +438,6 @@ class FormatLowering:
     def __template_parts(self, template: AST.Expr) -> list[AST.FormatPart]:
         if isinstance(template, AST.FormatTemplate):
             return template.parts
-        if isinstance(template, AST.Literal):
-            from yianc.frontend.lex import token as Tok
-            if isinstance(template.literal, Tok.StrLiteral):
-                return [AST.FormatLiteralPart(span=template.span, text=template.literal.value)]
+        if isinstance(template, AST.Literal) and isinstance(template.literal, Tok.StrLiteral):
+            return [AST.FormatLiteralPart(span=template.span, text=template.literal.value)]
         raise AnalysisError("format template must be an f-string or string literal", template.span)

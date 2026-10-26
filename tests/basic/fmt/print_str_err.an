@@ -1,0 +1,7 @@
+// A runtime str is written to stderr by @eprint and @eprintln.
+fn main() {
+    let text: str = "err";
+    @eprint(text);
+    @eprintln(text);
+    exit(3);
+}

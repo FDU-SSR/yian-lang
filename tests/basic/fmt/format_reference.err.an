@@ -1,0 +1,6 @@
+// f-string interpolation does not dereference references automatically.
+fn main() {
+    let value: i32 = 41;
+    let reference: i32& = &value;
+    @println(f"{reference}");
+}

@@ -282,6 +282,21 @@ fn write_str_call(checker: ExprChecker&, span: Span, text_span: Span, receiver: 
     checker.call_values(span, method, &values, Option<HirId>.Some(receiver), Option<Span>.None)
 }
 
+// A str value is written as bytes without interpreting braces or further formatting.
+fn write_str_value_call(checker: ExprChecker&, span: Span, receiver: HirId,
+    formatter_type: TypeId, value: HirId) -> Result<HirId, AnalysisError> {
+    let arguments = Vec<TypeId>.new();
+    defer arguments.drop();
+    arguments.push(checker.ctx.primitives.string);
+    let name = checker.ctx.session.names.intern("write_str");
+    let method = lookup_method_args(checker.ctx, formatter_type, name, Option<TypeId>.None,
+        Option<Vec<TypeId>&>.Some(&arguments), checker.ctx.span(checker.unit, span))?;
+    let values = Vec<HirId>.new();
+    defer values.drop();
+    values.push(value);
+    checker.call_values(span, method, &values, Option<HirId>.Some(receiver), Option<Span>.None)
+}
+
 fn standard_container(library: FormatLibrary&, definition: DefId) -> bool {
     definition == library.vec_definition || definition == library.option_definition
         || definition == library.result_definition || definition == library.map_definition
@@ -334,13 +349,8 @@ fn write_value_call(checker: ExprChecker&, span: Span, receiver: HirId, library:
     let format_trait = library.format_trait;
     let defaulted = default_type(checker.ctx, checker.type_of(value));
     let value = checker.coerce(value, defaulted)?;
-    let value_type = checker.type_of(value);
-    let choice: (TypeId, HirId) = match checker.ctx.session.types.require(value_type)? {
-        Reference(inner) => (*inner, value),
-        _ => (value_type, reference_of(checker, span, value)),
-    };
-    let actual = choice[0];
-    let argument = choice[1];
+    let actual = checker.type_of(value);
+    let argument = reference_of(checker, span, value);
 
     // Report a missing implementation at the interpolation expression before instantiating the adapter.
     let format_arguments = Vec<TypeId>.new();
@@ -649,6 +659,47 @@ fn printer(checker: ExprChecker&, span: Span, library: FormatLibrary&, parts: Ve
     Result<HirId, AnalysisError>.Ok(block(checker, span, statements, checker.ctx.primitives.void))
 }
 
+// A str argument is written as one raw value followed by the optional line break.
+fn printer_str(checker: ExprChecker&, span: Span, library: FormatLibrary&, argument: Expr&,
+    standard_output: bool, newline: bool) -> Result<HirId, AnalysisError> {
+    let value = checker.expression(argument)?;
+
+    if checker.type_of(value) != checker.ctx.primitives.string {
+        return Result<HirId, AnalysisError>.Err(checker.ctx.error(checker.unit, argument.span, DiagnosticCode.Type,
+            "format template must be an f-string or a 'str' value"));
+    }
+
+    let statements = Vec<HirId>.new();
+    let factory = if standard_output { library.stdout_printer } else { library.stderr_printer };
+    let target = call_function0(checker, span, factory)?;
+    let (target_declaration, target_symbol) = declare(checker, span, "print_target", target)?;
+    statements.push(target_declaration);
+    let formatter = call_function1(checker, span, library.formatter_for, reference_of(checker, span, variable(checker, span, target_symbol, true)))?;
+    let (formatter_declaration, formatter_symbol) = declare(checker, span, "print_formatter", formatter)?;
+    statements.push(formatter_declaration);
+    let receiver = formatter_receiver(checker, span, formatter_symbol);
+    let finish_name = checker.ctx.session.names.intern("finish");
+    let arguments = Vec<TypeId>.new();
+    defer arguments.drop();
+    let method = lookup_method_args(checker.ctx, checker.type_of(target), finish_name, Option<TypeId>.None,
+        Option<Vec<TypeId>&>.Some(&arguments), checker.ctx.span(checker.unit, span))?;
+    let finish_receiver = reference_of(checker, span, variable(checker, span, target_symbol, true));
+    let finish_values = Vec<HirId>.new();
+    defer finish_values.drop();
+    let finish = checker.call_values(span, method, &finish_values, Option<HirId>.Some(finish_receiver), Option<Span>.None)?;
+    let unit = void_value(checker, span);
+    let finish_tail = single_write(checker, span, library, finish, unit, FormatFailure.Panic)?;
+    let tail = if newline {
+        let line = write_str_call(checker, span, span, receiver, library.formatter_type, "\n")?;
+        single_write(checker, span, library, line, finish_tail, FormatFailure.Panic)?
+    } else {
+        finish_tail
+    };
+    let write = write_str_value_call(checker, span, receiver, library.formatter_type, value)?;
+    statements.push(single_write(checker, span, library, write, tail, FormatFailure.Panic)?);
+    Result<HirId, AnalysisError>.Ok(block(checker, span, statements, checker.ctx.primitives.void))
+}
+
 pub fn lower_format(checker: ExprChecker&, span: Span, destination: FormatDestination, parts: Vec<FormatPart>&) -> Result<HirId, AnalysisError> {
     let library = load_library(checker)?;
     match &destination {
@@ -657,5 +708,14 @@ pub fn lower_format(checker: ExprChecker&, span: Span, destination: FormatDestin
         Writer(target) => writer_target(checker, span, &library, *target, parts),
         Stdout(newline) => printer(checker, span, &library, parts, true, *newline),
         Stderr(newline) => printer(checker, span, &library, parts, false, *newline),
+    }
+}
+
+pub fn lower_format_str(checker: ExprChecker&, span: Span, destination: FormatDestination, argument: Expr&) -> Result<HirId, AnalysisError> {
+    let library = load_library(checker)?;
+    match &destination {
+        Stdout(newline) => printer_str(checker, span, &library, argument, true, *newline),
+        Stderr(newline) => printer_str(checker, span, &library, argument, false, *newline),
+        _ => Result<HirId, AnalysisError>.Err(AnalysisError.internal("runtime str formatting requires a print destination")),
     }
 }

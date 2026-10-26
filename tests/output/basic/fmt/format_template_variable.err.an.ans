@@ -1,1 +1,1 @@
-format template must be an f-string or string literal
+format template must be an f-string or a 'str' value
