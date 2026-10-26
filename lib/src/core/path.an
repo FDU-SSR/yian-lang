@@ -16,7 +16,8 @@ impl Path {
         end
     }
     pub fn file_name() -> Option<str> {
-        let bytes = self.value.as_slice(); let end = self.end();
+        let bytes = self.value.as_slice();
+        let end = self.end();
         if end == 0u64 || (end == 1u64 && bytes[0] == b'/') { return Option<str>.None; }
         let start = end;
         while start > 0u64 && bytes[start - 1u64] != b'/' { start -= 1u64; }
@@ -25,7 +26,8 @@ impl Path {
         Option<str>.Some(name)
     }
     pub fn parent() -> Option<Path> {
-        let bytes = self.value.as_slice(); let end = self.end();
+        let bytes = self.value.as_slice();
+        let end = self.end();
         if end == 0u64 || (end == 1u64 && bytes[0] == b'/') { return Option<Path>.None; }
         let start = end;
         while start > 0u64 && bytes[start - 1u64] != b'/' { start -= 1u64; }
@@ -34,7 +36,8 @@ impl Path {
     }
     pub fn extension() -> Option<str> {
         let name = match self.file_name() { Some(value) => value, None => return Option<str>.None, };
-        let bytes = name.as_slice(); let i = bytes.len();
+        let bytes = name.as_slice();
+        let i = bytes.len();
         while i > 0u64 {
             i -= 1u64;
             if bytes[i] == b'.' {
@@ -55,7 +58,8 @@ impl Path {
     }
     pub fn with_extension(extension: str) -> PathBuf {
         if self.file_name().is_none() { return PathBuf.from(self.value); }
-        let end = self.end(); let prefix_end = end;
+        let end = self.end();
+        let prefix_end = end;
         match self.extension() { Some(value) => { prefix_end = end - value.as_slice().len() - 1u64; }, None => {}, }
         let prefix = str.from_slice_unchecked(self.value.as_slice()[0u64..prefix_end]);
         let output = String.from(&prefix);

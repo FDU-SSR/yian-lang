@@ -48,7 +48,7 @@ fn c_path(path: str) -> Result<Vec<u8>, IoError> {
 }
 fn path_status(status: i32, operation: str, path: str) -> Result<(), IoError> {
     match io_status(status, operation) {
-        Ok(_) => Result<(), IoError>.Ok(val= ()),
+        Ok(_) => Result<(), IoError>.Ok(val=()),
         Err(error) => {
             let contextual = error.with_path(path);
             error.drop();
@@ -59,9 +59,9 @@ fn path_status(status: i32, operation: str, path: str) -> Result<(), IoError> {
 ffi fn path_metadata(path: str, follow: i32) -> Result<Metadata, IoError> {
     let bytes = c_path(path)?;
     defer bytes.drop();
-    let(data, _) = @ffi_parts(bytes.as_slice());
+    let (data, _) = @ffi_parts(bytes.as_slice());
     let fields: u64[4] = [0u64, 0u64, 0u64, 0u64];
-    let(out, _) = @ffi_parts(fields.as_slice());
+    let (out, _) = @ffi_parts(fields.as_slice());
     path_status(yian_io_metadata(@ffi_ptr_cast<c_char>(data), follow, out), "metadata", path)?;
     Result<Metadata, IoError>.Ok(val=Metadata.from_fields(fields.as_slice()))
 }
@@ -79,20 +79,20 @@ pub fn try_exists(path: str) -> Result<bool, IoError> {
 pub ffi fn create_dir(path: str) -> Result<(), IoError> {
     let bytes = c_path(path)?;
     defer bytes.drop();
-    let(data, _) = @ffi_parts(bytes.as_slice());
+    let (data, _) = @ffi_parts(bytes.as_slice());
     path_status(yian_io_mkdir(@ffi_ptr_cast<c_char>(data)), "create directory", path)
 }
 pub fn create_dir_all(path: str) -> Result<(), IoError> {
-    if path.as_slice().len() == 0u64 { return Result<(), IoError>.Ok(val= ()); }
+    if path.as_slice().len() == 0u64 { return Result<(), IoError>.Ok(val=()); }
     match create_dir(path) {
-        Ok(_) => return Result<(), IoError>.Ok(val= ()),
+        Ok(_) => return Result<(), IoError>.Ok(val=()),
         Err(error) => {
             if error.kind() == IoErrorKind.AlreadyExists {
                 let info = match metadata(path) {
                     Ok(value) => value,
                     Err(problem) => { error.drop(); return Result<(), IoError>.Err(msg=problem); },
                 };
-                if info.is_dir() { error.drop(); return Result<(), IoError>.Ok(val= ()); }
+                if info.is_dir() { error.drop(); return Result<(), IoError>.Ok(val=()); }
                 return Result<(), IoError>.Err(msg=error);
             }
             if error.kind() != IoErrorKind.NotFound { return Result<(), IoError>.Err(msg=error); }
@@ -101,14 +101,14 @@ pub fn create_dir_all(path: str) -> Result<(), IoError> {
     }
     match Path.new(path).parent() { Some(parent) => { create_dir_all(parent.as_str())?; }, None => {}, }
     match create_dir(path) {
-        Ok(_) => Result<(), IoError>.Ok(val= ()),
+        Ok(_) => Result<(), IoError>.Ok(val=()),
         Err(error) => {
             if error.kind() == IoErrorKind.AlreadyExists {
                 let info = match metadata(path) {
                     Ok(value) => value,
                     Err(problem) => { error.drop(); return Result<(), IoError>.Err(msg=problem); },
                 };
-                if info.is_dir() { error.drop(); return Result<(), IoError>.Ok(val= ()); }
+                if info.is_dir() { error.drop(); return Result<(), IoError>.Ok(val=()); }
             }
             Result<(), IoError>.Err(msg=error)
         },
@@ -117,7 +117,7 @@ pub fn create_dir_all(path: str) -> Result<(), IoError> {
 ffi fn remove(path: str, directory: i32) -> Result<(), IoError> {
     let bytes = c_path(path)?;
     defer bytes.drop();
-    let(data, _) = @ffi_parts(bytes.as_slice());
+    let (data, _) = @ffi_parts(bytes.as_slice());
     path_status(yian_io_remove(@ffi_ptr_cast<c_char>(data), directory), "remove", path)
 }
 pub fn remove_file(path: str) -> Result<(), IoError> { remove(path, 0) }
@@ -127,8 +127,8 @@ pub ffi fn rename(from: str, to: str) -> Result<(), IoError> {
     defer a.drop();
     let b = c_path(to)?;
     defer b.drop();
-    let(left, _) = @ffi_parts(a.as_slice());
-    let(right, _) = @ffi_parts(b.as_slice());
+    let (left, _) = @ffi_parts(a.as_slice());
+    let (right, _) = @ffi_parts(b.as_slice());
     let status = yian_io_rename(@ffi_ptr_cast<c_char>(left), @ffi_ptr_cast<c_char>(right));
     if status < 0 {
         let error = IoError.from_os_error(-status, "rename");
@@ -138,18 +138,18 @@ pub ffi fn rename(from: str, to: str) -> Result<(), IoError> {
         first.drop();
         return Result<(), IoError>.Err(msg=result);
     }
-    Result<(), IoError>.Ok(val= ())
+    Result<(), IoError>.Ok(val=())
 }
 ffi fn resolved_path(path: str, mode: i32) -> Result<PathBuf, IoError> {
     let bytes = c_path(path)?;
     defer bytes.drop();
-    let(input, _) = @ffi_parts(bytes.as_slice());
+    let (input, _) = @ffi_parts(bytes.as_slice());
     let capacity = 256u64;
     loop {
         let buffer = Vec<u8>.with_capacity(capacity);
         let i = 0u64;
         while i < capacity { buffer.push(0u8); i += 1u64; }
-        let(output, _) = @ffi_parts(buffer.as_slice());
+        let (output, _) = @ffi_parts(buffer.as_slice());
         let count = if mode == 1i32 {
             yian_io_canonicalize(@ffi_ptr_cast<c_char>(input), output, capacity)
         } elif mode == 2i32 {
@@ -211,7 +211,7 @@ fn write_mode(path: str, data: u8[], mode: OpenMode) -> Result<(), IoError> {
         Err(error) => { let result = error.with_path(path); error.drop(); return Result<(), IoError>.Err(msg=result); },
     }
     match file.close() {
-        Ok(_) => Result<(), IoError>.Ok(val= ()),
+        Ok(_) => Result<(), IoError>.Ok(val=()),
         Err(error) => { let result = error.with_path(path); error.drop(); Result<(), IoError>.Err(msg=result) },
     }
 }
@@ -230,7 +230,7 @@ pub fn write_atomic(path: str, data: u8[]) -> Result<(), IoError> {
         match create_atomic_temporary(temporary.as_str(), data) {
             Ok(_) => {
                 match rename(temporary.as_str(), path) {
-                    Ok(_) => { temporary.drop(); return Result<(), IoError>.Ok(val= ()); },
+                    Ok(_) => { temporary.drop(); return Result<(), IoError>.Ok(val=()); },
                     Err(error) => {
                         match remove_file(temporary.as_str()) { Ok(_) => {}, Err(problem) => problem.drop(), }
                         temporary.drop();
@@ -317,7 +317,7 @@ fn create_atomic_temporary(path: str, data: u8[]) -> Result<(), IoError> {
         },
     }
     complete = true;
-    Result<(), IoError>.Ok(val= ())
+    Result<(), IoError>.Ok(val=())
 }
 pub fn write_string(path: str, data: str) -> Result<(), IoError> { write(path, data.as_slice()) }
 pub fn append(path: str, data: u8[]) -> Result<(), IoError> { write_mode(path, data, OpenMode.Append) }
@@ -337,7 +337,7 @@ impl Directory {
     static pub ffi fn open(path: str) -> Result<Self, IoError> {
         let bytes = c_path(path)?;
         defer bytes.drop();
-        let(data, _) = @ffi_parts(bytes.as_slice());
+        let (data, _) = @ffi_parts(bytes.as_slice());
         let error = 0i32;
         let handle = yian_io_dir_open(@ffi_ptr_cast<c_char>(data), @ffi_addr(&error));
         if handle == @ffi_null<DirHandle>() {
@@ -352,7 +352,7 @@ impl Directory {
         if self.handle == @ffi_null<DirHandle>() { return Result<Option<DirEntry>, IoError>.Err(msg=IoError.new(IoErrorKind.InvalidInput, "directory is closed")); }
         let buffer: u8[4096];
         @assume_init(buffer);
-        let(data, count) = @ffi_parts(buffer.as_slice());
+        let (data, count) = @ffi_parts(buffer.as_slice());
         let length = yian_io_dir_next(self.handle, data, count);
         if length < 0 {
             let error = IoError.from_os_error(i32(-length), "read directory");
@@ -378,7 +378,7 @@ impl Directory {
         Result<Option<DirEntry>, IoError>.Ok(val=Option<DirEntry>.Some(DirEntry(name=String.from(&text), path=path, kind=info.file_type())))
     }
     pub ffi fn close() -> Result<(), IoError> {
-        if self.handle == @ffi_null<DirHandle>() { return Result<(), IoError>.Ok(val= ()); }
+        if self.handle == @ffi_null<DirHandle>() { return Result<(), IoError>.Ok(val=()); }
         let handle = self.handle;
         self.handle = @ffi_null<DirHandle>();
         path_status(yian_io_dir_close(handle), "close directory", self.path.as_str())

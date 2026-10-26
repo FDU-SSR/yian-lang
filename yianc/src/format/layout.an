@@ -98,7 +98,7 @@ impl Layout {
     fn breaks(index: u64, trivia: Gap&) -> bool {
         let token = &self.tokens[index];
         let previous = &self.tokens[index - 1];
-        if (previous.is_punct(PunctuatorKind.LBrace) || previous.is_punct(PunctuatorKind.Semicolon)) && !self.flags[index - 1].inline_ { return true; }
+        if (previous.is_punct(PunctuatorKind.LBrace) || (previous.is_punct(PunctuatorKind.Semicolon) && self.parens == 0)) && !self.flags[index - 1].inline_ { return true; }
         if token.is_punct(PunctuatorKind.RBrace) && !self.flags[index].inline_ { return true; }
         if previous.is_punct(PunctuatorKind.RBrace) {
             if token.is_keyword(KeywordKind.Else) || token.is_keyword(KeywordKind.Elif) { return false; }
@@ -112,6 +112,7 @@ impl Layout {
         let previous = &self.tokens[index - 1];
         if self.flags[index].closure_close || self.flags[index - 1].closure_open { return false; }
         if self.flags[index - 1].closure_close { return true; }
+        if (token.is_punct(PunctuatorKind.Equal) && self.flags[index].tight) || (previous.is_punct(PunctuatorKind.Equal) && self.flags[index - 1].tight) { return false; }
         if token.is_punct(PunctuatorKind.LAngle) || token.is_punct(PunctuatorKind.RAngle) || previous.is_punct(PunctuatorKind.LAngle) { return false; }
         if previous.is_punct(PunctuatorKind.RAngle) {
             return !(hug_before(token) || token.is_punct(PunctuatorKind.LParen) || token.is_punct(PunctuatorKind.LBracket) || token.is_punct(PunctuatorKind.Star) || token.is_punct(PunctuatorKind.Ampersand) || token.is_punct(PunctuatorKind.RAngle));
@@ -127,7 +128,6 @@ impl Layout {
         if previous.is_punct(PunctuatorKind.Exclamation) {
             return !(word(token) || token.is_punct(PunctuatorKind.LParen) || token.is_punct(PunctuatorKind.LBracket) || token.is_punct(PunctuatorKind.Star) || token.is_punct(PunctuatorKind.Ampersand));
         }
-        if (token.is_punct(PunctuatorKind.Equal) && self.flags[index].tight) || (previous.is_punct(PunctuatorKind.Equal) && self.flags[index - 1].tight) { return false; }
         if token.is_punct(PunctuatorKind.At) || binary(token) || token.is_punct(PunctuatorKind.Minus) || token.is_punct(PunctuatorKind.Plus) { return true; }
         if previous.is_punct(PunctuatorKind.Colon) || previous.is_punct(PunctuatorKind.Comma) { return true; }
         if previous.is_punct(PunctuatorKind.Minus) || previous.is_punct(PunctuatorKind.Plus) { return !prefix(previous, self.tokens, index - 1); }

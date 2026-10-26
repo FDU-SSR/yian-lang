@@ -62,24 +62,14 @@ fn layout_is_clean(text: str) -> bool {
     true
 }
 
-fn main() {
-    let input_path = "../../../tests/format/fixtures/comments/nested_generics.an";
-    let expected_path = "../../../tests/format/fixtures/comments/nested_generics.expected.an";
+fn check_fixture(input_path: str, expected_path: str) -> String {
     let input = read_to_string(input_path).unwrap(); defer input.drop();
     let expected = read_to_string(expected_path).unwrap(); defer expected.drop();
-    let formatted = format_text(input.as_str(), input_path).unwrap().unwrap(); defer formatted.drop();
+    let formatted = *format_text(input.as_str(), input_path).unwrap().unwrap();
 
     assert formatted.as_str() == expected.as_str(): "native formatter matches the fixed fixture expectation";
-    assert formatted.as_str().contains("/* before let */") &&
-        formatted.as_str().contains("// pointer comment") &&
-        formatted.as_str().contains("// standalone comment"):
-        "block, trailing and standalone comments survive";
     assert layout_is_clean(formatted.as_str()):
         "formatted fixture has clean layout and exactly one final newline";
-    assert formatted.as_str().contains("Vec<Vec<i32>> = values") &&
-        formatted.as_str().contains("i32* = **raw") &&
-        formatted.as_str().contains("return [1, 2];"):
-        "generic, pointer and keyword operand spacing is canonical";
 
     let formatted_again = format_text(formatted.as_str(), input_path).unwrap().unwrap();
     assert formatted_again.as_str() == formatted.as_str(): "formatting is idempotent";
@@ -88,4 +78,26 @@ fn main() {
     let before = Lexer.new(input.as_str()).run().unwrap(); defer drop_tokens(before);
     let after = Lexer.new(formatted.as_str()).run().unwrap(); defer drop_tokens(after);
     assert same_tokens(before, after): "formatting preserves token kind, spelling and order";
+    formatted
+}
+
+fn main() {
+    let formatted = check_fixture("../../../tests/format/fixtures/comments/nested_generics.an",
+        "../../../tests/format/fixtures/comments/nested_generics.expected.an");
+    defer formatted.drop();
+    assert formatted.as_str().contains("/* before let */") &&
+        formatted.as_str().contains("// pointer comment") &&
+        formatted.as_str().contains("// standalone comment"):
+        "block, trailing and standalone comments survive";
+    assert formatted.as_str().contains("Vec<Vec<i32>> = values") &&
+        formatted.as_str().contains("i32* = **raw") &&
+        formatted.as_str().contains("return [1, 2];"):
+        "generic, pointer and keyword operand spacing is canonical";
+
+    let brackets = check_fixture("../../../tests/format/fixtures/brackets/contexts.an",
+        "../../../tests/format/fixtures/brackets/contexts.expected.an");
+    brackets.drop();
+    let fields = check_fixture("../../../tests/format/fixtures/fields/construction.an",
+        "../../../tests/format/fixtures/fields/construction.expected.an");
+    fields.drop();
 }

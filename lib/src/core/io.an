@@ -47,7 +47,8 @@ impl IoError {
             _ => IoErrorKind.Other,
         };
         let message = String.from(&operation);
-        let buffer: u8[512]; @assume_init(buffer);
+        let buffer: u8[512];
+        @assume_init(buffer);
         let (data, capacity) = @ffi_parts(buffer.as_slice());
         let length = yian_io_error_message(code, data, capacity);
         if length >= 0i64 {
@@ -64,7 +65,8 @@ impl IoError {
     static pub fn other(msg: str) -> Self { Self.new(IoErrorKind.Other, msg) }
     pub fn with_path(path: str) -> Self {
         let text = String.from(&self.msg.as_str());
-        text.push_str(": "); text.push_str(path);
+        text.push_str(": ");
+        text.push_str(path);
         Self(kind=self.kind, msg=text, code=self.code)
     }
 }
@@ -97,7 +99,8 @@ pub trait Read {
     }
     fn read_to_bytes() -> Result<Vec<u8>, IoError> {
         let output = Vec<u8>.new();
-        let buffer: u8[4096]; @assume_init(buffer);
+        let buffer: u8[4096];
+        @assume_init(buffer);
         loop {
             let count = match self.read(buffer.as_slice()) {
                 Ok(n) => n,
@@ -162,7 +165,8 @@ impl OpenOptions {
         let fd = yian_io_open(@ffi_ptr_cast<c_char>(data), self.bits);
         if fd < 0 {
             let error = IoError.from_os_error(i32(-fd), "open");
-            let contextual = error.with_path(path); error.drop();
+            let contextual = error.with_path(path);
+            error.drop();
             return Result<File, IoError>.Err(msg=contextual);
         }
         Result<File, IoError>.Ok(val=File(descriptor=i32(fd)))
@@ -184,7 +188,8 @@ impl File {
     pub fn fd() -> i32 { self.descriptor }
     pub ffi fn close() -> Result<(), IoError> {
         if self.descriptor < 0 { return Result<(), IoError>.Ok(val=()); }
-        let fd = self.descriptor; self.descriptor = -1;
+        let fd = self.descriptor;
+        self.descriptor = -1;
         io_status(yian_io_close(fd), "close")
     }
     pub ffi fn metadata() -> Result<Metadata, IoError> {
@@ -214,7 +219,8 @@ impl Write for File {
 }
 impl Seek for File {
     pub ffi fn seek(position: SeekFrom) -> Result<u64, IoError> {
-        let offset: i64 = 0i64; let origin: i32 = 0;
+        let offset: i64 = 0i64;
+        let origin: i32 = 0;
         match position {
             Start(value) => {
                 if value > 9223372036854775807u64 { return Result<u64, IoError>.Err(msg=IoError.new(IoErrorKind.InvalidInput, "seek offset out of range")); }
@@ -278,7 +284,8 @@ impl Write for Stderr {
 pub trait BufRead {
     fn read_until(delimiter: u8) -> Result<Vec<u8>, IoError>;
     fn read_line() -> Result<Option<String>, IoError> {
-        let bytes = self.read_until(10u8)?; defer bytes.drop();
+        let bytes = self.read_until(10u8)?;
+        defer bytes.drop();
         if bytes.len() == 0u64 { return Result<Option<String>, IoError>.Ok(val=Option<String>.None); }
         let text = match str.from_slice(bytes.as_slice()) {
             Some(value) => value,
@@ -288,7 +295,8 @@ pub trait BufRead {
     }
 }
 fn buffer_of(capacity: u64) -> Vec<u8> {
-    let buffer = Vec<u8>.with_capacity(capacity); let i = 0u64;
+    let buffer = Vec<u8>.with_capacity(capacity);
+    let i = 0u64;
     while i < capacity { buffer.push(0u8); i += 1u64; }
     buffer
 }
@@ -327,7 +335,9 @@ impl<R> BufRead for BufReader<R> if R: Read {
         loop {
             match self.refill() { Ok(_) => {}, Err(error) => { output.drop(); return Result<Vec<u8>, IoError>.Err(msg=error); }, }
             if self.start == self.end { break; }
-            let byte = self.buffer[self.start]; self.start += 1u64; output.push(byte);
+            let byte = self.buffer[self.start];
+            self.start += 1u64;
+            output.push(byte);
             if byte == delimiter { break; }
         }
         Result<Vec<u8>, IoError>.Ok(val=output)
@@ -348,7 +358,8 @@ impl<W> BufWriter<W> if W: Write {
             if count == 0u64 { return Result<(), IoError>.Err(msg=IoError.new(IoErrorKind.WriteZero, "write made no progress")); }
             self.offset += count;
         }
-        self.buffer.clear(); self.offset = 0u64;
+        self.buffer.clear();
+        self.offset = 0u64;
         Result<(), IoError>.Ok(val=())
     }
     pub fn finish() -> Result<(), IoError> { self.flush() }

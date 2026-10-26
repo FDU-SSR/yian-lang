@@ -8,5 +8,7 @@ fn f(a: i32, arr: i32[4], holder: Holder) {
     let dynamic: i32* = dyn[8] i32;
     let mixed = wrap(a, [1, 2]);
     let tuple_type = Fn<(i32,), bool>;
+    let (a, b) = (1, 2);
+    let xs: i32[2] = [7; 2];
     return [a, a];
 }

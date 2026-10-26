@@ -76,9 +76,7 @@ fn shortest(mantissa: u64, exponent: u64, width: u64, bias: i32) -> Decimal {
         vp = mul_shift(upper, factor, shift);
         vm = mul_shift(lower, factor, shift);
         if q <= 21i32 {
-            if middle % 5u64 == 0u64 { middle_zero = multiple5(middle, u64(q)); }
-            elif accept { lower_zero = multiple5(lower, u64(q)); }
-            elif multiple5(upper, u64(q)) { vp -= 1u64; }
+            if middle % 5u64 == 0u64 { middle_zero = multiple5(middle, u64(q)); } elif accept { lower_zero = multiple5(lower, u64(q)); } elif multiple5(upper, u64(q)) { vp -= 1u64; }
         }
     } else {
         let q = (-e2 * 732923i32) >> 20i32;
@@ -104,14 +102,18 @@ fn shortest(mantissa: u64, exponent: u64, width: u64, bias: i32) -> Decimal {
             lower_zero = lower_zero && vm % 10u64 == 0u64;
             middle_zero = middle_zero && last == 0u64;
             last = vr % 10u64;
-            vr /= 10u64; vp /= 10u64; vm /= 10u64;
+            vr /= 10u64;
+            vp /= 10u64;
+            vm /= 10u64;
             removed += 1i32;
         }
         if lower_zero {
             while vm % 10u64 == 0u64 {
                 middle_zero = middle_zero && last == 0u64;
                 last = vr % 10u64;
-                vr /= 10u64; vp /= 10u64; vm /= 10u64;
+                vr /= 10u64;
+                vp /= 10u64;
+                vm /= 10u64;
                 removed += 1i32;
             }
         }
@@ -120,7 +122,9 @@ fn shortest(mantissa: u64, exponent: u64, width: u64, bias: i32) -> Decimal {
     } else {
         while vp / 10u64 > vm / 10u64 {
             last = vr % 10u64;
-            vr /= 10u64; vp /= 10u64; vm /= 10u64;
+            vr /= 10u64;
+            vp /= 10u64;
+            vm /= 10u64;
             removed += 1i32;
         }
         if vr == vm || last >= 5u64 { vr += 1u64; }
@@ -167,7 +171,7 @@ fn write_digits(out: Formatter&, coefficient: u64, exponent: i32, negative: bool
     let scientific = point - 1i32;
     if negative { out.write_str("-")?; }
     if scientific < -6i32 || scientific >= 21i32 {
-        out.write_str(str.from_slice_unchecked(buffer[start..(start + 1u64)]))?;
+        out.write_str(str.from_slice_unchecked(buffer[start.. (start + 1u64)]))?;
         if length > 1u64 {
             out.write_str(".")?;
             out.write_str(str.from_slice_unchecked(buffer[(start + 1u64)..20u64]))?;

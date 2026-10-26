@@ -63,7 +63,7 @@ pub fn binary(token: Token&) -> bool {
 }
 
 pub fn paren_space(token: Token&) -> bool {
-    match token.kind() { Keyword(kind) => match kind { If | Elif | While | For | Return | Assert | Defer | In | Match | Else => true, _ => false, }, _ => false, }
+    match token.kind() { Keyword(kind) => match kind { If | Elif | While | For | Return | Let | Assert | Defer | In | Match | Else => true, _ => false, }, _ => false, }
 }
 
 pub fn bracket_hugs(token: Token&, postfix: bool) -> bool {

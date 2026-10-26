@@ -39,7 +39,7 @@ fn parse_float_exponent(bytes: u8[], start: u64) -> Result<i64, ParseNumberError
         let current = bytes[position];
         if current == b'_' {
             if !previous_digit || position + 1u64 == bytes.len() ||
-                bytes[position + 1u64] < b'0' || bytes[position + 1u64] > b'9' {
+            bytes[position + 1u64] < b'0' || bytes[position + 1u64] > b'9' {
                 return Result<i64, ParseNumberError>.Err(msg=ParseNumberError.InvalidSeparator);
             }
             previous_digit = false;
@@ -50,8 +50,7 @@ fn parse_float_exponent(bytes: u8[], start: u64) -> Result<i64, ParseNumberError
             return Result<i64, ParseNumberError>.Err(msg=ParseNumberError.InvalidExponent);
         }
         let digit = i64(current - b'0');
-        if value > (limit - digit) / 10i64 { value = limit; }
-        else { value = value * 10i64 + digit; }
+        if value > (limit - digit) / 10i64 { value = limit; } else { value = value * 10i64 + digit; }
         previous_digit = true;
         position += 1u64;
     }
@@ -69,7 +68,7 @@ fn read_float(bytes: u8[]) -> Result<ParsedFloat, ParseNumberError> {
     let capacity: u64 = 19u64;
     if length >= 2u64 && bytes[0u64] == b'0' {
         if bytes[1u64] == b'b' || bytes[1u64] == b'B' ||
-            bytes[1u64] == b'o' || bytes[1u64] == b'O' {
+        bytes[1u64] == b'o' || bytes[1u64] == b'O' {
             return Result<ParsedFloat, ParseNumberError>.Err(msg=ParseNumberError.UnsupportedRadix);
         }
         if bytes[1u64] == b'x' || bytes[1u64] == b'X' {
@@ -103,7 +102,7 @@ fn read_float(bytes: u8[]) -> Result<ParsedFloat, ParseNumberError> {
             continue;
         }
         if (radix == 10u32 && (current == b'e' || current == b'E')) ||
-            (radix == 16u32 && (current == b'p' || current == b'P')) {
+        (radix == 16u32 && (current == b'p' || current == b'P')) {
             if !any_digit {
                 return Result<ParsedFloat, ParseNumberError>.Err(msg=ParseNumberError.MissingDigits);
             }
@@ -145,8 +144,7 @@ fn read_float(bytes: u8[]) -> Result<ParsedFloat, ParseNumberError> {
         return Result<ParsedFloat, ParseNumberError>.Err(msg=ParseNumberError.MissingDigits);
     }
     let displacement = i64(significant - retained) - i64(fractional);
-    if radix == 16u32 { exponent += displacement * 4i64; }
-    else { exponent += displacement; }
+    if radix == 16u32 { exponent += displacement * 4i64; } else { exponent += displacement; }
     return Result<ParsedFloat, ParseNumberError>.Ok(val=ParsedFloat(
         mantissa=mantissa, exponent=exponent, radix=radix,
         retained=retained, end=position, truncated=truncated));
@@ -215,9 +213,7 @@ impl FloatDecimal {
         let read: u64 = 0u64;
         let window: u64 = 0u64;
         while window >> bits == 0u64 {
-            if read < count { window = window * 10u64 + u64(self.digits[read]); }
-            elif window != 0u64 { window *= 10u64; }
-            else { self.count = 0u64; self.point = 0i64; return; }
+            if read < count { window = window * 10u64 + u64(self.digits[read]); } elif window != 0u64 { window *= 10u64; } else { self.count = 0u64; self.point = 0i64; return; }
             read += 1u64;
         }
         self.point -= i64(read - 1u64);
@@ -225,8 +221,7 @@ impl FloatDecimal {
         let write: u64 = 0u64;
         loop {
             let digit = u8(window >> bits);
-            if write < 800u64 { self.digits[write] = digit; }
-            elif digit != 0u8 { self.truncated = true; }
+            if write < 800u64 { self.digits[write] = digit; } elif digit != 0u8 { self.truncated = true; }
             write += 1u64;
             window &= mask;
             if read < count {
@@ -266,8 +261,7 @@ impl FloatDecimal {
         let index: u64 = 0u64;
         while index < length {
             let digit = output[write + index];
-            if index < 800u64 { self.digits[index] = digit; }
-            elif digit != 0u8 { self.truncated = true; }
+            if index < 800u64 { self.digits[index] = digit; } elif digit != 0u8 { self.truncated = true; }
             index += 1u64;
         }
         self.count = length;

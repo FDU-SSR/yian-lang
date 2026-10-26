@@ -345,7 +345,7 @@ impl PipeWriter {
 
 impl Read for PipeReader {
     pub ffi fn read(buffer: u8[]) -> Result<u64, IoError> {
-        let(data, length) = @ffi_parts(buffer);
+        let (data, length) = @ffi_parts(buffer);
         let count = yian_child_read(self.owner, self.stream, data, length);
         if count < 0 { return Result<u64, IoError>.Err(IoError.from_os_error(i32(-count), "read child pipe")); }
         Result<u64, IoError>.Ok(u64(count))
@@ -354,7 +354,7 @@ impl Read for PipeReader {
 
 impl Write for PipeWriter {
     pub ffi fn write(data: u8[]) -> Result<u64, IoError> {
-        let(bytes, length) = @ffi_parts(data);
+        let (bytes, length) = @ffi_parts(data);
         let count = yian_child_write(self.owner, self.stream, bytes, length);
         if count < 0 { return Result<u64, IoError>.Err(IoError.from_os_error(i32(-count), "write child pipe")); }
         Result<u64, IoError>.Ok(u64(count))
@@ -506,7 +506,7 @@ pub ffi fn executable_path() -> Result<String, IoError> {
         let buffer = Vec<u8>.with_capacity(capacity);
         let i = 0u64;
         while i < capacity { buffer.push(0u8); i += 1u64; }
-        let(data, _) = @ffi_parts(buffer.as_slice());
+        let (data, _) = @ffi_parts(buffer.as_slice());
         let length = yian_process_executable_path(data, capacity);
         if length == -34i64 {
             buffer.drop();
