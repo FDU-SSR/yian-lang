@@ -1,0 +1,8 @@
+[package]
+name = "fmt"
+kind = "hybrid"
+version = "0.1.0"
+entry = "src/main.an"
+
+[dependencies]
+yianc = { path = "../yianc" }

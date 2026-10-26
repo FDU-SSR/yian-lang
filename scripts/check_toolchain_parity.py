@@ -108,9 +108,12 @@ def _read_marker(path: Path) -> dict[str, str]:
         if not separator or not name or not value or name in values:
             raise IdentityError(f"malformed or duplicate install marker field in {path}: {line!r}")
         values[name] = value
-    for name in ("yianc", "anx", "resources", "build_info_sha256"):
+    for name in ("yianc", "anx", "yian-fmt", "resources", "build_info_sha256"):
         if name not in values:
             raise IdentityError(f"native install marker is missing {name}: {path}")
+    for name in ("yianc_build_mode", "anx_build_mode", "fmt_build_mode"):
+        if values.get(name) != "raw":
+            raise IdentityError(f"native install marker is missing {name}=raw: {path}")
     return values
 
 
@@ -124,18 +127,20 @@ def validate_install(prefix: Path) -> dict[str, Json]:
     data_root = resolved / "share" / "yian"
     yianc = bin_root / "yianc"
     anx = bin_root / "anx"
+    formatter = bin_root / "yian-fmt"
     info_path = data_root / ".build-info"
     marker_path = data_root / ".native-install"
 
     for path in (bin_root, resolved / "share", data_root):
         if path.is_symlink():
             raise IdentityError(f"installed toolchain path contains a symlink: {path}")
-    for path in (yianc, anx, info_path, marker_path):
+    for path in (yianc, anx, formatter, info_path, marker_path):
         if path.is_symlink() or not path.is_file():
             raise IdentityError(f"required installed tool or identity file is missing or unsafe: {path}")
     try:
         yianc = resolve_native(str(yianc))
         anx = resolve_native(str(anx))
+        formatter = resolve_native(str(formatter))
     except NativeToolError as error:
         raise IdentityError(str(error)) from error
 
@@ -151,7 +156,11 @@ def validate_install(prefix: Path) -> dict[str, Json]:
             raise IdentityError(f"installed resources contain a symlink: {path}")
 
     marker = _read_marker(marker_path)
-    artifacts = {"yianc": file_sha256(yianc), "anx": file_sha256(anx)}
+    artifacts = {
+        "yianc": file_sha256(yianc),
+        "anx": file_sha256(anx),
+        "yian-fmt": file_sha256(formatter),
+    }
     for name, digest in artifacts.items():
         if marker[name] != digest:
             raise IdentityError(f"installed {name} digest does not match its marker")
@@ -195,8 +204,11 @@ def validate_install(prefix: Path) -> dict[str, Json]:
         "anx": str(anx),
         "yianc_sha256": artifacts["yianc"],
         "anx_sha256": artifacts["anx"],
+        "formatter": str(formatter),
+        "formatter_sha256": artifacts["yian-fmt"],
         "yianc_source_sha256": cast(dict[str, Json], components["yianc"])["source_sha256"],
         "anx_source_sha256": cast(dict[str, Json], components["anx"])["source_sha256"],
+        "formatter_source_sha256": cast(dict[str, Json], components["yian-fmt"])["source_sha256"],
         "resources_sha256": installed_resource_hash,
     }
 

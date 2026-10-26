@@ -1,0 +1,283 @@
+from std.core.env import args;
+from std.core.drop import Drop;
+from std.core.fs import write_string;
+from std.core.io import Read, Stdin;
+from std.core.iter import Iterator, IntoIterator;
+from yianc.frontend.source import collect_sources, read_source;
+from fmt.api import format_text;
+
+const EXIT_USAGE: i32 = 2;
+const EXIT_SYNTAX: i32 = 3;
+
+const HELP_TEXT: str = "Usage: yian-fmt [options] [PATH...]\n\nFormat YIAN sources.\n\nOptions:\n  PATH...              Format exactly one source file and print it\n  -w, --write          Rewrite selected sources in place\n      --check          List sources that need formatting\n      --stdin          Read one source from standard input\n      --stdin-filepath PATH  Source path label required with --stdin\n  -h, --help           Show this help\n      --version        Show the version\n";
+
+enum Mode { Print, Write, Check, Stdin }
+
+struct Options {
+    mode: Mode,
+    paths: Vec<String>,
+    stdin_path: Option<String>,
+}
+
+impl Drop for Options {
+    pub fn drop() {
+        for path in self.paths { path.drop(); }
+        self.paths.drop();
+        match &self.stdin_path {
+            Some(value) => value.drop(),
+            None => {},
+        }
+    }
+}
+
+fn release_arguments(arguments: Vec<String>&) {
+    for argument in *arguments { argument.drop(); }
+    arguments.drop();
+}
+
+fn release_paths(paths: Vec<String>&) {
+    for path in *paths { path.drop(); }
+    paths.drop();
+}
+
+fn release_option(value: Option<String>&) {
+    match value { Some(item) => item.drop(), None => {}, }
+}
+
+fn usage_error(message: str) -> Result<Options, i32> {
+    @eprint("yian-fmt: ");
+    @eprintln(f"{message}");
+    Result<Options, i32>.Err(EXIT_USAGE)
+}
+
+fn parse_options(arguments: Vec<String>&) -> Result<Options, i32> {
+    let mode = Mode.Print;
+    let paths = Vec<String>.new();
+    let stdin_path = Option<String>.None;
+    let stdin = false;
+    let write = false;
+    let check = false;
+    let separated = false;
+    let transferred = false;
+    defer {
+        if !transferred {
+            release_paths(&paths);
+            release_option(&stdin_path);
+        }
+    };
+
+    let index = 1u64;
+    while index < arguments.len() {
+        let argument = arguments[index].as_str();
+        if separated || !argument.starts_with("-") || argument == "-" {
+            paths.push(String.from(&argument));
+            index += 1u64;
+            continue;
+        }
+        if argument == "--help" || argument == "-h" {
+            @print(f"{HELP_TEXT}");
+            return Result<Options, i32>.Err(0i32);
+        }
+        if argument == "--version" {
+            @println("yian-fmt 0.1.0");
+            return Result<Options, i32>.Err(0i32);
+        }
+        if argument == "--stdin" {
+            stdin = true;
+            index += 1u64;
+            continue;
+        }
+        if argument == "--stdin-filepath" {
+            if index + 1u64 >= arguments.len() {
+                return usage_error("--stdin-filepath requires a path");
+            }
+            let value = arguments[index + 1u64].as_str();
+            if value.as_slice().len() == 0u64 {
+                return usage_error("--stdin-filepath PATH cannot be empty");
+            }
+            match &stdin_path { Some(previous) => previous.drop(), None => {}, }
+            stdin_path = Option<String>.Some(String.from(&value));
+            index += 2u64;
+            continue;
+        }
+        if argument == "-w" || argument == "--write" {
+            write = true;
+            index += 1u64;
+            continue;
+        }
+        if argument == "--check" {
+            check = true;
+            index += 1u64;
+            continue;
+        }
+        if argument == "--" {
+            separated = true;
+            index += 1u64;
+            continue;
+        }
+        @eprint("yian-fmt: unknown option: ");
+        @eprintln(f"{argument}");
+        return Result<Options, i32>.Err(EXIT_USAGE);
+    }
+
+    if write && check { return usage_error("--write and --check are mutually exclusive"); }
+    if stdin {
+        if write || check { return usage_error("--stdin cannot be combined with --write or --check"); }
+        if !paths.is_empty() { return usage_error("--stdin cannot be combined with source paths"); }
+        match &stdin_path {
+            Some(value) => {
+                if value.as_slice().len() == 0u64 { return usage_error("--stdin-filepath PATH cannot be empty"); }
+            },
+            None => return usage_error("--stdin requires --stdin-filepath PATH"),
+        }
+        mode = Mode.Stdin;
+    } else {
+        match &stdin_path {
+            Some(value) => {
+                let present = value.as_slice().len() != 0u64;
+                if present { return usage_error("--stdin-filepath requires --stdin"); }
+            },
+            None => {},
+        }
+        if paths.is_empty() { return usage_error("at least one source file is required"); }
+        mode = if check { Mode.Check } elif write { Mode.Write } else { Mode.Print };
+    }
+
+    transferred = true;
+    Result<Options, i32>.Ok(Options(mode, paths, stdin_path))
+}
+
+fn run_stdin(options: Options&) -> i32 {
+    let label = match &options.stdin_path {
+        Some(value) => value.as_str(),
+        None => return EXIT_USAGE,
+    };
+    let input = Stdin.new();
+    let text = match input.read_to_string() {
+        Ok(value) => value,
+        Err(problem) => {
+            @eprint("yian-fmt: ");
+            @eprintln(f"{problem.msg()}");
+            problem.drop();
+            return EXIT_USAGE;
+        },
+    };
+    defer text.drop();
+
+    let formatted = match format_text(text.as_str(), label) {
+        Ok(Some(value)) => value,
+        Ok(None) => return EXIT_SYNTAX,
+        Err(problem) => {
+            problem.drop();
+            @eprintln("yian-fmt: formatter failed");
+            return EXIT_USAGE;
+        },
+    };
+    defer formatted.drop();
+    @print(f"{formatted.as_str()}");
+    0i32
+}
+
+fn run_sources(options: Options&) -> i32 {
+    let paths = match collect_sources(&options.paths) {
+        Ok(value) => value,
+        Err(problem) => {
+            @eprint("yian-fmt: ");
+            @eprintln(f"{problem.msg()}");
+            problem.drop();
+            return EXIT_USAGE;
+        },
+    };
+    defer release_paths(&paths);
+    if paths.is_empty() {
+        @eprintln("yian-fmt: no source files were selected");
+        return EXIT_USAGE;
+    }
+
+    let check = match &options.mode { Check => true, _ => false, };
+    let write = match &options.mode { Write => true, _ => false, };
+    if !check && !write && paths.len() != 1u64 {
+        @eprintln("yian-fmt: stdout mode needs exactly one source file");
+        return EXIT_USAGE;
+    }
+
+    let io_error = false;
+    let syntax_error = false;
+    let changed = 0u64;
+    for path in paths {
+        let source = match read_source(path.as_str()) {
+            Ok(value) => value,
+            Err(problem) => {
+                @eprint("yian-fmt: ");
+                @eprintln(f"{problem.msg()}");
+                problem.drop();
+                io_error = true;
+                continue;
+            },
+        };
+        defer source.drop();
+
+        let formatted = match format_text(source.as_str(), path.as_str()) {
+            Ok(Some(value)) => value,
+            Ok(None) => {
+                @eprint("skip ");
+                @eprint(f"{path.as_str()}");
+                @eprintln(": cannot be formatted");
+                syntax_error = true;
+                continue;
+            },
+            Err(problem) => {
+                problem.drop();
+                @eprintln("yian-fmt: formatter failed");
+                io_error = true;
+                continue;
+            },
+        };
+        defer formatted.drop();
+        let different = formatted.as_str() != source.as_str();
+        if check {
+            if different {
+                changed += 1u64;
+                @println(f"{path.as_str()}");
+            }
+        } elif write {
+            if different {
+                match write_string(path.as_str(), formatted.as_str()) {
+                    Ok(_) => changed += 1u64,
+                    Err(problem) => {
+                        @eprint("yian-fmt: ");
+                        @eprintln(f"{problem.msg()}");
+                        problem.drop();
+                        io_error = true;
+                    },
+                }
+            }
+        } else {
+            @print(f"{formatted.as_str()}");
+        }
+    }
+
+    if check { @println(f"{changed} of {paths.len()} file(s) need formatting"); }
+    if write { @println(f"{paths.len()} file(s) checked, {changed} rewritten"); }
+    if io_error { return EXIT_USAGE; }
+    if syntax_error { return EXIT_SYNTAX; }
+    if check && changed > 0u64 { return 1i32; }
+    0i32
+}
+
+pub fn run() -> i32 {
+    let arguments = args();
+    let options = match parse_options(&arguments) {
+        Ok(value) => value,
+        Err(code) => {
+            release_arguments(&arguments);
+            return code;
+        },
+    };
+    release_arguments(&arguments);
+    defer options.drop();
+    match &options.mode {
+        Stdin => run_stdin(&options),
+        _ => run_sources(&options),
+    }
+}

@@ -1,0 +1,301 @@
+from std.core.drop import Drop;
+from std.core.fmt import ToString;
+from std.core.fs import canonicalize, metadata;
+from std.core.io import File, IoError, IoErrorKind, OpenMode, Read;
+from std.core.path import Path, PathBuf;
+from std.core.process import Command, ExitStatus, env_var, executable_path;
+
+fn invalid_formatter(path: str, reason: str) -> String {
+    let message = String.from(&"native YIAN formatter '");
+    message.push_str(path);
+    message.push_str("' ");
+    message.push_str(reason);
+    message
+}
+
+fn validate_formatter(path: PathBuf) -> Result<String, String> {
+    defer path.drop();
+    let canonical = String.from(&path.as_str());
+    defer canonical.drop();
+
+    let info = match metadata(canonical.as_str()) {
+        Ok(value) => value,
+        Err(problem) => {
+            let message = invalid_formatter(canonical.as_str(), "cannot be inspected");
+            let combined = String.from(&message.as_str());
+            combined.push_str(": ");
+            combined.push_str(problem.msg());
+            message.drop();
+            problem.drop();
+            return Result<String, String>.Err(msg=combined);
+        },
+    };
+    if !info.is_file() {
+        return Result<String, String>.Err(msg=invalid_formatter(canonical.as_str(), "is not a regular file"));
+    }
+
+    let permission = Command.new("/usr/bin/test");
+    defer permission.drop();
+    permission.arg("-x");
+    permission.arg(canonical.as_str());
+    let executable = match permission.status() {
+        Ok(status) => status.success(),
+        Err(problem) => {
+            let message = invalid_formatter(canonical.as_str(), "could not be checked for execute permission");
+            let combined = String.from(&message.as_str());
+            combined.push_str(": ");
+            combined.push_str(problem.msg());
+            message.drop();
+            problem.drop();
+            return Result<String, String>.Err(msg=combined);
+        },
+    };
+    if !executable {
+        return Result<String, String>.Err(msg=invalid_formatter(canonical.as_str(), "is not executable"));
+    }
+
+    let file = match File.open(canonical.as_str(), OpenMode.Read) {
+        Ok(value) => value,
+        Err(problem) => {
+            let message = invalid_formatter(canonical.as_str(), "cannot be read");
+            let combined = String.from(&message.as_str());
+            combined.push_str(": ");
+            combined.push_str(problem.msg());
+            message.drop();
+            problem.drop();
+            return Result<String, String>.Err(msg=combined);
+        },
+    };
+    defer file.drop();
+    let header: u8[4] = [0u8, 0u8, 0u8, 0u8];
+    match file.read_exact(header.as_slice()) {
+        Ok(_) => {},
+        Err(problem) => {
+            let message = invalid_formatter(canonical.as_str(), "does not contain a complete ELF header");
+            let combined = String.from(&message.as_str());
+            combined.push_str(": ");
+            combined.push_str(problem.msg());
+            message.drop();
+            problem.drop();
+            return Result<String, String>.Err(msg=combined);
+        },
+    }
+    if header[0u64] != 127u8 || header[1u64] != 69u8 || header[2u64] != 76u8 || header[3u64] != 70u8 {
+        return Result<String, String>.Err(msg=invalid_formatter(canonical.as_str(), "is not an ELF executable"));
+    }
+    Result<String, String>.Ok(val=String.from(&canonical.as_str()))
+}
+
+fn inspect_candidate(candidate: str) -> Result<Option<String>, String> {
+    match canonicalize(candidate) {
+        Ok(path) => {
+            match validate_formatter(path) {
+                Ok(program) => Result<Option<String>, String>.Ok(val=Option<String>.Some(program)),
+                Err(message) => Result<Option<String>, String>.Err(msg=message),
+            }
+        },
+        Err(problem) => {
+            if problem.kind() == IoErrorKind.NotFound {
+                problem.drop();
+                return Result<Option<String>, String>.Ok(val=Option<String>.None);
+            }
+            let message = invalid_formatter(candidate, "could not be resolved");
+            let combined = String.from(&message.as_str());
+            combined.push_str(": ");
+            combined.push_str(problem.msg());
+            message.drop();
+            problem.drop();
+            Result<Option<String>, String>.Err(msg=combined)
+        },
+    }
+}
+
+fn has_path_separator(value: str) -> bool {
+    let bytes = value.as_slice();
+    let index = 0u64;
+    while index < bytes.len() {
+        if bytes[index] == b'/' { return true; }
+        index += 1u64;
+    }
+    false
+}
+
+fn search_path(requested: str) -> Result<String, String> {
+    let path_value = match env_var("PATH") {
+        Ok(value) => value,
+        Err(problem) => {
+            let message = String.from(&"could not read PATH: ");
+            let combined = String.from(&message.as_str());
+            combined.push_str(problem.msg());
+            message.drop();
+            problem.drop();
+            return Result<String, String>.Err(msg=combined);
+        },
+    };
+    let search = match path_value {
+        Some(value) => value,
+        None => return Result<String, String>.Err(msg=String.from(&"PATH is unset; cannot locate yian-fmt")),
+    };
+    defer search.drop();
+
+    let bytes = search.as_slice();
+    let start = 0u64;
+    let index = 0u64;
+    while index <= bytes.len() {
+        if index == bytes.len() || bytes[index] == b':' {
+            let directory = str.from_slice_unchecked(bytes[start..index]);
+            let candidate = Path.new(directory).join(requested);
+            match inspect_candidate(candidate.as_str()) {
+                Ok(Some(program)) => {
+                    candidate.drop();
+                    return Result<String, String>.Ok(val=program);
+                },
+                Ok(None) => {},
+                Err(message) => {
+                    candidate.drop();
+                    return Result<String, String>.Err(msg=message);
+                },
+            }
+            candidate.drop();
+            start = index + 1u64;
+        }
+        index += 1u64;
+    }
+    let message = String.from(&"native YIAN formatter was not found on PATH: ");
+    message.push_str(requested);
+    Result<String, String>.Err(msg=message)
+}
+
+fn resolve_requested(requested: str) -> Result<String, String> {
+    if requested.as_slice().len() == 0u64 {
+        return Result<String, String>.Err(msg=String.from(&"native YIAN formatter name is empty"));
+    }
+    if has_path_separator(requested) {
+        match inspect_candidate(requested)? {
+            Some(program) => return Result<String, String>.Ok(val=program),
+            None => return Result<String, String>.Err(msg=invalid_formatter(requested, "was not found or has a dangling link")),
+        }
+    }
+    search_path(requested)
+}
+
+// Select the formatter without falling back to another tool or an in-process implementation.
+// A nonempty YIAN_FMT is authoritative; otherwise the folder holding the calling executable
+// is preferred over PATH only when it actually contains yian-fmt.
+pub fn formatter_program() -> Result<String, String> {
+    let configured = match env_var("YIAN_FMT") {
+        Ok(value) => value,
+        Err(problem) => {
+            let message = String.from(&"could not read YIAN_FMT: ");
+            let combined = String.from(&message.as_str());
+            combined.push_str(problem.msg());
+            message.drop();
+            problem.drop();
+            return Result<String, String>.Err(msg=combined);
+        },
+    };
+    match &configured {
+        Some(value) => {
+            if value.as_slice().len() != 0u64 {
+                let requested = String.from(&value.as_str());
+                defer requested.drop();
+                let result = resolve_requested(requested.as_str());
+                value.drop();
+                return result;
+            }
+            value.drop();
+        },
+        None => {},
+    }
+
+    let executable = match executable_path() {
+        Ok(value) => value,
+        Err(problem) => {
+            let message = String.from(&"could not resolve the formatter installation directory: ");
+            let combined = String.from(&message.as_str());
+            combined.push_str(problem.msg());
+            message.drop();
+            problem.drop();
+            return Result<String, String>.Err(msg=combined);
+        },
+    };
+    defer executable.drop();
+    let sibling = match Path.new(executable.as_str()).parent() {
+        Some(directory) => directory.join("yian-fmt"),
+        None => Path.new("/").join("yian-fmt"),
+    };
+    defer sibling.drop();
+    match inspect_candidate(sibling.as_str()) {
+        Ok(Some(program)) => return Result<String, String>.Ok(val=program),
+        Ok(None) => {},
+        Err(message) => return Result<String, String>.Err(msg=message),
+    }
+    search_path("yian-fmt")
+}
+
+fn decode_stdout(bytes: Vec<u8>&) -> Result<Option<String>, String> {
+    match str.from_slice(bytes.as_slice()) {
+        Some(text) => Result<Option<String>, String>.Ok(val=Option<String>.Some(String.from(&text))),
+        None => Result<Option<String>, String>.Err(msg=String.from(&"formatter output is not valid UTF-8")),
+    }
+}
+
+fn child_failure(status: ExitStatus&, stderr: Vec<u8>&) -> String {
+    let message = String.from(&"yian-fmt failed");
+    match status {
+        Exited(code) => {
+            let suffix = code.to_string();
+            defer suffix.drop();
+            message.push_str(" with exit code ");
+            message.push_str(suffix.as_str());
+        },
+        Signaled(signal) => {
+            let suffix = signal.to_string();
+            defer suffix.drop();
+            message.push_str(" after signal ");
+            message.push_str(suffix.as_str());
+        },
+    }
+    match str.from_slice(stderr.as_slice()) {
+        Some(text) => {
+            if text.as_slice().len() != 0u64 {
+                message.push_str(": ");
+                message.push_str(text);
+            }
+        },
+        None => {},
+    }
+    message
+}
+
+// Send the in-memory source through the formatter's stdin protocol and own the result.
+// Exit status 3 means the source cannot be parsed; other failures own a diagnostic message.
+pub fn format_stdin(text: str, path: str) -> Result<Option<String>, String> {
+    let program = formatter_program()?;
+    defer program.drop();
+    let command = Command.new(program.as_str());
+    defer command.drop();
+    command.arg("--stdin");
+    command.arg("--stdin-filepath");
+    command.arg(path);
+    command.stdin_bytes(text.as_slice());
+
+    let output = match command.output() {
+        Ok(value) => value,
+        Err(problem) => {
+            let message = String.from(&"could not run yian-fmt: ");
+            message.push_str(problem.msg());
+            problem.drop();
+            return Result<Option<String>, String>.Err(msg=message);
+        },
+    };
+    defer output.drop();
+    match &output.status {
+        Exited(code) => {
+            if *code == 0i32 { return decode_stdout(&output.stdout); }
+            if *code == 3i32 { return Result<Option<String>, String>.Ok(val=Option<String>.None); }
+            Result<Option<String>, String>.Err(msg=child_failure(&output.status, &output.stderr))
+        },
+        Signaled(_) => Result<Option<String>, String>.Err(msg=child_failure(&output.status, &output.stderr)),
+    }
+}

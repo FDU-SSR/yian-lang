@@ -1,12 +1,12 @@
 from std.core.drop import Drop;
-from std.core.fs import resolve, write_string;
+from std.core.fs import resolve;
 from std.core.path import PathBuf;
+from std.core.process import Command;
 from anx.diagnostics.model import AX_NO_PROJECT_ROOT, Diagnostic;
+from anx.driver.formatter import formatter_program;
 from anx.project.load import discover, load;
 from anx.project.model import LoadReport, Project;
 from anx.project.paths import standard_library_root;
-from yianc.format.api import format_text;
-from yianc.frontend.source import read_source;
 
 fn print_diagnostic(item: Diagnostic&) {
     @eprint("error[");
@@ -62,6 +62,9 @@ fn package_sources(project: Project&) -> Vec<u64> {
     indices
 }
 
+// Root-package selection stays in the package manager. The formatter owns
+// parsing, rendering, rewriting and the summary; this driver passes the
+// selected absolute source paths through one child process.
 pub fn format_project(start: str, check: bool) -> i32 {
     let project = match load_project(start) {
         Some(value) => value,
@@ -70,66 +73,33 @@ pub fn format_project(start: str, check: bool) -> i32 {
     defer project.drop();
     let files = package_sources(&project);
     defer files.drop();
-    let changed = 0u64;
+    if files.is_empty() {
+        if check { @println("0 of 0 file(s) need formatting"); } else { @println("0 file(s) checked, 0 rewritten"); }
+        return 0i32;
+    }
+
+    let program = match formatter_program() {
+        Ok(value) => value,
+        Err(message) => { @eprintln(f"{message.as_str()}"); message.drop(); return 1i32; },
+    };
+    defer program.drop();
+    let command = Command.new(program.as_str());
+    defer command.drop();
+    if check { command.arg("--check"); } else { command.arg("--write"); }
+    command.arg("--");
     let index = 0u64;
     while index < files.len() {
         let file = project.file(files[index]);
-        let source = match read_source(file.path()) {
-            Ok(value) => value,
-            Err(problem) => {
-                @eprintln(f"{problem.msg()}");
-                problem.drop();
-                return 1i32;
-            },
-        };
-        defer source.drop();
-        let formatted = match format_text(source.as_str(), file.path()) {
-            Ok(Some(value)) => value,
-            Ok(None) => {
-                @eprint("skip ");
-                @eprint(f"{file.path()}");
-                @eprintln(": cannot be formatted");
-                index += 1u64;
-                continue;
-            },
-            Err(problem) => {
-                problem.drop();
-                @eprintln("error: formatter failed");
-                return 1i32;
-            },
-        };
-        defer formatted.drop();
-        if formatted.as_str() != source.as_str() {
-            changed += 1u64;
-            if check {
-                @println(f"{file.path()}");
-            } else {
-                match write_string(file.path(), formatted.as_str()) {
-                    Ok(_) => {},
-                    Err(problem) => {
-                        @eprintln(f"{problem.msg()}");
-                        problem.drop();
-                        return 1i32;
-                    },
-                }
-            }
-        }
+        command.arg(file.path());
         index += 1u64;
     }
-    let total = files.len().to_string();
-    defer total.drop();
-    let count = changed.to_string();
-    defer count.drop();
-    if check {
-        @print(f"{count.as_str()}");
-        @print(" of ");
-        @print(f"{total.as_str()}");
-        @println(" file(s) need formatting");
-        return if changed > 0u64 { 1i32 } else { 0i32 };
+    match command.status() {
+        Ok(status) => if status.success() { 0i32 } else { 1i32 },
+        Err(problem) => {
+            @eprint("error: could not run yian-fmt: ");
+            @eprintln(f"{problem.msg()}");
+            problem.drop();
+            1i32
+        },
     }
-    @print(f"{total.as_str()}");
-    @print(" file(s) checked, ");
-    @print(f"{count.as_str()}");
-    @println(" rewritten");
-    0i32
 }

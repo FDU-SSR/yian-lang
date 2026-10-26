@@ -39,6 +39,26 @@ def native_lsp_path() -> Path:
         ) from error
 
 
+def native_formatter_path() -> Path:
+    configured = os.environ.get("YIAN_FMT")
+    if configured:
+        try:
+            return resolve_native(configured)
+        except NativeToolError as error:
+            raise FileNotFoundError(
+                f"native yian-fmt is unavailable: {error}; refresh with scripts/refresh_toolchain.sh"
+            ) from error
+    sibling = native_lsp_path().parent / "yian-fmt"
+    if sibling.is_file():
+        return resolve_native(str(sibling))
+    try:
+        return resolve_native("yian-fmt")
+    except NativeToolError as error:
+        raise FileNotFoundError(
+            f"native yian-fmt is unavailable: {error}; refresh with scripts/refresh_toolchain.sh"
+        ) from error
+
+
 class StdioClient:
     """A stdio client that retains unrelated messages and responds to server requests."""
 
@@ -568,7 +588,7 @@ class LspProtocolTests(unittest.TestCase):
             root = Path(directory)
             source = root / "format.an"
             source.write_text("fn main() {}\n", encoding="utf-8")
-            client = StdioClient()
+            client = StdioClient(environment={"YIAN_FMT": str(native_formatter_path())})
             uri = source.as_uri()
             text = "fn main(){\nlet x:i32=1;\nx;\n}\n"
             try:

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Refresh yianc, anx, yian-lsp and their shared resources with native tools.
+# Refresh yianc, anx, yian-fmt, yian-lsp and their shared resources with native tools.
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
@@ -22,9 +22,10 @@ Options:
   --yianc PATH   Native compiler (default: $YIANC, then yianc from PATH).
   -h, --help     Show this help.
 
-Builds staged yianc, anx and a raw/O2 yian-lsp, runs a staged LSP handshake,
-then publishes the complete toolchain as one recoverable transaction. The
-native build requires LLVM 22, clang 22 and the matching C/LLVM tools.
+Builds staged yianc, anx, yian-fmt and a raw/O2 yian-lsp, runs a staged formatter
+smoke check and LSP handshake, then publishes the complete toolchain as one
+recoverable transaction. The native build requires LLVM 22, clang 22 and the
+matching C/LLVM tools.
 EOF
 }
 
@@ -243,6 +244,7 @@ build_component() {
 
 initial_yianc_source="$(yian_component_sha256 "$ROOT_DIR" yianc)" || die 'could not identify yianc source inputs'
 initial_anx_source="$(yian_component_sha256 "$ROOT_DIR" anx)" || die 'could not identify anx source inputs'
+initial_fmt_source="$(yian_component_sha256 "$ROOT_DIR" yian-fmt)" || die 'could not identify formatter source inputs'
 initial_lsp_source="$(yian_component_sha256 "$ROOT_DIR" yian-lsp)" || die 'could not identify LSP source inputs'
 initial_resources_source="$(yian_resource_sha256 "$ROOT_DIR")" || die 'could not identify installed resources'
 seed_anx_sha="$(sha256sum -- "$ANX_SEED")"; seed_anx_sha="${seed_anx_sha%% *}"
@@ -252,6 +254,8 @@ build_component yianc "$ROOT_DIR/yianc" "$YIANC_SEED" "$ANX_SEED"
 staged_yianc="$BUNDLE/bin/yianc"
 build_component anx "$ROOT_DIR/anx" "$staged_yianc" "$ANX_SEED"
 staged_anx="$BUNDLE/bin/anx"
+build_component yian-fmt "$ROOT_DIR/fmt" "$staged_yianc" "$staged_anx"
+staged_fmt="$BUNDLE/bin/yian-fmt"
 build_component yian-lsp "$ROOT_DIR/lsp" "$staged_yianc" "$staged_anx"
 staged_lsp="$BUNDLE/bin/yian-lsp"
 
@@ -264,6 +268,17 @@ for command_name in yianc anx; do
     fi
     require_elf "$command_name" "$BUNDLE/bin/$command_name"
 done
+require_elf yian-fmt "$staged_fmt"
+fmt_version="$(env -u YIAN_FMT "$staged_fmt" --version 2>&1)" || die 'staged yian-fmt failed its version check'
+[[ "$fmt_version" == yian-fmt\ * ]] || die "unexpected yian-fmt version output: $fmt_version"
+fmt_help="$(env -u YIAN_FMT "$staged_fmt" --help 2>&1)" || die 'staged yian-fmt failed its help check'
+[[ "$fmt_help" == *'Usage: yian-fmt'* ]] || die 'staged yian-fmt help output is unrecognized'
+printf 'fn main(){let (a,b)=(1,2);}\n' | env -u YIAN_FMT -u YIAN_ROOT -u YIAN_LIB timeout 10 "$staged_fmt" --stdin --stdin-filepath smoke.an >"$RUN_DIR/fmt.stdout" 2>"$RUN_DIR/fmt.stderr" || {
+    KEEP_RUN_DIR=1
+    die "staged yian-fmt stdin smoke check failed; see $RUN_DIR/fmt.stderr"
+}
+[[ "$(cat "$RUN_DIR/fmt.stdout")" == 'fn main() { let (a, b) = (1, 2); }' ]] || { KEEP_RUN_DIR=1; die 'staged yian-fmt stdin output is unrecognized'; }
+[[ ! -s "$RUN_DIR/fmt.stderr" ]] || { KEEP_RUN_DIR=1; die 'staged yian-fmt stdin check wrote to stderr'; }
 require_elf yian-lsp "$staged_lsp"
 lsp_version="$("$staged_lsp" --version 2>&1)" || die 'staged yian-lsp failed its version check'
 [[ "$lsp_version" == yian-lsp\ * ]] || die "unexpected yian-lsp version output: $lsp_version"
@@ -287,7 +302,7 @@ frame() {
     frame "$shutdown_body"
     frame "$exit_body"
 } | env -u YIAN_ROOT -u YIAN_LIB -u YIAN_LSP_TRACE_FILE -u YIAN_LSP_PROFILE_FILE \
-    timeout 10 "$staged_lsp" --stdio >"$RUN_DIR/lsp.stdout" 2>"$RUN_DIR/lsp.stderr" || {
+    YIAN_FMT="$staged_fmt" timeout 10 "$staged_lsp" --stdio >"$RUN_DIR/lsp.stdout" 2>"$RUN_DIR/lsp.stderr" || {
         KEEP_RUN_DIR=1
         die "staged yian-lsp stdio handshake failed; see $RUN_DIR/lsp.stderr"
     }
@@ -297,6 +312,7 @@ grep -Fq '"id":2' "$RUN_DIR/lsp.stdout" || { KEEP_RUN_DIR=1; die 'yian-lsp shutd
 
 if [[ "$(yian_component_sha256 "$ROOT_DIR" yianc)" != "$initial_yianc_source" \
     || "$(yian_component_sha256 "$ROOT_DIR" anx)" != "$initial_anx_source" \
+    || "$(yian_component_sha256 "$ROOT_DIR" yian-fmt)" != "$initial_fmt_source" \
     || "$(yian_component_sha256 "$ROOT_DIR" yian-lsp)" != "$initial_lsp_source" \
     || "$(yian_resource_sha256 "$ROOT_DIR")" != "$initial_resources_source" ]]; then
     KEEP_RUN_DIR=1
@@ -305,6 +321,7 @@ fi
 
 yianc_sha="$(sha256sum -- "$BUNDLE/bin/yianc")"; yianc_sha="${yianc_sha%% *}"
 anx_sha="$(sha256sum -- "$BUNDLE/bin/anx")"; anx_sha="${anx_sha%% *}"
+fmt_sha="$(sha256sum -- "$BUNDLE/bin/yian-fmt")"; fmt_sha="${fmt_sha%% *}"
 lsp_sha="$(sha256sum -- "$BUNDLE/bin/yian-lsp")"; lsp_sha="${lsp_sha%% *}"
 resource_source_sha="$initial_resources_source"
 resource_artifact_sha="$(yian_tree_sha256 "$BUNDLE/share/yian")"
@@ -318,6 +335,8 @@ revision="$(git -C "$ROOT_DIR" rev-parse HEAD 2>/dev/null || true)"
         "$initial_yianc_source" "$yianc_sha" "$seed_anx_sha" "$seed_anx_sha" "$seed_yianc_sha"
     printf '    "anx": {"source_sha256":"%s","artifact_sha256":"%s","seed_sha256":"%s","builder":"staged-yianc","build_mode":"raw","optimization":2,"builder_inputs":{"anx_sha256":"%s","yianc_sha256":"%s"}},\n' \
         "$initial_anx_source" "$anx_sha" "$seed_anx_sha" "$seed_anx_sha" "$yianc_sha"
+    printf '    "yian-fmt": {"source_sha256":"%s","artifact_sha256":"%s","seed_sha256":"%s","builder":"staged-anx","build_mode":"raw","optimization":2,"builder_inputs":{"anx_sha256":"%s","yianc_sha256":"%s"}},\n' \
+        "$initial_fmt_source" "$fmt_sha" "$anx_sha" "$anx_sha" "$yianc_sha"
     printf '    "yian-lsp": {"source_sha256":"%s","artifact_sha256":"%s","seed_sha256":"%s","builder":"staged-anx","build_mode":"raw","optimization":2,"builder_inputs":{"anx_sha256":"%s","yianc_sha256":"%s"}}\n' \
         "$initial_lsp_source" "$lsp_sha" "$anx_sha" "$anx_sha" "$yianc_sha"
     printf '  },\n'
@@ -355,10 +374,12 @@ cat >"$BUNDLE/share/yian/.native-install" <<EOF
 yian-native-install-v1
 yianc=$yianc_sha
 anx=$anx_sha
+yian-fmt=$fmt_sha
 resources=$resource_artifact_sha
 build_info_sha256=$(sha256sum -- "$BUNDLE/share/yian/.build-info" | cut -d' ' -f1)
 yianc_build_mode=raw
 anx_build_mode=raw
+fmt_build_mode=raw
 optimization=2
 pointer_mode=raw
 EOF
@@ -367,4 +388,4 @@ if ! bash "$SCRIPT_DIR/publish.sh" --prefix "$PREFIX" --bundle "$BUNDLE"; then
     KEEP_RUN_DIR=1
     die "toolchain publication failed; build staging and command journal retained at $RUN_DIR"
 fi
-printf '%s\n' "Refreshed yianc, anx and yian-lsp under $PREFIX" "LSP build: raw pointers, -O2; initialization handshake passed."
+printf '%s\n' "Refreshed yianc, anx, yian-fmt and yian-lsp under $PREFIX" "Formats and LSP build: raw pointers, -O2; smoke test and initialization handshake passed."

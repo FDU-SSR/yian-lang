@@ -67,7 +67,8 @@ if [[ -e "$STAGED_LSP_BIN" || -L "$STAGED_LSP_BIN" ]]; then HAS_LSP=1; fi
 
 [[ -f "$BUNDLE/bin/yianc" && ! -L "$BUNDLE/bin/yianc" ]] || die "staged yianc is missing: $BUNDLE/bin/yianc"
 [[ -f "$BUNDLE/bin/anx" && ! -L "$BUNDLE/bin/anx" ]] || die "staged anx is missing: $BUNDLE/bin/anx"
-[[ -x "$BUNDLE/bin/yianc" && -x "$BUNDLE/bin/anx" ]] || die 'staged yianc and anx must be executable'
+[[ -f "$BUNDLE/bin/yian-fmt" && ! -L "$BUNDLE/bin/yian-fmt" ]] || die "staged yian-fmt is missing: $BUNDLE/bin/yian-fmt"
+[[ -x "$BUNDLE/bin/yianc" && -x "$BUNDLE/bin/anx" && -x "$BUNDLE/bin/yian-fmt" ]] || die 'staged yianc, anx and yian-fmt must be executable'
 [[ -d "$BUNDLE/share/yian" && ! -L "$BUNDLE/share/yian" ]] || die "staged resource directory is missing or symlinked: $BUNDLE/share/yian"
 [[ -f "$BUNDLE/share/yian/.native-install" && ! -L "$BUNDLE/share/yian/.native-install" ]] || die "staged native install marker is missing or symlinked: $BUNDLE/share/yian/.native-install"
 [[ -f "$BUNDLE/share/yian/.build-info" && ! -L "$BUNDLE/share/yian/.build-info" ]] || die "staged build identity is missing or symlinked: $BUNDLE/share/yian/.build-info"
@@ -77,11 +78,11 @@ fi
 
 staged_marker="$BUNDLE/share/yian/.native-install"
 grep -Fxq 'yian-native-install-v1' "$staged_marker" || die "unrecognized staged native install marker: $staged_marker"
-for identity_line in yianc_build_mode=raw anx_build_mode=raw optimization=2 pointer_mode=raw; do
+for identity_line in yianc_build_mode=raw anx_build_mode=raw fmt_build_mode=raw optimization=2 pointer_mode=raw; do
     grep -Fxq "$identity_line" "$staged_marker" \
         || die "staged toolchain identity is missing required setting: $identity_line"
 done
-for command_name in yianc anx; do
+for command_name in yianc anx yian-fmt; do
     staged_hash="$(sha256sum -- "$BUNDLE/bin/$command_name")"
     staged_hash="${staged_hash%% *}"
     recorded_hash="$(awk -F= -v name="$command_name" '$1 == name { print $2; exit }' "$staged_marker")"
@@ -169,7 +170,7 @@ is_legacy_python_entrypoint() {
     grep -Fq -- "$import_line" "$path"
 }
 
-for command_name in yianc anx; do
+for command_name in yianc anx yian-fmt; do
     target="$BIN_DIR/$command_name"
     [[ ! -L "$target" ]] || die "refusing to replace symlinked command: $target"
     [[ ! -e "$target" ]] && continue
@@ -180,6 +181,8 @@ for command_name in yianc anx; do
         actual="${actual%% *}"
         [[ -n "$expected" && "$actual" == "$expected" ]] \
             || die "refusing to replace a modified managed command: $target"
+    elif [[ "$command_name" == "yian-fmt" ]]; then
+        die "refusing to replace an unmanaged command: $target"
     elif ! is_legacy_python_entrypoint "$target" "$command_name"; then
         die "refusing to replace an unmanaged command: $target"
     fi
@@ -248,6 +251,7 @@ add_replacement() {
 add_replacement "$BUNDLE/share/yian" "$DATA_DIR"
 add_replacement "$BUNDLE/bin/yianc" "$BIN_DIR/yianc"
 add_replacement "$BUNDLE/bin/anx" "$BIN_DIR/anx"
+add_replacement "$BUNDLE/bin/yian-fmt" "$BIN_DIR/yian-fmt"
 if [[ "$HAS_LSP" -eq 1 ]]; then
     add_replacement "$STAGED_LSP_DATA" "$LSP_DATA_DIR"
     add_replacement "$STAGED_LSP_BIN" "$LSP_BIN"
@@ -299,7 +303,8 @@ mkdir -p "$TRANSACTION/candidates" "$TRANSACTION/backups"
 for index in "${!TARGETS[@]}"; do
     mkdir -p -- "$(dirname "${TARGETS[$index]}")"
     cp -a -- "${CANDIDATE_SOURCES[$index]}" "$TRANSACTION/candidates/$index"
-    if [[ "${TARGETS[$index]}" == "$BIN_DIR/yianc" || "${TARGETS[$index]}" == "$BIN_DIR/anx" || "${TARGETS[$index]}" == "$LSP_BIN" ]]; then
+    if [[ "${TARGETS[$index]}" == "$BIN_DIR/yianc" || "${TARGETS[$index]}" == "$BIN_DIR/anx" \
+        || "${TARGETS[$index]}" == "$BIN_DIR/yian-fmt" || "${TARGETS[$index]}" == "$LSP_BIN" ]]; then
         chmod 0755 "$TRANSACTION/candidates/$index"
     fi
 done

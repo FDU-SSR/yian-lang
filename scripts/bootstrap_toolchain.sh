@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Build and install native yianc/anx without relying on installed native tools.
+# Build and install native yianc/anx/yian-fmt without relying on installed native tools.
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -8,7 +8,7 @@ PREFIX="${PREFIX:-}"
 
 usage() {
     cat <<'EOF'
-Build and install native yianc and anx from this checkout using the Python reference compiler.
+Build and install native yianc, anx and yian-fmt from this checkout using the Python reference compiler.
 
 Usage: scripts/bootstrap_toolchain.sh [options]
 
@@ -19,8 +19,9 @@ Options:
 
 Requires llvm-config, clang and llvm-ar from LLVM 22. The Python recovery
 compiler builds raw yianc from its fixed five-package closure; staged native
-yianc builds raw anx from its fixed seven-package closure. The workflow does
-not use installed yianc/anx commands and does not install the language server.
+yianc builds raw anx from its fixed seven-package closure and raw yian-fmt
+from its fixed six-package closure. The workflow does not use installed
+yianc/anx/yian-fmt commands and does not install the language server.
 EOF
 }
 

@@ -8,7 +8,6 @@ from yianc.driver.middle import MiddleEndDriver;
 from yianc.driver.profile import ProfileKind;
 from yianc.driver.report import report;
 from yianc.driver.trace import CompilerTrace;
-from yianc.format.cli import format_cli;
 from yianc.frontend.source import SourceManager;
 from std.core.drop import Drop;
 from std.core.env import exit;
@@ -31,7 +30,6 @@ fn main() {
     match &config.action {
         Help(text) => { @print(f"{text.as_str()}"); return; },
         Invalid(message) => { @eprintln(f"{message.as_str()}"); exit(EXIT_FAILURE); },
-        Format(rewrite, check) => { format_cli(&config, *rewrite, *check); return; },
         Check => {},
         Compile => {},
     }

@@ -1,29 +1,30 @@
 
 from std.core.text import LineIndex;
 from json.value import Value, Number, Object;
-from yianc.format.api import format_text;
+from anx.driver.formatter import format_stdin;
 
 // One formatting request becomes one whole-document edit. The formatter re-emits
 // tokens and preserves comments, so applying the edit is a single undo step.
+// The current buffer text, never the file on disk, is sent to the formatter.
 // Text that does not lex or parse yields no edit: leaving the buffer untouched
 // is better than rewriting part of it.
 pub fn document_edits(text: str, path: str) -> Value {
-    let formatted = match format_text(text, path) {
+    let formatted = match format_stdin(text, path) {
         Ok(Some(value)) => value,
         Ok(None) => return no_edits(),
-        Err(problem) => {
-            problem.drop();
-            @eprintln("yian-lsp: formatter failed");
+        Err(message) => {
+            @eprint("yian-lsp: ");
+            @eprintln(f"{message.as_str()}");
+            message.drop();
             return no_edits();
         },
     };
     defer formatted.drop();
     if formatted.as_str() == text { return no_edits(); }
 
-    let new_text = formatted.as_str();
     let edit = Object.new();
     put(&edit, "range", document_range(text));
-    put(&edit, "newText", Value.String(String.from(&new_text)));
+    put(&edit, "newText", Value.String(String.from(&formatted.as_str())));
 
     let edits = Vec<Value>.new();
     edits.push(Value.Object(edit));

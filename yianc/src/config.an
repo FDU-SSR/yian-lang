@@ -4,7 +4,6 @@ from std.core.drop import Drop;
 pub enum CompilerAction {
     Compile,
     Check,
-    Format { write: bool, check: bool },
     Invalid { message: String },
     Help {
         text: String
@@ -65,9 +64,6 @@ impl CompilerConfig {
 
     static fn from_matches(matches: ArgMatches&) -> Result<Self, String> {
         let check = *matches.get_bool("check").unwrap().unwrap();
-        let format = *matches.get_bool("format").unwrap().unwrap();
-        let write = *matches.get_bool("write").unwrap().unwrap();
-        let format_check = *matches.get_bool("format-check").unwrap().unwrap();
 
         let inputs = string_values(matches, "inputs");
         if inputs.is_empty() {
@@ -117,36 +113,25 @@ impl CompilerConfig {
 
         let runtime_profile_error = match &runtime_profile_dir {
             Some(value) if value.is_empty() => Option<String>.Some(String.from(&"error: --runtime-profile-dir PATH cannot be empty\n")),
-            Some(_) if format || check => Option<String>.Some(String.from(&"error: --runtime-profile-dir requires compilation without --check or --format\n")),
+            Some(_) if check => Option<String>.Some(String.from(&"error: --runtime-profile-dir requires compilation without --check\n")),
             Some(_) if target != OutputKind.Exe => Option<String>.Some(String.from(&"error: --runtime-profile-dir requires target exe\n")),
             Some(value) if !value.as_str().starts_with("/") => Option<String>.Some(String.from(&"error: --runtime-profile-dir PATH must be absolute\n")),
             _ => Option<String>.None,
         };
         let profile_error = match &profile_output {
             Some(value) if value.is_empty() => Option<String>.Some(String.from(&"error: --profile-output PATH cannot be empty\n")),
-            Some(_) if format => Option<String>.Some(String.from(&"error: --profile-output cannot be combined with --format\n")),
             _ => Option<String>.None,
         };
         let action = match runtime_profile_error {
             Some(message) => CompilerAction.Invalid(message),
             None => match profile_error {
                 Some(message) => CompilerAction.Invalid(message),
-                None => if write && !format {
-                    CompilerAction.Invalid(String.from(&"error: --write requires --format\n"))
-                } elif format && check {
-                    CompilerAction.Invalid(String.from(&"error: --check cannot be combined with --format; use --format-check\n"))
-                } elif format_check && !format {
-                    CompilerAction.Invalid(String.from(&"error: --format-check requires --format\n"))
-                } elif format && write && format_check {
-                    CompilerAction.Invalid(String.from(&"error: --write and --format-check are mutually exclusive\n"))
-                } elif check && target_explicit {
+                None => if check && target_explicit {
                     CompilerAction.Invalid(String.from(&"error: --check does not accept --target\n"))
                 } elif check && output.is_some() {
                     CompilerAction.Invalid(String.from(&"error: --check does not accept --output\n"))
                 } elif check && (!link_libraries.is_empty() || !link_searches.is_empty()) {
                     CompilerAction.Invalid(String.from(&"error: --check does not accept native link options\n"))
-                } elif format {
-                    CompilerAction.Format(write, format_check)
                 } elif check {
                     CompilerAction.Check
                 } else {
@@ -163,7 +148,6 @@ impl Drop for CompilerConfig {
     pub fn drop() {
         match &self.action {
             Help(text) | Invalid(text) => text.drop(),
-            Format(_, _) => {},
             Check => {},
             Compile => {},
         }
@@ -204,18 +188,6 @@ pub fn parse_args() -> Result<CompilerConfig, String> {
     parser.add_argument("check")
     .long("check").action(Action.StoreTrue)
     .help("type-check sources without generating an artifact");
-
-    parser.add_argument("format")
-    .long("format").action(Action.StoreTrue)
-    .help("format validated sources");
-
-    parser.add_argument("write")
-    .long("write").short('w').action(Action.StoreTrue)
-    .help("rewrite formatted sources in place");
-
-    parser.add_argument("format-check")
-    .long("format-check").action(Action.StoreTrue)
-    .help("list sources requiring formatting (with --format)");
 
     parser.add_argument("compiler-root")
     .long("compiler-root").metavar("PATH")

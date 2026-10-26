@@ -58,6 +58,7 @@ class Case:
 class __Arguments(argparse.Namespace):
     native: str
     anx: str | None
+    formatter: str | None
     groups: str
     filter: str
     report: Path
@@ -127,23 +128,26 @@ def __cases() -> list[Case]:
         Case("output-space", "native", ("tests/basic/array/access.an",), ("-O2", "-o", "result with space"), run=True, executable="result with space"),
         Case("output-extension", "native", ("tests/basic/array/access.an",), ("-t", "ll", "-o", "result.old")),
     ]
-    for name, flags in (
-        ("analyze", ("--check",)),
-        ("format", ("--format",)), ("compile", ("--check",)),
-    ):
+    for name, flags in (("analyze", ("--check",)), ("compile", ("--check",))):
         cases.append(Case("missing-input-" + name, "cli", (), (*flags, "missing.an"), standard_library=False))
         cases.append(Case("empty-input-" + name, "cli", (), (*flags, "empty"), standard_library=False, json_output=False, preexisting=(("empty/.keep", ""),)))
-    for flags, name in ((("--format-check",), "check"), (("--write",), "write"), ((), "stdout")):
-        cases.append(Case("crlf-format-" + name, "format", ("tests/format/fixtures/comments/mixed.an",), ("--format", *flags), standard_library=False, newlines="\r\n"))
-    for name, flags in (("format-stdout", ()), ("format-check", ("--format-check",)), ("format-write", ("--write",))):
-        cases.append(Case(name, "format", ("tests/format/fixtures/comments/mixed.an",), ("--format", *flags), standard_library=False))
+    # Formatting belongs to yian-fmt. The compiler must reject its former options.
+    for old_option in ("--format", "--format-check", "--write", "-w"):
+        cases.append(Case(
+            "removed-" + old_option.strip("-"), "cli", ("tests/basic/array/access.an",), (old_option,),
+            standard_library=False, expected_error="unknown option",
+        ))
+    for flags, name in ((("--check",), "check"), (("--write",), "write"), ((), "stdout")):
+        cases.append(Case("crlf-format-" + name, "format", ("tests/format/fixtures/comments/mixed.an",), flags, standard_library=False, newlines="\r\n"))
+    for name, flags in (("format-stdout", ()), ("format-check", ("--check",)), ("format-write", ("--write",))):
+        cases.append(Case(name, "format", ("tests/format/fixtures/comments/mixed.an",), flags, standard_library=False))
     format_fixtures = __ROOT / "tests/format/fixtures"
     for fixture in sorted(format_fixtures.rglob("*.an")):
         if not fixture.name.endswith(".expected.an"):
-            cases.append(Case("fixture-" + fixture.relative_to(format_fixtures).as_posix(), "format", (fixture.relative_to(__ROOT).as_posix(),), ("--format",), standard_library=False))
+            cases.append(Case("fixture-" + fixture.relative_to(format_fixtures).as_posix(), "format", (fixture.relative_to(__ROOT).as_posix(),), (), standard_library=False))
     for name in ("mixed", "only"):
-        for flag in ("--write", "--format-check"):
-            cases.append(Case(f"comments-{name}-{flag[2:]}", "format", (f"tests/format/fixtures/comments/{name}.an",), ("--format", flag), standard_library=False))
+        for flag in ("--write", "--check"):
+            cases.append(Case(f"comments-{name}-{flag[2:]}", "format", (f"tests/format/fixtures/comments/{name}.an",), (flag,), standard_library=False))
     for target in ("exe", "ll", "bc"):
         cases.append(Case("no-main-" + target, "cli", ("tests/compiler_parity/no_main.an",), ("-t", target, "-o", "result")))
         cases.append(Case("output-" + target, "native", ("tests/basic/type/sizeof_full.an",), ("-t", target, "-o", "result"), run=target == "exe"))
@@ -183,6 +187,54 @@ def __normalize(value: Json, directory: Path, stdlib_root: Path) -> Json:
 cases = __cases
 
 
+def __run_format(
+    formatter: list[str],
+    case: Case,
+    directory: Path,
+) -> dict[str, Json]:
+    """Run one format case through the standalone formatter, without compiler inputs."""
+    sources: list[str] = []
+    for path, contents in case.preexisting:
+        destination = directory / path
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_text(contents, encoding="utf-8")
+    for source in case.sources:
+        destination = directory / case.source_prefix / source
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(__ROOT / source, destination)
+        if case.newlines:
+            text = destination.read_text(encoding="utf-8")
+            destination.write_bytes(text.replace("\n", case.newlines).encode())
+        sources.append(str(destination))
+
+    source_inputs = {
+        source: (directory / case.source_prefix / source).read_bytes().decode("utf-8")
+        for source in case.sources
+    }
+    command = [*formatter, *case.arguments, *sources]
+    environment = os.environ.copy()
+    for name in ("YIAN_FMT", "YIANC", "YIAN_ROOT", "YIAN_LIB", "YIAN_LOG", "YIAN_LOG_FILE"):
+        environment.pop(name, None)
+    process = subprocess.run(command, cwd=directory, env=environment, capture_output=True,
+                             text=True, check=False)
+    result: dict[str, Json] = {
+        "status": process.returncode,
+        "stdout": process.stdout,
+        "stderr": process.stderr,
+        "source_inputs": cast(Json, source_inputs),
+        "sources": {
+            source: (directory / case.source_prefix / source).read_bytes().decode("utf-8")
+            for source in case.sources
+        },
+    }
+    return {
+        "command": [str(value) for value in command],
+        "observation": __normalize(result, directory, __ROOT / "lib/src"),
+        "raw_stdout": process.stdout,
+        "raw_stderr": process.stderr,
+    }
+
+
 def __run(
     native: list[str],
     case: Case,
@@ -193,6 +245,8 @@ def __run(
 ) -> dict[str, Json]:
     if case.package_build:
         return __run_package_build(native, case, directory, raw, default_library, anx)
+    if case.group == "format":
+        return __run_format(native, case, directory)
 
     sources: list[str] = []
     for path, contents in case.preexisting:
@@ -551,7 +605,7 @@ def oracle_passes(case: Case, record: dict[str, Json]) -> bool:
                 formatted = __format_expected(case, source)
                 if formatted is None:
                     return False
-                if "--format-check" in arguments:
+                if "--check" in arguments:
                     expected_stdout = normalized_path + "\n1 of 1 file(s) need formatting\n"
                     return status == 1 and actual == original and "\r" in original and observation.get("stdout") == expected_stdout
                 if "--write" in arguments:
@@ -566,7 +620,7 @@ def oracle_passes(case: Case, record: dict[str, Json]) -> bool:
                 expected_stdout = f"1 file(s) checked, {1 if original != formatted else 0} rewritten\n"
                 if status != 0 or actual != formatted or observation.get("stdout") != expected_stdout:
                     return False
-            elif "--format-check" in arguments:
+            elif "--check" in arguments:
                 expected_status = 0 if original == formatted else 1
                 expected_stdout = ""
                 if original != formatted:
@@ -742,6 +796,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--native", required=True, help="Native yianc executable.")
     parser.add_argument("--anx", help="Native anx executable for package build cases.")
+    parser.add_argument("--formatter", help="Native yian-fmt executable for format cases.")
     parser.add_argument("--groups", default="analyze,cli,frontend,format,native,observability")
     parser.add_argument("--filter", default="")
     parser.add_argument("--report", type=Path, required=True)
@@ -813,6 +868,14 @@ def main() -> int:
             anx_command = [str(resolve_native(args.anx))]
         except NativeToolError as error:
             parser.error(str(error))
+    formatter_path: Path | None = None
+    if any(case.group == "format" for case in selected):
+        if not args.formatter:
+            parser.error("--formatter PATH is required when the selection contains a format case")
+        try:
+            formatter_path = resolve_native(args.formatter)
+        except NativeToolError as error:
+            parser.error(str(error))
 
     revision = subprocess.run(
         ["git", "rev-parse", "HEAD"], cwd=__ROOT, text=True, capture_output=True, check=False
@@ -828,11 +891,13 @@ def main() -> int:
     failure_log.write_text("", encoding="utf-8")
 
     for case in selected:
-        for raw in case.target_modes:
-            mode = "raw" if raw else "fat"
+        modes = (False,) if case.group == "format" else case.target_modes
+        for raw in modes:
+            mode = "none" if case.group == "format" else ("raw" if raw else "fat")
             with tempfile.TemporaryDirectory(prefix="yian-native-parity-") as temporary:
+                program = [str(formatter_path)] if case.group == "format" else native
                 observed = run_case(
-                    native,
+                    program,
                     case,
                     Path(temporary),
                     raw,
@@ -864,6 +929,9 @@ def main() -> int:
         "native_sha256": source_identity,
         "native_source_sha256": component_source_sha256(__ROOT, "yianc"),
         "anx": anx_command[0] if anx_command else None,
+        "formatter": str(formatter_path) if formatter_path else None,
+        "formatter_sha256": file_sha256(formatter_path) if formatter_path else None,
+        "formatter_source_sha256": component_source_sha256(__ROOT, "yian-fmt") if formatter_path else None,
         "total": len(records),
         "failures": failures,
         "cases": records,

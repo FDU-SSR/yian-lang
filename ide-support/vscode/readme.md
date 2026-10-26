@@ -4,7 +4,7 @@ VS Code 扩展提供 `.an` 语法高亮、语言配置和原生 YIAN 语言服�
 
 ## 安装工具链与服务器
 
-先 cold bootstrap `yianc`、`anx` 和标准库/运行时资源，再用这些原生 seeds warm refresh 完整工具链与服务器：
+先 cold bootstrap `yianc`、`anx`、`yian-fmt` 和标准库/运行时资源，再用这些原生 seeds warm refresh 完整工具链与服务器：
 
 ```bash
 conda run --no-capture-output -n yian-env bash scripts/bootstrap_toolchain.sh \
@@ -15,9 +15,9 @@ PATH="$HOME/.local/bin:$PATH" \
 "$HOME/.local/bin/yian-lsp" --version
 ```
 
-warm refresh 需要可用的原生 `anx` 与 `yianc`、LLVM 22、clang 22，以及已安装的共享资源。发布的完整工具链是native binaries；语言服务器复用同一工具链和标准库，不复制第二份资源。服务器以 raw 模式和 `-O2` 构建，分析 YIAN 源码时默认使用 fat 指针。
+warm refresh 需要可用的原生 `anx` 与 `yianc`、LLVM 22、clang 22，以及已安装的共享资源。发布的完整工具链是 native binaries；语言服务器与 `anx fmt` 复用同一 `yian-fmt` 命令和标准库，不复制第二份格式化实现。服务器以 raw 模式和 `-O2` 构建，分析 YIAN 源码时默认使用 fat 指针。
 
-服务器卸载：
+服务器卸载（保留 `yianc`、`anx`、`yian-fmt` 与共享资源）：
 
 ```bash
 scripts/uninstall.sh --lsp-only --prefix "$HOME/.local"
@@ -55,7 +55,7 @@ scripts/refresh_toolchain.sh --anx "$HOME/.local/bin/anx" --yianc "$HOME/.local/
 - 提示使用 VS Code 内建的 `editor.inlayHints.enabled`；可按语言设置 `"[yian]": {"editor.inlayHints.enabled": "off"}` 关闭。
 - 工作区文档同步和文件变更更新。
 - 未保存文本优先参与一次严格前端与语义分析；过期分析结果不会覆盖新版本。
-- Format Document 使用当前未保存文本，返回整文档编辑；已格式化或无法解析的文本不产生修改。
+- Format Document 使用当前未保存文本，通过已安装的 `yian-fmt` 子进程返回整文档编辑；已格式化、无法解析或格式化工具不可用的文本不产生修改。
 - 不声明补全、签名帮助、重命名或代码操作；这些请求由服务器以 `MethodNotFound` 拒绝。
 - 任一输入错误使当前分析单元不可导航并发布首错；修复后重新分析自动恢复，不返回旧导航。
 

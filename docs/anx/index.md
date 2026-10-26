@@ -22,12 +22,12 @@ Python 恢复编译器只在显式冷启动中消费其固定配方需要的包�
 | [03](03.cli.md) | 命令行 | 七个子命令、选项、退出码、构建产物 |
 | [04](04.testing.md) | 项目测试 | `tests/` 布局、期望文件、用例怎么编译 |
 | [05](05.diagnostics.md) | 诊断目录 | 当前 anx `AX` 码与 compiler `E` 码的边界 |
-| [06](06.install.md) | 安装与环境 | 原生 `yianc`/`anx` 工具链、独立 LSP 安装与共享资源 |
+| [06](06.install.md) | 安装与环境 | 原生 `yianc`/`anx`/`yian-fmt` 工具链、独立 LSP 安装与共享资源 |
 
 ## 快速上手
 
 ```bash
-scripts/bootstrap_toolchain.sh # Build native yianc/anx and install shared resources.
+scripts/bootstrap_toolchain.sh # Build native yianc/anx/yian-fmt and install shared resources.
 
 anx new demo              # Create a bin project skeleton.
 cd demo
@@ -66,7 +66,7 @@ demo/
 | 跑项目自己的测试 | `anx test` |
 | 保存编译耗时报告 | `anx build profile` |
 | 运行并保存逐函数统计 | `anx run profile` |
-| 格式化根包源码 | `anx fmt` / `anx fmt --check` |
+| 格式化根包源码 | `anx fmt` / `anx fmt --check`，格式化由独立 `yian-fmt` 子进程执行 |
 | 打印依赖图 | `anx graph` / `anx graph --json` |
 | 提高优化级别 | `anx build --release` 或 `anx build -O 3` |
 

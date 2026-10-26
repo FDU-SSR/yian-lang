@@ -13,6 +13,7 @@ BUILD_INFO_FORMAT = 1
 COMPONENT_ROOTS = {
     "yianc": "yianc",
     "anx": "anx",
+    "yian-fmt": "fmt",
     "yian-lsp": "lsp",
 }
 SOURCE_SUFFIXES = {".an", ".c", ".h"}
@@ -135,6 +136,7 @@ def tool_build_info(
     *,
     yianc: Path,
     anx: Path,
+    formatter: Path,
     python: Path,
     build_options: dict[str, Any],
     build_tools: dict[str, dict[str, str]],
@@ -171,6 +173,14 @@ def tool_build_info(
             "anx": {
                 "source_sha256": component_source_sha256(root, "anx"),
                 "artifact_sha256": file_sha256(anx),
+                "build_mode": "raw",
+                "optimization": 2,
+                "builder": "staged-yianc",
+                "builder_inputs": {"yianc_sha256": file_sha256(yianc)},
+            },
+            "yian-fmt": {
+                "source_sha256": component_source_sha256(root, "yian-fmt"),
+                "artifact_sha256": file_sha256(formatter),
                 "build_mode": "raw",
                 "optimization": 2,
                 "builder": "staged-yianc",

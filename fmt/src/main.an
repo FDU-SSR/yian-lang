@@ -1,0 +1,7 @@
+from fmt.cli import run;
+from std.core.env import exit;
+
+fn main() {
+    let status = run();
+    if status != 0i32 { exit(status); }
+}

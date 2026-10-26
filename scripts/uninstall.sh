@@ -14,7 +14,7 @@ Usage: scripts/uninstall.sh [options]
 
 Options:
   --prefix PATH  Installation prefix (default: $HOME/.local).
-  --lsp-only     Remove only yian-lsp; keep yianc, anx and shared resources.
+  --lsp-only     Remove only yian-lsp; keep yianc, anx, yian-fmt and shared resources.
   --python PATH  Also remove recognized legacy Python yianc/anx launchers.
   -h, --help     Show this help.
 EOF
@@ -127,16 +127,21 @@ else
 fi
 
 if [[ "$LSP_ONLY" -eq 1 ]]; then
-    printf 'Shared toolchain resources and yianc/anx were left in place under %s.\n' "$PREFIX"
+    printf 'Shared toolchain resources and yianc/anx/yian-fmt were left in place under %s.\n' "$PREFIX"
 else
     [[ ! -L "$NATIVE_DATA_DIR" ]] || die "refusing a symlinked native resource directory: $NATIVE_DATA_DIR"
     [[ ! -L "$NATIVE_MARKER" ]] || die "refusing a symlinked native install record: $NATIVE_MARKER"
 
     if [[ -f "$NATIVE_MARKER" ]] && grep -Fxq 'yian-native-install-v1' "$NATIVE_MARKER"; then
         KEEP_RESOURCES=0
-        for command_name in yianc anx; do
+        for command_name in yianc anx yian-fmt; do
             target="$BIN_DIR/$command_name"
             if [[ -e "$target" || -L "$target" ]]; then
+                if [[ "$command_name" == "yian-fmt" && -L "$target" ]]; then
+                    printf 'Preserving symlinked yian-fmt and shared resources: %s\n' "$target" >&2
+                    KEEP_RESOURCES=1
+                    continue
+                fi
                 expected="$(awk -F= -v name="$command_name" '$1 == name { print $2; exit }' "$NATIVE_MARKER")"
                 if matches_digest "$target" "$expected"; then
                     rm -f -- "$target"

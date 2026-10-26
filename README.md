@@ -2,7 +2,7 @@
 
 YIAN is a statically typed programming language with a Python recovery compiler and a native compiler and package manager written in YIAN. The native tools are the daily compiler and package workflow; Python remains for the explicit cold-recovery build and the compatibility it needs.
 
-The native compiler and package manager live in the root `yianc/` and `anx/` packages. Their shared JSON, TOML, LLVM, FFI and protocol libraries live under `bootstrap/`; the Python recovery compiler lives in `python/yianc/`.
+The native compiler, formatter and package manager live in the root `yianc/`, `fmt/` and `anx/` packages. Their shared JSON, TOML, LLVM, FFI and protocol libraries live under `bootstrap/`; the Python recovery compiler lives in `python/yianc/`.
 
 ## Requirements
 
@@ -10,7 +10,7 @@ The native compiler and package manager live in the root `yianc/` and `anx/` pac
 - Python 3.12+ and llvmlite 0.49+ for the initial native compiler build.
 - LLVM 22, clang 22, `llvm-config`, and a C toolchain for compilation and linking.
 
-The installed `yianc`, `anx`, and `yian-lsp` commands are native executables. The language server uses the same installed toolchain resources and LLVM runtime libraries.
+The installed `yianc`, `anx`, `yian-fmt`, and `yian-lsp` commands are native executables. The language server and `anx fmt` invoke the installed formatter; the language server uses the same installed toolchain resources and LLVM runtime libraries.
 
 For a fresh development environment, install the Python recovery dependency from the requirements file, then install the LLVM and native C build tools system-wide:
 
@@ -26,7 +26,7 @@ export YIAN_CC=/usr/lib/llvm-22/bin/clang
 
 ## Install
 
-Build and install native `yianc` and `anx`, the standard library, and the runtime from this checkout:
+Build and install native `yianc`, `anx`, `yian-fmt`, the standard library, and the runtime from this checkout:
 
 ```bash
 conda run --no-capture-output -n yian-env bash scripts/bootstrap_toolchain.sh \
@@ -50,7 +50,7 @@ scripts/uninstall.sh --lsp-only --prefix "$HOME/.local"
 scripts/uninstall.sh --prefix "$HOME/.local"
 ```
 
-The cold bootstrap uses the Python recovery compiler once to build raw `yianc` from its fixed five-package closure, then uses staged native `yianc` to build raw `anx` from its fixed seven-package closure. It never selects installed `yianc` or `anx` from `PATH` and does not build the language server. The warm refresh freezes existing native seeds, rebuilds raw/O2 `yianc`, `anx`, and `yian-lsp`, verifies a stdio handshake against staged resources, and publishes the complete set transactionally.
+The cold bootstrap uses the Python recovery compiler once to build raw `yianc` from its fixed five-package closure, then uses staged native `yianc` to build raw `anx` and raw `yian-fmt` from their fixed seven- and six-package closures. It never selects installed `yianc`, `anx`, or `yian-fmt` from `PATH` and does not build the language server. The warm refresh freezes existing native seeds, rebuilds raw/O2 `yianc`, `anx`, `yian-fmt`, and `yian-lsp`, verifies the formatter smoke check and a stdio handshake against staged resources, and publishes the complete set transactionally.
 
 If working native `yianc` and `anx` commands are already available, refresh the full native toolchain, including the language server, without a Python runtime:
 
@@ -68,7 +68,23 @@ yianc -t ll lib/src tests/basic/array/assign.an -o build/assign.ll
 yianc --log-spec "main=DEBUG" lib/src tests/basic/array/assign.an
 ```
 
-See the [compiler CLI guide](docs/compile_script.md) for targets, package maps, analysis, formatting, and diagnostics.
+See the [compiler CLI guide](docs/compile_script.md) for targets, package maps, analysis, and diagnostics.
+
+## Format sources
+
+`yian-fmt` formats `.an` sources with the native frontend and needs no standard-library or package-map input:
+
+```bash
+yian-fmt src/main.an              # Print one formatted file.
+yian-fmt --write src              # Rewrite files in a directory.
+yian-fmt --check src              # List files that need formatting; exit 1 on differences.
+yian-fmt --stdin --stdin-filepath src/main.an < src/main.an
+```
+
+Exit codes are `0` success, `1` formatting differences under `--check`, `2` usage/IO/runtime failure, and `3`
+lexical or syntax failure. `anx fmt` and the language server run the same command as a subprocess; they select
+it with a nonempty `YIAN_FMT`, then the calling executable's directory, then `PATH`. See the
+[formatter guide](docs/manual/28.formatter.md) for the layout rules, known limitations, and checks.
 
 ## Use anx
 

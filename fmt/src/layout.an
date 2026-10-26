@@ -1,8 +1,8 @@
 from yianc.frontend.lex.token import Token, PunctuatorKind, KeywordKind;
 from yianc.frontend.source import Position, Span;
 from yianc.frontend.text import SourceText;
-from yianc.format.rules import word, prefix, closer, ends_operand, closes_type, hug_before, hug_after, binary, paren_space, bracket_hugs;
-from yianc.format.trivia import gap, Gap;
+from fmt.rules import word, prefix, closer, ends_operand, closes_type, hug_before, hug_after, binary, paren_space, bracket_hugs;
+from fmt.trivia import gap, Gap;
 from std.core.drop import Drop;
 from std.core.iter import Iterator, IntoIterator;
 from std.core.ops import Index;

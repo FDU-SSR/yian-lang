@@ -5,6 +5,7 @@ yian_component_root() {
     case "$1" in
         yianc) printf '%s\n' 'yianc' ;;
         anx) printf '%s\n' 'anx' ;;
+        yian-fmt) printf '%s\n' 'fmt' ;;
         yian-lsp) printf '%s\n' 'lsp' ;;
         *) printf 'unknown toolchain component: %s\n' "$1" >&2; return 1 ;;
     esac

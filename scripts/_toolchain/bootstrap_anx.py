@@ -2,8 +2,8 @@
 """Validate and describe the checkout's fixed bootstrap package closures.
 
 This is installation support, not a general package manager. The package
-recipes are deliberately explicit so changes to either closure fail with a
-useful error and require an intentional recipe update.
+recipes are deliberately explicit so changes to a closure fail with a useful
+error and require an intentional recipe update.
 """
 
 from __future__ import annotations
@@ -32,10 +32,14 @@ class PackageRecipe:
 PACKAGE_ORDERS = {
     "yianc": ("yianc", "json", "llvm", "ffi", "std"),
     "anx": ("anx", "yianc", "json", "llvm", "ffi", "toml", "std"),
+    "fmt": ("fmt", "yianc", "json", "llvm", "ffi", "std"),
 }
 PACKAGES = {
     "anx": PackageRecipe(
         "anx", "anx", "hybrid", ("json", "toml", "yianc"), entry="src/main.an"
+    ),
+    "fmt": PackageRecipe(
+        "fmt", "fmt", "hybrid", ("yianc",), entry="src/main.an"
     ),
     "yianc": PackageRecipe(
         "yianc", "yianc", "hybrid", ("json", "llvm"), ffi=True,

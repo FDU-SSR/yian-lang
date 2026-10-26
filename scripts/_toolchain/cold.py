@@ -178,8 +178,44 @@ def _source_snapshot(root: Path) -> dict[str, str]:
     return {
         "yianc": component_source_sha256(root, "yianc"),
         "anx": component_source_sha256(root, "anx"),
+        "yian-fmt": component_source_sha256(root, "yian-fmt"),
         "resources": resources_source_sha256(root),
     }
+
+
+def _smoke_formatter(formatter: Path, *, cwd: Path, environment: dict[str, str], journal: Path) -> None:
+    version = subprocess.run(
+        [str(formatter), "--version"], cwd=cwd, env=environment, check=False, capture_output=True, text=True
+    )
+    _record_command(journal, label="version-yian-fmt", argv=[str(formatter), "--version"], cwd=cwd, code=version.returncode)
+    if version.returncode != 0 or not version.stdout.startswith("yian-fmt "):
+        raise ColdInstallError(f"staged yian-fmt failed its version check: {formatter}")
+    help_check = subprocess.run(
+        [str(formatter), "--help"], cwd=cwd, env=environment, check=False, capture_output=True, text=True
+    )
+    _record_command(journal, label="help-yian-fmt", argv=[str(formatter), "--help"], cwd=cwd, code=help_check.returncode)
+    if help_check.returncode != 0 or "Usage: yian-fmt" not in help_check.stdout:
+        raise ColdInstallError(f"staged yian-fmt failed its help check: {formatter}")
+    source = "fn main(){let (a,b)=(1,2);}\n"
+    expected = "fn main() { let (a, b) = (1, 2); }\n"
+    smoke = subprocess.run(
+        [str(formatter), "--stdin", "--stdin-filepath", "smoke.an"],
+        cwd=cwd,
+        env=environment,
+        input=source,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    _record_command(
+        journal,
+        label="stdin-yian-fmt",
+        argv=[str(formatter), "--stdin", "--stdin-filepath", "smoke.an"],
+        cwd=cwd,
+        code=smoke.returncode,
+    )
+    if smoke.returncode != 0 or smoke.stdout != expected or smoke.stderr != "":
+        raise ColdInstallError(f"staged yian-fmt failed its stdin smoke check: {formatter}")
 
 
 def _build(args: argparse.Namespace) -> None:
@@ -215,6 +251,7 @@ def _build(args: argparse.Namespace) -> None:
         try:
             yianc_recipe = build_recipe(root, root_package="yianc")
             anx_recipe = build_recipe(root, root_package="anx")
+            fmt_recipe = build_recipe(root, root_package="fmt")
         except BootstrapError as error:
             raise ColdInstallError(str(error)) from None
 
@@ -222,16 +259,20 @@ def _build(args: argparse.Namespace) -> None:
         recipe_dir.mkdir()
         yianc_map = recipe_dir / "yianc.json"
         anx_map = recipe_dir / "anx.json"
+        fmt_map = recipe_dir / "fmt.json"
         yianc_map.write_text(
             json.dumps(yianc_recipe.package_map, indent=2) + "\n", encoding="utf-8"
         )
         anx_map.write_text(
             json.dumps(anx_recipe.package_map, indent=2) + "\n", encoding="utf-8"
         )
+        fmt_map.write_text(
+            json.dumps(fmt_recipe.package_map, indent=2) + "\n", encoding="utf-8"
+        )
 
         initial_sources = _source_snapshot(root)
         clean_environment = os.environ.copy()
-        for variable in ("YIANC", "YIAN_ROOT", "YIAN_LIB", "PYTHONPATH"):
+        for variable in ("YIANC", "YIAN_ROOT", "YIAN_LIB", "YIAN_FMT", "PYTHONPATH"):
             clean_environment.pop(variable, None)
         build_environment = clean_environment.copy()
         build_environment.update(
@@ -269,6 +310,18 @@ def _build(args: argparse.Namespace) -> None:
         if not staged_anx.is_file() or not os.access(staged_anx, os.X_OK):
             raise ColdInstallError(f"native yianc did not create an executable anx: {staged_anx}")
 
+        staged_fmt = binaries / "yian-fmt"
+        print("Building raw native yian-fmt with the staged native yianc...", flush=True)
+        _run(
+            [str(staged_yianc), *compiler_arguments(fmt_recipe, fmt_map, staged_fmt)],
+            cwd=root,
+            environment=build_environment,
+            journal=journal,
+            label="build-yian-fmt-staged-yianc",
+        )
+        if not staged_fmt.is_file() or not os.access(staged_fmt, os.X_OK):
+            raise ColdInstallError(f"native yianc did not create an executable yian-fmt: {staged_fmt}")
+
         if _source_snapshot(root) != initial_sources:
             raise ColdInstallError("toolchain source inputs changed during the cold build; refusing publication")
 
@@ -283,6 +336,7 @@ def _build(args: argparse.Namespace) -> None:
                 journal=journal,
                 label=f"help-{command_name}",
             )
+        _smoke_formatter(staged_fmt, cwd=root, environment=clean_environment, journal=journal)
 
         shutil.copytree(root / "lib" / "src", data / "lib" / "src")
         shutil.copy2(root / "lib" / "package.anx", data / "lib" / "package.anx")
@@ -295,6 +349,7 @@ def _build(args: argparse.Namespace) -> None:
             root,
             yianc=staged_yianc,
             anx=staged_anx,
+            formatter=staged_fmt,
             python=python,
             build_options={"optimization": "-O2", "pointer_mode": "raw", "workflow": "cold"},
             build_tools=tools,
@@ -309,9 +364,11 @@ def _build(args: argparse.Namespace) -> None:
             "yian-native-install-v1\n"
             f"yianc={file_sha256(staged_yianc)}\n"
             f"anx={file_sha256(staged_anx)}\n"
+            f"yian-fmt={file_sha256(staged_fmt)}\n"
             f"resources={resource_hash}\n"
             "yianc_build_mode=raw\n"
             "anx_build_mode=raw\n"
+            "fmt_build_mode=raw\n"
             "optimization=2\n"
             "pointer_mode=raw\n",
             encoding="utf-8",
@@ -338,7 +395,7 @@ def _build(args: argparse.Namespace) -> None:
             journal=journal,
             label="publish-toolchain",
         )
-        print(f"Installed native yianc and anx under {prefix}", flush=True)
+        print(f"Installed native yianc, anx and yian-fmt under {prefix}", flush=True)
         shutil.rmtree(run_dir)
     finally:
         fcntl.flock(lock.fileno(), fcntl.LOCK_UN)

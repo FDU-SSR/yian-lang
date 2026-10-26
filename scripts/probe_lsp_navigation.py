@@ -5,7 +5,8 @@ The probe opens one two-file fixture, verifies definitions, references, hover,
 document symbols, semantic tokens, closed editing methods, whole-document
 formatting of an unsaved buffer and the valid to invalid to repaired transition.
 It intentionally calls only the public StdioSession helper and never runs the
-full protocol matrix.
+full protocol matrix. Formatting resolves yian-fmt through YIAN_FMT, then the
+server executable's directory, then PATH.
 """
 
 from __future__ import annotations

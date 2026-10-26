@@ -8,7 +8,7 @@
   以及项目测试驱动。
 - **分析接口与语言服务器**（26–27）：编译器分析会话与位置/引用模型，以及 `lsp/` 中的原生
   协议服务、调度与分发。
-- **格式化器**（28）：源码排版的规则、注释与空行的恢复、五条不变式与三个入口。
+- **格式化器**（28）：独立 `yian-fmt` 命令的源码排版规则、注释与空行的恢复、五条不变式与三个入口。
 - **FFI**（29）：C ABI 声明与封送的编译路径、包权限和原生链接。
 - **自举编译器与原生工具链**（30）：YIAN 实现的完整编译器、原生 anx 与 JSON/TOML/LLVM 支持库。
 
@@ -53,7 +53,7 @@
 |----|------|-----------|
 | [26](26.analysis_interface.md) | 分析接口 | Python 恢复分析 API 与 native 编辑器分析接口 |
 | [27](27.language_server.md) | 语言服务器 | `lsp/`、`ide-support/vscode/` |
-| [28](28.formatter.md) | 格式化器 | `yianc/src/format/`、`lsp/src/formatting.an` |
+| [28](28.formatter.md) | 格式化器 | `fmt/`、`anx/src/driver/formatter.an`、`lsp/src/formatting.an` |
 | [29](29.ffi.md) | FFI 编译与链接 | native 日常编译器与 anx 包图；另记录 Python 恢复实现 |
 | [30](30.bootstrap.md) | 自举编译器与原生工具链 | `yianc/`、`anx/`、`bootstrap/json/`、`bootstrap/toml/`、`bootstrap/jsonrpc/`、`bootstrap/lsp_protocol/`、`bootstrap/ffi/`、`bootstrap/llvm/` |
 

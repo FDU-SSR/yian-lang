@@ -1519,6 +1519,9 @@ def __run_infrastructure(args: argparse.Namespace) -> int:
     environment["YIAN_INSTALL_PREFIX"] = str(prefix)
     environment["YIANC"] = str(native_tools["yianc"])
     environment["YIAN_LSP_BIN"] = str(native_tools["yian-lsp"])
+    staged_formatter = native_bin / "yian-fmt"
+    if staged_formatter.is_file():
+        environment["YIAN_FMT"] = str(staged_formatter)
     commands = [
         [
             sys.executable,

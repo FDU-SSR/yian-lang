@@ -2,7 +2,7 @@
 
 本文档说明日常使用的原生 `yianc` 命令行。Python 恢复编译器通过
 `PYTHONPATH=python python -m yianc.main` 显式调用，只维护冷启动所需兼容性，不承诺与 native 完整功能对等。
-安装后的 `yianc` 是由 `yianc/` 构建的原生程序，也是日常编译、分析和格式化的权威入口。
+安装后的 `yianc` 是由 `yianc/` 构建的原生程序，是日常编译与分析的权威入口；格式化由独立的 `yian-fmt` 命令完成。
 
 ## 1. 基本用法
 
@@ -111,7 +111,7 @@ JSON，并在同目录写一个扩展名为 `.txt` 的可读汇总。两者可�
 lower/验证/清理/check insertion、LLVM lowering/优化前后验证/优化/native emission 或 IR/bitcode 序列化，
 以及 runtime、C shim、链接参数、最终链接和产物发布。优化等级 `-O0` 不运行 LLVM 优化；`--check` 在语义分析后结束，未执行项标为 `not_run`，不会伪造零耗时成功。原生链接阶段仅在 `exe` 目标运行。
 
-`--profile-output` 可用于编译模式与 `--check`；编译报告的目标为 `"exe"`、`"ll"` 或 `"bc"`，检查报告的目标为 `"check"`。与 `--format` 一起使用会报配置错误。报告写入失败只打印警告，不改变原编译结果。`anx
+`--profile-output` 可用于编译模式与 `--check`；编译报告的目标为 `"exe"`、`"ll"` 或 `"bc"`，检查报告的目标为 `"check"`。报告写入失败只打印警告，不改变原编译结果。`anx
 build profile` 用该接口保存每次 compiler 调用的独立明细并生成命令级报告；命令选项见
 [anx CLI](anx/03.cli.md)。`anx run profile` 启动产物后的执行不计入编译计时；它使用下节的运行时插桩接口，
 不读取编译报告。Python 恢复编译器的 `--profile` 属于其恢复 CLI 行为；它不支持 native
@@ -124,7 +124,7 @@ yianc --runtime-profile-dir /abs/run/dir -O2 -o build/app lib/src main.an
 ```
 
 该 native 选项只用于生成插桩可执行文件。`PATH` 必须是非空绝对路径，目标必须是 `exe`；与 `--check`、
-`--format`、`-t ll`/`-t bc` 一起使用会报配置错误。`anx run profile` 自动分配本次 run 目录并传入该选项，
+`-t ll`/`-t bc` 一起使用会报配置错误。`anx run profile` 自动分配本次 run 目录并传入该选项，
 普通构建不传。
 
 编译为本次构建中的每个生成 callable 分配 `function_id`，输出只读的描述符表与
@@ -228,17 +228,22 @@ definite-assignment 检查；不进入 CFG/LLVM，不生成编译器产物。诊
 `--runtime-profile-dir` 只用于插桩 `exe` 构建，与 `--check` 组合会报配置错误。
 `--dump` 只写 `tokens.txt`、`ast.txt` 和成功分析时的 `hir.txt`。
 
-### 2.11 `--format` / `-w` / `--format-check` — 格式化源码
+### 2.11 格式化源码 — `yian-fmt`
+
+native `yianc` 不包含格式化 action，`--format`、`--format-check`、`-w` 和 `--write` 都是未知选项。
+格式化使用独立命令：
 
 ```bash
-yianc --format main.an                 # One file: print formatted source to stdout.
-yianc --format -w src                  # Multiple files: rewrite in place.
-yianc --format --format-check src      # Report only files needing formatting.
+yian-fmt main.an                  # One file: print formatted source to stdout.
+yian-fmt --write src              # Multiple files: rewrite in place.
+yian-fmt --check src              # Report files needing formatting; exit 1 on differences.
+yian-fmt --stdin --stdin-filepath label.an < main.an
 ```
 
-只做词法与语法分析，再按规范化空白、换行与注释位置重新发射。无法格式化的文件被跳过并在
-stderr 打印 `skip <path>: cannot be formatted`。`--format-check` 列出需要格式化的文件，有差异时
-退出 `1`；它只能与 `--format` 一起使用，并且不能与 `-w` 组合。`anx fmt` 是同一格式化器在项目上的入口。
+`yian-fmt` 只做词法与语法分析，再按规范化空白、换行与注释位置重新发射。文件模式无法格式化的文件
+打印 `skip <path>: cannot be formatted` 并继续处理；退出码 2 优先于 3，差异检查为 1。stdin 模式只
+输出格式化文本。`anx fmt` 与语言服务器通过子进程调用同一命令。完整契约见
+[格式化器](manual/28.formatter.md)。
 
 ### 2.12 `--allow-ffi` / `--link-lib` / `--link-search` — FFI 与原生链接
 
