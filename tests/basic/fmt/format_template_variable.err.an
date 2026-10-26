@@ -1,4 +1,0 @@
-fn main() {
-    let pattern: String = String.from(&"text");
-    @print(pattern);
-}

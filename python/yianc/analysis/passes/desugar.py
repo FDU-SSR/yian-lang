@@ -62,6 +62,25 @@ class _ExprDesugarRewriter(AstRewriter):
         return expr
 
 
+class _PrintArgumentRewriter(AstRewriter):
+    """Normalize non-template print arguments to one-interpolation templates."""
+
+    def rewrite_expr(self, expr: AST.Expr) -> AST.Expr:
+        super().rewrite_expr(expr)
+        if not isinstance(expr, AST.Builtin) or not expr.kind.is_print_entry or len(expr.args) != 1:
+            return expr
+        value = expr.args[0].value
+        if isinstance(value, AST.FormatTemplate):
+            return expr
+        if isinstance(value, AST.Literal) and isinstance(value.literal, Tok.StrLiteral):
+            return expr
+        expr.args[0].value = AST.FormatTemplate(
+            span=value.span,
+            parts=[AST.FormatValuePart(span=value.span, expr=value)],
+        )
+        return expr
+
+
 class _TryRewriter(AstRewriter):
     """Expand propagation into trait-qualified calls and ordinary control flow."""
 
@@ -163,6 +182,7 @@ class Desugar:
                             self.__desugar_body(trait_item.body)
                 case AST.ConstDef():
                     item.value = self.__try_rewriter.rewrite_expr(item.value)
+                    item.value = _PrintArgumentRewriter().rewrite_expr(item.value)
                 case _:
                     continue
         self.__program.items = self.__try_rewriter.imports + self.__program.items
@@ -172,6 +192,7 @@ class Desugar:
         _ControlFlowRewriter(self.__transform_control_flow).rewrite_block(body)
         _ExprDesugarRewriter().rewrite_block(body)
         self.__try_rewriter.rewrite_callable(body)
+        _PrintArgumentRewriter().rewrite_block(body)
 
     def __normalize_params(
         self, params: list[AST.VarInfo | AST.PatternParam], body: AST.Block,

@@ -5,7 +5,7 @@ from yianc.analysis.ty.model import TypeData;
 from yianc.analysis.ty.validation import validate_value;
 from yianc.common.ids import TypeId, HirId;
 from yianc.frontend.ast.node import TypeSyntax, Argument, ExprData, Literal, FormatPart;
-from yianc.analysis.lowering.format import FormatDestination, lower_format, lower_format_str;
+from yianc.analysis.lowering.format import FormatDestination, lower_format;
 from yianc.frontend.ast.atoms import BuiltinKind;
 from yianc.frontend.source import Span;
 from yianc.diagnostics.model import AnalysisError, DiagnosticCode;
@@ -259,7 +259,7 @@ impl ExprChecker {
         Result<HirId, AnalysisError>.Ok(self.node(span, result, false, HirKind.Builtin(Builtin(kind, types, values))))
     }
 
-    // Print entries evaluate a runtime str argument; append/write keep static templates.
+    // Desugar normalizes print arguments to templates; append/write already require templates.
     fn format_builtin(span: Span, kind: BuiltinKind, args: Vec<Argument&>&) -> Result<HirId, AnalysisError> {
         for argument in *args {
             if argument.data.name.is_some() {
@@ -267,7 +267,7 @@ impl ExprChecker {
             }
         }
 
-        let print_entry = kind == BuiltinKind.Print || kind == BuiltinKind.Println || kind == BuiltinKind.Eprint || kind == BuiltinKind.Eprintln;
+        let print_entry = kind.is_print_entry();
         let destination = match &kind {
             Append => FormatDestination.Append(target=args[0].data.value),
             Write => FormatDestination.Writer(target=args[0].data.value),
@@ -278,14 +278,6 @@ impl ExprChecker {
             _ => return Result<HirId, AnalysisError>.Err(AnalysisError.internal("not a formatting builtin")),
         };
         let template = if print_entry { args[0] } else { args[1] };
-
-        // A print argument is either an f-string template or a str expression; string literals are str values.
-        if print_entry {
-            return match &template.data.value.data {
-                FormatTemplate(parts) => lower_format(self, span, destination, parts),
-                _ => lower_format_str(self, span, destination, template.data.value),
-            };
-        }
 
         return match &template.data.value.data {
             FormatTemplate(parts) => lower_format(self, span, destination, parts),

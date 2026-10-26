@@ -1,6 +1,6 @@
-// f-string interpolation does not dereference references automatically.
+// Non-template print arguments are wrapped as f-strings; references are not dereferenced.
 fn main() {
     let value: i32 = 41;
     let reference: i32& = &value;
-    @println(f"{reference}");
+    @println(reference);
 }

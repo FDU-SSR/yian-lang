@@ -181,9 +181,6 @@ class FormatLowering:
     def __write_str(self, span: SrcSpan, receiver: HIR.Expr, text: str) -> HIR.Expr:
         return self.__expr.call_method(receiver, "write_str", None, [self.__str_literal(span, text)])
 
-    def __write_str_value(self, span: SrcSpan, receiver: HIR.Expr, value: HIR.Expr) -> HIR.Expr:
-        return self.__expr.call_method(receiver, "write_str", None, [value])
-
     def __write_value(self, span: SrcSpan, receiver: HIR.Expr, value: HIR.Expr) -> HIR.Expr:
         return self.__expr.call_method(receiver, "write_value", None, [self.__address(span, value)])
 
@@ -379,24 +376,6 @@ class FormatLowering:
         statements.append(self.__chain(receiver, parts, 0, tail, TypeCtx.void_id, FormatFailure.PANIC))
         return self.__block(span, statements, TypeCtx.void_id)
 
-    def __printer_str(self, span: SrcSpan, value: HIR.Expr, standard_output: bool, newline: bool) -> HIR.Expr:
-        library = self.__library
-        statements: list[HIR.Expr] = []
-        factory = library.stdout_printer if standard_output else library.stderr_printer
-        target_value = self.__call(span, factory, [])
-        target = self.__declare(span, "print_target", target_value)
-        statements.append(target[0])
-        formatter_value = self.__call(span, library.formatter_for, [self.__address(span, self.__var(span, target[1], target_value.type_id))])
-        formatter = self.__declare(span, "print_formatter", formatter_value)
-        statements.append(formatter[0])
-        receiver = self.__var(span, formatter[1], formatter_value.type_id)
-        finish = self.__expr.call_method(self.__var(span, target[1], target_value.type_id), "finish", None, [])
-        tail = self.__match(span, finish, self.__void(span), TypeCtx.void_id, FormatFailure.PANIC)
-        if newline:
-            tail = self.__match(span, self.__write_str(span, receiver, "\n"), tail, TypeCtx.void_id, FormatFailure.PANIC)
-        statements.append(self.__match(span, self.__write_str_value(span, receiver, value), tail, TypeCtx.void_id, FormatFailure.PANIC))
-        return self.__block(span, statements, TypeCtx.void_id)
-
     # ------------------------------------------------------------------
     # public entry points
     # ------------------------------------------------------------------
@@ -416,16 +395,11 @@ class FormatLowering:
             raise AnalysisError(f"'{kind.spelling}' expects exactly {expected} {label}, got {len(node.args)}", node.span)
         if any(argument.name is not None for argument in node.args):
             raise AnalysisError(f"named arguments are not supported for '{kind.spelling}'", node.span)
-        if kind in (BuiltinKind.Print, BuiltinKind.Println, BuiltinKind.Eprint, BuiltinKind.Eprintln):
+        if kind.is_print_entry:
             template = node.args[0].value
             standard_output = kind in (BuiltinKind.Print, BuiltinKind.Println)
             newline = kind in (BuiltinKind.Println, BuiltinKind.Eprintln)
-            if isinstance(template, AST.FormatTemplate):
-                return self.__printer(node.span, template.parts, standard_output, newline)
-            value = self.__expr.value(template)
-            if value.type_id != TypeCtx.str_id:
-                raise AnalysisError("format template must be an f-string or a 'str' value", template.span)
-            return self.__printer_str(node.span, value, standard_output, newline)
+            return self.__printer(node.span, self.__template_parts(template), standard_output, newline)
         target = node.args[0].value
         template = node.args[1].value
         parts = self.__template_parts(template)

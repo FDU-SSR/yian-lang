@@ -38,6 +38,10 @@ class BuiltinKind(Enum):
     def spelling(self) -> str:
         return f"@{self.value}"
 
+    @property
+    def is_print_entry(self) -> bool:
+        return self in (BuiltinKind.Print, BuiltinKind.Println, BuiltinKind.Eprint, BuiltinKind.Eprintln)
+
     @classmethod
     def try_from_name(cls, name: str) -> BuiltinKind | None:
         return _BUILTIN_KIND_BY_NAME.get(name)

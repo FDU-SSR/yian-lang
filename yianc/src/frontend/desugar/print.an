@@ -1,0 +1,40 @@
+from yianc.frontend.ast.arena import AstArena, AstTree;
+from yianc.frontend.ast.node import Expr, ExprData, FormatPart, Literal;
+from yianc.frontend.ast.traversal import AstRewriter, rewrite_expr_children;
+
+struct PrintArgumentLowerer { arena: AstArena& }
+
+impl AstRewriter for PrintArgumentLowerer {
+    pub fn rewrite_expr(node: Expr&) -> Expr& {
+        rewrite_expr_children(node, self);
+
+        match &node.data {
+            Builtin(kind, _, args) => {
+                if (*kind).is_print_entry() && (*args).len() == 1 {
+                    let argument = (*args)[0];
+                    let value = argument.data.value;
+                    let template = match &value.data {
+                        FormatTemplate(_) => true,
+                        Literal(StringLiteral(_)) => true,
+                        _ => false,
+                    };
+
+                    if !template {
+                        let parts = Vec<FormatPart>.new();
+                        parts.push(FormatPart.Value(expr=value, span=value.span));
+                        argument.data.value = self.arena.alloc_expr(ExprData.FormatTemplate(parts=parts), value.span);
+                    }
+                }
+            },
+            _ => {},
+        }
+
+        node
+    }
+}
+
+// Print entries accept a template or an ordinary expression; the latter is normalized to f"{value}".
+pub fn lower_print_arguments(tree: AstTree&) {
+    let pass = PrintArgumentLowerer(arena=&tree.arena);
+    tree.root = pass.rewrite_program(tree.root);
+}

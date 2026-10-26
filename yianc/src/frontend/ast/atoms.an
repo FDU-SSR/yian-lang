@@ -65,6 +65,16 @@ pub enum BuiltinKind {
 }
 
 impl BuiltinKind {
+    pub fn is_print_entry() -> bool {
+        match self {
+            Print => true,
+            Println => true,
+            Eprint => true,
+            Eprintln => true,
+            _ => false,
+        }
+    }
+
     pub fn spelling() -> str {
         match self {
             SizeOf => "sizeof",
