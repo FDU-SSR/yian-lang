@@ -12,7 +12,6 @@ from yianc.frontend.desugar.build import identifier, name_expr, one_block, arm, 
 from yianc.frontend.source import Span;
 from yianc.diagnostics.model import AnalysisError;
 from std.collections.hash_map import HashMap;
-from std.core.drop import Drop;
 from std.core.iter import Iterator, IntoIterator;
 
 fn truth(arena: AstArena&, span: Span, value: bool) -> Block& {

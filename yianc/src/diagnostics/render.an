@@ -2,7 +2,6 @@ from yianc.diagnostics.model import Diagnostic, DiagnosticLocation, AnalysisErro
 from yianc.frontend.source import SourceManager, read_source;
 from yianc.frontend.source import Span;
 from std.core.convert import From;
-from std.core.drop import Drop;
 from std.core.fmt import ToString;
 from std.core.iter import Iterator, IntoIterator;
 

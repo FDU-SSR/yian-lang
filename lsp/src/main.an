@@ -1,5 +1,4 @@
-from std.core.drop import Drop;
-from std.core.env import args, exit;
+from std.core.env import args;
 from lsp.config import Config, log, parse_config;
 from lsp.protocol.server import run_server;
 from lsp.worker.entry import run_worker;

@@ -1,5 +1,4 @@
-from std.core.drop import Drop;
-from std.core.env import args, exit;
+from std.core.env import args;
 from std.core.io import IoErrorKind, Read, Stderr, Stdout, Write;
 from std.core.process import Command, ExitStatus, SpawnOptions, StdioMode;
 from std.core.poller import PollInterests, Poller, PollSource;

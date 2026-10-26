@@ -1,5 +1,4 @@
 from std.core.io import Read, Write, BufRead, BufReader, BufWriter, IoError, IoErrorKind;
-from std.core.drop import Drop;
 from std.core.ops import Index;
 
 struct Reader { data: u8[], position: u64, chunk: u64, fail_at: u64, failed: bool }

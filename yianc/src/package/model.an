@@ -1,5 +1,4 @@
 from yianc.package.provenance import within;
-from std.core.drop import Drop;
 from std.core.iter import Iterator, IntoIterator;
 from std.core.path import PathBuf;
 

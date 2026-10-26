@@ -1,5 +1,4 @@
 from std.core.env import args;
-from std.core.drop import Drop;
 from std.core.fs import write_string;
 from std.core.io import Read, Stdin;
 from std.core.iter import Iterator, IntoIterator;

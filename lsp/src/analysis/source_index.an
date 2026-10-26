@@ -15,7 +15,6 @@ from yianc.frontend.parse.items import parse_program;
 from yianc.frontend.parse.state import Parser;
 from yianc.frontend.source import Position, SourceDocument, Span;
 from std.collections.hash_map import HashMap;
-from std.core.drop import Drop;
 from std.core.fs import canonicalize;
 from std.core.hash import Hash, Murmur3Hasher;
 from std.core.iter import Iterator, IntoIterator;
@@ -1005,7 +1004,8 @@ impl SourceIndex {
         let entries = [("core/option", "Option"), ("core/result", "Result"), ("core/vec", "Vec"),
             ("core/string", "String"), ("core/range", "Range"), ("core/ops", "Ordering"),
             ("core/clone", "Clone"), ("core/builtin_types", "Ptr"), ("core/builtin_types", "Slice"),
-            ("core/builtin_types", "Array"), ("core/builtin_types", "Never")];
+            ("core/builtin_types", "Array"), ("core/builtin_types", "Never"),
+            ("core/drop", "Drop"), ("core/env", "exit")];
         let source = 0u64;
         while source < self.paths.len() {
             if !self.stdlib[source] {

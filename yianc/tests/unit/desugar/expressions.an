@@ -7,7 +7,6 @@ from yianc.frontend.ast.atoms import BuiltinKind;
 from yianc.frontend.ast.node import Expr;
 from yianc.frontend.ast.arena import AstTree;
 from yianc.frontend.ast.node import Block;
-from std.core.drop import Drop;
 from std.core.ops import Index;
 
 fn statement(expr: Expr&) -> Expr& {

@@ -9,9 +9,6 @@ from yianc.driver.profile import ProfileKind;
 from yianc.driver.report import report;
 from yianc.driver.trace import CompilerTrace;
 from yianc.frontend.source import SourceManager;
-from std.core.drop import Drop;
-from std.core.env import exit;
-
 
 const EXIT_FAILURE: i32 = 1;
 const EXIT_USAGE_ERROR: i32 = 2;

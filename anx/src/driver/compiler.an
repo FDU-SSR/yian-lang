@@ -1,4 +1,3 @@
-from std.core.drop import Drop;
 from std.core.fs import canonicalize, metadata;
 from std.core.io import File, IoError, IoErrorKind, OpenMode, Read;
 from std.core.path import Path, PathBuf;

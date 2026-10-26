@@ -23,7 +23,6 @@ from yianc.driver.profile import ProfileKind;
 from yianc.driver.report import report, report_diagnostics;
 from yianc.frontend.session import FrontendSession;
 from yianc.frontend.source import SourceManager;
-from std.core.drop import Drop;
 from std.core.iter import Iterator, IntoIterator;
 
 // The middle-end driver owns the semantic session and the exported analysis output.

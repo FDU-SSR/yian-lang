@@ -8,7 +8,6 @@ from yianc.analysis.ty.queries import struct_fields, enum_variants;
 from yianc.common.ids import TypeId;
 from yianc.frontend.ast.operator import BinaryOperator;
 from std.collections.hash_set import HashSet;
-from std.core.drop import Drop;
 from std.core.convert import From;
 from std.core.fmt import ToString;
 from std.core.iter import Iterator, IntoIterator;

@@ -9,7 +9,6 @@ from yianc.common.ids import TypeId, NameId, ImplId;
 from yianc.common.location import SourceSpan;
 from yianc.diagnostics.model import AnalysisError, AnalysisErrorKind, DiagnosticCode;
 from std.collections.hash_map import HashMap;
-from std.core.drop import Drop;
 from std.core.iter import Iterator, IntoIterator;
 
 struct TraitQuery {

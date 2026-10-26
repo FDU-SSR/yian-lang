@@ -8,7 +8,6 @@ from yianc.frontend.source import Position, Span;
 from yianc.diagnostics.model import Diagnostic, DiagnosticCode, AnalysisError;
 from std.collections.arena import Arena;
 from std.collections.hash_map import HashMap;
-from std.core.drop import Drop;
 from std.core.iter import Iterator, IntoIterator;
 
 pub enum DeclarationState {

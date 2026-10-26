@@ -4,8 +4,6 @@
 // keep an independent snapshot, reference matches read the borrowed place, and
 // copies never release resources implicitly.
 
-from std.core.drop import Drop;
-
 enum Packet {
     Empty,
     Data { number: i32, count: i64 },

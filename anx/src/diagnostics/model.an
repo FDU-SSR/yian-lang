@@ -1,5 +1,3 @@
-from std.core.drop import Drop;
-
 pub const AX_NO_PROJECT_ROOT: str = "AX001";
 pub const AX_BAD_MANIFEST: str = "AX002";
 pub const AX_DEPENDENCY_PATH_MISSING: str = "AX003";

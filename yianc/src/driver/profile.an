@@ -1,6 +1,5 @@
 from json.write import Writer;
 from std.core.convert import From;
-from std.core.drop import Drop;
 from std.core.fmt import ToString;
 from std.core.fs import create_dir_all, write_atomic;
 from std.core.path import Path;

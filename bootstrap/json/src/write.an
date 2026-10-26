@@ -1,4 +1,3 @@
-from std.core.drop import Drop;
 from std.core.fmt import ToString;
 from std.core.iter import Iterator;
 from std.core.ops import Index;

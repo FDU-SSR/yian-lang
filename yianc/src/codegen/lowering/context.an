@@ -9,7 +9,6 @@ from yianc.common.ids import HirId, TypeId, SymbolId;
 from yianc.common.location import SourceSpan;
 from std.collections.hash_map import HashMap;
 from std.collections.hash_set import HashSet;
-from std.core.drop import Drop;
 from std.core.iter import Iterator, IntoIterator;
 from std.core.ops import Index;
 

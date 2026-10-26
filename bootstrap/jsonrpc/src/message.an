@@ -1,4 +1,3 @@
-from std.core.drop import Drop;
 from json.parse import parse as parse_json;
 from json.value import Value, Number, Object;
 from json.write import Writer;

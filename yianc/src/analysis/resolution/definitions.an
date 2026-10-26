@@ -12,7 +12,6 @@ from yianc.frontend.ast.atoms import AttrKind;
 from yianc.diagnostics.model import DiagnosticCode, AnalysisError, AnalysisErrorKind, AnalysisStage;
 from yianc.frontend.source import Span;
 from std.collections.hash_map import HashMap;
-from std.core.drop import Drop;
 from std.core.iter import Iterator, IntoIterator;
 
 pub fn parameters(ctx: ResolutionContext&, unit: UnitId, scope: ScopeId, syntax: Vec<SyntaxParameter>&) -> Result<Vec<Parameter>, AnalysisError> {

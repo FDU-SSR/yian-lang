@@ -1,7 +1,6 @@
 from yianc.common.ids import NameId;
 from std.collections.hash_map import HashMap;
 from std.core.convert import From;
-from std.core.drop import Drop;
 from std.core.iter import Iterator, IntoIterator;
 from std.core.ops import Index;
 

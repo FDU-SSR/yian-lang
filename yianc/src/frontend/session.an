@@ -7,7 +7,6 @@ from yianc.frontend.source import SourceFile, SourceManager;
 from yianc.package.model import PackageMap;
 from yianc.package.provenance import SourceTrust;
 from std.collections.arena import Arena;
-from std.core.drop import Drop;
 from std.core.iter import Iterator, IntoIterator;
 
 pub struct CompilationUnit {

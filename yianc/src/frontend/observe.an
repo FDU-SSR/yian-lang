@@ -2,7 +2,6 @@ from yianc.frontend.lex.token import Token;
 from yianc.frontend.lex.token import KeywordKind;
 from std.num.f64 import to_bits;
 from json.write import Writer;
-from std.core.drop import Drop;
 from std.core.fmt import ToString;
 from std.core.ops import Index;
 

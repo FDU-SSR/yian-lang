@@ -5,7 +5,6 @@ from yianc.codegen.abi.runtime import failure_message, ENV_WORD;
 from yianc.common.ids import TypeId;
 from yianc.frontend.ast.atoms import BuiltinKind;
 from llvm.ir import IrValue, IrType, IntCompare, BinaryOp, CastOp;
-from std.core.drop import Drop;
 from std.core.ops import Index;
 
 impl FunctionLowering {

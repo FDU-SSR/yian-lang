@@ -7,7 +7,6 @@ from yianc.frontend.source import Position, SourceDocument, Span;
 from json.value import Object, Number, Value;
 from json.write import stringify;
 from json.parse import parse;
-from std.core.drop import Drop;
 from std.core.fs import create_dir_all, read, read_to_string, write_atomic;
 from std.core.path import Path;
 

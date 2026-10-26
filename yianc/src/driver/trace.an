@@ -3,7 +3,6 @@ from yianc.config import OutputKind;
 from yianc.driver.profile import ProfileRecorder, ProfileKind;
 from llvm.observation import OperationKind, OperationObserver;
 from std.core.convert import From;
-from std.core.drop import Drop;
 from std.core.fmt import ToString;
 from std.core.fs import create_dir_all;
 from std.core.io import File, OpenMode, Write;

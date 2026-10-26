@@ -1,6 +1,5 @@
 from std.core.iter import Iterator, IntoIterator;
 from std.core.ops import Index;
-from std.core.drop import Drop;
 
 // Comment text borrows source storage. A gap owns only the sequence of comment records.
 pub struct Comment { pub text: str, pub own_line: bool, pub blank_before: bool }

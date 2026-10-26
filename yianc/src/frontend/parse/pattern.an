@@ -3,7 +3,6 @@ from yianc.frontend.lex.token import KeywordKind, PunctuatorKind;
 from yianc.frontend.parse.literal import parse_literal;
 from yianc.frontend.parse.state import Parser;
 from yianc.frontend.parse.type import parse_type;
-from std.core.drop import Drop;
 from std.core.convert import From;
 from std.core.ops import Index;
 

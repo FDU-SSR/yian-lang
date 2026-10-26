@@ -13,7 +13,6 @@ from yianc.frontend.ast.node import Item, MethodDecl, Block;
 from yianc.frontend.ast.atoms import AttrKind;
 from yianc.diagnostics.model import DiagnosticCode, AnalysisError, AnalysisErrorKind, AnalysisStage;
 from std.collections.hash_map import HashMap;
-from std.core.drop import Drop;
 from std.core.iter import Iterator, IntoIterator;
 
 fn drop_conditions(conditions: Vec<ImplCondition>&) {

@@ -4,7 +4,6 @@ from yianc.common.location import SourceSpan;
 from yianc.frontend.ast.node import Identifier;
 from yianc.frontend.source import Span;
 from yianc.diagnostics.model import DiagnosticCode, AnalysisError, AnalysisErrorKind, AnalysisStage;
-from std.core.drop import Drop;
 from std.core.fs import canonicalize;
 from std.core.iter import Iterator, IntoIterator;
 from std.core.path import Path, PathBuf;
@@ -194,7 +193,8 @@ fn inject_prelude(ctx: ResolutionContext&) -> Result<(), AnalysisError> {
     let entries = [("core/option", "Option"), ("core/result", "Result"), ("core/vec", "Vec"),
         ("core/string", "String"), ("core/range", "Range"), ("core/ops", "Ordering"),
         ("core/clone", "Clone"), ("core/builtin_types", "Ptr"), ("core/builtin_types", "Slice"),
-        ("core/builtin_types", "Array"), ("core/builtin_types", "Never")];
+        ("core/builtin_types", "Array"), ("core/builtin_types", "Never"),
+        ("core/drop", "Drop"), ("core/env", "exit")];
     let has_stdlib = false;
     let index = 0u64;
 

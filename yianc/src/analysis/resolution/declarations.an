@@ -6,7 +6,6 @@ from yianc.common.location import SourceSpan;
 from yianc.frontend.ast.node import Item, Identifier, GenericParam, Attr;
 from yianc.frontend.ast.atoms import AttrKind;
 from yianc.diagnostics.model import DiagnosticCode, AnalysisError, AnalysisErrorKind, AnalysisStage;
-from std.core.drop import Drop;
 from std.core.iter import Iterator, IntoIterator;
 
 pub fn has_attr(attrs: Vec<Attr&>&, kind: AttrKind) -> bool {

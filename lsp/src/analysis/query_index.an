@@ -6,7 +6,6 @@ from yianc.diagnostics.render import detach;
 from yianc.frontend.lex.token import KeywordKind, TokenPayload;
 from yianc.frontend.source import SourceDocument, Span;
 from std.collections.hash_map import HashMap;
-from std.core.drop import Drop;
 from std.core.path import Path;
 from std.core.text import LineIndex;
 

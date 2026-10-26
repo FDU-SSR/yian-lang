@@ -1,5 +1,4 @@
 from std.cli import ArgumentParser, Nargs, ArgMatches, Action;
-from std.core.drop import Drop;
 
 pub enum CompilerAction {
     Compile,

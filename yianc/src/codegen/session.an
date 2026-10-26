@@ -7,7 +7,6 @@ from yianc.driver.trace import CompilerTrace;
 from yianc.driver.profile import ProfileKind;
 from llvm.core import llvm_version;
 from llvm.object import Module;
-from std.core.drop import Drop;
 
 pub struct BackendOptions {
     pub raw_pointers: bool,

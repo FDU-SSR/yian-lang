@@ -1,6 +1,5 @@
 from yianc.common.ids import UnitId, DefId, ScopeId, SymbolId;
 from yianc.analysis.session.session import AnalysisSession;
-from std.core.drop import Drop;
 
 // Local state borrows the session; copied stacks own independent container storage.
 pub struct DefinitionState {

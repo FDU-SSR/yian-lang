@@ -8,7 +8,6 @@ from yianc.common.ids import TypeId, HirId, NameId;
 from yianc.common.location import SourceSpan;
 from yianc.frontend.source import Span;
 from yianc.diagnostics.model import AnalysisError, DiagnosticCode;
-from std.core.drop import Drop;
 from std.core.iter import Iterator, IntoIterator;
 
 impl ExprChecker {

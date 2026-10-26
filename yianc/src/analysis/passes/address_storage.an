@@ -10,7 +10,6 @@ from yianc.common.traversal import WalkControl;
 from yianc.diagnostics.model import AnalysisError;
 from yianc.frontend.ast.operator import UnaryOperator;
 from std.collections.hash_set import HashSet;
-from std.core.drop import Drop;
 
 fn invalid(span: SourceSpan, message: str) -> AnalysisError {
     AnalysisError.internal(message).with_location(span)

@@ -5,7 +5,6 @@ from yianc.common.location import SourceSpan;
 from yianc.common.ids import TypeId;
 from yianc.diagnostics.model import AnalysisError;
 from std.collections.hash_map import HashMap;
-from std.core.drop import Drop;
 from std.core.iter import Iterator, IntoIterator;
 
 // Substitutions are caller-owned and isolated for each candidate or function instance.

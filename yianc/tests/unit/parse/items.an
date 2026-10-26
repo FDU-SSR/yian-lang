@@ -3,7 +3,6 @@ from yianc.frontend.lex.token import drop_tokens;
 from yianc.frontend.parse.state import Parser;
 from yianc.frontend.parse.items import parse_program;
 from yianc.frontend.ast.atoms import AttrKind;
-from std.core.drop import Drop;
 from std.core.ops import Index;
 
 fn main() {

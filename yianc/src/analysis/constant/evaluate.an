@@ -11,7 +11,6 @@ from yianc.diagnostics.model import DiagnosticCode, AnalysisError, AnalysisError
 from yianc.frontend.ast.atoms import BuiltinKind;
 from yianc.frontend.ast.operator import BinaryOperator, UnaryOperator;
 from std.core.ops import Index;
-from std.core.drop import Drop;
 
 pub trait TypeSizeProvider {
     fn size_of(type_id: TypeId) -> Result<u64, AnalysisError>;

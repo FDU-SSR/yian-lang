@@ -21,7 +21,6 @@ from yianc.package.model import PackageMap;
 from yianc.package.provenance import SourceTrust;
 from llvm.object import Module;
 from std.collections.hash_map import HashMap;
-from std.core.drop import Drop;
 
 struct Fixture {
     packet: TypeId,

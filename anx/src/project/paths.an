@@ -1,4 +1,3 @@
-from std.core.drop import Drop;
 from std.core.fs import canonicalize;
 from std.core.path import Path, PathBuf;
 from std.core.process import env_var;

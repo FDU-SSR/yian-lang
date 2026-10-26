@@ -1,5 +1,4 @@
 from lsp.analysis.fingerprint import sha256;
-from std.core.drop import Drop;
 from yianc.frontend.source import SourceDocument;
 
 struct InputFileIdentity {

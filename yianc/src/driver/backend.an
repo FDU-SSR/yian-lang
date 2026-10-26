@@ -21,7 +21,6 @@ from yianc.frontend.text import is_alphanumeric;
 from yianc.common.ids import UnitId;
 from llvm.observation import OperationObserver;
 from std.core.convert import From;
-from std.core.drop import Drop;
 from std.core.fs import create_dir_all, write, rename, remove_dir, remove_file, resolve;
 from std.core.iter import Iterator, IntoIterator;
 from std.core.path import Path;

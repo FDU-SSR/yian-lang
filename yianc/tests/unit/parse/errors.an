@@ -2,7 +2,6 @@ from yianc.frontend.lex.lexer import Lexer;
 from yianc.frontend.lex.token import drop_tokens;
 from yianc.frontend.parse.state import Parser;
 from yianc.frontend.parse.items import parse_program;
-from std.core.drop import Drop;
 
 fn reject(source: str, part: str) {
     let tokens = *Lexer.new(source).run().unwrap(); defer drop_tokens(&tokens);

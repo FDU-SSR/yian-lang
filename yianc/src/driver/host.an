@@ -1,5 +1,4 @@
 from yianc.diagnostics.model import AnalysisError;
-from std.core.drop import Drop;
 
 extern "C" {
     fn yian_compiler_root(buffer: cptr<u8>, capacity: u64) -> i64;

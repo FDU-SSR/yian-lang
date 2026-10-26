@@ -1,4 +1,3 @@
-from std.core.drop import Drop;
 from std.core.io import IoError, Read, Stdin, Stdout, Write;
 from std.core.fs import append;
 from std.core.process import env_var;

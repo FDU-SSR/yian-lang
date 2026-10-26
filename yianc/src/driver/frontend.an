@@ -14,7 +14,6 @@ from yianc.frontend.session import FrontendSession, PreparationObserver;
 from yianc.frontend.source import SourceDocument, collect_sources;
 from yianc.package.model import PackageMap;
 from yianc.package.provenance import SourceTrust;
-from std.core.drop import Drop;
 from std.core.fs import try_exists;
 from std.core.iter import Iterator, IntoIterator;
 from std.core.path import Path;

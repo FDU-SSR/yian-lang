@@ -13,7 +13,6 @@ from yianc.common.ids import UnitId, ScopeId, TypeId, SymbolId;
 from yianc.common.location import SourceSpan;
 from yianc.frontend.ast.node import TypeSyntax, ConstExpr, GenericArgument;
 from yianc.diagnostics.model import DiagnosticCode, AnalysisError;
-from std.core.drop import Drop;
 from std.core.iter import Iterator, IntoIterator;
 from std.collections.hash_map import HashMap;
 from yianc.frontend.source import Span;

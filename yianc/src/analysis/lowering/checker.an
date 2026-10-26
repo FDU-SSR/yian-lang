@@ -11,7 +11,6 @@ from yianc.common.location import SourceSpan;
 from yianc.frontend.ast.node import Block, Literal;
 from yianc.frontend.source import Span;
 from yianc.diagnostics.model import DiagnosticCode, AnalysisError;
-from std.core.drop import Drop;
 from std.core.iter import Iterator, IntoIterator;
 from std.core.convert import From;
 

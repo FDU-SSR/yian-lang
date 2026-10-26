@@ -1,7 +1,6 @@
 from fmt.api import format_text;
 from yianc.frontend.lex.lexer import Lexer;
 from yianc.frontend.lex.token import Token, TokenPayload, drop_tokens;
-from std.core.drop import Drop;
 from std.core.fs import read_to_string;
 from std.core.ops import Index;
 

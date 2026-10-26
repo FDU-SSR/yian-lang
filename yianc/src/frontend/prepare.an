@@ -9,7 +9,6 @@ from yianc.frontend.parse.items import parse_program;
 from yianc.frontend.parse.state import Parser;
 from yianc.frontend.source import Span;
 from std.core.convert import From;
-from std.core.drop import Drop;
 
 pub enum FrontendPhase {
     Tokens, Ast, Desugared

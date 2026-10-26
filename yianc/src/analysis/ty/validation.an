@@ -10,7 +10,6 @@ from yianc.analysis.ty.display import type_text;
 from yianc.common.ids import TypeId;
 from yianc.common.location import SourceSpan;
 from yianc.diagnostics.model import AnalysisError, AnalysisErrorKind, DiagnosticCode;
-from std.core.drop import Drop;
 from std.core.iter import Iterator, IntoIterator;
 
 fn contains_unsized(ctx: ResolutionContext&, type_id: TypeId, visited: HashSet<TypeId>&) -> Result<bool, AnalysisError> {

@@ -1,5 +1,4 @@
 from std.collections.sort import sort_by;
-from std.core.drop import Drop;
 from std.core.fs import Directory, DirEntryKind, canonicalize, metadata, resolve, try_exists;
 from std.core.io import IoError;
 from std.core.path import Path, PathBuf;

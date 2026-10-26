@@ -1,4 +1,3 @@
-from std.core.drop import Drop;
 from std.core.fs import resolve;
 from lsp_protocol.uri import uri_to_path;
 

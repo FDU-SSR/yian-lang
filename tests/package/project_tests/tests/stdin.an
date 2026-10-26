@@ -1,5 +1,4 @@
 from std.core.io import Stdin;
-from std.core.drop import Drop;
 
 fn main() {
     let content: String = *Stdin.new().read_to_string().unwrap();

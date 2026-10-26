@@ -2,7 +2,6 @@ from yianc.frontend.lex.token import Token, TokenPayload, KeywordKind, Punctuato
 from yianc.frontend.source import Position, Span;
 from yianc.frontend.text import SourceText;
 from std.core.convert import From;
-from std.core.drop import Drop;
 from std.core.iter import Iterator, IteratorExt, Peekable;
 from std.core.ops import Index;
 from std.core.str import CharIter;

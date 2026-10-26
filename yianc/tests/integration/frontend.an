@@ -10,7 +10,6 @@ from yianc.frontend.ast.traversal import AstVisitor, walk_program;
 from json.write import Writer;
 from json.parse import parse;
 from json.value import Value;
-from std.core.drop import Drop;
 from std.core.ops import Index;
 from std.core.iter import Iterator, IntoIterator;
 

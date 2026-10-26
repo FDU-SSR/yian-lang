@@ -3,7 +3,6 @@ from yianc.analysis.hir.node import HirNode;
 from yianc.analysis.hir.pattern import PatternNode;
 from yianc.diagnostics.model import AnalysisError;
 from std.collections.arena import Arena;
-from std.core.drop import Drop;
 from std.core.iter import Iterator, IntoIterator;
 
 pub struct HirStore {

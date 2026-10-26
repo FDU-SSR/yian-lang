@@ -3,7 +3,6 @@ from yianc.common.location import SourceSpan;
 from yianc.analysis.constant.interval import Boundary;
 from yianc.analysis.constant.value import ConstValue;
 from yianc.analysis.ty.model import EnumVariant;
-from std.core.drop import Drop;
 
 pub struct EnumPattern {
     pub variant: EnumVariant,

@@ -1,7 +1,6 @@
 from std.core.fs import Directory, metadata, symlink_metadata, read_to_string, write_string;
 from std.core.fs import create_dir_all, remove_file, remove_dir, canonicalize;
 from std.core.io import IoErrorKind;
-from std.core.drop import Drop;
 from std.ffi.c_string import c_string_bytes;
 
 extern "C" {

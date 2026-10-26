@@ -6,7 +6,6 @@ from yianc.analysis.definition.registry import Procedure;
 from yianc.common.ids import TypeId, DefId;
 from yianc.diagnostics.model import AnalysisError;
 from std.collections.hash_map import HashMap;
-from std.core.drop import Drop;
 from std.core.iter import Iterator, IntoIterator;
 
 pub struct CallableSignature {

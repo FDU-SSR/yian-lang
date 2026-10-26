@@ -7,7 +7,6 @@ from yianc.analysis.ty.relations import default_type;
 from yianc.analysis.resolution.types import resolve_type;
 from yianc.common.ids import SymbolId, HirId;
 from yianc.diagnostics.model import AnalysisError, DiagnosticCode, AnalysisErrorKind;
-from std.core.drop import Drop;
 from std.core.iter import Iterator, IntoIterator;
 
 pub fn evaluate_constants(ctx: ResolutionContext&, sizes: Option<TypeSizeProvider&>) -> Result<(), AnalysisError> {

@@ -5,7 +5,6 @@ from yianc.frontend.parse.items import parse_program;
 from yianc.frontend.ast.arena import AstTree;
 from yianc.frontend.ast.node import Expr;
 from yianc.frontend.ast.operator import BinaryOperator;
-from std.core.drop import Drop;
 from std.core.ops import Index;
 
 fn expression(tree: AstTree&) -> Expr& {

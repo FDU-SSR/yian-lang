@@ -2,7 +2,6 @@ from std.core.path import PathBuf;
 from std.collections.arena import Arena;
 from std.collections.sort import sort_by;
 from std.core.convert import From;
-from std.core.drop import Drop;
 from std.core.fs import Directory, DirEntryKind, metadata, read_to_string, canonicalize, resolve;
 from std.core.io import IoError, IoErrorKind;
 from std.core.ops import Add, AddAssign, Index;

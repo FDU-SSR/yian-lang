@@ -1,7 +1,6 @@
 from json.value import Value;
 from json.parse import parse;
 from json.write import stringify;
-from std.core.drop import Drop;
 from std.core.iter import Iterator;
 from std.num.f64 import to_bits;
 

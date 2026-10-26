@@ -1,0 +1,4 @@
+// exit is provided by the prelude and needs no explicit import.
+fn main() {
+    exit(7);
+}

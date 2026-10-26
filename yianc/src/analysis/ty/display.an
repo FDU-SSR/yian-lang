@@ -3,7 +3,6 @@ from yianc.analysis.names import NameInterner;
 from yianc.analysis.ty.store import TypeStore;
 from yianc.common.ids import TypeId;
 from std.core.iter import Iterator, IntoIterator;
-from std.core.drop import Drop;
 
 fn append(types: TypeStore&, names: NameInterner&, id: TypeId, text: String&, depth: u64) {
     if depth > 64 {

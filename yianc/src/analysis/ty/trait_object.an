@@ -7,7 +7,6 @@ from yianc.common.ids import TypeId, NameId;
 from yianc.common.location import SourceSpan;
 from yianc.diagnostics.model import AnalysisError, DiagnosticCode;
 from std.collections.sort import sort_by;
-from std.core.drop import Drop;
 from std.core.iter import Iterator, IntoIterator;
 
 fn before(left: TypeId&, right: TypeId&) -> bool {

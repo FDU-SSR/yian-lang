@@ -3,7 +3,6 @@ from yianc.diagnostics.model import AnalysisError;
 from yianc.frontend.ast.node import Block;
 from std.collections.arena import Arena;
 from std.collections.hash_map import HashMap;
-from std.core.drop import Drop;
 
 pub enum DefinitionKind {
     Function,

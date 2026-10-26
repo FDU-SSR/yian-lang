@@ -5,7 +5,6 @@ from yianc.common.ids import HirId, TypeId;
 from yianc.common.traversal import WalkControl;
 from yianc.frontend.source import Span;
 from yianc.diagnostics.model import AnalysisError;
-from std.core.drop import Drop;
 from std.core.iter import Iterator, IntoIterator;
 
 struct ExitCollector {

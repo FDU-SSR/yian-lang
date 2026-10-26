@@ -8,7 +8,6 @@ from yianc.frontend.parse.state import Parser, ParseError;
 from yianc.frontend.parse.type import parse_type;
 from yianc.frontend.source import Span, Position;
 from std.core.convert import From;
-from std.core.drop import Drop;
 from std.core.ops import Index;
 
 fn attributes(parser: Parser&) -> Option<Vec<Attr&>> {

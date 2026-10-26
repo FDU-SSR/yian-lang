@@ -6,7 +6,6 @@ from yianc.frontend.ast.arena import AstTree;
 from yianc.frontend.ast.node import Expr;
 from yianc.frontend.ast.traversal import AstVisitor, walk_program;
 from yianc.frontend.desugar import desugar;
-from std.core.drop import Drop;
 from std.core.ops import Index;
 
 fn parsed(source: str) -> AstTree {

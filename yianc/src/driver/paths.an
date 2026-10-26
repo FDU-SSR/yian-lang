@@ -3,7 +3,6 @@ from yianc.package.model import PackageMap;
 from yianc.diagnostics.model import AnalysisError;
 from yianc.package.provenance import normalize_path;
 from yianc.driver.host import associated_root;
-from std.core.drop import Drop;
 from std.core.iter import Iterator, IntoIterator;
 from std.core.path import Path, PathBuf;
 from std.core.process import env_var;

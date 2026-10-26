@@ -4,7 +4,6 @@ from yianc.codegen.cfg.model import Operation, Terminator;
 from yianc.codegen.error import CodegenError;
 from yianc.analysis.hir.node import HirNode, Block, If;
 from yianc.common.ids import HirId;
-from std.core.drop import Drop;
 from std.core.iter import Iterator, IntoIterator;
 from std.core.ops import Index;
 

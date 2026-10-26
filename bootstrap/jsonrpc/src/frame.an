@@ -1,5 +1,4 @@
 from std.core.fmt import ToString;
-from std.core.drop import Drop;
 
 pub struct FrameLimits {
     pub max_header_bytes: u64,

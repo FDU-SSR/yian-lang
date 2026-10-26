@@ -10,7 +10,6 @@ from yianc.common.location import SourceSpan;
 from yianc.frontend.ast.node import Expr, Argument;
 from yianc.frontend.source import Span;
 from yianc.diagnostics.model import AnalysisError;
-from std.core.drop import Drop;
 from std.core.iter import Iterator, IntoIterator;
 
 impl ExprChecker {

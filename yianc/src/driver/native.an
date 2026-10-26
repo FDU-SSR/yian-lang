@@ -4,7 +4,6 @@ from yianc.driver.profile import ProfileKind;
 from std.collections.hash_set import HashSet;
 from std.collections.sort import sort_by;
 from std.core.convert import From;
-from std.core.drop import Drop;
 from std.core.fs import Directory, canonicalize, create_dir_all, remove_file, remove_dir, rename;
 from std.core.io import IoError;
 from std.core.iter import Iterator, IntoIterator;

@@ -9,7 +9,6 @@ from yianc.analysis.lowering.format import FormatDestination, lower_format;
 from yianc.frontend.ast.atoms import BuiltinKind;
 from yianc.frontend.source import Span;
 from yianc.diagnostics.model import AnalysisError, DiagnosticCode;
-from std.core.drop import Drop;
 from std.core.iter import Iterator, IntoIterator;
 from std.core.convert import From;
 from std.core.fmt import ToString;

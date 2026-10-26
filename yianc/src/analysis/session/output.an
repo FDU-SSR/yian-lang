@@ -2,7 +2,6 @@ from yianc.common.ids import DefId, TypeId, SymbolId, HirId, UnitId, NameId;
 from yianc.analysis.constant.evaluate import TypeSizeProvider;
 from yianc.driver.trace import CompilerTrace;
 from yianc.diagnostics.model import Diagnostic, Severity, AnalysisStage;
-from std.core.drop import Drop;
 from std.core.iter import Iterator, IntoIterator;
 
 pub struct AnalysisOptions {

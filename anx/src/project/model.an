@@ -1,4 +1,3 @@
-from std.core.drop import Drop;
 from std.core.path import PathBuf;
 from anx.manifest.model import NativeLLVM, PackageKind;
 from anx.diagnostics.model import Diagnostic, release_diagnostics;

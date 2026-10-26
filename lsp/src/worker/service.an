@@ -15,7 +15,6 @@ from lsp.workspace.units import WorkspaceUnits;
 from lsp_protocol.types import Position, Range, ReferenceParams, TextDocumentIdentifier, TextDocumentPositionParams;
 from lsp_protocol.uri import path_to_uri, uri_to_path;
 from std.collections.hash_map import HashMap;
-from std.core.drop import Drop;
 from std.core.fs import canonicalize, read_to_string, resolve;
 from std.core.ops import Index;
 from std.core.path import Path, PathBuf;

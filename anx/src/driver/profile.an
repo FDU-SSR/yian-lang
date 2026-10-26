@@ -2,7 +2,6 @@ from json.parse import parse;
 from json.value import Value, Number;
 from json.write import Writer;
 from std.core.convert import From;
-from std.core.drop import Drop;
 from std.core.fmt import ToString;
 from std.core.fs import canonicalize, create_dir_all, read_to_string, write_atomic;
 from std.core.path import Path, PathBuf;

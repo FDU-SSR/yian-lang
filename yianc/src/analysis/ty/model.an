@@ -3,7 +3,6 @@ from yianc.common.location import SourceSpan;
 from yianc.diagnostics.model import AnalysisError;
 from yianc.frontend.ast.operator import UnaryOperator, BinaryOperator;
 from std.collections.hash_map import HashMap;
-from std.core.drop import Drop;
 from std.core.hash import Hash;
 from std.core.ops import PartialEq;
 

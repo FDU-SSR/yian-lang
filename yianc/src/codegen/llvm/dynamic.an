@@ -8,7 +8,6 @@ from yianc.codegen.abi.runtime import ENV_WORD;
 from llvm.object import Function;
 from llvm.ir import IrValue;
 from std.core.convert import From;
-from std.core.drop import Drop;
 from std.core.hash import Hash, Murmur3Hasher;
 from std.core.fmt import ToString;
 from std.core.iter import Iterator, IntoIterator;

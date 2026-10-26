@@ -1,7 +1,6 @@
 from yianc.diagnostics.model import Diagnostic, DiagnosticLocation;
 from yianc.frontend.source import SourceManager, Span, Position;
 from std.collections.sort import sort_by;
-from std.core.drop import Drop;
 from std.core.iter import Iterator, IntoIterator;
 from std.core.ops import Index;
 

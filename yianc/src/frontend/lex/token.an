@@ -1,5 +1,4 @@
 from yianc.frontend.source import Span;
-from std.core.drop import Drop;
 
 pub enum KeywordKind {
     Import,

@@ -13,7 +13,6 @@ from std.collections.arena import Arena;
 from std.collections.hash_map import HashMap;
 from std.collections.hash_set import HashSet;
 from std.core.convert import From;
-from std.core.drop import Drop;
 from std.core.fmt import ToString;
 from std.core.iter import Iterator, IntoIterator;
 

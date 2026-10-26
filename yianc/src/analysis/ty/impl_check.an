@@ -5,7 +5,6 @@ from yianc.common.ids import ImplId, TypeId, NameId;
 from yianc.common.location import SourceSpan;
 from yianc.diagnostics.model import AnalysisError, DiagnosticCode;
 from std.collections.hash_map import HashMap;
-from std.core.drop import Drop;
 from std.core.iter import Iterator, IntoIterator;
 
 fn signature_error(ctx: ResolutionContext&, span: SourceSpan, method: NameId, trait_id: TypeId, target: TypeId) -> AnalysisError {

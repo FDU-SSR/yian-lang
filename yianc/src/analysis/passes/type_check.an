@@ -11,7 +11,6 @@ from yianc.common.ids import TypeId, SymbolId, NameId, ScopeId, UnitId;
 from yianc.driver.profile import ProfileKind;
 from yianc.common.location import SourceSpan;
 from yianc.diagnostics.model import AnalysisError, AnalysisErrorKind, Diagnostic, DiagnosticCode;
-from std.core.drop import Drop;
 from std.core.iter import Iterator, IntoIterator;
 
 fn root_unit(ctx: ResolutionContext&, unit: UnitId) -> bool {

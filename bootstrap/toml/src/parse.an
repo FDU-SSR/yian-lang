@@ -1,6 +1,5 @@
 from std.collections.arena import Arena;
 from std.collections.hash_map import HashMap;
-from std.core.drop import Drop;
 from std.core.iter import Iterator;
 from std.num.f64 import from_bits;
 

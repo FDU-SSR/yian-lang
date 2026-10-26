@@ -1,7 +1,6 @@
 from yianc.codegen.cfg.ids import BlockId;
 from yianc.codegen.cfg.model import CfgFunction;
 from yianc.codegen.error import CodegenError;
-from std.core.drop import Drop;
 from std.core.iter import Iterator, IntoIterator;
 from std.core.ops import Index;
 

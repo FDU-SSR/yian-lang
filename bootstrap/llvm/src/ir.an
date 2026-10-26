@@ -1,4 +1,3 @@
-from std.core.drop import Drop;
 from std.ffi.c_string import c_string_bytes;
 from ffi.bytes import copy_c_bytes, copy_c_string;
 from llvm.raw_types import LLVMOpaqueContext, LLVMOpaqueModule, LLVMOpaqueBuilder;

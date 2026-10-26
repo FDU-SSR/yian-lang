@@ -1,5 +1,4 @@
-from std.core.drop import Drop;
-from std.core.env import args, exit;
+from std.core.env import args;
 from std.core.fs import resolve;
 from std.core.path import PathBuf;
 from std.cli import ArgumentParser, Action, ArgMatches, Nargs, ParseOutcome, ValueType, CliError;

@@ -11,7 +11,6 @@ from llvm.ir import IrValue, IrType;
 from std.collections.hash_map import HashMap;
 from std.core.ops import Index;
 from std.core.convert import From;
-from std.core.drop import Drop;
 from std.core.iter import Iterator, IntoIterator;
 
 // One descriptor is immutable run metadata for a generated source callable. The

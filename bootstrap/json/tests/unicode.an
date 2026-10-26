@@ -1,6 +1,5 @@
 from json.parse import parse;
 from json.write import stringify;
-from std.core.drop import Drop;
 fn main() {
     let value = parse("\"中文\\u0000\\b\\f\\n\\r\\t\\\"\\\\\\/\\ud83d\\ude00\"").unwrap();
     defer value.drop();

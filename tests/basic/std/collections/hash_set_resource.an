@@ -1,7 +1,6 @@
 // HashSet discards duplicates without drop; remove, clear and final drop only
 // release table storage.
 from std.collections.hash_set import HashSet;
-from std.core.drop import Drop;
 from std.core.hash import Hash, Murmur3Hasher;
 from std.core.ops import PartialEq;
 

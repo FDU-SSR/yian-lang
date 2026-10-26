@@ -1,5 +1,3 @@
-from std.core.env import exit;
-
 fn main() {
     exit(3);
 }

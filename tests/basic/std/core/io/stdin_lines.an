@@ -1,6 +1,5 @@
 // BufReader handles UTF-8, CRLF, empty lines, and an unterminated final line.
 from std.core.io import Stdin, BufReader;
-from std.core.drop import Drop;
 
 fn main() {
     let input = Stdin.new();

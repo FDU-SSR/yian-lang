@@ -3,7 +3,6 @@ from yianc.diagnostics.model import DiagnosticCode, AnalysisError;
 from yianc.package.model import PackageMap, PackageSpec, NativeLLVM;
 from yianc.package.provenance import normalize_path, within;
 from std.core.convert import From;
-from std.core.drop import Drop;
 from std.core.fs import read_to_string, metadata;
 from std.core.iter import Iterator, IntoIterator;
 from std.core.ops import Index;

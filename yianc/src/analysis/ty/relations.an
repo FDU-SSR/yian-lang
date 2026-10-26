@@ -2,7 +2,6 @@ from yianc.analysis.resolution.context import ResolutionContext;
 from yianc.common.ids import TypeId;
 from yianc.analysis.ty.model import TypeData;
 from yianc.diagnostics.model import AnalysisError;
-from std.core.drop import Drop;
 from std.core.iter import Iterator, IntoIterator;
 
 pub fn is_integer(ctx: ResolutionContext&, id: TypeId) -> bool {

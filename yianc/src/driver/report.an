@@ -2,7 +2,6 @@ from yianc.diagnostics.model import AnalysisError, Diagnostic;
 from yianc.diagnostics.render import render;
 from yianc.driver.native import DriverError;
 from yianc.frontend.source import SourceManager;
-from std.core.drop import Drop;
 from std.core.fmt import ToString;
 from std.core.io import Stderr, Write;
 from std.core.process import ExitStatus;

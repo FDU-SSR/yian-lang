@@ -7,7 +7,6 @@ from yianc.diagnostics.model import AnalysisError;
 from yianc.frontend.source import SourceDocument;
 from yianc.package.model import PackageMap;
 from yianc.package.provenance import SourceTrust;
-from std.core.drop import Drop;
 
 fn release_documents(documents: Vec<SourceDocument>&) {
     for document in *documents { document.drop(); }

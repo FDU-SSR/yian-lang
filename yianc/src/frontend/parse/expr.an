@@ -9,7 +9,6 @@ from yianc.frontend.parse.state import Parser;
 from yianc.frontend.parse.type import parse_generic_arg, parse_type;
 from yianc.frontend.source import Position, Span;
 from std.core.convert import From;
-from std.core.drop import Drop;
 from std.core.ops import Index;
 
 // Consume only operators whose left binding power meets min_bp; right binding power sets the recursive boundary.

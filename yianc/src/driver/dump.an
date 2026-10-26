@@ -16,7 +16,6 @@ from yianc.frontend.observe import append_token_file;
 from yianc.frontend.session import FrontendSession, PreparationObserver;
 from yianc.frontend.ast.format import AstFormatter;
 from json.write import Writer;
-from std.core.drop import Drop;
 from std.core.fmt import ToString;
 from std.core.fs import create_dir_all, write_string;
 from std.core.iter import Iterator, IntoIterator;

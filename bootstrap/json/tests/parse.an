@@ -1,6 +1,5 @@
 from json.parse import parse, parse_with_options, ParseOptions;
 from json.error import ParseErrorKind;
-from std.core.drop import Drop;
 from std.core.ops import Index;
 
 fn reject(text: str) {

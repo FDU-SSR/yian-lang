@@ -1,4 +1,3 @@
-from std.core.drop import Drop;
 from std.core.fs import canonicalize, create_dir_all, try_exists;
 from std.core.path import Path, PathBuf;
 from std.core.process import temporary_directory;

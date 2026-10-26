@@ -4,7 +4,6 @@ from yianc.codegen.error import CodegenError;
 from yianc.analysis.ty.queries import enum_variants;
 from yianc.common.ids import TypeId;
 from llvm.ir import IrValue, IntCompare;
-from std.core.drop import Drop;
 from std.core.iter import Iterator, IntoIterator;
 
 impl FunctionLowering {

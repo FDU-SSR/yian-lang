@@ -6,7 +6,6 @@ from lsp_protocol.sync import DidOpenParams, DidChangeParams, DidSaveParams, Did
 from lsp_protocol.diagnostic import Diagnostic, decode_diagnostic;
 from json.parse import parse;
 from json.write import stringify;
-from std.core.drop import Drop;
 
 fn main() {
     let method = Method.from_name("textDocument/hover");

@@ -1,4 +1,3 @@
-from std.core.drop import Drop;
 from llvm.ir import IrType;
 from llvm.object import Module;
 

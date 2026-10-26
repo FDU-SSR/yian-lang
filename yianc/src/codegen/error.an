@@ -1,7 +1,6 @@
 from yianc.diagnostics.model import AnalysisError, AnalysisErrorKind, Diagnostic, DiagnosticLocation;
 from yianc.common.location import SourceSpan;
 from std.core.convert import From;
-from std.core.drop import Drop;
 
 pub enum CodegenErrorKind {
     InvalidState,

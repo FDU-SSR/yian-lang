@@ -1,5 +1,4 @@
 from fmt.cli import run;
-from std.core.env import exit;
 
 fn main() {
     let status = run();

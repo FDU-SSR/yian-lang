@@ -1,5 +1,4 @@
 from yianc.package.provenance import SourceTrust, normalize_path;
-from std.core.drop import Drop;
 
 fn main() {
     let trust = SourceTrust.new("../../../../lib/src").unwrap(); defer trust.drop();

@@ -4,7 +4,6 @@ from yianc.analysis.hir.node import HirNode;
 from yianc.analysis.hir.pattern import PatternNode;
 from yianc.analysis.hir.store import HirStore;
 from yianc.diagnostics.model import AnalysisError;
-from std.core.drop import Drop;
 from std.core.iter import Iterator, IntoIterator;
 from std.core.ops import Index;
 

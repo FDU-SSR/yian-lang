@@ -9,7 +9,6 @@ from yianc.frontend.ast.node import Expr;
 from yianc.frontend.ast.operator import BinaryOperator, UnaryOperator;
 from yianc.frontend.source import Span;
 from yianc.diagnostics.model import AnalysisError;
-from std.core.drop import Drop;
 from std.core.iter import Iterator, IntoIterator;
 
 fn assignment_operator(op: BinaryOperator) -> bool {

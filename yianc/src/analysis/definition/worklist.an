@@ -1,7 +1,6 @@
 from yianc.common.ids import TypeId;
 from yianc.diagnostics.model import AnalysisError;
 from std.collections.hash_map import HashMap;
-from std.core.drop import Drop;
 from std.core.ops import Index;
 
 pub enum WorkState {

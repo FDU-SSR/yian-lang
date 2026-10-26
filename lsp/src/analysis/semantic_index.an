@@ -14,7 +14,6 @@ from yianc.common.location import SourceSpan;
 from yianc.common.traversal import WalkControl;
 from yianc.diagnostics.model import AnalysisError;
 from yianc.frontend.ast.node import Identifier;
-from std.core.drop import Drop;
 from lsp.analysis.source_index import DeclKind, DeclInfo, Occurrence, SourceIndex;
 
 // The semantic pass only adds links backed by compiler records; it never re-runs inference.

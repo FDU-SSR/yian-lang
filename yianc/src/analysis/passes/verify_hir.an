@@ -17,7 +17,6 @@ from yianc.common.traversal import WalkControl;
 from yianc.frontend.ast.operator import BinaryOperator, UnaryOperator;
 from yianc.diagnostics.model import AnalysisError;
 from std.collections.hash_set import HashSet;
-from std.core.drop import Drop;
 from std.core.iter import Iterator, IntoIterator;
 from std.num.f64 import to_bits;
 

@@ -1,4 +1,3 @@
-from std.core.drop import Drop;
 from std.core.ops import Index;
 
 pub enum UriErrorKind { NotFileUri, RelativePath, InvalidEscape, InvalidUtf8, UnsupportedAuthority }

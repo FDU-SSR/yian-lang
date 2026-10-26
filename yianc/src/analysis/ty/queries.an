@@ -4,7 +4,6 @@ from yianc.analysis.ty.callable import store_substitutions;
 from yianc.analysis.ty.substitution import substitute;
 from yianc.common.ids import TypeId;
 from yianc.diagnostics.model import AnalysisError;
-from std.core.drop import Drop;
 from std.core.iter import Iterator, IntoIterator;
 
 // Result buffers are caller-owned; fields contain borrowed session identities only.

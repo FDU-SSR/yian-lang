@@ -1,6 +1,5 @@
 from yianc.common.location import SourceSpan;
 from yianc.diagnostics.model import DiagnosticCode, AnalysisError;
-from std.core.drop import Drop;
 from std.core.fs import canonicalize;
 from std.core.iter import Iterator, IntoIterator;
 from std.core.ops import Index;

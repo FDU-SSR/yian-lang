@@ -4,7 +4,6 @@ from yianc.analysis.ty.store import TypeStore;
 from yianc.analysis.ty.substitution import substitute;
 from yianc.common.ids import TypeId;
 from yianc.diagnostics.model import AnalysisError;
-from std.core.drop import Drop;
 from std.core.iter import Iterator, IntoIterator;
 from std.collections.hash_set import HashSet;
 
