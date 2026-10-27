@@ -1,9 +1,11 @@
 from std.cli import ArgumentParser, Nargs, ArgMatches, Action;
 
+const EXIT_FAILURE: i32 = 1;
+const EXIT_USAGE_ERROR: i32 = 2;
+
 pub enum CompilerAction {
     Compile,
     Check,
-    Invalid { message: String },
     Help {
         text: String
     },
@@ -41,9 +43,9 @@ pub struct CompilerConfig {
     pub link_searches: Vec<String>,
 }
 
-fn string_values(matches: ArgMatches&, name: str) -> Vec<String> {
+fn string_values(arg_matches: ArgMatches&, name: str) -> Vec<String> {
     let result = Vec<String>.new();
-    match matches.get_many(name) {
+    match arg_matches.get_many(name) {
         Ok(Some(values)) => {
             for value in values {
                 match value { Text(text) => result.push(String.from(&text.as_str())), _ => {}, }
@@ -61,54 +63,54 @@ impl CompilerConfig {
             Vec<String>.new(), Vec<String>.new())
     }
 
-    static fn from_matches(matches: ArgMatches&) -> Result<Self, String> {
-        let check = *matches.get_bool("check").unwrap().unwrap();
+    static fn from_matches(arg_matches: ArgMatches&) -> Result<Self, String> {
+        let check = *arg_matches.get_bool("check").unwrap().unwrap();
 
-        let inputs = string_values(matches, "inputs");
+        let inputs = string_values(arg_matches, "inputs");
         if inputs.is_empty() {
             inputs.drop();
             return Result<Self, String>.Err(String.from(&"error: the following arguments are required: PATH\n"));
         }
 
-        let root = match matches.get_string("compiler-root") {
+        let root = match arg_matches.get_string("compiler-root") {
             Ok(Some(value)) => String.from(&value),
             _ => String.from(&"."),
         };
-        let packages = match matches.get_string("packages") {
+        let packages = match arg_matches.get_string("packages") {
             Ok(Some(value)) => Option<String>.Some(String.from(&value)),
             _ => Option<String>.None,
         };
-        let raw = *matches.get_bool("raw-pointers").unwrap().unwrap();
-        let ffi = *matches.get_bool("allow-ffi").unwrap().unwrap();
-        let target_explicit = match matches.was_provided("target") { Ok(value) => value, Err(_) => false, };
-        let target = match matches.get_string("target") {
+        let raw = *arg_matches.get_bool("raw-pointers").unwrap().unwrap();
+        let ffi = *arg_matches.get_bool("allow-ffi").unwrap().unwrap();
+        let target_explicit = match arg_matches.was_provided("target") { Ok(value) => value, Err(_) => false, };
+        let target = match arg_matches.get_string("target") {
             Ok(Some(text)) => match text {
                 "ll" => OutputKind.Ll, "bc" => OutputKind.Bc, _ => OutputKind.Exe,
             },
             _ => OutputKind.Exe,
         };
-        let output = match matches.get_string("output") {
+        let output = match arg_matches.get_string("output") {
             Ok(Some(text)) => Option<String>.Some(String.from(&text)),
             _ => Option<String>.None,
         };
-        let optimization = match matches.get_string("optimization") {
+        let optimization = match arg_matches.get_string("optimization") {
             Ok(Some(text)) => match text { "1" => 1u8, "2" => 2u8, "3" => 3u8, _ => 0u8, },
             _ => 0u8,
         };
-        let dump = *matches.get_bool("dump").unwrap().unwrap();
-        let profile = *matches.get_bool("profile").unwrap().unwrap();
-        let profile_output = match matches.get_string("profile-output") {
+        let dump = *arg_matches.get_bool("dump").unwrap().unwrap();
+        let profile = *arg_matches.get_bool("profile").unwrap().unwrap();
+        let profile_output = match arg_matches.get_string("profile-output") {
             Ok(Some(value)) => Option<String>.Some(String.from(&value)),
             _ => Option<String>.None,
         };
-        let runtime_profile_dir = match matches.get_string("runtime-profile-dir") {
+        let runtime_profile_dir = match arg_matches.get_string("runtime-profile-dir") {
             Ok(Some(value)) => Option<String>.Some(String.from(&value)),
             _ => Option<String>.None,
         };
-        let log_spec = match matches.get_string("log-spec") { Ok(Some(value)) => Option<String>.Some(String.from(&value)), _ => Option<String>.None, };
-        let log_file = match matches.get_string("log-file") { Ok(Some(value)) => Option<String>.Some(String.from(&value)), _ => Option<String>.None, };
-        let link_libraries = string_values(matches, "link-lib");
-        let link_searches = string_values(matches, "link-search");
+        let log_spec = match arg_matches.get_string("log-spec") { Ok(Some(value)) => Option<String>.Some(String.from(&value)), _ => Option<String>.None, };
+        let log_file = match arg_matches.get_string("log-file") { Ok(Some(value)) => Option<String>.Some(String.from(&value)), _ => Option<String>.None, };
+        let link_libraries = string_values(arg_matches, "link-lib");
+        let link_searches = string_values(arg_matches, "link-search");
 
         let runtime_profile_error = match &runtime_profile_dir {
             Some(value) if value.is_empty() => Option<String>.Some(String.from(&"error: --runtime-profile-dir PATH cannot be empty\n")),
@@ -121,24 +123,32 @@ impl CompilerConfig {
             Some(value) if value.is_empty() => Option<String>.Some(String.from(&"error: --profile-output PATH cannot be empty\n")),
             _ => Option<String>.None,
         };
-        let action = match runtime_profile_error {
-            Some(message) => CompilerAction.Invalid(message),
+        let action_error = match runtime_profile_error {
+            Some(message) => Option<String>.Some(message),
             None => match profile_error {
-                Some(message) => CompilerAction.Invalid(message),
+                Some(message) => Option<String>.Some(message),
                 None => if check && target_explicit {
-                    CompilerAction.Invalid(String.from(&"error: --check does not accept --target\n"))
+                    Option<String>.Some(String.from(&"error: --check does not accept --target\n"))
                 } elif check && output.is_some() {
-                    CompilerAction.Invalid(String.from(&"error: --check does not accept --output\n"))
+                    Option<String>.Some(String.from(&"error: --check does not accept --output\n"))
                 } elif check && (!link_libraries.is_empty() || !link_searches.is_empty()) {
-                    CompilerAction.Invalid(String.from(&"error: --check does not accept native link options\n"))
-                } elif check {
-                    CompilerAction.Check
+                    Option<String>.Some(String.from(&"error: --check does not accept native link options\n"))
                 } else {
-                    CompilerAction.Compile
+                    Option<String>.None
                 },
             },
         };
-        Result<Self, String>.Ok(Self(action, inputs, root, matches.get_string("compiler-root").unwrap().is_some(), packages, raw, ffi, target, target_explicit, output, optimization,
+
+        match action_error {
+            Some(message) => {
+                @eprintln(message);
+                exit(EXIT_FAILURE);
+            },
+            None => {},
+        }
+
+        let action = if check { CompilerAction.Check } else { CompilerAction.Compile };
+        Result<Self, String>.Ok(Self(action, inputs, root, arg_matches.get_string("compiler-root").unwrap().is_some(), packages, raw, ffi, target, target_explicit, output, optimization,
             dump, profile, profile_output, runtime_profile_dir, log_spec, log_file, link_libraries, link_searches))
     }
 }
@@ -146,7 +156,7 @@ impl CompilerConfig {
 impl Drop for CompilerConfig {
     pub fn drop() {
         match &self.action {
-            Help(text) | Invalid(text) => text.drop(),
+            Help(text) => text.drop(),
             Check => {},
             Compile => {},
         }
@@ -178,7 +188,8 @@ impl Drop for CompilerConfig {
 }
 
 // Configuration and error text own their storage independently of the parser and command-line strings.
-pub fn parse_args() -> Result<CompilerConfig, String> {
+// Argument failures are reported here and terminate the process with the usage status.
+pub fn parse_args() -> CompilerConfig {
     let parser = ArgumentParser.new("compiler");
     defer parser.drop();
 
@@ -252,12 +263,18 @@ pub fn parse_args() -> Result<CompilerConfig, String> {
     .nargs(Nargs.ZeroOrMore).metavar("INPUT")
     .help("input files or directories");
 
-    match parser.parse_env() {
+    let config = match parser.parse_env() {
         Ok(outcome) => match outcome {
-            Help(text) => Result<CompilerConfig, String>.Ok(CompilerConfig.help(text)),
-            Parsed(matches) => {
-                defer matches.drop();
-                CompilerConfig.from_matches(&matches)
+            Help(text) => CompilerConfig.help(text),
+            Parsed(arg_matches) => {
+                defer arg_matches.drop();
+                match CompilerConfig.from_matches(&arg_matches) {
+                    Ok(value) => value,
+                    Err(message) => {
+                        @eprintln(message);
+                        exit(EXIT_USAGE_ERROR);
+                    },
+                }
             },
         },
         Err(error) => {
@@ -275,7 +292,9 @@ pub fn parse_args() -> Result<CompilerConfig, String> {
             let message = error.format();
             defer message.drop();
             diagnostic.push_str(message.as_str());
-            Result<CompilerConfig, String>.Err(diagnostic)
+            @eprintln(diagnostic);
+            exit(EXIT_USAGE_ERROR);
         },
-    }
+    };
+    config
 }

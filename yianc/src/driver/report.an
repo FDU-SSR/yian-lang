@@ -12,7 +12,7 @@ pub fn report(diagnostic: Diagnostic&, sources: Option<SourceManager&>) {
         Err(problem) => { problem.drop(); return; },
     };
     defer text.drop();
-    @eprintln(f"{text.as_str()}");
+    @eprintln(text);
 }
 
 pub fn report_error(problem: AnalysisError&, sources: Option<SourceManager&>) {
@@ -27,7 +27,7 @@ pub fn report_diagnostics(diagnostics: Vec<Diagnostic>&, sources: Option<SourceM
             Err(problem) => { problem.drop(); return false; },
         };
         defer text.drop();
-        @eprintln(f"{text.as_str()}");
+        @eprintln(text);
     }
     true
 }
@@ -52,6 +52,6 @@ pub fn driver_error(problem: DriverError&) {
         None => {},
     }
     text.push_str("\n");
-    @eprint(f"{text.as_str()}");
+    @eprint(text);
     match Stderr.new().write_all(problem.stderr.as_slice()) { Ok(_) => {}, Err(error) => error.drop(), }
 }
