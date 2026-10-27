@@ -12,7 +12,7 @@
 #   --skip-cve       skip the CVE correctness suite
 #   --skip-perf      skip the three-state performance run
 #   --skip-asan      skip the ASan cross-comparison
-#   --refresh-data   copy the new samples into ../data via ../../refresh_data.py
+#   --refresh-data   copy the new samples into ../data via ../refresh_data.py
 #   -h, --help       show this help
 #
 # Results go to bench/results/; command output is also kept under
@@ -131,10 +131,10 @@ if [[ -f bench/results/asan.md ]]; then
 fi
 
 if ((REFRESH_DATA)); then
-    if [[ -x "$ROOT_DIR/../../refresh_data.py" ]]; then
+    if [[ -x "$ROOT_DIR/../refresh_data.py" ]]; then
         echo
         echo "== refresh paper data =="
-        "$ROOT_DIR/../../refresh_data.py"
+        "$ROOT_DIR/../refresh_data.py"
     else
         echo "refresh_data.py not found; run it from the paper checkout" >&2
     fi
