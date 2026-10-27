@@ -3,9 +3,10 @@
 // The probe builds a valid graph with EnumInitAt, EnumTagAt, EnumFieldAt and
 // EnumCopyAt, then rejects malformed graphs before LLVM lowering.
 
-from yianc.analysis.session.output import AnalysisOptions;
-from yianc.analysis.session.prepare import PreparationObserver;
+from yianc.analysis.session.output import AnalysisOptions, AnalysisOutput;
 from yianc.analysis.session.session import AnalysisSession;
+from yianc.driver.frontend import FrontendDriver;
+from yianc.driver.middle import MiddleEndDriver;
 from yianc.analysis.ty.model import AccessMode, AggregateDefinition, DefinitionBody, DefinitionHeader, EnumDefinition, EnumVariant, NominalKind, StructField, TypeData;
 from yianc.codegen.cfg.ids import BlockId, FunctionId, ValueId;
 from yianc.codegen.cfg.model import CfgFunction, CfgModule, Operation, SafetyCheck, Terminator, ValueKind;
@@ -322,25 +323,31 @@ fn main() {
     documents.push(SourceDocument(path=String.from(&"/tmp/enum-storage-probe.an"),
         text=String.from(&"fn main() {}\n")));
     defer release_documents(&documents);
-    let session = match AnalysisSession.prepare_documents(&documents, trust(), Option<PackageMap>.None,
-        false, false, Option<PreparationObserver&>.None) {
+    let frontend = match FrontendDriver.prepare_documents(&documents, trust(), Option<PackageMap>.None, false) {
         Ok(value) => value,
         Err(error) => { error.drop(); @panic("enum storage probe preparation failed"); },
     };
-    defer session.drop();
-    let output = match session.analyze(AnalysisOptions.new()) {
+    let driver = MiddleEndDriver.new(frontend.take_session(), false);
+    defer driver.drop();
+    let report = match driver.run(AnalysisOptions.new()) {
         Ok(value) => value,
         Err(error) => { error.drop(); @panic("enum storage probe analysis failed"); },
     };
+    let output = match report.output.take() {
+        Some(value) => value,
+        None => { report.drop(); @panic("enum storage probe analysis produced no output"); },
+    };
+    report.drop();
     defer output.drop();
+    let session = driver.analysis_session();
 
     let location = SourceSpan(SourceId(0u64), Span(Position(0u64, 0u64), Position(0u64, 0u64)));
-    let fixture = build_types(&session, location);
-    check_valid(&session, &fixture, location);
-    check_wrong_pointee(&session, &fixture, location);
-    check_invalid_variant(&session, &fixture, location);
-    check_invalid_field_type(&session, &fixture, location);
-    check_unit_fields(&session, &fixture, location);
-    check_field_on_unit(&session, &fixture, location);
-    check_tag_type(&session, &fixture, location);
+    let fixture = build_types(session, location);
+    check_valid(session, &fixture, location);
+    check_wrong_pointee(session, &fixture, location);
+    check_invalid_variant(session, &fixture, location);
+    check_invalid_field_type(session, &fixture, location);
+    check_unit_fields(session, &fixture, location);
+    check_field_on_unit(session, &fixture, location);
+    check_tag_type(session, &fixture, location);
 }

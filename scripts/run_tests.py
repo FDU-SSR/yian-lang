@@ -23,6 +23,10 @@ for an expected failure whose content is a diagnostic substring.
 Test inputs are discovered from ``tests/input/<suite>``:
   - <name>.args  → CLI arguments passed to the executable (whitespace-separated)
   - <name>.stdin → content piped to the executable's stdin
+  - <name>.compile.json → optional compiler variants and pointer-mode applicability.
+    A top-level ``compiler_args`` array supplies arguments for every selected mode;
+    a compile-error test whose arguments include ``-t``/``--target`` is compiled
+    with that target instead of ``--check``, so entry-point errors can be tested.
 
 Usage:
     python scripts/run_tests.py                  # basic suite, fat + raw
@@ -317,7 +321,7 @@ def __parse_compile_config(
         entries = cast(list[object], raw)
     elif isinstance(raw, dict):
         config = cast(dict[str, object], raw)
-        allowed_config = {"variants", "pointer_modes", "raw_inapplicable_reason"}
+        allowed_config = {"variants", "pointer_modes", "compiler_args", "raw_inapplicable_reason"}
         unknown_config = set(config) - allowed_config
         if unknown_config:
             names_text = ", ".join(sorted(str(name) for name in unknown_config))
@@ -427,6 +431,17 @@ def __parse_compile_config(
     return variants, pointer_modes, raw_reason
 
 
+def __base_compiler_args(file_path: Path) -> list[str]:
+    """Return test-level compiler arguments stored in a compile configuration."""
+    raw: object = json.loads(file_path.read_text())
+    if not isinstance(raw, dict):
+        return []
+    value = raw.get("compiler_args", [])
+    if not isinstance(value, list) or not all(isinstance(arg, str) for arg in cast(list[object], value)):
+        raise ValueError(f"{file_path}: compiler_args must be a string array")
+    return cast(list[str], value)
+
+
 def __parse_compile_variants(file_path: Path) -> list[CompileVariant]:
     """Parse the compile variants, preserving the legacy array helper API."""
     return __parse_compile_config(file_path)[0]
@@ -496,8 +511,10 @@ def discover_tests() -> list[TestCase]:
         config_path = __find_compile_config(name)
         if config_path is not None:
             compile_variants, pointer_modes, raw_reason = __parse_compile_config(config_path)
+            base_compiler_args = __base_compiler_args(config_path)
         else:
             compile_variants, pointer_modes, raw_reason = [], None, None
+            base_compiler_args = []
 
         tests.append(TestCase(
             name=name,
@@ -509,6 +526,7 @@ def discover_tests() -> list[TestCase]:
             cli_args=cli_args,
             stdin=stdin,
             compile_variants=compile_variants,
+            compiler_args=base_compiler_args,
             pointer_modes=pointer_modes,
             raw_inapplicable_reason=raw_reason,
         ))
@@ -673,7 +691,12 @@ def run_test(
     cmd += test.compiler_args
     exe_path: Path | None = None
     if test.expect_error:
-        cmd += ["--check"]
+        has_target = any(
+            arg in {"-t", "--target"} or arg.startswith("--target=")
+            for arg in test.compiler_args
+        )
+        if not has_target:
+            cmd += ["--check"]
     elif run:
         exe_path = BUILD_DIR / "test_exe" / _suite_name / test.name
         exe_path.parent.mkdir(parents=True, exist_ok=True)

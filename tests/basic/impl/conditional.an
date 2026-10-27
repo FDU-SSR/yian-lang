@@ -1,4 +1,6 @@
-// Test conditional impl: trait implementation with trait bounds
+// Test conditional impl: trait implementation with trait bounds.
+// The two traits use distinct method names so the shared receiver type
+// does not create an unrelated lookup ambiguity.
 //
 // Expected output: 0
 
@@ -30,11 +32,11 @@ fn case_conditional_impl_value_42() {
 }
 
 trait SatisfiedMyClone {
-    fn my_clone() -> Self;
+    fn satisfied_clone() -> Self;
 }
 
 impl SatisfiedMyClone for i32 {
-    fn my_clone() -> i32 {
+    fn satisfied_clone() -> i32 {
         *self
     }
 }
@@ -44,15 +46,15 @@ struct SatisfiedWrapper<T> {
 }
 
 impl<T> SatisfiedMyClone for SatisfiedWrapper<T> if T: SatisfiedMyClone {
-    fn my_clone() -> Self {
-        let value = self.value.my_clone();
+    fn satisfied_clone() -> Self {
+        let value = self.value.satisfied_clone();
         SatisfiedWrapper(value)
     }
 }
 
 fn case_conditional_impl_value_10() {
     let wrapper: SatisfiedWrapper<i32> = SatisfiedWrapper(10);
-    assert wrapper.my_clone().value == 10: "clone should work for i32";
+    assert wrapper.satisfied_clone().value == 10: "clone should work for i32";
 }
 
 fn main() {

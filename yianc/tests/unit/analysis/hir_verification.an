@@ -3,8 +3,9 @@ from yianc.analysis.passes.hir_verification_cache import HirVerificationCache, H
 from yianc.analysis.passes.verify_hir import verify_hir_observed;
 from yianc.analysis.resolution.context import ResolutionContext;
 from yianc.analysis.session.output import AnalysisOptions, AnalysisOutput, AnalyzedProcedure;
-from yianc.analysis.session.prepare import PreparationObserver;
 from yianc.analysis.session.session import AnalysisSession;
+from yianc.driver.frontend import FrontendDriver;
+from yianc.driver.middle import MiddleEndDriver;
 from yianc.analysis.ty.model import AccessMode, AggregateDefinition, CallableDefinition, DefinitionBody,
 DefinitionHeader, NominalKind, Parameter, StructField;
 from yianc.analysis.ty.validation import validate_concrete_value;
@@ -502,23 +503,38 @@ fn check_hir_integration(session: AnalysisSession&, output: AnalysisOutput&) {
     "a failed contextual verification leaves no cached state";
 }
 
-fn check_trait_integration() {
+fn prepare(source: str, path: str) -> MiddleEndDriver {
     let documents = Vec<SourceDocument>.new();
-    documents.push(SourceDocument(path=String.from(&"/tmp/hir-verification-trait.an"),
-        text=String.from(&"trait Show { fn show() -> i32; }\nstruct Item { value: i32 }\nimpl Show for Item { pub fn show() -> i32 { self.value } }\nfn render(value: Show&) -> i32 { value.show() }\nfn main() { let item = Item(value=7); let shown = render(&item); assert shown == 7: \"dispatch\"; }\n")));
+    documents.push(SourceDocument(path=String.from(&path), text=String.from(&source)));
     defer release_documents(&documents);
-    let session = match AnalysisSession.prepare_documents(&documents, trust(), Option<PackageMap>.None,
-        false, false, Option<PreparationObserver&>.None) {
+    let frontend = match FrontendDriver.prepare_documents(&documents, trust(), Option<PackageMap>.None, false) {
         Ok(value) => value,
-        Err(error) => { error.drop(); @panic("trait probe preparation failed"); },
+        Err(error) => { error.drop(); @panic("probe preparation failed"); },
     };
-    defer session.drop();
-    let output = match session.analyze(AnalysisOptions.new()) {
+    MiddleEndDriver.new(frontend.take_session(), false)
+}
+
+fn analyze(driver: MiddleEndDriver&) -> AnalysisOutput {
+    let report = match driver.run(AnalysisOptions.new()) {
         Ok(value) => value,
-        Err(error) => { error.drop(); @panic("trait probe analysis failed"); },
+        Err(error) => { error.drop(); @panic("probe analysis failed"); },
     };
+    let output = match report.output.take() {
+        Some(value) => value,
+        None => { report.drop(); @panic("probe analysis produced no output"); },
+    };
+    report.drop();
+    output
+}
+
+fn check_trait_integration() {
+    let source = "trait Show { fn show() -> i32; }\nstruct Item { value: i32 }\nimpl Show for Item { pub fn show() -> i32 { self.value } }\nfn render(value: Show&) -> i32 { value.show() }\nfn main() { let item = Item(value=7); let shown = render(&item); assert shown == 7: \"dispatch\"; }\n";
+    let driver = prepare(source, "/tmp/hir-verification-trait.an");
+    defer driver.drop();
+    let output = analyze(&driver);
     defer output.drop();
-    let context = match ResolutionContext.new(&session) {
+    let session = driver.analysis_session();
+    let context = match ResolutionContext.new(session) {
         Ok(value) => value,
         Err(error) => { error.drop(); @panic("trait probe context failed"); },
     };
@@ -538,33 +554,24 @@ fn check_trait_integration() {
 }
 
 fn main() {
-    let documents = Vec<SourceDocument>.new();
-    documents.push(SourceDocument(path=String.from(&"/tmp/hir-verification-probe.an"),
-        text=String.from(&"fn left(value: i32) { let first: i32 = value; }\nfn right(value: i32) { let second: i32 = value; }\nfn main() {\n    let value: i32 = 1;\n    left(value);\n    right(value);\n    match value { 0 => {}, _ => {} }\n}\n")));
-    defer release_documents(&documents);
-    let session = match AnalysisSession.prepare_documents(&documents, trust(), Option<PackageMap>.None,
-        false, false, Option<PreparationObserver&>.None) {
-        Ok(value) => value,
-        Err(error) => { error.drop(); @panic("probe preparation failed"); },
-    };
-    defer session.drop();
-    let output = match session.analyze(AnalysisOptions.new()) {
-        Ok(value) => value,
-        Err(error) => { error.drop(); @panic("probe analysis failed"); },
-    };
+    let source = "fn left(value: i32) { let first: i32 = value; }\nfn right(value: i32) { let second: i32 = value; }\nfn main() {\n    let value: i32 = 1;\n    left(value);\n    right(value);\n    match value { 0 => {}, _ => {} }\n}\n";
+    let driver = prepare(source, "/tmp/hir-verification-probe.an");
+    defer driver.drop();
+    let output = analyze(&driver);
     defer output.drop();
+    let session = driver.analysis_session();
 
-    check_hir_integration(&session, &output);
+    check_hir_integration(session, &output);
     check_trait_integration();
 
-    let context = match ResolutionContext.new(&session) {
+    let context = match ResolutionContext.new(session) {
         Ok(value) => value,
         Err(error) => { error.drop(); @panic("probe context failed"); },
     };
     defer context.drop();
     let location = SourceSpan(SourceId(0u64), Span(Position(1u64, 4u64), Position(1u64, 9u64)));
     let second_location = SourceSpan(SourceId(0u64), Span(Position(2u64, 4u64), Position(2u64, 9u64)));
-    let fixture = build_types(&session, &context, location);
+    let fixture = build_types(session, &context, location);
 
     let value_observer = MissCounter.new();
     defer value_observer.drop();

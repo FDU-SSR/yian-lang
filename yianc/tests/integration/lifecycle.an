@@ -11,7 +11,8 @@ from json.write import Writer;
 from json.parse import parse;
 from std.core.ops import Index;
 from yianc.analysis.session.session import AnalysisSession;
-from yianc.analysis.session.prepare import PreparationObserver;
+from yianc.driver.frontend import FrontendDriver;
+from yianc.driver.middle import MiddleEndDriver;
 from yianc.analysis.session.output import AnalysisOptions;
 from yianc.diagnostics.model import AnalysisErrorKind;
 from yianc.package.model import PackageMap;
@@ -114,29 +115,31 @@ fn check_strict_lifecycle(raw: bool) {
     documents.push(SourceDocument(path=String.from(&"/tmp/yian-native-strict-lifecycle.an"),
         text=String.from(&"struct Record { field: i32 }\nfn helper(value: Record) -> Record { value }\nconst SIZE: u64 = 8;\nfn main() { helper(Record(1)); }\n")));
     defer release_documents(&documents);
-    let session = match AnalysisSession.prepare_documents(&documents, trust(), Option<PackageMap>.None,
-        raw, false, Option<PreparationObserver&>.None) {
+    let frontend = match FrontendDriver.prepare_documents(&documents, trust(), Option<PackageMap>.None, false) {
         Ok(value) => value,
         Err(error) => { error.drop(); @panic("strict preparation failed"); },
     };
-    let transferred = false;
-    defer { if !transferred { session.drop(); } };
-    let output = match session.analyze(AnalysisOptions.new()) {
+    let driver = MiddleEndDriver.new(frontend.take_session(), raw);
+    defer driver.drop();
+    let report = match driver.run(AnalysisOptions.new()) {
         Ok(value) => value,
-        Err(error) => { error.drop(); session.drop(); @panic("strict analysis failed"); },
+        Err(error) => { error.drop(); @panic("strict analysis failed"); },
     };
+    let output = match report.output.take() {
+        Some(value) => value,
+        None => { report.drop(); @panic("strict analysis produced no output"); },
+    };
+    report.drop();
     assert output.procedures.len() >= 2u64: "strict analysis exports checked procedure roots";
     assert output.warnings.len() == 0u64: "a clean strict analysis emits no warnings";
     assert output.entry.is_some(): "strict analysis selects an entry when main exists";
-    let second = session.analyze(AnalysisOptions.new());
+    let second = driver.run(AnalysisOptions.new());
     match second {
         Err(error) => { assert error.kind == AnalysisErrorKind.Internal: "a session cannot analyze twice"; error.drop(); },
         Ok(again) => { again.drop(); @panic("strict session accepted a second analysis"); },
     }
-    assert session.len() == 1u64: "the session keeps its prepared unit until its owner drops";
+    assert driver.analysis_session().len() == 1u64: "the session keeps its prepared unit until its owner drops";
     output.drop();
-    transferred = true;
-    session.drop();
 }
 
 fn strict_analysis_lifecycle() {
@@ -149,13 +152,14 @@ fn strict_analysis_reports_first_error() {
     documents.push(SourceDocument(path=String.from(&"/tmp/yian-native-strict-error.an"),
         text=String.from(&"fn bad_one() { let value: i32 = true; }\nfn bad_two() { let value: bool = \"wrong\"; }\nfn main() {}\n")));
     defer release_documents(&documents);
-    let session = match AnalysisSession.prepare_documents(&documents, trust(), Option<PackageMap>.None,
-        false, false, Option<PreparationObserver&>.None) {
+    let frontend = match FrontendDriver.prepare_documents(&documents, trust(), Option<PackageMap>.None, false) {
         Ok(value) => value,
         Err(error) => { error.drop(); @panic("strict error fixture preparation failed"); },
     };
-    match session.analyze(AnalysisOptions.new()) {
-        Ok(output) => { output.drop(); session.drop(); @panic("invalid strict fixture passed analysis"); },
+    let driver = MiddleEndDriver.new(frontend.take_session(), false);
+    defer driver.drop();
+    match driver.run(AnalysisOptions.new()) {
+        Ok(report) => { report.drop(); @panic("invalid strict fixture passed analysis"); },
         Err(error) => {
             assert error.diagnostic.code.text() == "E401": "strict failure keeps the type diagnostic code";
             assert error.diagnostic.message.as_str().contains("Expected type"):
@@ -163,7 +167,6 @@ fn strict_analysis_reports_first_error() {
             error.drop();
         },
     }
-    session.drop();
 }
 
 fn main() {

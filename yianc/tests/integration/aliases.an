@@ -1,5 +1,6 @@
 from yianc.analysis.session.session import AnalysisSession;
-from yianc.analysis.session.prepare import PreparationObserver;
+from yianc.driver.frontend import FrontendDriver;
+from yianc.driver.middle import MiddleEndDriver;
 from yianc.analysis.session.output import AnalysisOptions;
 from yianc.analysis.ty.queries import struct_fields;
 from yianc.common.ids import TypeId;
@@ -20,34 +21,36 @@ fn trust() -> SourceTrust {
     }
 }
 
-fn prepare(source: str, path: str) -> AnalysisSession {
+fn prepare(source: str, path: str) -> MiddleEndDriver {
     let documents = Vec<SourceDocument>.new();
     documents.push(SourceDocument(path=String.from(&path), text=String.from(&source)));
     defer release_documents(&documents);
-    match AnalysisSession.prepare_documents(&documents, trust(), Option<PackageMap>.None,
-        IS_RAW_MODE, false, Option<PreparationObserver&>.None) {
+    let frontend = match FrontendDriver.prepare_documents(&documents, trust(), Option<PackageMap>.None, false) {
         Ok(value) => value,
         Err(error) => { error.drop(); @panic("strict fixture preparation failed"); },
-    }
+    };
+    MiddleEndDriver.new(frontend.take_session(), IS_RAW_MODE)
 }
 
 fn analyze_success(source: str, path: str) -> AnalysisSession {
-    let session = prepare(source, path);
-    match session.analyze(AnalysisOptions.new()) {
-        Ok(output) => { output.drop(); session },
+    let driver = prepare(source, path);
+    match driver.run(AnalysisOptions.new()) {
+        Ok(report) => {
+            report.drop();
+            driver.take_session()
+        },
         Err(error) => {
             error.drop();
-            session.drop();
             @panic("strict fixture analysis failed");
         },
     }
 }
 
 fn analyze_failure(source: str, path: str) -> AnalysisError {
-    let session = prepare(source, path);
-    match session.analyze(AnalysisOptions.new()) {
-        Ok(output) => { output.drop(); session.drop(); @panic("invalid fixture passed strict analysis"); },
-        Err(error) => { session.drop(); error },
+    let driver = prepare(source, path);
+    match driver.run(AnalysisOptions.new()) {
+        Ok(report) => { report.drop(); driver.take_session().drop(); @panic("invalid fixture passed strict analysis"); },
+        Err(error) => { driver.take_session().drop(); error },
     }
 }
 
