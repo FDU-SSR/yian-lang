@@ -236,6 +236,16 @@ The `basic`, `package`, and `bootstrap` suites run the selected fat/raw modes; s
 
 Sources are under `tests/<suite>/`; expected results are under `tests/output/<suite>/`. A `.err.an` source must fail compilation, and its `.ans` file contains the required diagnostic substring. For a normal test, `.ans` contains expected stdout; a first line of `Exit code <N>` specifies an expected nonzero exit code. A directory test — a multi-file standalone test or a package fixture — uses `<dir>.ans`, or `<dir>.err.ans` for an expected failure. `tests/input/<suite>/<name>.args` and `.stdin` provide process arguments and standard input.
 
+The separate `cve/` dataset contains 38 archived C projects and 38 vulnerable
+YIAN anx projects. It is outside compiler self-tests. Use
+`python scripts/run_cve.py --case CVE-2021-33304` for an exact YIAN witness;
+`--language c|both` adds the archived vulnerable C baseline with ASan.
+No fixed variants are supplied. `--list` and `--check-layout` start no tools;
+`--all` selects the complete dataset and requires explicit batch authorization
+in agent work. `cve/README.md` documents provenance and runner semantics.
+Packaging alone is not evidence
+that a witness faithfully reproduces its upstream CVE.
+
 An existing `tests/input/<suite>/<test>.compile.json` file attaches compiler variants to that test. Each variant supplies a name, a string-array `compiler_args`, and at most one compile-error substring or expected runtime exit code. The legacy top-level array remains valid. An object may instead contain `variants`, `pointer_modes` (a non-empty unique list containing `fat` and optionally `raw`), and `raw_inapplicable_reason`; excluding `raw` requires a non-empty reason. Such N/A results do not count as passes, and an all-N/A selection exits nonzero.
 
 Test data lives under `tests/`; Python tooling under `scripts/` selects native executables and checks their results. Bootstrap package tests live under each package's `tests/` directory and run through native `anx test` with native `yianc`. `scripts/check_toolchain_parity.py check` runs native-only fixed oracles; repeat `--case ID` to select exact cases and use `--pointer-mode fat|raw|both` to select modes (default: `both`). `check` is the default command and can be omitted; `--list` previews the commands without running them. Its separate `full` subcommand delegates the native compiler corpus and test suites and requires explicit authorization. The script validates existing native tools; it does not compare against the recovery Python compiler or refresh tools.

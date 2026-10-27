@@ -12,6 +12,9 @@ refreshes the toolchain:
 - ``bootstrap`` — existing package tests for the bootstrap compiler, JSON,
   TOML, JSON-RPC, and LSP protocol packages, each in fat and raw pointer modes.
 
+CVE witness projects live under ``cve/`` and use ``scripts/run_cve.py``;
+they are independent of the compiler's safety regression suite.
+
 Tests without a corresponding .ans file under ``tests/output/<suite>`` are
 treated as success tests (expected exit code 0, no output comparison).
 

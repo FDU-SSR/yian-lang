@@ -101,8 +101,8 @@ echo "runs=$RUNS pin=$PIN_LABEL bench=${BENCH:-paper set}"
 echo
 
 if ((SKIP_CVE == 0)); then
-    echo "== CVE and safety suite =="
-    "$PYTHON_BIN" scripts/run_tests.py --suite safety -q
+    echo "== CVE project suite =="
+    "$PYTHON_BIN" scripts/run_cve.py --all
     echo
 fi
 
