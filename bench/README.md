@@ -16,9 +16,10 @@ bench/
 │   ├── an/  specs/
 ├── fatptr/          机制专项微基准 (表示尺寸/拷贝/追逐, 本仓库自写)
 │   ├── an/  c/  specs/
-├── sets/*.json      集合清单: 成员 + 默认规模档 + 测量次数
-├── results/         生成物: <set>.{md,csv}、alloc.{md,csv}、partial.{md,csv}
+├── sets/*.json      集合清单: 成员 + 默认规模档 + 测量次数 (paper.json = 论文 14 基准)
+├── results/         生成物: <set>.{md,csv}、asan.{md,csv}、asan-samples.txt、alloc/partial
 ├── bench_three_way.py 三态运行器 (C / raw / fat)
+├── bench_asan.py    ASan 交叉对比运行器 (C plain / C ASan / YIAN fat)
 ├── bench_allocator.py 分配器运行器 (fat / raw 两态)
 ├── SUITES.md        来源与许可登记
 └── README.md
@@ -112,6 +113,30 @@ fatptr 3 项（call_abi、copy_struct、chase）。
   解释比值前须核对 C/raw/fat 的算法与工作量；未经核对的条目不能作为表示开销的证据。
 - **运行范围需先审查**：bench 命令会编译并运行所选负载，含 warmup 和多次采样；benchmark 是性能测量，不是默认局部测试。仓库任务中执行前需明确选择和测量范围并取得相应授权。
 
+## ASan 交叉对比
+
+`bench_asan.py` 在同一会话内相邻测量 C plain、C ASan（`ASAN_OPTIONS=detect_leaks=0`）和 YIAN
+fat 三条腿；`binarytree` 另有 `quarantine_size_mb=0` 的敏感性腿。每腿 1 次 warmup 加 N 次测量，
+输出中位数、IQR、min–max、峰值 RSS，以及三条口径的逐基准比值与几何平均：
+
+- (i) C ASan / C plain（ASan 自身开销）
+- (ii) C ASan / YIAN fat（跨工具链）
+- (iii) YIAN fat / C plain（完整栈对未插桩 C）
+
+```bash
+python3 bench/bench_asan.py --set paper --runs 5 --pin 4
+python3 bench/bench_asan.py --bench BG/fasta --runs 1 --pin 0
+python3 bench/bench_asan.py --set paper --runs 5 --pin 4
+```
+
+结果写入 `results/asan.md`、`results/asan.csv` 和 `results/asan-samples.txt`（原始
+`wall_ms (peak_rss_kb)` 样本，可与论文 data/ 下的冻结样本对照）。`--set paper` 是论文使用的
+14 个基准；语义护栏要求 C warmup 通过 spec 的 `check`，ASan 的 stdout/退出码与 C plain
+一致，YIAN 腿退出码为 0。
+
+`BG/binarytree` 固定 `N=16`：ASan 约 2.5 s、峰值 RSS 约 0.7 GB。N=20 的 ASan 配置峰值 RSS
+超过 9 GB、单次运行超过 4 分钟，不再使用。`--fast` 仍可对声明了 `scale.fast` 的基准单独降档。
+
 ## 分配器专项
 
 ```bash
@@ -128,6 +153,22 @@ python3 bench/bench_allocator.py --scale fast --yianc "$HOME/.local/bin/yianc"
 `bench/results/` 里只有完全档与分配器记录（`full.{md,csv}`、`alloc.{md,csv}`）进版本历史；
 其余集合（`ptr`/`numeric`/`string`/`alloc-heavy`/`micro`）与临时子集（`partial.*`）由 `.gitignore` 排除。
 报告中的日期、提交与环境指纹定义该次测量的范围，不能视为当前源码性能。
+
+## 论文整体复现
+
+`scripts/rerun_paper_experiments.sh` 依次执行 safety 套件（含 38 对 CVE）、三态性能
+（`--set paper`）和 ASan 对比（`--set paper`），输出与单独运行各 runner
+一致；命令输出同时写入 `build/paper-rerun/<时间戳>/run.log`。
+
+```bash
+scripts/rerun_paper_experiments.sh                       # runs=5, pin=4
+scripts/rerun_paper_experiments.sh --runs 3 --pin 0      # 不绑核, 每腿 3 次
+scripts/rerun_paper_experiments.sh --skip-cve --bench BG/fasta --runs 1
+scripts/rerun_paper_experiments.sh --refresh-data        # 结束后调用上级仓库的 refresh_data.py
+```
+
+`--bench` 同时限制两个 runner；`--skip-cve`/`--skip-perf`/`--skip-asan` 跳过对应阶段；
+`SECL_RUNS`、`SECL_PIN` 与 `YIAN_PYTHON` 环境变量可覆盖默认值。
 
 ## 新增一个基准
 

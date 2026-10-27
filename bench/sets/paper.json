@@ -1,0 +1,23 @@
+{
+  "name": "paper",
+  "scale": "full",
+  "runs": 5,
+  "include": [
+    "AWFY/bounce",
+    "AWFY/list",
+    "AWFY/mand",
+    "AWFY/nbody",
+    "AWFY/permute",
+    "AWFY/queen",
+    "AWFY/sieve",
+    "AWFY/storage",
+    "AWFY/towers",
+    "BG/binarytree",
+    "BG/fann",
+    "BG/fasta",
+    "BG/revcomp",
+    "BG/spectralnorm"
+  ],
+  "exclude": [],
+  "note": "论文使用的 14 个基准 (9 AWFY + 5 BG); 三态与 ASan 对比都用这一档"
+}

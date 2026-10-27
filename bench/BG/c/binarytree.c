@@ -56,7 +56,7 @@ void DeleteTree(treeNode* tree) {
 }
 
 int main() {
-    uint32_t N = 20;
+    uint32_t N = 16;
     uint32_t minDepth = 4;
     uint32_t maxDepth = N;
     int64_t check = 0;

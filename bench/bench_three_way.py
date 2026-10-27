@@ -187,6 +187,7 @@ class Row:
     spec: BenchSpec
     times: dict[str, Stats]
     rss_mb: dict[str, float]
+    rss_samples: dict[str, list[int]]
     runs: int
     yian_stdout_match: bool
     c_check_ok: bool
@@ -562,11 +563,31 @@ def measure_triple(
         spec=spec,
         times={state: _stats(samples[state]) for state in STATES},
         rss_mb={state: max(rss[state]) / 1024.0 for state in STATES},
+        rss_samples=rss,
         runs=used_runs,
         yian_stdout_match=yian_stdout_match,
         c_check_ok=c_check_ok,
         exit_codes={state: warm[state][3] for state in STATES},
     )
+
+
+def write_samples(rows: list[Row], path: Path) -> None:
+    """Write per-run samples in the format the paper's data/ files use."""
+    lines = [
+        f"C / raw / fat raw samples, measured {datetime.date.today():%Y-%m-%d}.",
+        "Each pair is wall_ms (peak_rss_kb); one line per benchmark and state.",
+    ]
+    for row in sorted(rows, key=lambda item: item.spec.name):
+        for state in STATES:
+            stats = row.times[state]
+            pairs = ", ".join(
+                f"{wall:.1f} ({peak})"
+                for wall, peak in zip(stats.samples, row.rss_samples[state])
+            )
+            lines.append(
+                f"- {row.spec.name} / {state} ({len(stats.samples)} runs): {pairs}"
+            )
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
 def _tool_version(tool: str) -> str:
@@ -915,8 +936,11 @@ def main() -> int:
     RESULTS_DIR.mkdir(parents=True, exist_ok=True)
     md_path.write_text(render_md(rows, fingerprint), encoding="utf-8")
     write_csv(rows, fingerprint, csv_path)
+    samples_path = RESULTS_DIR / "three-way-samples.txt"
+    write_samples(rows, samples_path)
     print(f"[write] {md_path.relative_to(ROOT)}", file=sys.stderr)
     print(f"[write] {csv_path.relative_to(ROOT)}", file=sys.stderr)
+    print(f"[write] {samples_path.relative_to(ROOT)}", file=sys.stderr)
     return 0
 
 
