@@ -463,6 +463,16 @@ class Match(ExpressionSyntax):
         return f"match {self.expr} {{ {arms_str} }}"
 
 
+@dataclass
+class Matches(ExpressionSyntax):
+    span: SrcSpan
+    value: Expr
+    pattern: Pattern
+
+    def __repr__(self) -> str:
+        return f"({self.value} matches {self.pattern})"
+
+
 class MatchArmOrigin(Enum):
     USER = "user"
     CONDITION = "condition"
@@ -897,7 +907,7 @@ Expr: TypeAlias = (
     | Tuple | Array | ArrayRepeat
     | Block
     | VarDecl | PatternLet
-    | If | ComptimeIf | For | While | Loop | Match
+    | If | ComptimeIf | For | While | Loop | Match | Matches
     | Return | Break | Continue | Defer | Assert
     | Delete
     | Semi

@@ -865,6 +865,10 @@ pub fn try_walk_expr<E>(node: Expr&, visitor: TryAstVisitor<E>&) -> Result<(), E
                 }
             };
         },
+        Matches(value, pattern) => {
+            try_walk_expr(*value, visitor)?;
+            try_walk_pattern(*pattern, visitor)?;
+        },
         Return(expr) => {
             match &(*expr) {
                 Some(value) => {

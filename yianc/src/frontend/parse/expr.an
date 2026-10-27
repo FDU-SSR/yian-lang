@@ -19,6 +19,17 @@ fn expr_bp(parser: Parser&, min_bp: i32) -> Option<Expr&> {
     let lhs = prefix(parser)?;
 
     loop {
+        if parser.at_keyword(KeywordKind.Matches) {
+            if 7 < min_bp {
+                break;
+            }
+
+            parser.advance();
+            let pattern = parse_binding_pattern(parser)?;
+            lhs = parser.arena.alloc_expr(ExprData.Matches(value=lhs, pattern=pattern), lhs.span + pattern.span);
+            continue;
+        }
+
         let candidate = BinaryOperator.from_token(parser.peek());
         let lbp = match candidate { Some(op) => op.lbp(), None => 0 };
         if lbp == 0 || lbp < min_bp {

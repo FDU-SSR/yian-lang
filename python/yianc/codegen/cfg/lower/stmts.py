@@ -316,9 +316,10 @@ class StmtLowerer:
                 value = self.__memory.build_load(address)
                 ty = ctx[pattern.type_id]
                 lower: IR.Value = IR.CharLiteral(chr(pattern.lower), TypeCtx.char_id) if isinstance(ty, Type.CharType) else IR.IntLiteral(pattern.lower, pattern.type_id)
+                # Range patterns include both endpoints; the upper test mirrors the native `<=` comparison.
                 upper: IR.Value = IR.CharLiteral(chr(pattern.upper), TypeCtx.char_id) if isinstance(ty, Type.CharType) else IR.IntLiteral(pattern.upper, pattern.type_id)
                 self.__branch_on(self.__compare(BinaryOperator.Geq, value, lower), failure)
-                self.__branch_on(self.__compare(BinaryOperator.Lt, self.__memory.build_load(address), upper), failure)
+                self.__branch_on(self.__compare(BinaryOperator.Leq, self.__memory.build_load(address), upper), failure)
             case HIR.EnumPattern():
                 is_variant = IR.Reg(self.__state.emitter.new_name(), TypeCtx.bool_id)
                 condition = self.__state.emitter.emit(IR.EnumIsVariant(is_variant, address, pattern.variant)).result

@@ -553,7 +553,7 @@ impl CoverageChecker {
         }
 
         let pattern = self.ctx.session.hir.require_pattern(*cell.unwrap())?;
-        let matches = match &pattern.kind {
+        let is_match = match &pattern.kind {
             EnumPattern(value) => match &constructor.kind {
                 Variant(index) => {
                     if *index != value.variant.discriminant {
@@ -646,7 +646,7 @@ impl CoverageChecker {
             _ => return Result<Option<Row>, AnalysisError>.Err(AnalysisError.internal("coverage specialization requires a normalized pattern")),
         };
 
-        if !matches {
+        if !is_match {
             return Result<Option<Row>, AnalysisError>.Ok(Option<Row>.None);
         }
 

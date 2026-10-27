@@ -872,6 +872,10 @@ pub fn rewrite_expr_children(node: Expr&, rewriter: AstRewriter&) {
                 }
             };
         },
+        Matches(value, pattern) => {
+            *value = rewriter.rewrite_expr(*value);
+            *pattern = rewriter.rewrite_pattern(*pattern);
+        },
         Return(expr) => {
             match &(*expr) {
                 Some(value) => {

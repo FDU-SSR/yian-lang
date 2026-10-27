@@ -218,9 +218,9 @@ fn cache_matches_inputs(document: Object&, documents: Vec<SourceDocument>&) -> b
         let record = match inputs[cursor].as_object() { Some(value) => value, None => return false };
         if !same_string(field_string(record, "path"), documents[cursor].path.as_str()) { return false; }
         let digest = document_digest(&documents[cursor]);
-        let matches = same_string(field_string(record, "sha256"), digest.as_str());
+        let is_match = same_string(field_string(record, "sha256"), digest.as_str());
         digest.drop();
-        if !matches { return false; }
+        if !is_match { return false; }
         cursor += 1u64;
     }
     true

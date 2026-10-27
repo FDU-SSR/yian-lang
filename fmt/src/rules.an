@@ -3,7 +3,7 @@ from std.core.ops import Index;
 
 pub fn operand_keyword(token: Token&) -> bool {
     match token.kind() {
-        Keyword(kind) => match kind { Return | Let | In | Assert | Defer | If | Elif | While | Else | Match => true, _ => false, },
+        Keyword(kind) => match kind { Return | Let | In | Assert | Defer | If | Elif | While | Else | Match | Matches => true, _ => false, },
         _ => false,
     }
 }
@@ -63,7 +63,7 @@ pub fn binary(token: Token&) -> bool {
 }
 
 pub fn paren_space(token: Token&) -> bool {
-    match token.kind() { Keyword(kind) => match kind { If | Elif | While | For | Return | Let | Assert | Defer | In | Match | Else => true, _ => false, }, _ => false, }
+    match token.kind() { Keyword(kind) => match kind { If | Elif | While | For | Return | Let | Assert | Defer | In | Match | Matches | Else => true, _ => false, }, _ => false, }
 }
 
 pub fn bracket_hugs(token: Token&, postfix: bool) -> bool {

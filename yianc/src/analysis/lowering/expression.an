@@ -414,6 +414,7 @@ impl ExprChecker {
                 Result<HirId, AnalysisError>.Ok(self.node(span, self.ctx.primitives.void, false, HirKind.Delete(value)))
             },
             For(_, _, _) => Result<HirId, AnalysisError>.Err(AnalysisError.internal("for must be desugared before lowering")),
+            Matches(_, _) => Result<HirId, AnalysisError>.Err(AnalysisError.internal("matches operator must be desugared before lowering")),
             TryExpr(_) => Result<HirId, AnalysisError>.Err(AnalysisError.internal("propagation must be desugared before lowering")),
         }
     }

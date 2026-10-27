@@ -936,6 +936,17 @@ impl AstFormatter {
 
                 self.node_end();
             },
+            Matches(value, pattern) => {
+                self.node_start("Matches", node.span);
+
+                self.field("value");
+                self.append_expr(*value);
+
+                self.field("pattern");
+                self.append_pattern(*pattern);
+
+                self.node_end();
+            },
             Return(expr) => {
                 self.node_start("Return", node.span);
 

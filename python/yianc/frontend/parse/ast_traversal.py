@@ -100,6 +100,9 @@ class AstVisitor:
                     if arm.guard is not None:
                         self.visit_expr(arm.guard)
                     self.visit_expr(arm.body)
+            case AST.Matches():
+                self.visit_expr(expr.value)
+                self.visit_pattern(expr.pattern)
             case AST.Defer():
                 self.visit_expr(expr.action)
             case AST.Assert():
@@ -248,6 +251,9 @@ class AstRewriter:
                 for arm in stmt.arms:
                     if arm.guard is not None:
                         arm.guard = self.rewrite_expr(arm.guard)
+            case AST.Matches():
+                stmt.value = self.rewrite_expr(stmt.value)
+                stmt.pattern = self.rewrite_pattern(stmt.pattern)
             case AST.Delete():
                 stmt.target = self.rewrite_expr(stmt.target)
             case AST.For():
@@ -339,6 +345,9 @@ class AstRewriter:
                     if arm.guard is not None:
                         arm.guard = self.rewrite_expr(arm.guard)
                     arm.body = self.rewrite_block(arm.body)
+            case AST.Matches():
+                expr.value = self.rewrite_expr(expr.value)
+                expr.pattern = self.rewrite_pattern(expr.pattern)
             case AST.Defer():
                 expr.action = self.rewrite_expr(expr.action)
             case AST.Assert():

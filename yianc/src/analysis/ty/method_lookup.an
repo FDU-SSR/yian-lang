@@ -432,7 +432,7 @@ fn match_arguments(ctx: ResolutionContext&, method: TypeId, arguments: Option<Ve
     while index < parameters.len() {
         let expected = substitute(&ctx.session.types, parameters[index].type_id, substitutions)?;
         let actual = values[index];
-        let matches = compatible(ctx, values[index], expected) || match ctx.session.types.require(expected)? {
+        let is_match = compatible(ctx, values[index], expected) || match ctx.session.types.require(expected)? {
             Reference(inner) => match ctx.session.types.require(actual)? {
                 Pointer(value) => compatible(ctx, *value, *inner) || infer(&ctx.session.types, *inner, default_type(ctx, *value), substitutions),
                 _ => infer(&ctx.session.types, expected, default_type(ctx, actual), substitutions)
@@ -440,7 +440,7 @@ fn match_arguments(ctx: ResolutionContext&, method: TypeId, arguments: Option<Ve
             _ => infer(&ctx.session.types, expected, default_type(ctx, actual), substitutions),
         };
 
-        if !matches {
+        if !is_match {
             return Result<bool, AnalysisError>.Ok(false);
         }
 

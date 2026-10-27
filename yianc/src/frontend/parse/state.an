@@ -144,6 +144,11 @@ impl Parser {
             return Option<Identifier&>.None;
         }
 
+        if token.is_keyword(KeywordKind.Matches) {
+            self.error("'matches' is a reserved keyword", token.span);
+            return Option<Identifier&>.None;
+        }
+
         if !token.is_identifier() {
             let reserved = token.is_keyword(KeywordKind.True_) || token.is_keyword(KeywordKind.False_) ||
             token.is_keyword(KeywordKind.Fn) || token.is_keyword(KeywordKind.Struct) ||

@@ -350,13 +350,13 @@ impl ArgumentParser {
         transferred = true;
         Result<ArgMatches, CliError>.Ok(result)
     }
-    fn apply(matches: ArgMatches&, index: u64, value: Option<ArgValue>) -> Result<(), CliError> {
+    fn apply(arg_matches: ArgMatches&, index: u64, value: Option<ArgValue>) -> Result<(), CliError> {
         let spec = &self.definitions[index];
         match &spec.group {
             Some(group) => {
                 let i = 0u64;
                 while i < self.definitions.len() {
-                    if i != index && self.definitions[i].in_group(*group) && matches.entries[i].supplied {
+                    if i != index && self.definitions[i].in_group(*group) && arg_matches.entries[i].supplied {
                         match value { Some(item) => item.drop(), None => {}, }
                         return Result<(), CliError>.Err(CliError.new(CliErrorKind.Conflict, spec.name.as_str(), "mutually exclusive arguments were supplied together"));
                     }
@@ -364,7 +364,7 @@ impl ArgumentParser {
                 }
             }, None => {},
         }
-        let entry = &matches.entries[index];
+        let entry = &arg_matches.entries[index];
         entry.supplied = true;
         if spec.action == Action.Append {
             match entry.value.unwrap() { List(values) => match value { Some(item) => values.push(item), None => values.push(ArgValue.Null), }, _ => {}, }
@@ -374,16 +374,16 @@ impl ArgumentParser {
         }
         Result<(), CliError>.Ok(())
     }
-    fn consume(matches: ArgMatches&, index: u64, argv: str[], cursor: u64&, attached: Option<str>, origin: u64) -> Result<(), CliError> {
+    fn consume(arg_matches: ArgMatches&, index: u64, argv: str[], cursor: u64&, attached: Option<str>, origin: u64) -> Result<(), CliError> {
         let spec = &self.definitions[index];
         if !spec.takes_value() {
             if attached.is_some() { return Result<(), CliError>.Err(CliError.new(CliErrorKind.WrongCount, spec.name.as_str(), "flag does not accept a value").at(origin)); }
             let value = if spec.action == Action.Count {
-                let old = match matches.entries[index].value.unwrap() { U64(value) => *value, _ => 0u64, };
+                let old = match arg_matches.entries[index].value.unwrap() { U64(value) => *value, _ => 0u64, };
                 if old == u64.max() { return Result<(), CliError>.Err(CliError.new(CliErrorKind.InvalidValue, spec.name.as_str(), "count overflow").at(origin)); }
                 ArgValue.U64(old + 1u64)
             } else { ArgValue.Bool(spec.action == Action.StoreTrue) };
-            return match self.apply(matches, index, Option<ArgValue>.Some(value)) {
+            return match self.apply(arg_matches, index, Option<ArgValue>.Some(value)) {
                 Ok(_) => Result<(), CliError>.Ok(()), Err(error) => Result<(), CliError>.Err(error.at(origin)),
             };
         }
@@ -398,14 +398,14 @@ impl ArgumentParser {
             return Result<(), CliError>.Err(CliError.new(CliErrorKind.MissingValue, spec.name.as_str(), "wrong number of option values").at(origin));
         }
         let value = match spec.make_value(texts.as_slice()) { Ok(value) => value, Err(error) => return Result<(), CliError>.Err(error.at(origin)), };
-        match self.apply(matches, index, value) { Ok(_) => Result<(), CliError>.Ok(()), Err(error) => Result<(), CliError>.Err(error.at(origin)), }
+        match self.apply(arg_matches, index, value) { Ok(_) => Result<(), CliError>.Ok(()), Err(error) => Result<(), CliError>.Err(error.at(origin)), }
     }
     // argv excludes the program name; results own their storage, and parsing performs no output or process exit.
     pub fn parse_args(argv: str[]) -> Result<ParseOutcome, CliError> {
         self.validate()?;
-        let matches = self.initial()?;
+        let arg_matches = self.initial()?;
         let transferred = false;
-        defer { if !transferred { matches.drop(); } };
+        defer { if !transferred { arg_matches.drop(); } };
         let positions = Vec<u64>.new();
         defer positions.drop();
         let i = 0u64;
@@ -426,7 +426,7 @@ impl ArgumentParser {
                         return Result<ParseOutcome, CliError>.Ok(ParseOutcome.Help(self.format_help()?));
                     }
                     let index = match self.find_long(name) { Some(value) => value, None => return Result<ParseOutcome, CliError>.Err(CliError.new(CliErrorKind.UnknownOption, text, "unknown option").at(i)), };
-                    self.consume(&matches, index, argv, &cursor, attached, i)?;
+                    self.consume(&arg_matches, index, argv, &cursor, attached, i)?;
                 } else {
                     let bytes = text.as_slice();
                     let j = 1u64;
@@ -440,7 +440,7 @@ impl ArgumentParser {
                             if bytes[start] == b'=' { start += 1u64; }
                             Option<str>.Some(text[start..bytes.len()])
                         } else { Option<str>.None };
-                        self.consume(&matches, index, argv, &cursor, attached, i)?;
+                        self.consume(&arg_matches, index, argv, &cursor, attached, i)?;
                         if takes_value { break; }
                         j += 1u64;
                     }
@@ -472,10 +472,10 @@ impl ArgumentParser {
                     j = 0u64;
                     while j < count { texts.push(argv[positions[offset + j]]); j += 1u64; }
                     let value = match spec.make_value(texts.as_slice()) { Ok(value) => value, Err(error) => return Result<ParseOutcome, CliError>.Err(error.at(positions[offset])), };
-                    self.apply(&matches, i, value)?;
+                    self.apply(&arg_matches, i, value)?;
                     offset += count;
                 }
-            } elif spec.required && !matches.entries[i].supplied { return Result<ParseOutcome, CliError>.Err(CliError.new(CliErrorKind.Required, spec.name.as_str(), "required option was not supplied")); }
+            } elif spec.required && !arg_matches.entries[i].supplied { return Result<ParseOutcome, CliError>.Err(CliError.new(CliErrorKind.Required, spec.name.as_str(), "required option was not supplied")); }
             i += 1u64;
         }
         if offset < positions.len() { return Result<ParseOutcome, CliError>.Err(CliError.new(CliErrorKind.WrongCount, argv[positions[offset]], "unexpected positional value").at(positions[offset])); }
@@ -485,7 +485,7 @@ impl ArgumentParser {
                 let supplied = false;
                 let j = 0u64;
                 while j < self.definitions.len() {
-                    if self.definitions[j].in_group(i) && matches.entries[j].supplied { supplied = true; }
+                    if self.definitions[j].in_group(i) && arg_matches.entries[j].supplied { supplied = true; }
                     j += 1u64;
                 }
                 if !supplied { return Result<ParseOutcome, CliError>.Err(CliError.new(CliErrorKind.Required, "", "one argument in the required mutually exclusive group must be supplied")); }
@@ -493,7 +493,7 @@ impl ArgumentParser {
             i += 1u64;
         }
         transferred = true;
-        Result<ParseOutcome, CliError>.Ok(ParseOutcome.Parsed(matches))
+        Result<ParseOutcome, CliError>.Ok(ParseOutcome.Parsed(arg_matches))
     }
     pub fn parse_env() -> Result<ParseOutcome, CliError> {
         let owned = args();

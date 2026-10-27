@@ -310,6 +310,7 @@ pub enum ExprData {
     While { condition: Condition, body: Block& },
     Loop { body: Block& },
     Match { expr: Expr&, arms: Vec<MatchArm&> },
+    Matches { value: Expr&, pattern: Pattern& },
     Return { expr: Option<Expr&> },
     Break { expr: Option<Expr&> },
     Continue,
@@ -371,6 +372,7 @@ impl Drop for ExprData {
             Match(expr, arms) => {
                 arms.drop();
             },
+            Matches(value, pattern) => {},
             Return(expr) => {},
             Break(expr) => {},
             Continue => {},

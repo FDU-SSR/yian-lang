@@ -1,5 +1,5 @@
 from yianc.frontend.ast.arena import AstArena, AstTree;
-from yianc.frontend.ast.node import Expr, ExprData, Block, Pattern, PatternData, TypeSyntax, TypeData, Condition, MatchArm, PatternArguments, Argument, StrLiteralData, Literal, ElifBranch;
+from yianc.frontend.ast.node import Expr, ExprData, Block, Pattern, PatternData, TypeSyntax, TypeData, Condition, MatchArm, PatternArguments, Argument, StrLiteralData, BoolLiteralData, Literal, ElifBranch;
 from yianc.frontend.ast.atoms import BuiltinKind, MatchArmOrigin;
 from yianc.frontend.ast.traversal import AstRewriter, rewrite_expr_children;
 from yianc.frontend.source import Span;
@@ -91,6 +91,19 @@ impl ControlLowerer {
         block_expr(self.arena, block(self.arena, span, stmts))
     }
 
+    fn boolean_expr(span: Span, value: bool) -> Expr& {
+        let literal = self.arena.alloc_bool_literal(BoolLiteralData(value), span);
+        self.arena.alloc_expr(ExprData.Literal(literal=Literal.Boolean(literal)), span)
+    }
+
+    fn lower_matches(span: Span, value: Expr&, pattern: Pattern&) -> Expr& {
+        let arms = Vec<MatchArm&>.new();
+        arms.push(arm(self.arena, pattern, one_block(self.arena, span, self.boolean_expr(span, true)), MatchArmOrigin.Condition));
+        let wildcard = self.arena.alloc_pattern(PatternData.WildcardPattern, span);
+        arms.push(arm(self.arena, wildcard, one_block(self.arena, span, self.boolean_expr(span, false)), MatchArmOrigin.Synthetic));
+        match_expr(self.arena, span, value, arms)
+    }
+
     fn lower_assert(span: Span, cond: Expr&, message: Option<Expr&>) -> Expr& {
         let value = if message.is_some() { *message.unwrap() } else {
             let text = assertion_message(self.path, span);
@@ -118,6 +131,7 @@ impl AstRewriter for ControlLowerer {
             If(cond, yes, branches, no) => self.lower_if(node.span, *cond, *yes, branches, *no),
             While(cond, body) => self.lower_while(node.span, *cond, *body),
             For(pattern, iterable, body) => self.lower_for(node.span, *pattern, *iterable, *body),
+            Matches(value, pattern) => self.lower_matches(node.span, *value, *pattern),
             Assert(cond, message) => self.lower_assert(node.span, *cond, *message),
             _ => node,
         }

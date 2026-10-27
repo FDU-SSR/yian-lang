@@ -1,0 +1,15 @@
+fn check(value: i32, items: i32[], text: str) {
+    assert value matches (0 | 1 | 2);
+    assert items matches [1, .., 3];
+    assert value matches -1;
+    assert text matches "yian" | "lang";
+}
+
+struct Point {
+    x: i32,
+    y: i32,
+}
+
+fn point(value: Point) -> bool {
+    return value matches Point(x=0, y=0);
+}

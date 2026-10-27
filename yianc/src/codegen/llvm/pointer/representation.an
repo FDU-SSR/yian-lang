@@ -120,8 +120,8 @@ impl FunctionLowering {
         match source_type {
             Pointer(element) | Reference(element) => match store.require(*element)? {
                 Array(inner, count) => {
-                    let matches = match target_type { Pointer(target_element) | Reference(target_element) => *inner == *target_element, _ => false, };
-                    if matches {
+                    let is_match = match target_type { Pointer(target_element) | Reference(target_element) => *inner == *target_element, _ => false, };
+                    if is_match {
                         let bits = match store.require(*count)? {
                             LiteralValue(bits, false, _) => *bits,
                             _ => return Result<IrValue, CodegenError>.Err(CodegenError.invalid("array pointer conversion has no length")),

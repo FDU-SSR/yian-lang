@@ -56,22 +56,22 @@ fn report_argument_error(command: str, parser: ArgumentParser&, problem: CliErro
     2i32
 }
 
-fn argument_string(matches: ArgMatches&, name: str, fallback: str) -> String {
-    match matches.get_string(name) {
+fn argument_string(arg_matches: ArgMatches&, name: str, fallback: str) -> String {
+    match arg_matches.get_string(name) {
         Ok(Some(value)) => String.from(&value),
         _ => String.from(&fallback),
     }
 }
 
-fn argument_bool(matches: ArgMatches&, name: str) -> bool {
-    match matches.get_bool(name) {
+fn argument_bool(arg_matches: ArgMatches&, name: str) -> bool {
+    match arg_matches.get_bool(name) {
         Ok(Some(value)) => value,
         _ => false,
     }
 }
 
-fn argument_level(matches: ArgMatches&, name: str) -> Option<u8> {
-    match matches.get_u64(name) {
+fn argument_level(arg_matches: ArgMatches&, name: str) -> Option<u8> {
+    match arg_matches.get_u64(name) {
         Ok(Some(value)) => Option<u8>.Some(u8(value)),
         _ => Option<u8>.None,
     }
@@ -135,8 +135,8 @@ fn legacy_profile_argument(argv: Vec<String>&, start: u64, end: u64, command: st
     false
 }
 
-fn nonempty_option(matches: ArgMatches&, name: str) -> Option<String> {
-    match matches.get_string(name) {
+fn nonempty_option(arg_matches: ArgMatches&, name: str) -> Option<String> {
+    match arg_matches.get_string(name) {
         Ok(Some(value)) => if value.as_slice().len() == 0u64 { Option<String>.None } else { Option<String>.Some(String.from(&value)) },
         _ => Option<String>.None,
     }
@@ -159,17 +159,17 @@ fn build_command(argv: Vec<String>&, command: str, start: u64, end: u64, profile
             text.drop();
             0i32
         },
-        Parsed(matches) => {
-            defer matches.drop();
-            let project = argument_string(&matches, "project", ".");
+        Parsed(arg_matches) => {
+            defer arg_matches.drop();
+            let project = argument_string(&arg_matches, "project", ".");
             defer project.drop();
-            let optimization = argument_level(&matches, "optimization");
-            let release = argument_bool(&matches, "release");
-            let raw = argument_bool(&matches, "raw-pointers");
+            let optimization = argument_level(&arg_matches, "optimization");
+            let release = argument_bool(&arg_matches, "release");
+            let raw = argument_bool(&arg_matches, "raw-pointers");
             let mode = if raw { "raw" } else { "fat" };
             if profile_mode {
-                let provided = match matches.was_provided("profile-dir") { Ok(value) => value, Err(_) => false };
-                let root_value = nonempty_option(&matches, "profile-dir");
+                let provided = match arg_matches.was_provided("profile-dir") { Ok(value) => value, Err(_) => false };
+                let root_value = nonempty_option(&arg_matches, "profile-dir");
                 defer { match root_value.take() { Some(value) => value.drop(), None => {}, } };
                 if provided && root_value.is_none() {
                     @eprintln("anx build profile: --profile-dir requires a non-empty path");
@@ -242,11 +242,11 @@ fn format_command(argv: Vec<String>&) -> i32 {
             text.drop();
             0i32
         },
-        Parsed(matches) => {
-            defer matches.drop();
-            let project = argument_string(&matches, "project", ".");
+        Parsed(arg_matches) => {
+            defer arg_matches.drop();
+            let project = argument_string(&arg_matches, "project", ".");
             defer project.drop();
-            format_project(project.as_str(), argument_bool(&matches, "check"))
+            format_project(project.as_str(), argument_bool(&arg_matches, "check"))
         },
     }
 }
@@ -271,15 +271,15 @@ fn test_command(argv: Vec<String>&) -> i32 {
             text.drop();
             0i32
         },
-        Parsed(matches) => {
-            defer matches.drop();
-            let selected_mode = match matches.get_string("pointer-mode") {
+        Parsed(arg_matches) => {
+            defer arg_matches.drop();
+            let selected_mode = match arg_matches.get_string("pointer-mode") {
                 Ok(Some("fat")) => Option<PointerMode>.Some(PointerMode.Fat),
                 Ok(Some("raw")) => Option<PointerMode>.Some(PointerMode.Raw),
                 Ok(Some(_)) => Option<PointerMode>.Some(PointerMode.Both),
                 _ => Option<PointerMode>.None,
             };
-            let legacy_raw = argument_bool(&matches, "raw-pointers");
+            let legacy_raw = argument_bool(&arg_matches, "raw-pointers");
             if legacy_raw && selected_mode.is_some() {
                 @eprintln("anx test: --raw-pointers cannot be combined with --pointer-mode");
                 return 2i32;
@@ -292,7 +292,7 @@ fn test_command(argv: Vec<String>&) -> i32 {
                     None => PointerMode.Both,
                 }
             };
-            let project_path = argument_string(&matches, "project", ".");
+            let project_path = argument_string(&arg_matches, "project", ".");
             defer project_path.drop();
             let project = match load_project(project_path.as_str()) {
                 Some(value) => value,
@@ -300,7 +300,7 @@ fn test_command(argv: Vec<String>&) -> i32 {
             };
             defer project.drop();
             run_tests(&project, pointer_mode,
-                argument_level(&matches, "optimization"), argument_bool(&matches, "release"))
+                argument_level(&arg_matches, "optimization"), argument_bool(&arg_matches, "release"))
         },
     }
 }
@@ -326,14 +326,14 @@ fn new_command(argv: Vec<String>&) -> i32 {
             text.drop();
             0i32
         },
-        Parsed(matches) => {
-            defer matches.drop();
-            let name = argument_string(&matches, "name", "");
+        Parsed(arg_matches) => {
+            defer arg_matches.drop();
+            let name = argument_string(&arg_matches, "name", "");
             defer name.drop();
-            let kind = if argument_bool(&matches, "lib") {
+            let kind = if argument_bool(&arg_matches, "lib") {
                 String.from(&"lib")
             } else {
-                argument_string(&matches, "kind", "bin")
+                argument_string(&arg_matches, "kind", "bin")
             };
             defer kind.drop();
             scaffold(name.as_str(), kind.as_str())
@@ -408,9 +408,9 @@ fn graph_command(argv: Vec<String>&) -> i32 {
             text.drop();
             0i32
         },
-        Parsed(matches) => {
-            defer matches.drop();
-            render_graph(argument_string(&matches, "project", "."), argument_bool(&matches, "json"))
+        Parsed(arg_matches) => {
+            defer arg_matches.drop();
+            render_graph(argument_string(&arg_matches, "project", "."), argument_bool(&arg_matches, "json"))
         },
     }
 }
@@ -448,20 +448,20 @@ fn build_dispatch(argv: Vec<String>&, command: str) -> i32 {
         };
         match outcome {
             Help(text) => { @print(f"{text.as_str()}"); text.drop(); 0i32 },
-            Parsed(matches) => {
-                defer matches.drop();
-                let project = argument_string(&matches, "project", ".");
+            Parsed(arg_matches) => {
+                defer arg_matches.drop();
+                let project = argument_string(&arg_matches, "project", ".");
                 defer project.drop();
-                let provided = match matches.was_provided("profile-dir") { Ok(value) => value, Err(_) => false };
-                let root_value = nonempty_option(&matches, "profile-dir");
+                let provided = match arg_matches.was_provided("profile-dir") { Ok(value) => value, Err(_) => false };
+                let root_value = nonempty_option(&arg_matches, "profile-dir");
                 defer { match root_value.take() { Some(value) => value.drop(), None => {}, } };
                 if provided && root_value.is_none() {
                     @eprintln("anx run profile: --profile-dir requires a non-empty path");
                     return 2i32;
                 }
                 let root = match &root_value { Some(value) => value.as_str(), None => "" };
-                return run_runtime_profile(project.as_str(), argument_level(&matches, "optimization"),
-                    argument_bool(&matches, "release"), argument_bool(&matches, "raw-pointers"),
+                return run_runtime_profile(project.as_str(), argument_level(&arg_matches, "optimization"),
+                    argument_bool(&arg_matches, "release"), argument_bool(&arg_matches, "raw-pointers"),
                     root, &program_arguments);
             },
         }

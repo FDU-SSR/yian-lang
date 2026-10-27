@@ -33,6 +33,7 @@ class KeywordKind(Enum):
     Elif = "elif"
     Else = "else"
     Match = "match"
+    Matches = "matches"
     For = "for"
     While = "while"
     Loop = "loop"

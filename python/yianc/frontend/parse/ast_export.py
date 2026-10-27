@@ -245,6 +245,12 @@ class AstTreeFormatter(TreeFormatter):
         res += self.render_items(stmt.arms, child_guides + [False], lambda arm, g, last: self.__export_stmt_match_arm(arm, g, last))
         return res
 
+    def __export_matches(self, stmt: AST.Matches, guides: list[bool], is_last: bool) -> str:
+        res = self.render_line(guides, is_last, "Matches")
+        res += self.__export_expr_child("Value", stmt.value, guides, is_last, False)
+        res += self.render_line(guides + [not is_last], True, f"Pattern: {stmt.pattern}")
+        return res
+
     def __export_stmt_match_arm(self, arm: AST.MatchArm, guides: list[bool], is_last: bool) -> str:
         res = self.render_line(guides, is_last, f"Arm: {arm.pattern}")
         guides.append(not is_last)
@@ -325,6 +331,8 @@ class AstTreeFormatter(TreeFormatter):
                 return self.__export_loop(expr, guides, is_last)
             case AST.Match():
                 return self.__export_match(expr, guides, is_last)
+            case AST.Matches():
+                return self.__export_matches(expr, guides, is_last)
             case AST.VarDecl():
                 return self.__export_var_decl(expr, guides, is_last)
             case AST.PatternLet():

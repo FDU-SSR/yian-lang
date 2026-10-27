@@ -21,9 +21,9 @@ fn within(path: str, root: str) -> bool {
     if path == root { return true; }
     let prefix = String.from(&root);
     if !prefix.as_str().ends_with("/") { prefix.push('/'); }
-    let matches = path.starts_with(prefix.as_str());
+    let is_match = path.starts_with(prefix.as_str());
     prefix.drop();
-    matches
+    is_match
 }
 
 pub struct WorkspaceUnits {

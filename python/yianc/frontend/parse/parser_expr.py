@@ -28,7 +28,16 @@ class ExprParser:
 
         while True:
 
-            op = BinaryOperator.try_from_token(self.__stream.peek())
+            token = self.__stream.peek()
+            if isinstance(token, Tok.Keyword) and token.kind == Tok.KeywordKind.Matches:
+                if 7 < min_bp:
+                    break
+                self.__stream.advance()
+                pattern = self.parse_binding_pattern()
+                lhs = AST.Matches(span=lhs.span + pattern.span, value=lhs, pattern=pattern)
+                continue
+
+            op = BinaryOperator.try_from_token(token)
 
             if op is None:
                 break

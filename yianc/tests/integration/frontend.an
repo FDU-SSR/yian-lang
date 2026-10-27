@@ -32,12 +32,12 @@ fn unsigned(value: Value&, expected: u64) {
         }, _ => @panic("JSON number")
     }
 }
-struct Check { for_nodes: u64, while_nodes: u64, try_nodes: u64, matches: u64 }
+struct Check { for_nodes: u64, while_nodes: u64, try_nodes: u64, match_nodes: u64 }
 impl AstVisitor for Check {
     pub fn enter_expr(node: Expr&) -> bool {
         match &node.data {
             For(_, _, _) => { self.for_nodes += 1; }, While(_, _) => { self.while_nodes += 1; },
-            TryExpr(_) => { self.try_nodes += 1; }, Match(_, _) => { self.matches += 1; }, _ => {},
+            TryExpr(_) => { self.try_nodes += 1; }, Match(_, _) => { self.match_nodes += 1; }, _ => {},
         };
         true
     }
@@ -75,7 +75,7 @@ fn main() {
     let check = Check(0u64, 0u64, 0u64, 0u64);
     walk_program(tree.root, &check);
     assert check.for_nodes == 0 && check.while_nodes == 0: "control sugar removed";
-    assert check.try_nodes == 0 && check.matches == 3: "nested propagation lowered";
+    assert check.try_nodes == 0 && check.match_nodes == 3: "nested propagation lowered";
     let writer = Writer.with_max_depth(512u64);
     defer writer.drop();
     let formatter = AstFormatter.new(&writer);

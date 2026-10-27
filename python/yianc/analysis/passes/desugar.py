@@ -41,6 +41,29 @@ class _ControlFlowRewriter(AstRewriter):
 class _ExprDesugarRewriter(AstRewriter):
     def rewrite_expr(self, expr: AST.Expr) -> AST.Expr:
         super().rewrite_expr(expr)
+        if isinstance(expr, AST.Matches):
+            matched = AST.Literal(span=expr.span, literal=Tok.BoolLiteral(raw="true", span=expr.span, value=True))
+            unmatched = AST.Literal(span=expr.span, literal=Tok.BoolLiteral(raw="false", span=expr.span, value=False))
+            return AST.Match(
+                span=expr.span,
+                expr=expr.value,
+                arms=[
+                    AST.MatchArm(
+                        span=expr.pattern.span,
+                        pattern=expr.pattern,
+                        guard=None,
+                        body=AST.Block(span=expr.span, stmts=[matched]),
+                        origin=AST.MatchArmOrigin.CONDITION,
+                    ),
+                    AST.MatchArm(
+                        span=expr.span,
+                        pattern=AST.WildcardPattern(span=expr.span),
+                        guard=None,
+                        body=AST.Block(span=expr.span, stmts=[unmatched]),
+                        origin=AST.MatchArmOrigin.SYNTHETIC,
+                    ),
+                ],
+            )
         if isinstance(expr, AST.Binary):
             if expr.op == BinaryOperator.Range:
                 return AST.Call(

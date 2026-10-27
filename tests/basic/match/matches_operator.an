@@ -1,0 +1,71 @@
+enum Shape {
+    Circle { radius: i32 },
+    Square { side: i32 },
+    Empty,
+}
+
+struct Point {
+    pub x: i32,
+    pub y: i32,
+}
+
+fn bump(counter: i32&, value: i32) -> i32 {
+    *counter += 1;
+    value
+}
+
+fn main() {
+    let option: Option<i32> = Option<i32>.Some(3);
+    let circle = Shape.Circle(radius=3);
+    let square = Shape.Square(side=2);
+    let empty = Shape.Empty;
+
+    assert option matches Some(_);
+    assert !(Option<i32>.None matches Some(_));
+    assert option matches Some(value);
+    assert circle matches Circle(_);
+    assert !(square matches Circle(_));
+    assert square matches Square(side=2);
+    assert empty matches Empty;
+
+    assert 5 matches 0..10;
+    assert 10 matches 0..10;
+    assert !(11 matches 0..10);
+    assert !(20 matches 0..10);
+    assert 'm' matches 'a'..'z';
+    assert !('M' matches 'a'..'z');
+    assert "yian" matches "yian" | "lang";
+    assert !("other" matches "yian" | "lang");
+    assert true matches true;
+    assert !(false matches true);
+
+    let point = Point(x=1, y=2);
+    assert point matches Point(x=1, y=2);
+    assert point matches Point(x=1, ..);
+    let pair = (1i32, 2i32);
+    assert pair matches (1, _);
+    let values = [1i32, 2, 3];
+    assert values matches [1, 2, 3];
+    let view: i32[] = values[0u64..3];
+    assert view matches [1, .., 3];
+    assert view matches [first, .., last];
+
+    assert 1 + 1 matches 2;
+    assert 1 == 1 matches true;
+    assert true && 2 matches 1 | 2;
+    assert (2 matches 1 | 2) == true;
+
+    let option_ref: Option<i32>& = &option;
+    assert option_ref matches Some(_);
+
+    let counter = 0;
+    assert bump(&counter, 2) matches 1 | 2;
+    assert counter == 1;
+    assert !(bump(&counter, 9) matches 1 | 2);
+    assert counter == 2;
+
+    if 7 matches 7 {
+        @print("matched\n");
+    }
+    @print("matches ok\n");
+}
