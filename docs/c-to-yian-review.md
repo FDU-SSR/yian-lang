@@ -196,10 +196,10 @@ G1 改写后两函数的数组参数均为切片：当前 checked 为 24 字节�
 按相对路径排序，逐项拼接“路径 UTF-8 + NUL + 文件 SHA-256 的 32 字节摘要”，再求 SHA-256：
 
 - 改写前：ae66a8f953ec1dcefc0e8943fe1fc34a9ad5c00faf17a413685e9ae9c8dca0d6
-- 本次提交源码：e473abe13fe8b11aeeb5c3cb8de5a53adcc94831b467a66cacca31f998c5e9d0
-- 审查时工作区：37c9c5995ab5e2811c02ae1ebf3de6098a3a8f2f2aeeef89c878c28dde7a799a
+- fcd6be82 提交源码（不含下列注释更正）：e473abe13fe8b11aeeb5c3cb8de5a53adcc94831b467a66cacca31f998c5e9d0
+- 当前源码（含注释更正，与审查时工作区一致）：37c9c5995ab5e2811c02ae1ebf3de6098a3a8f2f2aeeef89c878c28dde7a799a
 
-两项摘要仅因六个既有 C 文件的注释改动而不同；这些注释改动保留在本地，未纳入本次提交：
+两项摘要仅因以下六个 C 文件的注释更正而不同；更正已另行提交，不改变可执行代码：
 - `cve/CVE-2001-1009/c/src/reproducer.c`
 - `cve/CVE-2003-0721/c/src/reproducer.c`
 - `cve/CVE-2005-0102/c/src/reproducer.c`
