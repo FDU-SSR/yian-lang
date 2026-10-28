@@ -236,11 +236,17 @@ The `basic`, `package`, and `bootstrap` suites run the selected fat/raw modes; s
 
 Sources are under `tests/<suite>/`; expected results are under `tests/output/<suite>/`. A `.err.an` source must fail compilation, and its `.ans` file contains the required diagnostic substring. For a normal test, `.ans` contains expected stdout; a first line of `Exit code <N>` specifies an expected nonzero exit code. A directory test — a multi-file standalone test or a package fixture — uses `<dir>.ans`, or `<dir>.err.ans` for an expected failure. `tests/input/<suite>/<name>.args` and `.stdin` provide process arguments and standard input.
 
-The separate `cve/` dataset contains 38 archived C projects and 38 vulnerable
-YIAN anx projects. It is outside compiler self-tests. Use
+The separate `cve/` dataset contains 38 pairs of programs: a vulnerable C
+reference and its equivalent YIAN rewrite. Both use the same `case.json`
+`args`. The C reference may carry the defect silently; the YIAN rewrite must
+stop at the first illegal operation with the language guard. Only
+language-representation differences are allowed. It is
+outside compiler self-tests. Every case has a `cve/<id>/README.md` documenting
+its C-to-YIAN translation; fifteen are source-mapped to upstream records. The
+runner executes each pair. Use
 `python scripts/run_cve.py --case CVE-2021-33304` for an exact YIAN witness;
-`--language c|both` adds the archived vulnerable C baseline with ASan.
-No fixed variants are supplied. `--list` and `--check-layout` start no tools;
+`--language c|both` adds the vulnerable C baseline with ASan. No fixed variants
+are supplied. `--list` and `--check-layout` start no tools;
 `--all` selects the complete dataset and requires explicit batch authorization
 in agent work. `cve/README.md` documents provenance and runner semantics.
 Packaging alone is not evidence

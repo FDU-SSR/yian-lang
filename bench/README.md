@@ -161,7 +161,7 @@ python3 bench/bench_allocator.py --scale fast --yianc "$HOME/.local/bin/yianc"
 一致；命令输出同时写入 `build/paper-rerun/<时间戳>/run.log`。
 
 CVE 项目位于 [`cve/`](../cve/README.md)，与 `tests/safety/` 的编译器安全回归独立。
-归档 C 见证使用独立 CMake 项目；C 的 ASan 对照需要显式选择 `--language c` 或 `both`，
+C 见证使用独立 CMake 项目；C 的 ASan 对照需要显式选择 `--language c` 或 `both`，
 不计入论文记录的 38 次 YIAN 漏洞执行。
 
 ```bash
