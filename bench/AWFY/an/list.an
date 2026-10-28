@@ -1,3 +1,5 @@
+from std.core.env import args;
+
 // bench/AWFY/an/list.an: recursive linked-list tail reduction (shootout list).
 //
 // Upstream: AWFY benchmarks/Java/src/List.java; see AWFY LICENSE.md.
@@ -13,7 +15,7 @@
 // Layout: next is Option<Element&>, with None for empty/tail; match unwraps traversal positions.
 //       dyn Element(...) allocates nodes, and del T& releases them.
 //
-// Both modes share this source. dyn uses inference; ranges such as
+// Both modes share this source. Allocations use explicit full-range slices; ranges such as
 //         x[0u64..n] work in both modes and retain checks in fat mode.
 struct Element {
     val: i32,
@@ -150,8 +152,33 @@ fn benchmark_list() -> i32 {
     return l;
 }
 
+// Decimal prefix parsing for the C atoi/atoll workload argument.
+fn c_decimal(text: str) -> i64 {
+    let bytes = text.as_slice();
+    let i: u64 = 0;
+    while i < bytes.len() && (bytes[u64(i)] == 32 || (bytes[u64(i)] >= 9 && bytes[u64(i)] <= 13)) { i += 1; }
+    let negative: bool = false;
+    if i < bytes.len() && (bytes[u64(i)] == b'-' || bytes[u64(i)] == b'+') {
+        negative = bytes[u64(i)] == b'-';
+        i += 1;
+    }
+    let value: i64 = 0;
+    while i < bytes.len() && bytes[u64(i)] >= b'0' && bytes[u64(i)] <= b'9' {
+        value = value * 10 + i64(bytes[u64(i)] - b'0');
+        i += 1;
+    }
+    return if negative { -value } else { value };
+}
+
 fn main() {
     let ITER: u64 = 94077;  // bench-scale
+    let argv = args();
+    if argv.len() > 1u64 {
+        let requested = i32(c_decimal(argv[1u64].as_str()));
+        ITER = if requested > 0 { u64(requested) } else { 0u64 };
+    }
+    for argument in &argv { argument.drop(); }
+    argv.drop();
     let iter: u64 = 0;
     while iter < ITER {
         let result: i32 = benchmark_list();

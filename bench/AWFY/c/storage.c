@@ -13,8 +13,6 @@ typedef struct Random {
     unsigned long long stage;
 } Random;
 
-// Global variables.
-int count_arrays = 0;
 
 // Initialize the random-number generator.
 void Random_init(Random* r, unsigned long long seed) {
@@ -28,8 +26,8 @@ unsigned long long Random_next(Random* r) {
 }
 
 // Recursively build the tree.
-array_tree* build_tree_depth(int depth, Random* random, int* out_count) {
-    count_arrays++;
+array_tree* build_tree_depth(int depth, Random* random, int* count_arrays, int* out_count) {
+    (*count_arrays)++;
 
     if (depth == 1) {
         int n = Random_next(random) % 10 + 1;
@@ -47,7 +45,7 @@ array_tree* build_tree_depth(int depth, Random* random, int* out_count) {
     array_tree* arr = (array_tree*)malloc(n * sizeof(array_tree));
     for (int i = 0; i < n; i++) {
         int child_count = 0;
-        array_tree* child = build_tree_depth(depth - 1, random, &child_count);
+        array_tree* child = build_tree_depth(depth - 1, random, count_arrays, &child_count);
         arr[i].children = child;
         arr[i].child_count = child_count;
     }
@@ -73,9 +71,10 @@ int benchmark_storage(int root_depth) {
     Random random;
     Random_init(&random, 74755);
 
+    static int count_arrays;
     count_arrays = 0;
     int root_count = 0;
-    array_tree* result = build_tree_depth(root_depth, &random, &root_count);
+    array_tree* result = build_tree_depth(root_depth, &random, &count_arrays, &root_count);
 
     free_tree(result, root_count);
 

@@ -11,50 +11,55 @@
 //
 // Signature: g_seed:i32&, checksum:i64&; genelist:AminoAcid[].
 //
-// Both modes share this source. dyn uses inference; ranges such as
+// Both modes share this source. Allocations use explicit full-range slices; ranges such as
 //         x[0u64..n] work in both modes and retain checks in fat mode.
+
+const IA: i32 = 3877;
+const IC: i32 = 29573;
+const IM: i32 = 139968;
+const ALU: str = "GGCCGGGCGCGGTGGCTCACGCCTGTAATCCCAGCACTTTGGGAGGCCGAGGCGGGCGGATCACCTGAGGTCAGGAGTTCGAGACCAGCCTGGCCAACATGGTGAAACCCCGTCTCTACTAAAAATACAAAAATTAGCCGGGCGTGGTGGCGCGCGCCTGTAATCCCAGCTACTCGGGAGGCTGAGGCAGGAGAATCGCTTGAACCCGGGAGGCGGAGGTTGCAGTGAGCCGAGATCGCGCCACTGCACTCCAGCCTGGGCGACAGAGCGAGACTCCGTCTCAAAAA\0";
 
 struct AminoAcid {
     symbol: u8,
     prob: f64,
 }
 
-fn make_cumulative(genelist: AminoAcid[], count: u64, checksum: i64&) {
+fn make_cumulative(genelist: AminoAcid[], count: i32, checksum: i64&) {
     let p: f64 = 0.0;
     let i: u64 = 0;
-    while i < count {
-        p += genelist[i].prob;
-        genelist[i].prob = p;
-        *checksum += i64(genelist[i].symbol);
+    while count > 0 && i < u64(count) {
+        p += genelist[u64(i)].prob;
+        genelist[u64(i)].prob = p;
+        *checksum += i64(genelist[u64(i)].symbol);
         i += 1;
     }
 }
 
-fn repeat_fasta_compute_only(seq: u8[], n: u64, checksum: i64&) {
+fn repeat_fasta_compute_only(seq: u8[], n: i32, checksum: i64&) {
     let i: u64 = 0;
-    while i < n {
-        *checksum += i64(seq[i % 287]);
+    while n > 0 && i < u64(n) {
+        *checksum += i64(seq[u64(i % 287)]);
         i += 1;
     }
 }
 
 fn random_fasta_compute_only(
     genelist: AminoAcid[],
-    count: u64,
-    n: u64,
+    count: i32,
+    n: i32,
     g_seed: i32&,
     checksum: i64&,
 ) {
     let i: u64 = 0;
-    while i < n {
-        *g_seed = (*g_seed * 3877 + 29573) % 139968;
+    while n > 0 && i < u64(n) {
+        *g_seed = (*g_seed * IA + IC) % 139968;
         let r: f64 = f64(*g_seed) / 139968.0;
 
         let selected: u8 = b' ';
         let j: u64 = 0;
-        while j < count {
-            if r < genelist[j].prob {
-                selected = genelist[j].symbol;
+        while count > 0 && j < u64(count) {
+            if r < genelist[u64(j)].prob {
+                selected = genelist[u64(j)].symbol;
                 break;
             }
             j += 1;
@@ -65,8 +70,7 @@ fn random_fasta_compute_only(
 }
 
 fn main() {
-    let alu: str = "GGCCGGGCGCGGTGGCTCACGCCTGTAATCCCAGCACTTTGGGAGGCCGAGGCGGGCGGATCACCTGAGGTCAGGAGTTCGAGACCAGCCTGGCCAACATGGTGAAACCCCGTCTCTACTAAAAATACAAAAATTAGCCGGGCGTGGTGGCGCGCGCCTGTAATCCCAGCTACTCGGGAGGCTGAGGCAGGAGAATCGCTTGAACCCGGGAGGCGGAGGTTGCAGTGAGCCGAGATCGCGCCACTGCACTCCAGCCTGGGCGACAGAGCGAGACTCCGTCTCAAAAA";
-    let alu_bytes: u8[] = alu.as_slice();
+    let alu_bytes: u8[] = ALU.as_slice();
 
     let g_seed: i32 = 42;
     let checksum: i64 = 0;
@@ -95,7 +99,7 @@ fn main() {
         AminoAcid(b't', 0.3010684568318),
     ];
 
-    let n: u64 = 25000000;
+    let n: i32 = 25000000;
 
     make_cumulative(iub[0u64..15u64], 15, &checksum);
     make_cumulative(homosapiens[0u64..4u64], 4, &checksum);
@@ -105,5 +109,5 @@ fn main() {
 
     let res: i32 = i32(checksum) % 256;
     assert res == -71: "fasta: checksum is not correct";
-    @print("fasta pass\n");
+    @print(f"checksum: {res}\n");
 }

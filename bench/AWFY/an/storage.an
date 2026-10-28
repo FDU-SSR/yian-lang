@@ -1,3 +1,5 @@
+from std.core.env import args;
+
 // bench/AWFY/an/storage.an: recursive array-tree allocation/release (shootout storage).
 //
 // Reference: AWFY benchmarks/Java/src/Storage.java; see AWFY LICENSE.md.
@@ -32,33 +34,41 @@ fn Random_next(r: Random&) -> u64 {
     return r.stage;
 }
 
-fn build_tree_depth(depth: i32, random: Random&, count: i64&, out_count: i32&) -> Option<array_tree[]> {
+fn build_tree_depth(depth: i32, random: Random&, count: i32&, out_count: i32&) -> Option<array_tree[]> {
     *count += 1;
 
     if depth == 1 {
-        let n: u64 = Random_next(random) % 10 + 1;
-        let arr = dyn[n] array_tree(Option<array_tree[]>.None, 0);
+        let n: i32 = i32(Random_next(random) % 10 + 1);
+        let arr: array_tree[] = {
+            let extent: u64 = u64(n);
+            let allocation = dyn[extent] array_tree(Option<array_tree[]>.None, 0);
+            allocation[0u64..u64(extent)]
+        };
         let i: u64 = 0;
-        while i < n {
-            arr[i].children = Option<array_tree[]>.None;
-            arr[i].child_count = 0;
+        while i < u64(n) {
+            arr[u64(i)].children = Option<array_tree[]>.None;
+            arr[u64(i)].child_count = 0;
             i += 1;
         };
         *out_count = i32(n);
-        return Option<array_tree[]>.Some(arr[0u64..n]);
+        return Option<array_tree[]>.Some(arr[0u64..u64(n)]);
     }
 
-    let n: u64 = 4;
-    let arr = dyn[n] array_tree(Option<array_tree[]>.None, 0);
+    let n: i32 = 4;
+    let arr: array_tree[] = {
+        let extent: u64 = u64(n);
+        let allocation = dyn[extent] array_tree(Option<array_tree[]>.None, 0);
+        allocation[0u64..u64(extent)]
+    };
     let i: u64 = 0;
-    while i < n {
+    while i < u64(n) {
         let child_count: i32 = 0;
-        arr[i].children = build_tree_depth(depth - 1, random, count, &child_count);
-        arr[i].child_count = child_count;
+        arr[u64(i)].children = build_tree_depth(depth - 1, random, count, &child_count);
+        arr[u64(i)].child_count = child_count;
         i += 1;
     };
     *out_count = i32(n);
-    return Option<array_tree[]>.Some(arr[0u64..n]);
+    return Option<array_tree[]>.Some(arr[0u64..u64(n)]);
 }
 
 fn free_tree(arr: Option<array_tree[]>) {
@@ -68,33 +78,57 @@ fn free_tree(arr: Option<array_tree[]>) {
     let view: array_tree[] = *arr.unwrap();
     let i: u64 = 0;
     while i < view.len() {
-        if view[i].children.is_some() && view[i].child_count > 0 {
-            free_tree(view[i].children);
+        if view[u64(i)].children.is_some() && view[u64(i)].child_count > 0 {
+            free_tree(view[u64(i)].children);
         }
         i += 1;
     };
     del view;
 }
 
-fn benchmark_storage(root_depth: i32) -> i64 {
-    let random: Random& = dyn Random(74755);
-    Random_init(random, 74755);
+fn benchmark_storage(root_depth: i32) -> i32 {
+    let random: Random = Random(74755);
+    Random_init(&random, 74755);
 
-    let count: i64 = 0;
+    let count: i32 = 0;
     let root_count: i32 = 0;
-    let result: Option<array_tree[]> = build_tree_depth(root_depth, random, &count, &root_count);
+    let result: Option<array_tree[]> = build_tree_depth(root_depth, &random, &count, &root_count);
 
     free_tree(result);
-    del random;
 
     return count;
 }
 
+// Decimal prefix parsing for the C atoi/atoll workload argument.
+fn c_decimal(text: str) -> i64 {
+    let bytes = text.as_slice();
+    let i: u64 = 0;
+    while i < bytes.len() && (bytes[u64(i)] == 32 || (bytes[u64(i)] >= 9 && bytes[u64(i)] <= 13)) { i += 1; }
+    let negative: bool = false;
+    if i < bytes.len() && (bytes[u64(i)] == b'-' || bytes[u64(i)] == b'+') {
+        negative = bytes[u64(i)] == b'-';
+        i += 1;
+    }
+    let value: i64 = 0;
+    while i < bytes.len() && bytes[u64(i)] >= b'0' && bytes[u64(i)] <= b'9' {
+        value = value * 10 + i64(bytes[u64(i)] - b'0');
+        i += 1;
+    }
+    return if negative { -value } else { value };
+}
+
 fn main() {
     let ITER: u64 = 9885;  // bench-scale
+    let argv = args();
+    if argv.len() > 1u64 {
+        let requested = i32(c_decimal(argv[1u64].as_str()));
+        ITER = if requested > 0 { u64(requested) } else { 0u64 };
+    }
+    for argument in &argv { argument.drop(); }
+    argv.drop();
     let iter: u64 = 0;
     while iter < ITER {
-        let result: i64 = benchmark_storage(7);
+        let result: i32 = benchmark_storage(7);
         assert result == 5461: "storage count not expected";
         iter += 1;
     }

@@ -27,6 +27,14 @@ bench/
 
 当前评测来源与许可登记见 `bench/SUITES.md`。
 
+2026-10-28 已按新规范改写 22 个 C/YIAN 配对：17 个支持规模参数的程序在运行时读取 argv，
+五个大型 AWFY 的业务函数保持为普通函数，BG 使用与 C 相同的输出/退出码。
+[当前审查](../docs/c-to-yian-review.md) 仍列出 5 个基准的未解决差异：
+permute/storage/fasta/spectralnorm 的存储期，以及 call_abi 的优化后调用边界。
+call_abi 当前不能作为三态实际调用开销证据。已有 results/ 与论文样本属于改写前记录，
+本次没有重测；它们不是当前源码的性能验收。22 对均共用同一份 .an 编译 raw/fat。
+
+
 这些命令用于编译、运行和测量所选基准，不属于默认局部验收。执行仓库验证前应检查集合、基准数、规模和采样次数；性能测量需要明确授权。
 
 ## 集合
@@ -66,7 +74,7 @@ fatptr 3 项（call_abi、copy_struct、chase）。
 - **full**（默认，正式记录）：源内默认规模，每态 1 次 warmup + 5 次测量取最小值。
 - **fast**（开发中频繁跑）：对 `specs/<name>.json` 里声明了 `scale.fast` 的基准，把源里
   `// bench-scale` 标记行的数字替换成 fast 值，在 `build/bench/src/fast/<SOURCE>/` 下生成构建
-  副本再编译；同一个值作为 argv 传给 C 参考，保证三态工作量一致。其余基准两档同规模。
+  副本再编译；同一个值作为 argv 传给 C、raw、fat，保证三态工作量一致。其余基准两档同规模。
   fast 档不触发降次，每态 1 次 warmup + 3 次测量取最小值。
 
 | 基准 | 标记的规模量 | full | fast |
@@ -102,15 +110,15 @@ fatptr 3 项（call_abi、copy_struct、chase）。
 
 - 产物：`build/bench/{cbin,yraw,yfat}/<SOURCE>_<name>`（三态**等长路径**——分配密集型基准的
   绝对值对 argv[0] 长度 → 进程布局敏感）。
-- 采样：每态 1 次 warmup（不计入样本）后按 C→raw→fat **逐次轮转**测量 N 次；正式指标取最小值，
+- 采样：每态 1 次 warmup（不计入样本）后按 C→raw→fat **逐次轮转**测量 N 次；正式指标取中位数，
   同时记录中位数/四分位距/CV/峰值 RSS（`/usr/bin/time -v`）。
 - 降噪：`taskset -c <cpu>` 绑核；逐次轮转减轻跨时段频率/温度漂移。
 - 语义护栏：C warmup 必须通过 spec 的 `check`（`rc` / `stdout_eq` / `stdout_contains` /
-  `stdout_int_mod`）；raw 与 fat 的 warmup stdout 与退出码必须逐字节一致，且退出码为 0。
+  `stdout_int_mod`）；raw 与 fat 的 warmup stdout 与退出码必须逐字节一致，且各自通过同一 spec 的输出/退出码校验（例如 fann 为 51）。
   报告中标 `否` 即该基准的比值不可用。
 - **不设回归门槛**：性能试验只作参考，不写阈值脚本；噪声量级取决于采样环境，判断变化需结合重复测量与样本分布。
-- **算法等价需独立核对**：退出码与输出一致只能说明结果校验通过，不能证明搜索路径、读写恢复、分配或错误路径一致。
-  解释比值前须核对 C/raw/fat 的算法与工作量；未经核对的条目不能作为表示开销的证据。
+- 翻译统一按 [C → YIAN 语法改写规则](../docs/c-to-yian.md) 处理，工作量核对见其“使用与核对”节。
+  现有结果表是运行器观测，不表示已通过该初稿的逐项审查。
 - **运行范围需先审查**：bench 命令会编译并运行所选负载，含 warmup 和多次采样；benchmark 是性能测量，不是默认局部测试。仓库任务中执行前需明确选择和测量范围并取得相应授权。
 
 ## ASan 交叉对比
@@ -132,7 +140,7 @@ python3 bench/bench_asan.py --set paper --runs 5 --pin 4
 结果写入 `results/asan.md`、`results/asan.csv` 和 `results/asan-samples.txt`（原始
 `wall_ms (peak_rss_kb)` 样本，可与论文 data/ 下的冻结样本对照）。`--set paper` 是论文使用的
 14 个基准；语义护栏要求 C warmup 通过 spec 的 `check`，ASan 的 stdout/退出码与 C plain
-一致，YIAN 腿退出码为 0。
+一致，YIAN 腿也通过同一 spec 的 stdout/退出码校验。
 
 `BG/binarytree` 固定 `N=16`：ASan 约 2.5 s、峰值 RSS 约 0.7 GB。N=20 的 ASan 配置峰值 RSS
 超过 9 GB、单次运行超过 4 分钟，不再使用。`--fast` 仍可对声明了 `scale.fast` 的基准单独降档。
@@ -177,7 +185,7 @@ scripts/rerun_paper_experiments.sh --refresh-data        # 结束后调用上级
 ## 新增一个基准
 
 1. 放到对应来源目录（新来源就新建 `bench/<SOURCE>/{an,c,specs}`）；
-2. `an/<name>.an`（裸态语义不同则加 `<name>.raw.an`）、`c/<name>.c`（同算法同规模）、
+2. `an/<name>.an`（裸态语义不同则加 `<name>.raw.an`）、`c/<name>.c`（对应审查见上述规范）、
    `specs/<name>.json`（`argv`、`check`、`tags`、可选 `scale`）；
 3. 在 `bench/README.md` 登记来源与规模对齐关系；三态跑通并确认 C 权威值。
 

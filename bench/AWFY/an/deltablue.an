@@ -1,3 +1,5 @@
+from std.core.env import args;
+
 // bench/AWFY/an/deltablue.an: DeltaBlue incremental constraint solver (AWFY macrobenchmark).
 //
 // Upstream: AWFY benchmarks/Java/src/DeltaBlue.java and deltablue/*.java.
@@ -46,11 +48,11 @@ enum Flow {
 
 // -- Strength (upstream deltablue/Strength.java) --
 // Upstream interned Strength constants compare only arithmeticValue, represented here as i32.
-fn strength_absolute_weakest() -> i32 { return 10000; }
-fn strength_required() -> i32 { return -800; }
-fn strength_strong_default() -> i32 { return -200; }
-fn strength_default() -> i32 { return 0; }
-fn strength_preferred() -> i32 { return -400; }
+const S_ABSOLUTE_WEAKEST: i32 = 10000;
+const S_REQUIRED: i32 = -800;
+const S_STRONG_DEFAULT: i32 = -200;
+const S_DEFAULT: i32 = 0;
+const S_PREFERRED: i32 = -400;
 
 // Strength.stronger/weaker/weakest: lower arithmeticValue means stronger.
 fn strength_stronger(a: i32, b: i32) -> bool { return a < b; }
@@ -138,438 +140,438 @@ fn binary_choose(strength: i32, v1: Variable&, v2: Variable&, mark: i32) -> Flow
     return Flow.Unset;
 }
 
-impl Variable {
-    static pub fn new() -> Variable& {
-        return dyn Variable(0, Vec<Constraint&>.new(), Option<Constraint&>.None, 0, strength_absolute_weakest(), true);
-    }
+
+pub fn Variable_new() -> Variable& {
+    return dyn Variable(0, Vec<Constraint&>.new(), Option<Constraint&>.None, 0, S_ABSOLUTE_WEAKEST, true);
+}
 
     // Upstream Variable.value(int).
-    static pub fn value(v: i32) -> Variable& {
-        return dyn Variable(v, Vec<Constraint&>.new(), Option<Constraint&>.None, 0, strength_absolute_weakest(), true);
-    }
+pub fn Variable_value(v: i32) -> Variable& {
+    return dyn Variable(v, Vec<Constraint&>.new(), Option<Constraint&>.None, 0, S_ABSOLUTE_WEAKEST, true);
+}
 
-    pub fn add_constraint(c: Constraint&) {
-        self.constraints.push(c);
-    }
+pub fn Variable_add_constraint(self: Variable&, c: Constraint&) {
+    self.constraints.push(c);
+}
 
     // Upstream Vector.remove(c): remove the first identity match and reset determinedBy.
-    pub fn remove_constraint(c: Constraint&) {
-        let i: u64 = 0;
-        let idx: i64 = -1;
-        while i < self.constraints.len() {
-            let x: Constraint& = self.constraints[i];
-            if idx < 0 && x.get_id() == c.get_id() {
-                idx = i64(i);
+pub fn Variable_remove_constraint(self: Variable&, c: Constraint&) {
+    let i: u64 = 0;
+    let idx: i32 = -1;
+    while i < self.constraints.len() {
+        let x: Constraint& = self.constraints[u64(i)];
+        if idx < 0 && Constraint_get_id(x) == Constraint_get_id(c) {
+            idx = i32(i);
+        }
+        i += 1;
+    }
+    if idx >= 0 {
+        let removed: Constraint& = self.constraints.remove(u64(idx));
+    }
+    match self.determined_by {
+        Some(d) => {
+            if Constraint_get_id(d) == Constraint_get_id(c) {
+                self.determined_by = Option<Constraint&>.None;
             }
-            i += 1;
-        }
-        if idx >= 0 {
-            let removed: Constraint& = self.constraints.remove(u64(idx));
-        }
-        match self.determined_by {
-            Some(d) => {
-                if d.get_id() == c.get_id() {
-                    self.determined_by = Option<Constraint&>.None;
-                }
+        },
+        None => {
+        },
+    }
+}
+
+
+
+pub fn Constraint_get_id(self: Constraint&) -> u64 {
+    return match self {
+        Equality(id, strength, v1, v2, direction) => *id,
+        Scale(id, strength, v1, v2, scale, offset, direction) => *id,
+        Stay(id, strength, output, satisfied) => *id,
+        Edit(id, strength, output, satisfied) => *id,
+    };
+}
+
+pub fn Constraint_get_strength(self: Constraint&) -> i32 {
+    return match self {
+        Equality(id, strength, v1, v2, direction) => *strength,
+        Scale(id, strength, v1, v2, scale, offset, direction) => *strength,
+        Stay(id, strength, output, satisfied) => *strength,
+        Edit(id, strength, output, satisfied) => *strength,
+    };
+}
+
+    // Upstream AbstractConstraint.isInput / EditConstraint.isInput.
+pub fn Constraint_is_input(self: Constraint&) -> bool {
+    return match self {
+        Equality(id, strength, v1, v2, direction) => false,
+        Scale(id, strength, v1, v2, scale, offset, direction) => false,
+        Stay(id, strength, output, satisfied) => false,
+        Edit(id, strength, output, satisfied) => true,
+    };
+}
+
+    // Upstream isSatisfied: binary direction != null, unary satisfied flag.
+pub fn Constraint_is_satisfied(self: Constraint&) -> bool {
+    return match self {
+        Equality(id, strength, v1, v2, direction) => match *direction {
+            Forward => true,
+            Backward => true,
+            Unset => false,
+        },
+        Scale(id, strength, v1, v2, scale, offset, direction) => match *direction {
+            Forward => true,
+            Backward => true,
+            Unset => false,
+        },
+        Stay(id, strength, output, satisfied) => *satisfied,
+        Edit(id, strength, output, satisfied) => *satisfied,
+    };
+}
+
+    // Upstream addToGraph.
+pub fn Constraint_add_to_graph(self: Constraint&) {
+    match self {
+        Equality(id, strength, v1, v2, direction) => {
+            Variable_add_constraint(*v1, self);
+            Variable_add_constraint(*v2, self);
+            *direction = Flow.Unset;
+        },
+        Scale(id, strength, v1, v2, scale, offset, direction) => {
+            Variable_add_constraint(*v1, self);
+            Variable_add_constraint(*v2, self);
+            Variable_add_constraint(*scale, self);
+            Variable_add_constraint(*offset, self);
+            *direction = Flow.Unset;
+        },
+        Stay(id, strength, output, satisfied) => {
+            Variable_add_constraint(*output, self);
+            *satisfied = false;
+        },
+        Edit(id, strength, output, satisfied) => {
+            Variable_add_constraint(*output, self);
+            *satisfied = false;
+        },
+    }
+}
+
+    // Upstream removeFromGraph.
+pub fn Constraint_remove_from_graph(self: Constraint&) {
+    match self {
+        Equality(id, strength, v1, v2, direction) => {
+            Variable_remove_constraint(*v1, self);
+            Variable_remove_constraint(*v2, self);
+            *direction = Flow.Unset;
+        },
+        Scale(id, strength, v1, v2, scale, offset, direction) => {
+            Variable_remove_constraint(*v1, self);
+            Variable_remove_constraint(*v2, self);
+            Variable_remove_constraint(*scale, self);
+            Variable_remove_constraint(*offset, self);
+            *direction = Flow.Unset;
+        },
+        Stay(id, strength, output, satisfied) => {
+            Variable_remove_constraint(*output, self);
+            *satisfied = false;
+        },
+        Edit(id, strength, output, satisfied) => {
+            Variable_remove_constraint(*output, self);
+            *satisfied = false;
+        },
+    }
+}
+
+    // Upstream chooseMethod; ScaleConstraint inherits BinaryConstraint's implementation.
+pub fn Constraint_choose_method(self: Constraint&, mark: i32) {
+    match self {
+        Equality(id, strength, v1, v2, direction) => {
+            *direction = binary_choose(*strength, *v1, *v2, mark);
+        },
+        Scale(id, strength, v1, v2, scale, offset, direction) => {
+            *direction = binary_choose(*strength, *v1, *v2, mark);
+        },
+        Stay(id, strength, output, satisfied) => {
+            *satisfied = output.mark != mark && strength_stronger(*strength, output.walk_strength);
+        },
+        Edit(id, strength, output, satisfied) => {
+            *satisfied = output.mark != mark && strength_stronger(*strength, output.walk_strength);
+        },
+    }
+}
+
+    // Upstream execute.
+pub fn Constraint_execute(self: Constraint&) {
+    match self {
+        Equality(id, strength, v1, v2, direction) => {
+            match *direction {
+                Forward => {
+                    v2.value = v1.value;
+                },
+                Backward => {
+                    v1.value = v2.value;
+                },
+                Unset => {
+                },
+            }
+        },
+        Scale(id, strength, v1, v2, scale, offset, direction) => {
+            match *direction {
+                Forward => {
+                    v2.value = v1.value * scale.value + offset.value;
+                },
+                Backward => {
+                    v1.value = (v2.value - offset.value) / scale.value;
+                },
+                Unset => {
+                },
+            }
+        },
+        Stay(id, strength, output, satisfied) => {
+        },
+        Edit(id, strength, output, satisfied) => {
+        },
+    }
+}
+
+    // Upstream inputsDo(in -> in.setMark(mark)): mark this constraint's input variables.
+fn Constraint_mark_inputs(self: Constraint&, mark: i32) {
+    match self {
+        Equality(id, strength, v1, v2, direction) => {
+            match *direction {
+                Forward => {
+                    v1.mark = mark;
+                },
+                Backward => {
+                    v2.mark = mark;
+                },
+                Unset => {
+                    v2.mark = mark;
+                },
+            }
+        },
+        Scale(id, strength, v1, v2, scale, offset, direction) => {
+            match *direction {
+                Forward => {
+                    v1.mark = mark;
+                    scale.mark = mark;
+                    offset.mark = mark;
+                },
+                Backward => {
+                    v2.mark = mark;
+                    scale.mark = mark;
+                    offset.mark = mark;
+                },
+                Unset => {
+                    v2.mark = mark;
+                    scale.mark = mark;
+                    offset.mark = mark;
+                },
+            }
+        },
+        Stay(id, strength, output, satisfied) => {
+        },
+        Edit(id, strength, output, satisfied) => {
+        },
+    }
+}
+
+    // Upstream inputsKnown(mark): every input is marked, has a stay, or is not constraint-determined.
+pub fn Constraint_inputs_known(self: Constraint&, mark: i32) -> bool {
+    return match self {
+        Equality(id, strength, v1, v2, direction) => {
+            let input: Variable& = match *direction {
+                Forward => *v1,
+                Backward => *v2,
+                Unset => *v2,
+            };
+            return input.mark == mark || input.stay || input.determined_by.is_none();
+        },
+        Scale(id, strength, v1, v2, scale, offset, direction) => {
+            let input: Variable& = match *direction {
+                Forward => *v1,
+                Backward => *v2,
+                Unset => *v2,
+            };
+            return (input.mark == mark || input.stay || input.determined_by.is_none())
+                && (scale.mark == mark || scale.stay || scale.determined_by.is_none())
+                && (offset.mark == mark || offset.stay || offset.determined_by.is_none());
+        },
+        Stay(id, strength, output, satisfied) => {
+            // UnaryConstraint.inputsHasOne is always false.
+            return true;
+        },
+        Edit(id, strength, output, satisfied) => {
+            return true;
+        },
+    };
+}
+
+    // Upstream markUnsatisfied.
+pub fn Constraint_mark_unsatisfied(self: Constraint&) {
+    match self {
+        Equality(id, strength, v1, v2, direction) => {
+            *direction = Flow.Unset;
+        },
+        Scale(id, strength, v1, v2, scale, offset, direction) => {
+            *direction = Flow.Unset;
+        },
+        Stay(id, strength, output, satisfied) => {
+            *satisfied = false;
+        },
+        Edit(id, strength, output, satisfied) => {
+            *satisfied = false;
+        },
+    }
+}
+
+    // Upstream getOutput.
+pub fn Constraint_get_output(self: Constraint&) -> Variable& {
+    return match self {
+        Equality(id, strength, v1, v2, direction) => match *direction {
+            Forward => *v2,
+            Backward => *v1,
+            Unset => *v1,
+        },
+        Scale(id, strength, v1, v2, scale, offset, direction) => match *direction {
+            Forward => *v2,
+            Backward => *v1,
+            Unset => *v1,
+        },
+        Stay(id, strength, output, satisfied) => *output,
+        Edit(id, strength, output, satisfied) => *output,
+    };
+}
+
+    // Upstream recalculate.
+pub fn Constraint_recalculate(self: Constraint&) {
+    match self {
+        Equality(id, strength, v1, v2, direction) => {
+            let input: Variable& = match *direction {
+                Forward => *v1,
+                Backward => *v2,
+                Unset => *v2,
+            };
+            let out: Variable& = match *direction {
+                Forward => *v2,
+                Backward => *v1,
+                Unset => *v1,
+            };
+            out.walk_strength = strength_weakest(*strength, input.walk_strength);
+            out.stay = input.stay;
+            if out.stay {
+                Constraint_execute(self);
+            }
+        },
+        Scale(id, strength, v1, v2, scale, offset, direction) => {
+            let input: Variable& = match *direction {
+                Forward => *v1,
+                Backward => *v2,
+                Unset => *v2,
+            };
+            let out: Variable& = match *direction {
+                Forward => *v2,
+                Backward => *v1,
+                Unset => *v1,
+            };
+            out.walk_strength = strength_weakest(*strength, input.walk_strength);
+            out.stay = input.stay && scale.stay && offset.stay;
+            if out.stay {
+                Constraint_execute(self);
+            }
+        },
+        Stay(id, strength, output, satisfied) => {
+            output.walk_strength = *strength;
+            output.stay = !Constraint_is_input(self);
+            if output.stay {
+                Constraint_execute(self);
+            }
+        },
+        Edit(id, strength, output, satisfied) => {
+            output.walk_strength = *strength;
+            output.stay = !Constraint_is_input(self);
+            if output.stay {
+                Constraint_execute(self);
+            }
+        },
+    }
+}
+
+    // Upstream AbstractConstraint.satisfy.
+pub fn Constraint_satisfy(self: Constraint&, mark: i32, planner: Planner&) -> Option<Constraint&> {
+    Constraint_choose_method(self, mark);
+
+    if Constraint_is_satisfied(self) {
+        // Mark inputs for addPropagate's cycle detection.
+        Constraint_mark_inputs(self, mark);
+
+        let out: Variable& = Constraint_get_output(self);
+        let overridden: Option<Constraint&> = out.determined_by;
+        match overridden {
+            Some(o) => {
+                Constraint_mark_unsatisfied(o);
             },
             None => {
             },
         }
+        out.determined_by = Option<Constraint&>.Some(self);
+        if !Planner_add_propagate(planner, self, mark) {
+            assert false: "Cycle encountered";
+        }
+        out.mark = mark;
+        return overridden;
     }
+
+    assert Constraint_get_strength(self) != S_REQUIRED: "Could not satisfy a required constraint";
+    return Option<Constraint&>.None;
 }
 
-impl Constraint {
-    pub fn get_id() -> u64 {
-        return match self {
-            Equality(id, strength, v1, v2, direction) => *id,
-            Scale(id, strength, v1, v2, scale, offset, direction) => *id,
-            Stay(id, strength, output, satisfied) => *id,
-            Edit(id, strength, output, satisfied) => *id,
-        };
-    }
-
-    pub fn get_strength() -> i32 {
-        return match self {
-            Equality(id, strength, v1, v2, direction) => *strength,
-            Scale(id, strength, v1, v2, scale, offset, direction) => *strength,
-            Stay(id, strength, output, satisfied) => *strength,
-            Edit(id, strength, output, satisfied) => *strength,
-        };
-    }
-
-    // Upstream AbstractConstraint.isInput / EditConstraint.isInput.
-    pub fn is_input() -> bool {
-        return match self {
-            Equality(id, strength, v1, v2, direction) => false,
-            Scale(id, strength, v1, v2, scale, offset, direction) => false,
-            Stay(id, strength, output, satisfied) => false,
-            Edit(id, strength, output, satisfied) => true,
-        };
-    }
-
-    // Upstream isSatisfied: binary direction != null, unary satisfied flag.
-    pub fn is_satisfied() -> bool {
-        return match self {
-            Equality(id, strength, v1, v2, direction) => match *direction {
-                Forward => true,
-                Backward => true,
-                Unset => false,
-            },
-            Scale(id, strength, v1, v2, scale, offset, direction) => match *direction {
-                Forward => true,
-                Backward => true,
-                Unset => false,
-            },
-            Stay(id, strength, output, satisfied) => *satisfied,
-            Edit(id, strength, output, satisfied) => *satisfied,
-        };
-    }
-
-    // Upstream addToGraph.
-    pub fn add_to_graph() {
-        match self {
-            Equality(id, strength, v1, v2, direction) => {
-                v1.add_constraint(self);
-                v2.add_constraint(self);
-                *direction = Flow.Unset;
-            },
-            Scale(id, strength, v1, v2, scale, offset, direction) => {
-                v1.add_constraint(self);
-                v2.add_constraint(self);
-                scale.add_constraint(self);
-                offset.add_constraint(self);
-                *direction = Flow.Unset;
-            },
-            Stay(id, strength, output, satisfied) => {
-                output.add_constraint(self);
-                *satisfied = false;
-            },
-            Edit(id, strength, output, satisfied) => {
-                output.add_constraint(self);
-                *satisfied = false;
-            },
-        }
-    }
-
-    // Upstream removeFromGraph.
-    pub fn remove_from_graph() {
-        match self {
-            Equality(id, strength, v1, v2, direction) => {
-                v1.remove_constraint(self);
-                v2.remove_constraint(self);
-                *direction = Flow.Unset;
-            },
-            Scale(id, strength, v1, v2, scale, offset, direction) => {
-                v1.remove_constraint(self);
-                v2.remove_constraint(self);
-                scale.remove_constraint(self);
-                offset.remove_constraint(self);
-                *direction = Flow.Unset;
-            },
-            Stay(id, strength, output, satisfied) => {
-                output.remove_constraint(self);
-                *satisfied = false;
-            },
-            Edit(id, strength, output, satisfied) => {
-                output.remove_constraint(self);
-                *satisfied = false;
-            },
-        }
-    }
-
-    // Upstream chooseMethod; ScaleConstraint inherits BinaryConstraint's implementation.
-    pub fn choose_method(mark: i32) {
-        match self {
-            Equality(id, strength, v1, v2, direction) => {
-                *direction = binary_choose(*strength, *v1, *v2, mark);
-            },
-            Scale(id, strength, v1, v2, scale, offset, direction) => {
-                *direction = binary_choose(*strength, *v1, *v2, mark);
-            },
-            Stay(id, strength, output, satisfied) => {
-                *satisfied = output.mark != mark && strength_stronger(*strength, output.walk_strength);
-            },
-            Edit(id, strength, output, satisfied) => {
-                *satisfied = output.mark != mark && strength_stronger(*strength, output.walk_strength);
-            },
-        }
-    }
-
-    // Upstream execute.
-    pub fn execute() {
-        match self {
-            Equality(id, strength, v1, v2, direction) => {
-                match *direction {
-                    Forward => {
-                        v2.value = v1.value;
-                    },
-                    Backward => {
-                        v1.value = v2.value;
-                    },
-                    Unset => {
-                    },
-                }
-            },
-            Scale(id, strength, v1, v2, scale, offset, direction) => {
-                match *direction {
-                    Forward => {
-                        v2.value = v1.value * scale.value + offset.value;
-                    },
-                    Backward => {
-                        v1.value = (v2.value - offset.value) / scale.value;
-                    },
-                    Unset => {
-                    },
-                }
-            },
-            Stay(id, strength, output, satisfied) => {
-            },
-            Edit(id, strength, output, satisfied) => {
-            },
-        }
-    }
-
-    // Upstream inputsDo(in -> in.setMark(mark)): mark this constraint's input variables.
-    fn mark_inputs(mark: i32) {
-        match self {
-            Equality(id, strength, v1, v2, direction) => {
-                match *direction {
-                    Forward => {
-                        v1.mark = mark;
-                    },
-                    Backward => {
-                        v2.mark = mark;
-                    },
-                    Unset => {
-                        v2.mark = mark;
-                    },
-                }
-            },
-            Scale(id, strength, v1, v2, scale, offset, direction) => {
-                match *direction {
-                    Forward => {
-                        v1.mark = mark;
-                        scale.mark = mark;
-                        offset.mark = mark;
-                    },
-                    Backward => {
-                        v2.mark = mark;
-                        scale.mark = mark;
-                        offset.mark = mark;
-                    },
-                    Unset => {
-                        v2.mark = mark;
-                        scale.mark = mark;
-                        offset.mark = mark;
-                    },
-                }
-            },
-            Stay(id, strength, output, satisfied) => {
-            },
-            Edit(id, strength, output, satisfied) => {
-            },
-        }
-    }
-
-    // Upstream inputsKnown(mark): every input is marked, has a stay, or is not constraint-determined.
-    pub fn inputs_known(mark: i32) -> bool {
-        return match self {
-            Equality(id, strength, v1, v2, direction) => {
-                let input: Variable& = match *direction {
-                    Forward => *v1,
-                    Backward => *v2,
-                    Unset => *v2,
-                };
-                return input.mark == mark || input.stay || input.determined_by.is_none();
-            },
-            Scale(id, strength, v1, v2, scale, offset, direction) => {
-                let input: Variable& = match *direction {
-                    Forward => *v1,
-                    Backward => *v2,
-                    Unset => *v2,
-                };
-                return (input.mark == mark || input.stay || input.determined_by.is_none())
-                    && (scale.mark == mark || scale.stay || scale.determined_by.is_none())
-                    && (offset.mark == mark || offset.stay || offset.determined_by.is_none());
-            },
-            Stay(id, strength, output, satisfied) => {
-                // UnaryConstraint.inputsHasOne is always false.
-                return true;
-            },
-            Edit(id, strength, output, satisfied) => {
-                return true;
-            },
-        };
-    }
-
-    // Upstream markUnsatisfied.
-    pub fn mark_unsatisfied() {
-        match self {
-            Equality(id, strength, v1, v2, direction) => {
-                *direction = Flow.Unset;
-            },
-            Scale(id, strength, v1, v2, scale, offset, direction) => {
-                *direction = Flow.Unset;
-            },
-            Stay(id, strength, output, satisfied) => {
-                *satisfied = false;
-            },
-            Edit(id, strength, output, satisfied) => {
-                *satisfied = false;
-            },
-        }
-    }
-
-    // Upstream getOutput.
-    pub fn get_output() -> Variable& {
-        return match self {
-            Equality(id, strength, v1, v2, direction) => match *direction {
-                Forward => *v2,
-                Backward => *v1,
-                Unset => *v1,
-            },
-            Scale(id, strength, v1, v2, scale, offset, direction) => match *direction {
-                Forward => *v2,
-                Backward => *v1,
-                Unset => *v1,
-            },
-            Stay(id, strength, output, satisfied) => *output,
-            Edit(id, strength, output, satisfied) => *output,
-        };
-    }
-
-    // Upstream recalculate.
-    pub fn recalculate() {
-        match self {
-            Equality(id, strength, v1, v2, direction) => {
-                let input: Variable& = match *direction {
-                    Forward => *v1,
-                    Backward => *v2,
-                    Unset => *v2,
-                };
-                let out: Variable& = match *direction {
-                    Forward => *v2,
-                    Backward => *v1,
-                    Unset => *v1,
-                };
-                out.walk_strength = strength_weakest(*strength, input.walk_strength);
-                out.stay = input.stay;
-                if out.stay {
-                    self.execute();
-                }
-            },
-            Scale(id, strength, v1, v2, scale, offset, direction) => {
-                let input: Variable& = match *direction {
-                    Forward => *v1,
-                    Backward => *v2,
-                    Unset => *v2,
-                };
-                let out: Variable& = match *direction {
-                    Forward => *v2,
-                    Backward => *v1,
-                    Unset => *v1,
-                };
-                out.walk_strength = strength_weakest(*strength, input.walk_strength);
-                out.stay = input.stay && scale.stay && offset.stay;
-                if out.stay {
-                    self.execute();
-                }
-            },
-            Stay(id, strength, output, satisfied) => {
-                output.walk_strength = *strength;
-                output.stay = !self.is_input();
-                if output.stay {
-                    self.execute();
-                }
-            },
-            Edit(id, strength, output, satisfied) => {
-                output.walk_strength = *strength;
-                output.stay = !self.is_input();
-                if output.stay {
-                    self.execute();
-                }
-            },
-        }
-    }
-
-    // Upstream AbstractConstraint.satisfy.
-    pub fn satisfy(mark: i32, planner: Planner&) -> Option<Constraint&> {
-        self.choose_method(mark);
-
-        if self.is_satisfied() {
-            // Mark inputs for addPropagate's cycle detection.
-            self.mark_inputs(mark);
-
-            let out: Variable& = self.get_output();
-            let overridden: Option<Constraint&> = out.determined_by;
-            match overridden {
-                Some(o) => {
-                    o.mark_unsatisfied();
-                },
-                None => {
-                },
-            }
-            out.determined_by = Option<Constraint&>.Some(self);
-            if !planner.add_propagate(self, mark) {
-                assert false: "Cycle encountered";
-            }
-            out.mark = mark;
-            return overridden;
-        }
-
-        assert self.get_strength() != strength_required(): "Could not satisfy a required constraint";
-        return Option<Constraint&>.None;
-    }
-
     // Upstream AbstractConstraint.destroyConstraint.
-    pub fn destroy_constraint(planner: Planner&) {
-        if self.is_satisfied() {
-            planner.incremental_remove(self);
-        }
-        self.remove_from_graph();
+pub fn Constraint_destroy_constraint(self: Constraint&, planner: Planner&) {
+    if Constraint_is_satisfied(self) {
+        Planner_incremental_remove(planner, self);
     }
+    Constraint_remove_from_graph(self);
+}
 
     // -- Construction: upstream constructors build the graph and call incrementalAdd --
 
-    static pub fn equality(v1: Variable&, v2: Variable&, strength: i32, planner: Planner&) -> Constraint& {
-        let id: u64 = planner.new_constraint_id();
-        let c: Constraint& = dyn Constraint.Equality(id, strength, v1, v2, Flow.Unset);
-        c.add_to_graph();
-        planner.incremental_add(c);
-        return c;
-    }
-
-    static pub fn scale(v1: Variable&, scale: Variable&, offset: Variable&, v2: Variable&, strength: i32, planner: Planner&) -> Constraint& {
-        let id: u64 = planner.new_constraint_id();
-        let c: Constraint& = dyn Constraint.Scale(id, strength, v1, v2, scale, offset, Flow.Unset);
-        c.add_to_graph();
-        planner.incremental_add(c);
-        return c;
-    }
-
-    static pub fn stay(output: Variable&, strength: i32, planner: Planner&) -> Constraint& {
-        let id: u64 = planner.new_constraint_id();
-        let c: Constraint& = dyn Constraint.Stay(id, strength, output, false);
-        c.add_to_graph();
-        planner.incremental_add(c);
-        return c;
-    }
-
-    static pub fn edit(output: Variable&, strength: i32, planner: Planner&) -> Constraint& {
-        let id: u64 = planner.new_constraint_id();
-        let c: Constraint& = dyn Constraint.Edit(id, strength, output, false);
-        c.add_to_graph();
-        planner.incremental_add(c);
-        return c;
-    }
+pub fn Constraint_equality(v1: Variable&, v2: Variable&, strength: i32, planner: Planner&) -> Constraint& {
+    let id: u64 = Planner_new_constraint_id(planner);
+    let c: Constraint& = dyn Constraint.Equality(id, strength, v1, v2, Flow.Unset);
+    Constraint_add_to_graph(c);
+    Planner_incremental_add(planner, c);
+    return c;
 }
+
+pub fn Constraint_scale(v1: Variable&, scale: Variable&, offset: Variable&, v2: Variable&, strength: i32, planner: Planner&) -> Constraint& {
+    let id: u64 = Planner_new_constraint_id(planner);
+    let c: Constraint& = dyn Constraint.Scale(id, strength, v1, v2, scale, offset, Flow.Unset);
+    Constraint_add_to_graph(c);
+    Planner_incremental_add(planner, c);
+    return c;
+}
+
+pub fn Constraint_stay(output: Variable&, strength: i32, planner: Planner&) -> Constraint& {
+    let id: u64 = Planner_new_constraint_id(planner);
+    let c: Constraint& = dyn Constraint.Stay(id, strength, output, false);
+    Constraint_add_to_graph(c);
+    Planner_incremental_add(planner, c);
+    return c;
+}
+
+pub fn Constraint_edit(output: Variable&, strength: i32, planner: Planner&) -> Constraint& {
+    let id: u64 = Planner_new_constraint_id(planner);
+    let c: Constraint& = dyn Constraint.Edit(id, strength, output, false);
+    Constraint_add_to_graph(c);
+    Planner_incremental_add(planner, c);
+    return c;
+}
+
 
 // Execute the plan (upstream Plan.execute: forEach(c -> c.execute())).
 fn execute_plan(plan: Vec<Constraint&>) {
     let i: u64 = 0;
     while i < plan.len() {
-        let c: Constraint& = plan[i];
-        c.execute();
+        let c: Constraint& = plan[u64(i)];
+        Constraint_execute(c);
         i += 1;
     }
 }
@@ -578,7 +580,7 @@ fn execute_plan(plan: Vec<Constraint&>) {
 fn free_constraints(cons: Vec<Constraint&>) {
     let i: u64 = 0;
     while i < cons.len() {
-        let c: Constraint& = cons[i];
+        let c: Constraint& = cons[u64(i)];
         del c;
         i += 1;
     }
@@ -588,7 +590,7 @@ fn free_constraints(cons: Vec<Constraint&>) {
 fn free_variables(vars: Vec<Variable&>) {
     let i: u64 = 0;
     while i < vars.len() {
-        let v: Variable& = vars[i];
+        let v: Variable& = vars[u64(i)];
         v.constraints.drop();
         del v;
         i += 1;
@@ -601,70 +603,175 @@ fn free_variables(vars: Vec<Variable&>) {
 fn sort_unsatisfied(v: Vec<Constraint&>) {
     let i: u64 = 1;
     while i < v.len() {
-        let key: Constraint& = v[i];
-        let key_strength: i32 = key.get_strength();
-        let j: i64 = i64(i) - 1;
-        while j >= 0 && strength_weaker(v[u64(j)].get_strength(), key_strength) {
-            v[u64(j) + 1] = v[u64(j)];
+        let key: Constraint& = v[u64(i)];
+        let key_strength: i32 = Constraint_get_strength(key);
+        let j: u64 = i;
+        while j > 0 && strength_weaker(Constraint_get_strength(v[u64(j - 1)]), key_strength) {
+            v[u64(j)] = v[u64(j - 1)];
             j -= 1;
         }
-        v[u64(j) + 1] = key;
+        v[u64(j)] = key;
         i += 1;
     }
 }
 
-impl Planner {
-    static pub fn new() -> Planner& {
-        return dyn Planner(1, 1u64);
-    }
+
+pub fn Planner_new() -> Planner& {
+    return dyn Planner(1, 1u64);
+}
 
     // Unique constraint ID for identity comparison.
-    pub fn new_constraint_id() -> u64 {
-        self.next_id += 1u64;
-        return self.next_id;
-    }
+pub fn Planner_new_constraint_id(self: Planner&) -> u64 {
+    self.next_id += 1u64;
+    return self.next_id;
+}
 
     // Upstream newMark.
-    pub fn new_mark() -> i32 {
-        self.current_mark += 1;
-        return self.current_mark;
-    }
+pub fn Planner_new_mark(self: Planner&) -> i32 {
+    self.current_mark += 1;
+    return self.current_mark;
+}
 
     // Upstream incrementalAdd.
-    pub fn incremental_add(c: Constraint&) {
-        let mark: i32 = self.new_mark();
-        let cur: Option<Constraint&> = c.satisfy(mark, self);
-        while cur.is_some() {
-            let overridden: Constraint& = *cur.unwrap();
-            cur = overridden.satisfy(mark, self);
-        }
+pub fn Planner_incremental_add(self: Planner&, c: Constraint&) {
+    let mark: i32 = Planner_new_mark(self);
+    let cur: Option<Constraint&> = Constraint_satisfy(c, mark, self);
+    while cur.is_some() {
+        let overridden: Constraint& = *cur.unwrap();
+        cur = Constraint_satisfy(overridden, mark, self);
     }
+}
 
     // Upstream incrementalRemove.
-    pub fn incremental_remove(c: Constraint&) {
-        let out: Variable& = c.get_output();
-        c.mark_unsatisfied();
-        c.remove_from_graph();
+pub fn Planner_incremental_remove(self: Planner&, c: Constraint&) {
+    let out: Variable& = Constraint_get_output(c);
+    Constraint_mark_unsatisfied(c);
+    Constraint_remove_from_graph(c);
 
-        let unsatisfied: Vec<Constraint&> = self.remove_propagate_from(out);
-        let i: u64 = 0;
-        while i < unsatisfied.len() {
-            self.incremental_add(unsatisfied[i]);
-            i += 1;
-        }
-        unsatisfied.drop();
+    let unsatisfied: Vec<Constraint&> = Planner_remove_propagate_from(self, out);
+    let i: u64 = 0;
+    while i < unsatisfied.len() {
+        Planner_incremental_add(self, unsatisfied[u64(i)]);
+        i += 1;
     }
+    unsatisfied.drop();
+}
 
     // Upstream addConstraintsConsumingTo, using an explicit loop instead of a closure.
-    pub fn add_constraints_consuming_to(v: Variable&, coll: Vec<Constraint&>&) {
-        let determining: Option<Constraint&> = v.determined_by;
+pub fn Planner_add_constraints_consuming_to(self: Planner&, v: Variable&, coll: Vec<Constraint&>&) {
+    let determining: Option<Constraint&> = v.determined_by;
+    let i: u64 = 0;
+    while i < v.constraints.len() {
+        let c: Constraint& = v.constraints[u64(i)];
+        let consuming: bool = Constraint_is_satisfied(c);
+        match determining {
+            Some(d) => {
+                if Constraint_get_id(d) == Constraint_get_id(c) {
+                    consuming = false;
+                }
+            },
+            None => {
+            },
+        }
+        if consuming {
+            coll.push(c);
+        }
+        i += 1;
+    }
+}
+
+    // Upstream makePlan: todo uses Vec plus head; this function takes ownership of sources and releases it.
+pub fn Planner_make_plan(self: Planner&, sources: Vec<Constraint&>) -> Vec<Constraint&> {
+    let mark: i32 = Planner_new_mark(self);
+    let plan: Vec<Constraint&> = Vec<Constraint&>.new();
+
+    let head: u64 = 0;
+    while head < sources.len() {
+        let c: Constraint& = sources[u64(head)];
+        head += 1;
+
+        let out: Variable& = Constraint_get_output(c);
+        if out.mark != mark && Constraint_inputs_known(c, mark) {
+            // Not yet in the plan, but eligible for inclusion.
+            plan.push(c);
+            out.mark = mark;
+            Planner_add_constraints_consuming_to(self, out, &sources);
+        }
+    }
+    sources.drop();
+    return plan;
+}
+
+    // Upstream extractPlanFromConstraints.
+pub fn Planner_extract_plan_from_constraints(self: Planner&, constraints: Vec<Constraint&>) -> Vec<Constraint&> {
+    let sources: Vec<Constraint&> = Vec<Constraint&>.new();
+    let i: u64 = 0;
+    while i < constraints.len() {
+        let c: Constraint& = constraints[u64(i)];
+        if Constraint_is_input(c) && Constraint_is_satisfied(c) {
+            sources.push(c);
+        }
+        i += 1;
+    }
+    return Planner_make_plan(self, sources);
+}
+
+    // Upstream addPropagate.
+pub fn Planner_add_propagate(self: Planner&, c: Constraint&, mark: i32) -> bool {
+    let todo: Vec<Constraint&> = Vec<Constraint&>.new();
+    todo.push(c);
+
+    let head: u64 = 0;
+    while head < todo.len() {
+        let d: Constraint& = todo[u64(head)];
+        head += 1;
+
+        let out: Variable& = Constraint_get_output(d);
+        if out.mark == mark {
+            todo.drop();
+            Planner_incremental_remove(self, c);
+            return false;
+        }
+        Constraint_recalculate(d);
+        Planner_add_constraints_consuming_to(self, out, &todo);
+    }
+    todo.drop();
+    return true;
+}
+
+    // Upstream constraintsConsuming inlined, followed by removePropagateFrom.
+pub fn Planner_remove_propagate_from(self: Planner&, out: Variable&) -> Vec<Constraint&> {
+    let unsatisfied: Vec<Constraint&> = Vec<Constraint&>.new();
+
+    out.determined_by = Option<Constraint&>.None;
+    out.walk_strength = S_ABSOLUTE_WEAKEST;
+    out.stay = true;
+
+    let todo: Vec<Variable&> = Vec<Variable&>.new();
+    todo.push(out);
+
+    let head: u64 = 0;
+    while head < todo.len() {
+        let v: Variable& = todo[u64(head)];
+        head += 1;
+
         let i: u64 = 0;
         while i < v.constraints.len() {
-            let c: Constraint& = v.constraints[i];
-            let consuming: bool = c.is_satisfied();
+            let c: Constraint& = v.constraints[u64(i)];
+            if !Constraint_is_satisfied(c) {
+                unsatisfied.push(c);
+            }
+            i += 1;
+        }
+
+        let determining: Option<Constraint&> = v.determined_by;
+        let j: u64 = 0;
+        while j < v.constraints.len() {
+            let c: Constraint& = v.constraints[u64(j)];
+            let consuming: bool = Constraint_is_satisfied(c);
             match determining {
                 Some(d) => {
-                    if d.get_id() == c.get_id() {
+                    if Constraint_get_id(d) == Constraint_get_id(c) {
                         consuming = false;
                     }
                 },
@@ -672,269 +779,189 @@ impl Planner {
                 },
             }
             if consuming {
-                coll.push(c);
+                Constraint_recalculate(c);
+                todo.push(Constraint_get_output(c));
             }
-            i += 1;
+            j += 1;
         }
     }
+    todo.drop();
 
-    // Upstream makePlan: todo uses Vec plus head; this function takes ownership of sources and releases it.
-    pub fn make_plan(sources: Vec<Constraint&>) -> Vec<Constraint&> {
-        let mark: i32 = self.new_mark();
-        let plan: Vec<Constraint&> = Vec<Constraint&>.new();
-
-        let head: u64 = 0;
-        while head < sources.len() {
-            let c: Constraint& = sources[head];
-            head += 1;
-
-            let out: Variable& = c.get_output();
-            if out.mark != mark && c.inputs_known(mark) {
-                // Not yet in the plan, but eligible for inclusion.
-                plan.push(c);
-                out.mark = mark;
-                self.add_constraints_consuming_to(out, &sources);
-            }
-        }
-        sources.drop();
-        return plan;
-    }
-
-    // Upstream extractPlanFromConstraints.
-    pub fn extract_plan_from_constraints(constraints: Vec<Constraint&>) -> Vec<Constraint&> {
-        let sources: Vec<Constraint&> = Vec<Constraint&>.new();
-        let i: u64 = 0;
-        while i < constraints.len() {
-            let c: Constraint& = constraints[i];
-            if c.is_input() && c.is_satisfied() {
-                sources.push(c);
-            }
-            i += 1;
-        }
-        return self.make_plan(sources);
-    }
-
-    // Upstream addPropagate.
-    pub fn add_propagate(c: Constraint&, mark: i32) -> bool {
-        let todo: Vec<Constraint&> = Vec<Constraint&>.new();
-        todo.push(c);
-
-        let head: u64 = 0;
-        while head < todo.len() {
-            let d: Constraint& = todo[head];
-            head += 1;
-
-            let out: Variable& = d.get_output();
-            if out.mark == mark {
-                todo.drop();
-                self.incremental_remove(c);
-                return false;
-            }
-            d.recalculate();
-            self.add_constraints_consuming_to(out, &todo);
-        }
-        todo.drop();
-        return true;
-    }
-
-    // Upstream constraintsConsuming inlined, followed by removePropagateFrom.
-    pub fn remove_propagate_from(out: Variable&) -> Vec<Constraint&> {
-        let unsatisfied: Vec<Constraint&> = Vec<Constraint&>.new();
-
-        out.determined_by = Option<Constraint&>.None;
-        out.walk_strength = strength_absolute_weakest();
-        out.stay = true;
-
-        let todo: Vec<Variable&> = Vec<Variable&>.new();
-        todo.push(out);
-
-        let head: u64 = 0;
-        while head < todo.len() {
-            let v: Variable& = todo[head];
-            head += 1;
-
-            let i: u64 = 0;
-            while i < v.constraints.len() {
-                let c: Constraint& = v.constraints[i];
-                if !c.is_satisfied() {
-                    unsatisfied.push(c);
-                }
-                i += 1;
-            }
-
-            let determining: Option<Constraint&> = v.determined_by;
-            let j: u64 = 0;
-            while j < v.constraints.len() {
-                let c: Constraint& = v.constraints[j];
-                let consuming: bool = c.is_satisfied();
-                match determining {
-                    Some(d) => {
-                        if d.get_id() == c.get_id() {
-                            consuming = false;
-                        }
-                    },
-                    None => {
-                    },
-                }
-                if consuming {
-                    c.recalculate();
-                    todo.push(c.get_output());
-                }
-                j += 1;
-            }
-        }
-        todo.drop();
-
-        sort_unsatisfied(unsatisfied);
-        return unsatisfied;
-    }
+    sort_unsatisfied(unsatisfied);
+    return unsatisfied;
+}
 
     // Upstream change.
-    pub fn change(var: Variable&, new_value: i32) {
-        let edit_c: Constraint& = Constraint.edit(var, strength_preferred(), self);
-        let edit_v: Vec<Constraint&> = Vec<Constraint&>.new();
-        edit_v.push(edit_c);
-        let plan: Vec<Constraint&> = self.extract_plan_from_constraints(edit_v);
-        edit_v.drop();
+pub fn Planner_change(self: Planner&, var: Variable&, new_value: i32) {
+    let edit_c: Constraint& = Constraint_edit(var, S_PREFERRED, self);
+    let edit_v: Vec<Constraint&> = Vec<Constraint&>.new();
+    edit_v.push(edit_c);
+    let plan: Vec<Constraint&> = Planner_extract_plan_from_constraints(self, edit_v);
+    edit_v.drop();
 
-        let i: i32 = 0;
-        while i < 10 {
-            var.value = new_value;
-            execute_plan(plan);
-            i += 1;
-        }
-        plan.drop();
-
-        edit_c.destroy_constraint(self);
-        del edit_c;
+    let i: u64 = 0;
+    while i32(i) < 10 {
+        var.value = new_value;
+        execute_plan(plan);
+        i += 1;
     }
+    plan.drop();
+
+    Constraint_destroy_constraint(edit_c, self);
+    del edit_c;
+}
 
     // Upstream chainTest: return the sum of vars[n] over 100 iterations, 0+...+99=4950.
-    static pub fn chain_test(n: i32) -> i64 {
-        let planner: Planner& = Planner.new();
+pub fn Planner_chain_test(n: i32) -> i64 {
+    let planner: Planner& = Planner_new();
 
-        let vars: Vec<Variable&> = Vec<Variable&>.new();
-        let i: i32 = 0;
-        while i <= n {
-            vars.push(Variable.new());
-            i += 1;
-        }
-
-        let cons: Vec<Constraint&> = Vec<Constraint&>.new();
-
-        // Chain of n REQUIRED equalities.
-        let k: i32 = 0;
-        while k < n {
-            let c: Constraint& = Constraint.equality(vars[u64(k)], vars[u64(k) + 1u64], strength_required(), planner);
-            cons.push(c);
-            k += 1;
-        }
-
-        let stay_c: Constraint& = Constraint.stay(vars[u64(n)], strength_strong_default(), planner);
-        cons.push(stay_c);
-        let edit_c: Constraint& = Constraint.edit(vars[0], strength_preferred(), planner);
-        cons.push(edit_c);
-
-        let edit_v: Vec<Constraint&> = Vec<Constraint&>.new();
-        edit_v.push(edit_c);
-        let plan: Vec<Constraint&> = planner.extract_plan_from_constraints(edit_v);
-        edit_v.drop();
-
-        let acc: i64 = 0;
-        let t: i32 = 0;
-        while t < 100 {
-            vars[0].value = t;
-            execute_plan(plan);
-            assert vars[u64(n)].value == t: "Chain test failed!";
-            acc += i64(vars[u64(n)].value);
-            t += 1;
-        }
-        plan.drop();
-
-        edit_c.destroy_constraint(planner);
-
-        free_constraints(cons);
-        free_variables(vars);
-        del planner;
-        return acc;
+    let vars: Vec<Variable&> = Vec<Variable&>.new();
+    let i: u64 = 0;
+    while i32(i) <= n {
+        vars.push(Variable_new());
+        i += 1;
     }
+
+    let cons: Vec<Constraint&> = Vec<Constraint&>.new();
+
+    // Chain of n REQUIRED equalities.
+    let k: u64 = 0;
+    while i32(k) < n {
+        let c: Constraint& = Constraint_equality(vars[u64(i32(k))], vars[u64(u64(i32(k)) + 1u64)], S_REQUIRED, planner);
+        cons.push(c);
+        k += 1;
+    }
+
+    let stay_c: Constraint& = Constraint_stay(vars[u64(n)], S_STRONG_DEFAULT, planner);
+    cons.push(stay_c);
+    let edit_c: Constraint& = Constraint_edit(vars[u64(0)], S_PREFERRED, planner);
+    cons.push(edit_c);
+
+    let edit_v: Vec<Constraint&> = Vec<Constraint&>.new();
+    edit_v.push(edit_c);
+    let plan: Vec<Constraint&> = Planner_extract_plan_from_constraints(planner, edit_v);
+    edit_v.drop();
+
+    let acc: i64 = 0;
+    let t: u64 = 0;
+    while i32(t) < 100 {
+        vars[u64(0)].value = i32(t);
+        execute_plan(plan);
+        assert vars[u64(n)].value == i32(t): "Chain test failed!";
+        acc += i64(vars[u64(n)].value);
+        t += 1;
+    }
+    plan.drop();
+
+    Constraint_destroy_constraint(edit_c, planner);
+
+    free_constraints(cons);
+    free_variables(vars);
+    del planner;
+    return acc;
+}
 
     // Upstream projectionTest: return checked values after change plus the sum of inspected dests.
-    static pub fn projection_test(n: i32) -> i64 {
-        let planner: Planner& = Planner.new();
+pub fn Planner_projection_test(n: i32) -> i64 {
+    let planner: Planner& = Planner_new();
 
-        let all_vars: Vec<Variable&> = Vec<Variable&>.new();
-        let all_cons: Vec<Constraint&> = Vec<Constraint&>.new();
-        let dests: Vec<Variable&> = Vec<Variable&>.new();
+    let all_vars: Vec<Variable&> = Vec<Variable&>.new();
+    let all_cons: Vec<Constraint&> = Vec<Constraint&>.new();
+    let dests: Vec<Variable&> = Vec<Variable&>.new();
 
-        let scale: Variable& = Variable.value(10);
-        let offset: Variable& = Variable.value(1000);
-        all_vars.push(scale);
-        all_vars.push(offset);
+    let scale: Variable& = Variable_value(10);
+    let offset: Variable& = Variable_value(1000);
+    all_vars.push(scale);
+    all_vars.push(offset);
 
-        let src: Variable& = scale;
-        let dst: Variable& = scale;
-        let i: i32 = 1;
-        while i <= n {
-            let s: Variable& = Variable.value(i);
-            let d: Variable& = Variable.value(i);
-            all_vars.push(s);
-            all_vars.push(d);
-            dests.push(d);
+    let src: Variable& = scale;
+    let dst: Variable& = scale;
+    let i: u64 = 1;
+    while i32(i) <= n {
+        let s: Variable& = Variable_value(i32(i));
+        let d: Variable& = Variable_value(i32(i));
+        all_vars.push(s);
+        all_vars.push(d);
+        dests.push(d);
 
-            let stay_c: Constraint& = Constraint.stay(s, strength_default(), planner);
-            all_cons.push(stay_c);
-            let scale_c: Constraint& = Constraint.scale(s, scale, offset, d, strength_required(), planner);
-            all_cons.push(scale_c);
+        let stay_c: Constraint& = Constraint_stay(s, S_DEFAULT, planner);
+        all_cons.push(stay_c);
+        let scale_c: Constraint& = Constraint_scale(s, scale, offset, d, S_REQUIRED, planner);
+        all_cons.push(scale_c);
 
-            src = s;
-            dst = d;
-            i += 1;
-        }
-
-        let acc: i64 = 0;
-
-        planner.change(src, 17);
-        assert dst.value == 1170: "Projection test 1 failed!";
-        acc += i64(dst.value);
-
-        planner.change(dst, 1050);
-        assert src.value == 5: "Projection test 2 failed!";
-        acc += i64(src.value);
-
-        planner.change(scale, 5);
-        let j: i32 = 0;
-        while j < n - 1 {
-            let d: Variable& = dests[u64(j)];
-            assert d.value == (j + 1) * 5 + 1000: "Projection test 3 failed!";
-            acc += i64(d.value);
-            j += 1;
-        }
-
-        planner.change(offset, 2000);
-        j = 0;
-        while j < n - 1 {
-            let d: Variable& = dests[u64(j)];
-            assert d.value == (j + 1) * 5 + 2000: "Projection test 4 failed!";
-            acc += i64(d.value);
-            j += 1;
-        }
-        acc += i64(src.value) + i64(dst.value) + i64(scale.value) + i64(offset.value);
-
-        dests.drop();
-        free_constraints(all_cons);
-        free_variables(all_vars);
-        del planner;
-        return acc;
+        src = s;
+        dst = d;
+        i += 1;
     }
+
+    let acc: i64 = 0;
+
+    Planner_change(planner, src, 17);
+    assert dst.value == 1170: "Projection test 1 failed!";
+    acc += i64(dst.value);
+
+    Planner_change(planner, dst, 1050);
+    assert src.value == 5: "Projection test 2 failed!";
+    acc += i64(src.value);
+
+    Planner_change(planner, scale, 5);
+    let j: u64 = 0;
+    while i32(j) < n - 1 {
+        let d: Variable& = dests[u64(i32(j))];
+        assert d.value == (i32(j) + 1) * 5 + 1000: "Projection test 3 failed!";
+        acc += i64(d.value);
+        j += 1;
+    }
+
+    Planner_change(planner, offset, 2000);
+    j = 0;
+    while i32(j) < n - 1 {
+        let d: Variable& = dests[u64(i32(j))];
+        assert d.value == (i32(j) + 1) * 5 + 2000: "Projection test 4 failed!";
+        acc += i64(d.value);
+        j += 1;
+    }
+    acc += i64(src.value) + i64(dst.value) + i64(scale.value) + i64(offset.value);
+
+    dests.drop();
+    free_constraints(all_cons);
+    free_variables(all_vars);
+    del planner;
+    return acc;
+}
+
+
+// Decimal prefix parsing for the C atoi/atoll workload argument.
+fn c_decimal(text: str) -> i64 {
+    let bytes = text.as_slice();
+    let i: u64 = 0;
+    while i < bytes.len() && (bytes[u64(i)] == 32 || (bytes[u64(i)] >= 9 && bytes[u64(i)] <= 13)) { i += 1; }
+    let negative: bool = false;
+    if i < bytes.len() && (bytes[u64(i)] == b'-' || bytes[u64(i)] == b'+') {
+        negative = bytes[u64(i)] == b'-';
+        i += 1;
+    }
+    let value: i64 = 0;
+    while i < bytes.len() && bytes[u64(i)] >= b'0' && bytes[u64(i)] <= b'9' {
+        value = value * 10 + i64(bytes[u64(i)] - b'0');
+        i += 1;
+    }
+    return if negative { -value } else { value };
 }
 
 fn main() {
     let ITER: u64 = 134;  // bench-scale
+    let argv = args();
+    if argv.len() > 1u64 {
+        let requested = i32(c_decimal(argv[1u64].as_str()));
+        ITER = if requested > 0 { u64(requested) } else { 0u64 };
+    }
+    for argument in &argv { argument.drop(); }
+    argv.drop();
     let i: u64 = 0;
     while i < ITER {
-        Planner.chain_test(12000);
-        Planner.projection_test(12000);
+        Planner_chain_test(12000);
+        Planner_projection_test(12000);
         i += 1;
     }
 }

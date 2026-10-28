@@ -207,12 +207,12 @@ def render_md(results: list[dict], fingerprint: dict[str, str], runs: int,
         if not row["asan_match"]:
             problems.append(f"{row['key']}: ASan stdout differs from C plain")
         if not row["yian_ok"]:
-            problems.append(f"{row['key']}: YIAN exit code differs from C")
+            problems.append(f"{row['key']}: YIAN output/exit fails the authoritative check")
     lines += ["## Checks", ""]
     if problems:
         lines += [f"- {item}" for item in problems]
     else:
-        lines.append("- C baselines pass, ASan stdout/exit match C plain, every YIAN leg exits 0.")
+        lines.append("- C baselines pass, ASan stdout/exit match C plain, YIAN output/exit satisfy the same benchmark spec.")
     lines.append("")
     return "\n".join(lines)
 
@@ -364,9 +364,8 @@ def main() -> int:
             for leg in ("c_asan", "c_asan_sens")
             if leg in outputs
         )
-        # YIAN programs assert internally and exit 0; the C reference may use a
-        # nonzero status as its result (fann exits with the checksum).
-        yian_ok = codes.get("an_check", -1) == 0
+        # All languages use the same result/exit contract, including fann's 51.
+        yian_ok = spec.check.ok(codes.get("an_check", -1), outputs.get("an_check", ""))
         results.append(
             {
                 "key": spec.key,
@@ -387,7 +386,7 @@ def main() -> int:
         if not asan_match:
             flags.append("ASan stdout differs from C plain")
         if not yian_ok:
-            flags.append("YIAN exit code differs from C")
+            flags.append("YIAN output/exit fails the authoritative check")
         extra = " (" + "; ".join(flags) + ")" if flags else ""
         print(f"[measure] {spec.key}: {text}{extra}", file=sys.stderr)
         dump()

@@ -237,10 +237,11 @@ The `basic`, `package`, and `bootstrap` suites run the selected fat/raw modes; s
 Sources are under `tests/<suite>/`; expected results are under `tests/output/<suite>/`. A `.err.an` source must fail compilation, and its `.ans` file contains the required diagnostic substring. For a normal test, `.ans` contains expected stdout; a first line of `Exit code <N>` specifies an expected nonzero exit code. A directory test — a multi-file standalone test or a package fixture — uses `<dir>.ans`, or `<dir>.err.ans` for an expected failure. `tests/input/<suite>/<name>.args` and `.stdin` provide process arguments and standard input.
 
 The separate `cve/` dataset contains 38 pairs of programs: a vulnerable C
-reference and its equivalent YIAN rewrite. Both use the same `case.json`
-`args`. The C reference may carry the defect silently; the YIAN rewrite must
-stop at the first illegal operation with the language guard. Only
-language-representation differences are allowed. It is
+reference and its YIAN rewrite. Translation and equivalence review use only
+[the C-to-YIAN specification](docs/c-to-yian.md); keep general translation
+rules there and case-specific mappings/evidence in case READMEs. The specification
+is a draft; existing audits are not evidence of conformance to its new version.
+The dataset is
 outside compiler self-tests. Every case has a `cve/<id>/README.md` documenting
 its C-to-YIAN translation; fifteen are source-mapped to upstream records. The
 runner executes each pair. Use
@@ -307,7 +308,7 @@ For compiler changes, validate native `yianc` with minimal relevant cases. Check
 - `bootstrap/ffi/` and `bootstrap/llvm/` are FFI consumer packages; the LLVM package uses LLVM 22 C API bindings and declares its C shim and link components through `[native.llvm]`.
 - `runtime/src/{alloc,runtime,io}.c` provide allocation, runtime failures and synchronous Linux I/O; `runtime/src/profile.c` provides runtime function profiling only when `YIAN_RUNTIME_PROFILE` is defined. `runtime/include/` declares the ABI, including `yian_profile.h`; `python/yianc/runtime_lib.py` is the recovery backend's runtime-object/archive builder.
 - `lsp/` is the native YIAN LSP package. It owns stdio JSON-RPC, document/workspace coordination, strict-analysis snapshots, its own source/semantic navigation indexes, diagnostics, semantic tokens, definition, hover, references, highlights, document symbols, inlay hints for inferred variable binding types, and whole-document formatting through the standalone formatter process. It declares no completion, signature help, rename, code action, range-formatting or on-type-formatting capability. It depends on `yianc/`, `anx/`, the JSON/RPC packages and shared standard-library resources. stdout belongs to the protocol; logs go to stderr or the configured file.
-- `ide-support/` contains the VS Code extension. `bench/` contains benchmark sources, specifications, runners and result data. Check algorithmic equivalence before comparing C/raw/fat timings; retain the environment and commit context of recorded results.
+- `ide-support/` contains the VS Code extension. `bench/` contains benchmark sources, specifications, runners and result data. Use [the C-to-YIAN specification](docs/c-to-yian.md) for C/raw/fat correspondence review; retain the environment and commit context of recorded results.
 - `docs/grammar/`, `docs/manual/`, and `docs/anx/` contain language and tooling documentation; `mkdocs_cn.yml` configures the documentation site. `licenses/` contains license texts.
 
 ## Python semantic navigation with Serena

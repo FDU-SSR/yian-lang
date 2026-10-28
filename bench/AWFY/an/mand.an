@@ -1,3 +1,5 @@
+from std.core.env import args;
+
 // bench/AWFY/an/mand.an: Mandelbrot bitmap checksum (AWFY Mandelbrot).
 //
 // Official work unit: size=500, 50 complex iterations, result 191.
@@ -7,21 +9,21 @@ fn mandelbrot(size: i32) -> i32 {
     let sum: i32 = 0;
     let byte_acc: i32 = 0;
     let bit_num: i32 = 0;
-    let y: i32 = 0;
+    let y: u64 = 0;
 
-    while y < size {
-        let ci: f64 = (2.0 * f64(y) / f64(size)) - 1.0;
-        let x: i32 = 0;
-        while x < size {
+    while i32(y) < size {
+        let ci: f64 = (2.0 * f64(i32(y)) / f64(size)) - 1.0;
+        let x: u64 = 0;
+        while i32(x) < size {
             let zrzr: f64 = 0.0;
             let zi: f64 = 0.0;
             let zizi: f64 = 0.0;
-            let cr: f64 = (2.0 * f64(x) / f64(size)) - 1.5;
+            let cr: f64 = (2.0 * f64(i32(x)) / f64(size)) - 1.5;
 
-            let z: i32 = 0;
+            let z: u64 = 0;
             let not_done: bool = true;
             let escape: i32 = 0;
-            while not_done && z < 50 {
+            while not_done && i32(z) < 50 {
                 let zr: f64 = zrzr - zizi + cr;
                 zi = 2.0 * zr * zi + ci;
                 zrzr = zr * zr;
@@ -41,14 +43,8 @@ fn mandelbrot(size: i32) -> i32 {
                 byte_acc = 0;
                 bit_num = 0;
             } else {
-                if x == size - 1 {
-                    let shift: i32 = 1;
-                    let j: i32 = 0;
-                    while j < 8 - bit_num {
-                        shift *= 2;
-                        j += 1;
-                    }
-                    byte_acc *= shift;
+                if i32(x) == size - 1 {
+                    byte_acc <<= (8 - bit_num);
                     sum ^= byte_acc;
                     byte_acc = 0;
                     bit_num = 0;
@@ -61,8 +57,33 @@ fn mandelbrot(size: i32) -> i32 {
     return sum;
 }
 
+// Decimal prefix parsing for the C atoi/atoll workload argument.
+fn c_decimal(text: str) -> i64 {
+    let bytes = text.as_slice();
+    let i: u64 = 0;
+    while i < bytes.len() && (bytes[u64(i)] == 32 || (bytes[u64(i)] >= 9 && bytes[u64(i)] <= 13)) { i += 1; }
+    let negative: bool = false;
+    if i < bytes.len() && (bytes[u64(i)] == b'-' || bytes[u64(i)] == b'+') {
+        negative = bytes[u64(i)] == b'-';
+        i += 1;
+    }
+    let value: i64 = 0;
+    while i < bytes.len() && bytes[u64(i)] >= b'0' && bytes[u64(i)] <= b'9' {
+        value = value * 10 + i64(bytes[u64(i)] - b'0');
+        i += 1;
+    }
+    return if negative { -value } else { value };
+}
+
 fn main() {
     let ITER: u64 = 69;  // bench-scale
+    let argv = args();
+    if argv.len() > 1u64 {
+        let requested = i32(c_decimal(argv[1u64].as_str()));
+        ITER = if requested > 0 { u64(requested) } else { 0u64 };
+    }
+    for argument in &argv { argument.drop(); }
+    argv.drop();
     let iter: u64 = 0;
     while iter < ITER {
         assert mandelbrot(500) == 191: "mand: checksum is not correct";

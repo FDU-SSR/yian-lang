@@ -511,8 +511,8 @@ def measure_triple(
 ) -> Row:
     """Warm up each mode, then rotate C/raw/fat for used_runs rounds.
 
-    All modes share argv, including fast scale for C. YIAN source copies encode their scale
-    at compile time, so both YIAN modes perform the same workload as C.
+    All modes share argv, including the optional workload scale. Source markers
+    retain the default scale when the command line supplies no override.
     """
     argv = list(spec.run_argv(profile))
     bins = {state: spec_bin(spec, state) for state in STATES}
@@ -528,17 +528,21 @@ def measure_triple(
             f"(exit={warm['c'][3]}, stdout={warm['c'][2].strip()!r}); 该基准的 C 比值不可用",
             file=sys.stderr,
         )
-    yian_stdout_match = warm["raw"][2] == warm["fat"][2] and warm["raw"][3] == warm["fat"][3]
+    yian_stdout_match = (
+        warm["raw"][2] == warm["fat"][2]
+        and warm["raw"][3] == warm["fat"][3]
+        and all(spec.check.ok(warm[state][3], warm[state][2]) for state in ("raw", "fat"))
+    )
     if not yian_stdout_match:
         print(
-            f"[{spec.key}] 警告: 两态 warmup 的 stdout/退出码不一致 "
+            f"[{spec.key}] 警告: 两态 warmup 的结果不一致或未通过 spec.check "
             f"(raw exit={warm['raw'][3]}, fat exit={warm['fat'][3]})",
             file=sys.stderr,
         )
     for state in ("raw", "fat"):
-        if warm[state][3] != 0:
+        if warm[state][3] != spec.check.rc:
             print(
-                f"[{spec.key}] 警告: {state} 态 warmup 退出码 {warm[state][3]} (应为 0)",
+                f"[{spec.key}] 警告: {state} 态 warmup 退出码 {warm[state][3]} (应为 {spec.check.rc})",
                 file=sys.stderr,
             )
 
@@ -702,7 +706,7 @@ def render_md(rows: list[Row], fingerprint: dict[str, str]) -> str:
     lines.append("## 结果\n")
     lines.append(
         "| 基准 | C 最小 (ms) | raw 最小 (ms) | fat 最小 (ms) | raw/C | fat/C | fat/raw "
-        "| C 峰值 RSS (MB) | raw 峰值 RSS (MB) | fat 峰值 RSS (MB) | 裸态源 | raw/fat stdout 一致 | C 校验 |"
+        "| C 峰值 RSS (MB) | raw 峰值 RSS (MB) | fat 峰值 RSS (MB) | 裸态源 | raw/fat 校验且一致 | C 校验 |"
     )
     lines.append("| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- | --- | --- |")
     for row in rows:

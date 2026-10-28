@@ -1,17 +1,18 @@
+from std.core.env import args;
+
 // bench/fatptr/an/copy_struct.an: copying/passing structs containing fat values.
 //
-// Isolate representation size: elements contain T& and T* fields; the hot loop makes shallow
-//       struct copies without entering elements. The checksum uses only data values, yielding equal stdout,
-//       so fat/raw differences come from representation size and by-value argument passing.
-//       Reference and pointer fields contribute independently to struct size and argument-passing costs.
+// Elements contain T& and T[] fields. The hot loop makes shallow struct copies
+//       and passes them by value to sum_item, whose checksum uses the value field.
+//       A separate loop reads the copied reference and slice fields.
 // Scale: ROUNDS at the // bench-scale marker; ITEMS fixed at 100000.
 // C reference: bench/fatptr/c/copy_struct.c, same algorithm/scale with 8 B raw pointer fields.
 //
 // Layout: one payloads array and one Item array; Item.ref=&payloads[i] references heap data,
-//           Item.view=&payloads[0]+i selects the element by index;
+//           Item.view retains the full payload slice, indexed by i;
 //           shallow-copy src[i] through a local into dst[i], and pass it by value to sum_item.
 //
-// Both modes share this source; raw T&/T* use 8 B pointers.
+// Both modes share this source; raw references use 8 B and raw slices use 16 B.
 
 struct Payload {
     value: i64,
@@ -20,7 +21,7 @@ struct Payload {
 struct Item {
     value: i64,
     ref: Payload&,
-    view: Payload*,
+    view: Payload[],
 }
 
 // Receive a struct containing fat values by value; arguments over 16 B use memory.
@@ -28,25 +29,59 @@ fn sum_item(src: Item) -> i64 {
     return src.value;
 }
 
-fn main() {
-    let ITEMS: u64 = 100000;
-    let ROUNDS: u64 = 1024;  // bench-scale
-    let payloads = dyn[ITEMS] Payload(0);
-    let src = dyn[ITEMS] Item(0, &payloads[0], payloads);
-    let dst = dyn[ITEMS] Item(0, &payloads[0], payloads);
+// Decimal prefix parsing for the C atoi/atoll workload argument.
+fn c_decimal(text: str) -> i64 {
+    let bytes = text.as_slice();
     let i: u64 = 0;
-    while i < ITEMS {
-        payloads[i] = Payload(i64(i));
-        src[i] = Item(i64(i), &payloads[i], payloads);
+    while i < bytes.len() && (bytes[u64(i)] == 32 || (bytes[u64(i)] >= 9 && bytes[u64(i)] <= 13)) { i += 1; }
+    let negative: bool = false;
+    if i < bytes.len() && (bytes[u64(i)] == b'-' || bytes[u64(i)] == b'+') {
+        negative = bytes[u64(i)] == b'-';
+        i += 1;
+    }
+    let value: i64 = 0;
+    while i < bytes.len() && bytes[u64(i)] >= b'0' && bytes[u64(i)] <= b'9' {
+        value = value * 10 + i64(bytes[u64(i)] - b'0');
+        i += 1;
+    }
+    return if negative { -value } else { value };
+}
+
+fn main() {
+    let ITEMS: i64 = 100000;
+    let ROUNDS: i64 = 1024;  // bench-scale
+    let argv = args();
+    if argv.len() > 1u64 { ROUNDS = c_decimal(argv[1u64].as_str()); }
+    for argument in &argv { argument.drop(); }
+    argv.drop();
+    let payloads: Payload[] = {
+        let extent: u64 = u64(ITEMS);
+        let allocation = dyn[extent] Payload(0);
+        allocation[0u64..u64(extent)]
+    };
+    let src: Item[] = {
+        let extent: u64 = u64(ITEMS);
+        let allocation = dyn[extent] Item(0, &payloads[u64(0)], payloads);
+        allocation[0u64..u64(extent)]
+    };
+    let dst: Item[] = {
+        let extent: u64 = u64(ITEMS);
+        let allocation = dyn[extent] Item(0, &payloads[u64(0)], payloads);
+        allocation[0u64..u64(extent)]
+    };
+    let i: u64 = 0;
+    while i < u64(ITEMS) {
+        payloads[u64(i)] = Payload(i64(i));
+        src[u64(i)] = Item(i64(i), &payloads[u64(i)], payloads);
         i += 1;
     }
     let acc: i64 = 0;
     let round: u64 = 0;
-    while round < ROUNDS {
+    while round < u64(if ROUNDS > 0 { ROUNDS } else { 0i64 }) {
         i = 0;
-        while i < ITEMS {
-            let item: Item = src[i];
-            dst[i] = item;
+        while i < u64(ITEMS) {
+            let item: Item = src[u64(i)];
+            dst[u64(i)] = item;
             acc = acc + sum_item(item);
             i += 1;
         }
@@ -56,8 +91,8 @@ fn main() {
     assert acc == expect: "copy_struct checksum";
     let check: i64 = 0;
     i = 0;
-    while i < ITEMS {
-        check = check + dst[i].value + dst[i].ref.value + dst[i].view[i].value;
+    while i < u64(ITEMS) {
+        check = check + dst[u64(i)].value + dst[u64(i)].ref.value + dst[u64(i)].view[u64(i)].value;
         i += 1;
     }
     assert check == 3 * (i64(ITEMS) * (i64(ITEMS) - 1) / 2): "copy_struct dst";

@@ -6,23 +6,49 @@
 // Scale: iterations=2000000; assert i32(checksum)%256==128.
 //   Checksum grows linearly with iterations: each round contributes the same amount, cycling modulo 256.
 //
-// Character-level I/O uses byte views, str.as_slice()->u8[].
-//     Input is a fixed 386-byte FASTA document with three sequences; each round scans all sequences,
+// Character-level I/O uses byte views of the fixed array and the static pairs literal.
+//     Input keeps the C automatic 387-byte array; end=386 excludes its final newline. Each round
 //     computes their reverse complements, and accumulates checksum using the ATCGGCTA...N pairs.
 //
 // Fat and raw modes share this source.
 // Use inferred dyn types and x[0u64..n] range views for both modes, retaining fat-mode checks.
 
 fn main() {
-    let input: str = ">ONE Homo sapiens alu\nGGCCGGGCGCGGTGGCTCACGCCTGTAATCCCAGCACTTTGG\nGAGGCCGAGGCGGGCGGATCACCTGAGGTCAGGAGTTCGAGA\nCCAGCCTGGCCAACATGGTGAAACCCCGTCTCTACTAAAAAT\nACAAAAATTAGCCGGGCGTGGTGGCGGGCGCCTGTAATCCCA\n>TWO IUB ambiguity codes\nGCTACTCGGGAGGCTGAGGCAGGAGAATCGCTTGAACCCGGG\nAGGCGGAGGTTGCAGTGAGCCGAGATCGCGCCACTGCACTCC\nAGCCTGGGCGACAGAGCGAGACTCCGTCTCAAAAA\n>THREE Homo sapiens frequency\nTTT\nAAA\nGGG\nCCC\n";
+    let input: u8[387] = [
+        62, 79, 78, 69, 32, 72, 111, 109, 111, 32, 115, 97, 112, 105, 101, 110,
+        115, 32, 97, 108, 117, 10, 71, 71, 67, 67, 71, 71, 71, 67, 71, 67,
+        71, 71, 84, 71, 71, 67, 84, 67, 65, 67, 71, 67, 67, 84, 71, 84,
+        65, 65, 84, 67, 67, 67, 65, 71, 67, 65, 67, 84, 84, 84, 71, 71,
+        10, 71, 65, 71, 71, 67, 67, 71, 65, 71, 71, 67, 71, 71, 71, 67,
+        71, 71, 65, 84, 67, 65, 67, 67, 84, 71, 65, 71, 71, 84, 67, 65,
+        71, 71, 65, 71, 84, 84, 67, 71, 65, 71, 65, 10, 67, 67, 65, 71,
+        67, 67, 84, 71, 71, 67, 67, 65, 65, 67, 65, 84, 71, 71, 84, 71,
+        65, 65, 65, 67, 67, 67, 67, 71, 84, 67, 84, 67, 84, 65, 67, 84,
+        65, 65, 65, 65, 65, 84, 10, 65, 67, 65, 65, 65, 65, 65, 84, 84,
+        65, 71, 67, 67, 71, 71, 71, 67, 71, 84, 71, 71, 84, 71, 71, 67,
+        71, 71, 71, 67, 71, 67, 67, 84, 71, 84, 65, 65, 84, 67, 67, 67,
+        65, 10, 62, 84, 87, 79, 32, 73, 85, 66, 32, 97, 109, 98, 105, 103,
+        117, 105, 116, 121, 32, 99, 111, 100, 101, 115, 10, 71, 67, 84, 65, 67,
+        84, 67, 71, 71, 71, 65, 71, 71, 67, 84, 71, 65, 71, 71, 67, 65,
+        71, 71, 65, 71, 65, 65, 84, 67, 71, 67, 84, 84, 71, 65, 65, 67,
+        67, 67, 71, 71, 71, 10, 65, 71, 71, 67, 71, 71, 65, 71, 71, 84,
+        84, 71, 67, 65, 71, 84, 71, 65, 71, 67, 67, 71, 65, 71, 65, 84,
+        67, 71, 67, 71, 67, 67, 65, 67, 84, 71, 67, 65, 67, 84, 67, 67,
+        10, 65, 71, 67, 67, 84, 71, 71, 71, 67, 71, 65, 67, 65, 71, 65,
+        71, 67, 71, 65, 71, 65, 67, 84, 67, 67, 71, 84, 67, 84, 67, 65,
+        65, 65, 65, 65, 10, 62, 84, 72, 82, 69, 69, 32, 72, 111, 109, 111,
+        32, 115, 97, 112, 105, 101, 110, 115, 32, 102, 114, 101, 113, 117, 101, 110,
+        99, 121, 10, 84, 84, 84, 10, 65, 65, 65, 10, 71, 71, 71, 10, 67,
+        67, 67, 10,
+    ];
     let ibytes: u8[] = input.as_slice();
 
-    let tbl: u8[256] = [0; 256];
-    let pairs: str = "ATCGGCTAUAMKRYWWSSYRKMVBHDDHBVNN";
+    let tbl: u8[400] = [0; 400];
+    let pairs: str = "ATCGGCTAUAMKRYWWSSYRKMVBHDDHBVNN\0";
     let pbytes: u8[] = pairs.as_slice();
     let i: u64 = 0;
-    while i < pbytes.len() {
-        tbl[u64(pbytes[i])] = pbytes[i + 1];
+    while pbytes[u64(i)] != 0 {
+        tbl[u64(pbytes[u64(i)])] = pbytes[u64(i + 1)];
         i += 2;
     };
 
@@ -35,12 +61,12 @@ fn main() {
     while iter < iterations {
         let in_offset: u64 = 0;
 
-        while in_offset < end && ibytes[in_offset] != b'>' {
+        while in_offset < end && ibytes[u64(in_offset)] != b'>' {
             in_offset += 1;
         };
 
         while in_offset < end {
-            while in_offset < end && ibytes[in_offset] != b'\n' {
+            while in_offset < end && ibytes[u64(in_offset)] != b'\n' {
                 in_offset += 1;
             };
             if in_offset < end {
@@ -48,7 +74,7 @@ fn main() {
             };
 
             let seq_start: u64 = in_offset;
-            while in_offset < end && ibytes[in_offset] != b'>' {
+            while in_offset < end && ibytes[u64(in_offset)] != b'>' {
                 in_offset += 1;
             };
             let seq_end: u64 = in_offset;
@@ -56,30 +82,30 @@ fn main() {
             let clean_len: u64 = 0;
             let k: u64 = seq_start;
             while k < seq_end {
-                let t: u8 = ibytes[k];
+                let t: u8 = ibytes[u64(k)];
                 if t != b'\n' {
-                    temp_buf[clean_len] = t;
+                    temp_buf[u64(clean_len)] = t;
                     clean_len += 1;
                 };
                 k += 1;
             };
 
-            let left: i64 = 0;
-            let right: i64 = i64(clean_len) - 1;
+            let left: u64 = 0;
+            let right: u64 = if clean_len > 0 { clean_len - 1 } else { 0u64 };
             while left < right {
-                let lc: u8 = temp_buf[u64(left)];
+                let lc: u8 = temp_buf[u64(i64(left))];
                 let lcomp: u8 = tbl[u64(lc)];
                 if lcomp != 0 {
                     lc = lcomp;
                 };
-                let rc: u8 = temp_buf[u64(right)];
+                let rc: u8 = temp_buf[u64(i64(right))];
                 let rcomp: u8 = tbl[u64(rc)];
                 if rcomp != 0 {
                     rc = rcomp;
                 };
 
-                temp_buf[u64(left)] = rc;
-                temp_buf[u64(right)] = lc;
+                temp_buf[u64(i64(left))] = rc;
+                temp_buf[u64(i64(right))] = lc;
                 checksum += i64(lc) + i64(rc);
 
                 left += 1;
@@ -88,11 +114,11 @@ fn main() {
 
             if clean_len % 2 == 1 {
                 let mid: u64 = clean_len / 2;
-                let mcomp: u8 = tbl[u64(temp_buf[mid])];
+                let mcomp: u8 = tbl[u64(temp_buf[u64(mid)])];
                 if mcomp != 0 {
-                    temp_buf[mid] = mcomp;
+                    temp_buf[u64(mid)] = mcomp;
                 };
-                checksum += i64(temp_buf[mid]);
+                checksum += i64(temp_buf[u64(mid)]);
             };
 
             let newlines: u64 = 0;
@@ -101,7 +127,7 @@ fn main() {
             };
             checksum += i64(newlines) * 10;
 
-            while in_offset < end && ibytes[in_offset] != b'>' {
+            while in_offset < end && ibytes[u64(in_offset)] != b'>' {
                 in_offset += 1;
             };
         };
@@ -110,5 +136,5 @@ fn main() {
 
     let res: i32 = i32(checksum % 256);
     assert res == 128: "revcomp: checksum is not correct";
-    @print("revcomp pass\n");
+    @print(f"Checksum: {res}\n");
 }

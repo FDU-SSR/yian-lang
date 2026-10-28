@@ -124,13 +124,15 @@ PATH="$HOME/.local/bin:$PATH" \
 ## Documentation
 
 The [CVE witness dataset](cve/README.md) contains 38 C projects and 38
-vulnerable YIAN projects built with anx, independently of `tests/`. Fifteen
-cases have a `cve/<id>/README.md` documenting the C-to-YIAN translation; fifteen
+vulnerable YIAN projects built with anx, independently of `tests/`.
+All 38 cases have a `cve/<id>/README.md` documenting the C-to-YIAN translation; fifteen
 are source-mapped to upstream records and the rest are earlier minimized
 witnesses audited under the same pair contract. Select an exact
 case with `python scripts/run_cve.py --case CVE-2021-33304`; `--list` and
 `--check-layout` inspect the dataset without compiling or running it.
 
+- [C-to-YIAN syntax rewriting rules (draft)](docs/c-to-yian.md)
+- [C-to-YIAN rewrite review and remaining differences](docs/c-to-yian-review.md)
 - [Language reference](docs/grammar/index.md)
 - [anx guide](docs/anx/index.md)
 - [Developer manual](docs/manual/index.md)

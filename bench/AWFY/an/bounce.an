@@ -1,3 +1,5 @@
+from std.core.env import args;
+
 // bench/AWFY/an/bounce.an: ball-bounce simulation (shootout bounce).
 //
 // Reference: AWFY benchmarks/Java/src/Bounce.java; upstream license: AWFY LICENSE.md.
@@ -44,16 +46,20 @@ struct BounceResult {
     bounced: bool,
 }
 
-fn Random_next(r: Random) -> RandomResult {
+fn Random_new() -> Random {
+    return Random(74755);
+}
+
+fn Random_next(r: Random&) -> RandomResult {
     let new_seed: i32 = ((r.seed * 1309) + 13849) & 65535;
     return RandomResult(Random(new_seed), new_seed);
 }
 
-fn BallInitResult_new(r: Random) -> BallInitResult {
+fn BallInitResult_new(r: Random&) -> BallInitResult {
     let res1: RandomResult = Random_next(r);
-    let res2: RandomResult = Random_next(res1.random_state);
-    let res3: RandomResult = Random_next(res2.random_state);
-    let res4: RandomResult = Random_next(res3.random_state);
+    let res2: RandomResult = Random_next(&res1.random_state);
+    let res3: RandomResult = Random_next(&res2.random_state);
+    let res4: RandomResult = Random_next(&res3.random_state);
 
     let new_ball: Ball = Ball(
         res1.value % 500,
@@ -64,7 +70,7 @@ fn BallInitResult_new(r: Random) -> BallInitResult {
     return BallInitResult(new_ball, res4.random_state);
 }
 
-fn Ball_bounce(b: Ball) -> BounceResult {
+fn Ball_bounce(b: Ball&) -> BounceResult {
     let x_limit: i32 = 500;
     let y_limit: i32 = 500;
     let bounced: bool = false;
@@ -100,19 +106,23 @@ fn Ball_bounce(b: Ball) -> BounceResult {
     return BounceResult(new_ball, bounced_flag);
 }
 
-fn benchmark() -> i64 {
-    let random: Random = Random(74755);
+fn benchmark() -> i32 {
+    let random: Random = Random_new();
 
-    let ball_count: u64 = 100;
+    let ball_count: i32 = 100;
     let rounds: u64 = 50;
-    let bounces: i64 = 0;
-    let balls = dyn[ball_count] Ball(0, 0, 0, 0);
-    let balls_slice: Ball[] = balls[0u64..ball_count];
+    let bounces: i32 = 0;
+    let balls: Ball[] = {
+        let extent: u64 = u64(ball_count);
+        let allocation = dyn[extent] Ball(0, 0, 0, 0);
+        allocation[0u64..u64(extent)]
+    };
+    let balls_slice: Ball[] = balls[0u64..u64(ball_count)];
 
     let i: u64 = 0;
-    while i < ball_count {
-        let init_res: BallInitResult = BallInitResult_new(random);
-        balls_slice[i] = init_res.ball;
+    while i < u64(ball_count) {
+        let init_res: BallInitResult = BallInitResult_new(&random);
+        balls_slice[u64(i)] = init_res.ball;
         random = init_res.random_state;
         i += 1;
     }
@@ -120,9 +130,9 @@ fn benchmark() -> i64 {
     let j: u64 = 0;
     while j < rounds {
         let k: u64 = 0;
-        while k < ball_count {
-            let bounce_res: BounceResult = Ball_bounce(balls_slice[k]);
-            balls_slice[k] = bounce_res.ball;
+        while k < u64(ball_count) {
+            let bounce_res: BounceResult = Ball_bounce(&balls_slice[u64(k)]);
+            balls_slice[u64(k)] = bounce_res.ball;
             if bounce_res.bounced {
                 bounces += 1;
             }
@@ -135,11 +145,36 @@ fn benchmark() -> i64 {
     return bounces;
 }
 
+// Decimal prefix parsing for the C atoi/atoll workload argument.
+fn c_decimal(text: str) -> i64 {
+    let bytes = text.as_slice();
+    let i: u64 = 0;
+    while i < bytes.len() && (bytes[u64(i)] == 32 || (bytes[u64(i)] >= 9 && bytes[u64(i)] <= 13)) { i += 1; }
+    let negative: bool = false;
+    if i < bytes.len() && (bytes[u64(i)] == b'-' || bytes[u64(i)] == b'+') {
+        negative = bytes[u64(i)] == b'-';
+        i += 1;
+    }
+    let value: i64 = 0;
+    while i < bytes.len() && bytes[u64(i)] >= b'0' && bytes[u64(i)] <= b'9' {
+        value = value * 10 + i64(bytes[u64(i)] - b'0');
+        i += 1;
+    }
+    return if negative { -value } else { value };
+}
+
 fn main() {
     let ITER: u64 = 300000;  // bench-scale
+    let argv = args();
+    if argv.len() > 1u64 {
+        let requested = i32(c_decimal(argv[1u64].as_str()));
+        ITER = if requested > 0 { u64(requested) } else { 0u64 };
+    }
+    for argument in &argv { argument.drop(); }
+    argv.drop();
     let iter: u64 = 0;
     while iter < ITER {
-        let result: i64 = benchmark();
+        let result: i32 = benchmark();
         assert result == 1331: "bounce count not expected";
         iter += 1;
     }

@@ -2,8 +2,6 @@
 #include <stdlib.h>
 #include <assert.h>
 
-// Global counter.
-int count = 0;
 
 // Swap array elements using pointer arithmetic.
 void swap_indices(int i, int j, int* v) {
@@ -15,14 +13,14 @@ void swap_indices(int i, int j, int* v) {
 }
 
 // Recursive permutation generator.
-void permute_inner(int n, int* v) {
-    count += 1;
+void permute_inner(int n, int* v, int* count) {
+    *count += 1;
     if (n != 0) {
         int n1 = n - 1;
-        permute_inner(n1, v);
+        permute_inner(n1, v, count);
         for (int i = n1; i >= 0; i -= 1) {
             swap_indices(n1, i, v);
-            permute_inner(n1, v);
+            permute_inner(n1, v, count);
             swap_indices(n1, i, v);
         }
     }
@@ -30,10 +28,11 @@ void permute_inner(int n, int* v) {
 
 // Benchmark function.
 int benchmark_permute() {
+    static int count;
     count = 0;
     int* v = (int*)calloc(6, sizeof(int));
 
-    permute_inner(6, v);
+    permute_inner(6, v, &count);
     free(v);
     return count;
 }

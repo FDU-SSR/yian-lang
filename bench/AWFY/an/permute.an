@@ -1,3 +1,5 @@
+from std.core.env import args;
+
 // bench/AWFY/an/permute.an: recursive permutation swaps (shootout permute).
 //
 // Reference: AWFY benchmarks/Java/src/Permute.java; see AWFY LICENSE.md.
@@ -11,14 +13,16 @@
 //
 // Array representation: v in swap_indices/permute_inner is i32[] with block access and no index field;
 //   count is i32&. benchmark_permute binds v directly as
-//   i32[] (let x:T[]=dyn[n] T; del T[] validly releases the whole block).
+//   i32[] (an allocation followed by its full-range slice; del T[] validly releases the whole block).
 //
 // Fat and raw modes share this source.
 // Use inferred dyn types and x[0u64..n] range views for both modes, retaining fat-mode checks.
-fn swap_indices(i: u64, j: u64, v: i32[]) {
-    let tmp: i32 = v[i];
-    v[i] = v[j];
-    v[j] = tmp;
+fn swap_indices(i: u64, j: u64, v: i32*) {
+    let p: i32* = v + u64(i);
+    let q: i32* = v + u64(j);
+    let tmp: i32 = *p;
+    *p = *q;
+    *q = tmp;
 }
 
 fn permute_inner(n: i32, v: i32[], count: i32&) {
@@ -26,11 +30,12 @@ fn permute_inner(n: i32, v: i32[], count: i32&) {
     if n != 0 {
         let n1: i32 = n - 1;
         permute_inner(n1, v, count);
-        let i: i32 = n1;
-        while i >= 0 {
-            swap_indices(u64(n1), u64(i), v);
+        let i: u64 = u64(n1);
+        loop {
+            swap_indices(u64(n1), u64(i32(i)), v.ptr());
             permute_inner(n1, v, count);
-            swap_indices(u64(n1), u64(i), v);
+            swap_indices(u64(n1), u64(i32(i)), v.ptr());
+            if i == 0 { break; }
             i -= 1;
         }
     }
@@ -38,14 +43,43 @@ fn permute_inner(n: i32, v: i32[], count: i32&) {
 
 fn benchmark_permute() -> i32 {
     let count: i32 = 0;
-    let v = dyn[6] 0i32;
+    let v: i32[] = {
+        let extent: u64 = u64(6);
+        let allocation = dyn[extent] 0i32;
+        allocation[0u64..u64(extent)]
+    };
     permute_inner(6, v[0u64..6u64], &count);
     del v;
     return count;
 }
 
+// Decimal prefix parsing for the C atoi/atoll workload argument.
+fn c_decimal(text: str) -> i64 {
+    let bytes = text.as_slice();
+    let i: u64 = 0;
+    while i < bytes.len() && (bytes[u64(i)] == 32 || (bytes[u64(i)] >= 9 && bytes[u64(i)] <= 13)) { i += 1; }
+    let negative: bool = false;
+    if i < bytes.len() && (bytes[u64(i)] == b'-' || bytes[u64(i)] == b'+') {
+        negative = bytes[u64(i)] == b'-';
+        i += 1;
+    }
+    let value: i64 = 0;
+    while i < bytes.len() && bytes[u64(i)] >= b'0' && bytes[u64(i)] <= b'9' {
+        value = value * 10 + i64(bytes[u64(i)] - b'0');
+        i += 1;
+    }
+    return if negative { -value } else { value };
+}
+
 fn main() {
     let ITER: u64 = 70866;  // bench-scale
+    let argv = args();
+    if argv.len() > 1u64 {
+        let requested = i32(c_decimal(argv[1u64].as_str()));
+        ITER = if requested > 0 { u64(requested) } else { 0u64 };
+    }
+    for argument in &argv { argument.drop(); }
+    argv.drop();
     let iter: u64 = 0;
     while iter < ITER {
         let result: i32 = benchmark_permute();

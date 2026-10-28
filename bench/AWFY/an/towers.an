@@ -1,3 +1,5 @@
+from std.core.env import args;
+
 // bench/AWFY/an/towers.an: Tower of Hanoi pointer-stack simulation (shootout towers).
 //
 // Reference: AWFY benchmarks/Java/src/Towers.java; see AWFY LICENSE.md.
@@ -29,7 +31,7 @@ struct TowersState {
 }
 
 fn push_disk(disk: TowersDisk&, pile: u64, state: TowersState&) {
-    disk.next = match state.piles[pile] {
+    disk.next = match state.piles[u64(pile)] {
         Some(d) => {
             if disk.size >= d.size {
                 Stderr.new().write_str("Cannot put a big disk on a smaller one").unwrap();
@@ -39,17 +41,17 @@ fn push_disk(disk: TowersDisk&, pile: u64, state: TowersState&) {
         },
         None => Option<TowersDisk&>.None,
     }
-    state.piles[pile] = Option<TowersDisk&>.Some(disk);
+    state.piles[u64(pile)] = Option<TowersDisk&>.Some(disk);
 }
 
 fn pop_disk_from(pile: u64, state: TowersState&) -> TowersDisk& {
-    return match state.piles[pile] {
+    return match state.piles[u64(pile)] {
         None => {
             Stderr.new().write_str("Attempting to remove a disk from an empty pile").unwrap();
             exit(1)
         },
         Some(tt) => {
-            state.piles[pile] = match tt.next {
+            state.piles[u64(pile)] = match tt.next {
                 Some(n) => Option<TowersDisk&>.Some(n),
                 None => Option<TowersDisk&>.None,
             };
@@ -65,10 +67,12 @@ fn move_top_disk(from_pile: u64, to_pile: u64, state: TowersState&) {
 }
 
 fn build_tower_at(pile: u64, disks: i32, state: TowersState&) {
-    let i: i32 = disks;
-    while i >= 0 {
-        let disk: TowersDisk& = dyn TowersDisk(i, Option<TowersDisk&>.None);
+    if disks < 0 { return; }
+    let i: u64 = u64(disks);
+    loop {
+        let disk: TowersDisk& = dyn TowersDisk(i32(i), Option<TowersDisk&>.None);
         push_disk(disk, pile, state);
+        if i == 0 { break; }
         i -= 1;
     };
 }
@@ -106,16 +110,41 @@ fn benchmark(state: TowersState&) -> i32 {
 
     let i: u64 = 0;
     while i < 3 {
-        free_pile(state.piles[i]);
+        free_pile(state.piles[u64(i)]);
         i += 1;
     };
 
     return state.moves_done;
 }
 
+// Decimal prefix parsing for the C atoi/atoll workload argument.
+fn c_decimal(text: str) -> i64 {
+    let bytes = text.as_slice();
+    let i: u64 = 0;
+    while i < bytes.len() && (bytes[u64(i)] == 32 || (bytes[u64(i)] >= 9 && bytes[u64(i)] <= 13)) { i += 1; }
+    let negative: bool = false;
+    if i < bytes.len() && (bytes[u64(i)] == b'-' || bytes[u64(i)] == b'+') {
+        negative = bytes[u64(i)] == b'-';
+        i += 1;
+    }
+    let value: i64 = 0;
+    while i < bytes.len() && bytes[u64(i)] >= b'0' && bytes[u64(i)] <= b'9' {
+        value = value * 10 + i64(bytes[u64(i)] - b'0');
+        i += 1;
+    }
+    return if negative { -value } else { value };
+}
+
 fn main() {
-    let ITER: i32 = 41065;  // bench-scale
-    let i: i32 = 0;
+    let ITER: u64 = 41065;  // bench-scale
+    let argv = args();
+    if argv.len() > 1u64 {
+        let requested = i32(c_decimal(argv[1u64].as_str()));
+        ITER = if requested > 0 { u64(requested) } else { 0u64 };
+    }
+    for argument in &argv { argument.drop(); }
+    argv.drop();
+    let i: u64 = 0;
     while i < ITER {
         let state: TowersState& = dyn TowersState(
             [Option<TowersDisk&>.None, Option<TowersDisk&>.None, Option<TowersDisk&>.None], 0);

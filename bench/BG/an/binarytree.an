@@ -2,7 +2,7 @@
 //
 // Adapted from Benchmarks Game (shootout); upstream: Revised BSD, Copyright 2008-2012 Isaac Gouy.
 // Semantic reference: bench/BG/c/binarytree.c, the project's C implementation.
-// Scale: N=20, minDepth=4; assert check%256==176.
+// Scale: default N=16 (the benchmark runner may materialize another N), minDepth=4; assert check%256==176.
 //
 // Algorithm: BottomUpTree recursively constructs full binary trees with two child pointers per node;
 //       ItemCheck recursively sums children, counting empty subtrees as one; DeleteTree releases
@@ -14,8 +14,7 @@
 //       dyn treeNode(...); ItemCheck reads through treeNode&, and DeleteTree
 //       releases directly with del T&.
 //
-// Both modes share this source. dyn uses inference; ranges such as
-//         x[0u64..n] work in both modes and retain checks in fat mode.
+// Both pointer modes share this source; each dyn allocation holds one treeNode.
 
 struct treeNode {
     left: Option<treeNode&>,
@@ -26,7 +25,7 @@ fn NewTreeNode(left: Option<treeNode&>, right: Option<treeNode&>) -> Option<tree
     return Option<treeNode&>.Some(dyn treeNode(left, right));
 }
 
-fn BottomUpTree(depth: u64) -> Option<treeNode&> {
+fn BottomUpTree(depth: u32) -> Option<treeNode&> {
     if depth > 0 {
         let left_child: Option<treeNode&> = BottomUpTree(depth - 1);
         let right_child: Option<treeNode&> = BottomUpTree(depth - 1);
@@ -36,27 +35,29 @@ fn BottomUpTree(depth: u64) -> Option<treeNode&> {
 }
 
 fn ItemCheck(tree: treeNode&) -> i64 {
-    let res: i64 = 1;
-    match tree.left {
-        Some(lc) => { res = res + ItemCheck(lc); },
+    let res: i32 = 1;
+    let tmp: treeNode = *tree;
+    match tmp.left {
+        Some(lc) => { res = i32(i64(res) + ItemCheck(lc)); },
         None => { },
     }
-    match tree.right {
-        Some(rc) => { res = res + ItemCheck(rc); },
+    match tmp.right {
+        Some(rc) => { res = i32(i64(res) + ItemCheck(rc)); },
         None => { },
     }
-    return res;
+    return i64(res);
 }
 
 fn DeleteTree(tree: Option<treeNode&>) {
     match tree {
         None => { return; },
         Some(tt) => {
-            match tt.left {
+            let tmp: treeNode = *tt;
+            match tmp.left {
                 Some(l) => { DeleteTree(Option<treeNode&>.Some(l)); },
                 None => { },
             }
-            match tt.right {
+            match tmp.right {
                 Some(r) => { DeleteTree(Option<treeNode&>.Some(r)); },
                 None => { },
             }
@@ -67,27 +68,27 @@ fn DeleteTree(tree: Option<treeNode&>) {
 }
 
 fn main() {
-    let N: u64 = 16;
-    let minDepth: u64 = 4;
-    let maxDepth: u64 = N;
+    let N: u32 = 16;
+    let minDepth: u32 = 4;
+    let maxDepth: u32 = N;
     let check: i64 = 0;
 
     if (minDepth + 2) > N {
         maxDepth = minDepth + 2;
     }
 
-    let stretchDepth: u64 = maxDepth + 1;
+    let stretchDepth: u32 = maxDepth + 1;
     let stretchTree: Option<treeNode&> = BottomUpTree(stretchDepth);
     DeleteTree(stretchTree);
 
     let longLivedTree: Option<treeNode&> = BottomUpTree(maxDepth);
 
-    let depth: u64 = minDepth;
-    while depth <= maxDepth {
-        let iterations: i64 = i64(1u64 << (maxDepth - depth + minDepth));
-        let i: i64 = 0;
-        while i < iterations {
-            let tempTree: Option<treeNode&> = BottomUpTree(depth);
+    let depth: u64 = u64(minDepth);
+    while depth <= u64(maxDepth) {
+        let iterations: u32 = 1u32 << (maxDepth - u32(depth) + minDepth);
+        let i: u64 = 0;
+        while i < u64(iterations) {
+            let tempTree: Option<treeNode&> = BottomUpTree(u32(depth));
             match tempTree {
                 Some(tt) => { check = check + ItemCheck(tt); },
                 None => { },
@@ -101,5 +102,5 @@ fn main() {
     DeleteTree(longLivedTree);
 
     assert check % 256 == 176: "binarytree: check % 256 mismatch";
-    @print("binarytree pass\n");
+    @print(f"{check}\n");
 }
