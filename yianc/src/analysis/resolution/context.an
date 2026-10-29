@@ -1,8 +1,7 @@
 from yianc.common.ids import UnitId, ScopeId, SymbolId, DefId, TypeId, SourceId, HirId;
 from yianc.common.location import SourceSpan;
 from yianc.analysis.session.session import AnalysisSession;
-from yianc.analysis.ty.model import TypeData;
-from yianc.analysis.constant.evaluate import TypeSizeProvider;
+from yianc.analysis.constant.evaluate import ConstantEvaluator, TypeSizeProvider;
 from yianc.frontend.ast.node import Item;
 from yianc.frontend.source import Position, Span;
 from yianc.diagnostics.model import Diagnostic, DiagnosticCode, AnalysisError;
@@ -27,51 +26,25 @@ pub struct Declaration {
     pub state: DeclarationState,
 }
 
-pub struct PrimitiveTypes {
-    pub void: TypeId,
-    pub never: TypeId,
-    pub error: TypeId,
-    pub boolean: TypeId,
-    pub character: TypeId,
-    pub string: TypeId,
-    pub integer_literal: TypeId,
-    pub float_literal: TypeId,
-    pub integer: TypeId,
-    pub unsigned: TypeId,
-    pub float: TypeId,
-}
-
-impl PrimitiveTypes {
-    static pub fn new(session: AnalysisSession&) -> Result<Self, AnalysisError> {
-        Result<Self, AnalysisError>.Ok(Self(
-            session.types.primitive(TypeData.Void)?, session.types.primitive(TypeData.Never)?,
-            session.types.primitive(TypeData.Error)?, session.types.primitive(TypeData.Bool)?,
-            session.types.primitive(TypeData.Char)?, session.types.primitive(TypeData.Str)?,
-            session.types.primitive(TypeData.IntLiteral)?, session.types.primitive(TypeData.FloatLiteral)?,
-            session.types.primitive(TypeData.Integer(32, true))?,
-            session.types.primitive(TypeData.Integer(64, false))?,
-            session.types.primitive(TypeData.Float(64))?))
-    }
-}
+// The fixed builtin type prefix lives in TypeStore; the context keeps no second cache.
 
 // The context lives for one analysis run and borrows its session throughout.
 pub struct ResolutionContext {
     pub session: AnalysisSession&,
-    pub primitives: PrimitiveTypes,
     pub scopes: Vec<ScopeId>,
     declarations: Arena<Declaration>,
     pub callable_scopes: HashMap<DefId, ScopeId>,
     pub constants: HashMap<SymbolId, HirId>,
     pub closure_captures: HashMap<DefId, Vec<SymbolId>>,
-    pub sizes: Option<TypeSizeProvider&>,
+    pub evaluator: ConstantEvaluator,
     pub alias_stack: Vec<SymbolId>,
     pub constant_stack: Vec<SymbolId>,
     pub warnings: Vec<Diagnostic>,
 }
 
 impl ResolutionContext {
-    static pub fn new(session: AnalysisSession&) -> Result<Self, AnalysisError> {
-        let primitives = PrimitiveTypes.new(session)?;
+    static pub fn new(session: AnalysisSession&, sizes: Option<TypeSizeProvider&>) -> Result<Self, AnalysisError> {
+        let evaluator = ConstantEvaluator.new(&session.types, &session.hir, sizes);
         let scopes = Vec<ScopeId>.new();
         let accepted = false;
         defer {
@@ -89,7 +62,7 @@ impl ResolutionContext {
         }
 
         accepted = true;
-        Result<Self, AnalysisError>.Ok(Self(session, primitives, scopes, Arena<Declaration>.new(), HashMap<DefId, ScopeId>.new(), HashMap<SymbolId, HirId>.new(), HashMap<DefId, Vec<SymbolId>>.new(), Option<TypeSizeProvider&>.None, Vec<SymbolId>.new(), Vec<SymbolId>.new(), Vec<Diagnostic>.new()))
+        Result<Self, AnalysisError>.Ok(Self(session, scopes, Arena<Declaration>.new(), HashMap<DefId, ScopeId>.new(), HashMap<SymbolId, HirId>.new(), HashMap<DefId, Vec<SymbolId>>.new(), evaluator, Vec<SymbolId>.new(), Vec<SymbolId>.new(), Vec<Diagnostic>.new()))
     }
 
     pub fn span(unit: UnitId, span: Span) -> SourceSpan {

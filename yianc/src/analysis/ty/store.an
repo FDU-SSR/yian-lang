@@ -2,6 +2,7 @@ from yianc.common.ids import TypeId, DefId, NameId;
 from yianc.common.location import SourceSpan;
 from yianc.analysis.ty.key import TypeKey;
 from yianc.analysis.ty.model import TypeData, TypeDefinition, DefinitionHeader, DefinitionBody, CapturedVar, Parameter;
+from yianc.analysis.ty.c_scalar import CScalarKind;
 from yianc.diagnostics.model import DiagnosticCode, AnalysisError;
 from yianc.frontend.ast.operator import UnaryOperator, BinaryOperator;
 from yianc.analysis.constant.value import IntegerValue;
@@ -12,6 +13,30 @@ from std.core.hash import Hash;
 from std.core.iter import Iterator, IntoIterator;
 from std.core.ops import Index, PartialEq;
 
+pub const VOID_TYPE_ID: u64 = 0;
+pub const NEVER_TYPE_ID: u64 = 1;
+pub const ERROR_TYPE_ID: u64 = 2;
+pub const BOOL_TYPE_ID: u64 = 3;
+pub const CHAR_TYPE_ID: u64 = 4;
+pub const STR_TYPE_ID: u64 = 5;
+pub const INT_LITERAL_TYPE_ID: u64 = 6;
+pub const FLOAT_LITERAL_TYPE_ID: u64 = 7;
+pub const I32_TYPE_ID: u64 = 8;
+pub const U64_TYPE_ID: u64 = 9;
+pub const F64_TYPE_ID: u64 = 10;
+pub const I8_TYPE_ID: u64 = 11;
+pub const I16_TYPE_ID: u64 = 12;
+pub const I64_TYPE_ID: u64 = 13;
+pub const U8_TYPE_ID: u64 = 14;
+pub const U16_TYPE_ID: u64 = 15;
+pub const U32_TYPE_ID: u64 = 16;
+pub const F16_TYPE_ID: u64 = 17;
+pub const F32_TYPE_ID: u64 = 18;
+pub const C_CHAR_TYPE_ID: u64 = 19;
+pub const C_INT_TYPE_ID: u64 = 20;
+pub const C_UINT_TYPE_ID: u64 = 21;
+pub const C_SIZE_TYPE_ID: u64 = 22;
+
 pub struct TypeStore {
     values: Arena<TypeData>,
     definitions: Arena<TypeDefinition>,
@@ -20,7 +45,36 @@ pub struct TypeStore {
 
 impl TypeStore {
     static pub fn new() -> Self {
-        Self(Arena<TypeData>.new(), Arena<TypeDefinition>.new(), HashMap<TypeKey, TypeId>.new())
+        let types = Self(Arena<TypeData>.new(), Arena<TypeDefinition>.new(), HashMap<TypeKey, TypeId>.new());
+        // Builtin records occupy the fixed 0..22 prefix; later types allocate from 23 onwards.
+        types.register_builtin(TypeData.Void);
+        types.register_builtin(TypeData.Never);
+        types.register_builtin(TypeData.Error);
+        types.register_builtin(TypeData.Bool);
+        types.register_builtin(TypeData.Char);
+        types.register_builtin(TypeData.Str);
+        types.register_builtin(TypeData.IntLiteral);
+        types.register_builtin(TypeData.FloatLiteral);
+        types.register_builtin(TypeData.Integer(32, true));
+        types.register_builtin(TypeData.Integer(64, false));
+        types.register_builtin(TypeData.Float(64));
+        types.register_builtin(TypeData.Integer(8, true));
+        types.register_builtin(TypeData.Integer(16, true));
+        types.register_builtin(TypeData.Integer(64, true));
+        types.register_builtin(TypeData.Integer(8, false));
+        types.register_builtin(TypeData.Integer(16, false));
+        types.register_builtin(TypeData.Integer(32, false));
+        types.register_builtin(TypeData.Float(16));
+        types.register_builtin(TypeData.Float(32));
+        types.register_builtin(TypeData.CScalar(CScalarKind.Char));
+        types.register_builtin(TypeData.CScalar(CScalarKind.Int));
+        types.register_builtin(TypeData.CScalar(CScalarKind.UInt));
+        types.register_builtin(TypeData.CScalar(CScalarKind.Size));
+        types
+    }
+
+    fn register_builtin(data: TypeData) {
+        self.primitive(data).unwrap();
     }
 
     pub fn len() -> u64 {
@@ -68,14 +122,7 @@ impl TypeStore {
 
                 TypeKey.Integer(*bits, *signed)
             },
-            CScalar(bits, signed, name) => {
-                if *bits != 8 && *bits != 16 && *bits != 32 && *bits != 64 {
-                    data.drop();
-                    return Result<TypeId, AnalysisError>.Err(AnalysisError.internal("unsupported scalar width"));
-                }
-
-                TypeKey.CScalar(*bits, *signed, *name)
-            },
+            CScalar(kind) => TypeKey.CScalar(*kind),
             Float(bits) => {
                 if *bits != 16 && *bits != 32 && *bits != 64 {
                     data.drop();

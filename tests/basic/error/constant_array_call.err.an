@@ -1,0 +1,9 @@
+// Expected compilation error: a runtime call is not a compile-time array element
+fn runtime_value() -> i32 {
+    1
+}
+
+const BAD: i32[0] = [runtime_value(); 0];
+
+fn main() {
+}

@@ -21,7 +21,7 @@ impl ExprChecker {
 
                 Result<TypeId, AnalysisError>.Ok(default_type(self.ctx, self.type_of(args[*index])))
             },
-            CallableReturnType => Result<TypeId, AnalysisError>.Ok(self.return_type),
+            CallableReturnType => self.required_return_type(span),
         }
     }
 

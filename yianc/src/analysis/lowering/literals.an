@@ -7,7 +7,8 @@ from yianc.analysis.constant.value import IntegerValue, IntegerWidth;
 from yianc.analysis.constant.integer import cast_integer, integer_fits;
 from yianc.analysis.constant.floating import round_float;
 from yianc.analysis.constant.definitions import evaluate_constant;
-from yianc.common.ids import HirId;
+from yianc.common.ids import HirId, TypeId;
+from yianc.analysis.ty.store import C_CHAR_TYPE_ID, C_INT_TYPE_ID, C_UINT_TYPE_ID, C_SIZE_TYPE_ID, BOOL_TYPE_ID, CHAR_TYPE_ID, F64_TYPE_ID, FLOAT_LITERAL_TYPE_ID, I32_TYPE_ID, INT_LITERAL_TYPE_ID, STR_TYPE_ID, U64_TYPE_ID;
 from yianc.common.location import SourceSpan;
 from yianc.frontend.ast.node import Literal;
 from yianc.frontend.source import Span;
@@ -18,7 +19,7 @@ from std.core.iter import Iterator, IntoIterator;
 impl ExprChecker {
     fn integer_literal(span: Span, magnitude: u64, negative: bool, suffix: IntSuffix) -> Result<HirId, AnalysisError> {
         let type_id = match &suffix {
-            Unsuffixed => self.ctx.primitives.integer_literal,
+            Unsuffixed => TypeId(INT_LITERAL_TYPE_ID),
             I8 => self.ctx.session.types.primitive(TypeData.Integer(8, true))?,
             I16 => self.ctx.session.types.primitive(TypeData.Integer(16, true))?,
             I32 => self.ctx.session.types.primitive(TypeData.Integer(32, true))?,
@@ -26,13 +27,13 @@ impl ExprChecker {
             U8 => self.ctx.session.types.primitive(TypeData.Integer(8, false))?,
             U16 => self.ctx.session.types.primitive(TypeData.Integer(16, false))?,
             U32 => self.ctx.session.types.primitive(TypeData.Integer(32, false))?,
-            U64 => self.ctx.primitives.unsigned,
-            Int => self.ctx.primitives.integer,
+            U64 => TypeId(U64_TYPE_ID),
+            Int => TypeId(I32_TYPE_ID),
             Uint => self.ctx.session.types.primitive(TypeData.Integer(32, false))?,
         };
         let integer = IntegerValue.untyped(magnitude, negative);
 
-        if type_id != self.ctx.primitives.integer_literal {
+        if type_id != TypeId(INT_LITERAL_TYPE_ID) {
             match self.ctx.session.types.require(type_id)? {
                 Integer(bits, signed) => {
                     if !integer_fits(integer, *bits, *signed) {
@@ -53,11 +54,11 @@ impl ExprChecker {
             Integer(value) => return self.integer_literal(span, value.data.value, value.data.negative, value.data.suffix),
             Float(value) => {
                 let type_id = match &value.data.suffix {
-                    Unsuffixed => self.ctx.primitives.float_literal,
+                    Unsuffixed => TypeId(FLOAT_LITERAL_TYPE_ID),
                     F16 => self.ctx.session.types.primitive(TypeData.Float(16))?,
                     F32 => self.ctx.session.types.primitive(TypeData.Float(32))?,
-                    F64 => self.ctx.primitives.float,
-                    Float => self.ctx.primitives.float,
+                    F64 => TypeId(F64_TYPE_ID),
+                    Float => TypeId(F64_TYPE_ID),
                 };
                 let number = match self.ctx.session.types.require(type_id)? {
                     Float(bits) => round_float(value.data.value, *bits),
@@ -65,10 +66,10 @@ impl ExprChecker {
                 };
                 self.node(span, type_id, false, HirKind.FloatLiteral(number))
             },
-            Boolean(value) => self.node(span, self.ctx.primitives.boolean, false, HirKind.BoolLiteral(value.data.value)),
+            Boolean(value) => self.node(span, TypeId(BOOL_TYPE_ID), false, HirKind.BoolLiteral(value.data.value)),
             StringLiteral(value) => {
                 let interned = self.ctx.session.names.intern(value.data.value.as_str());
-                self.node(span, self.ctx.primitives.string, false, HirKind.StrLiteral(interned))
+                self.node(span, TypeId(STR_TYPE_ID), false, HirKind.StrLiteral(interned))
             },
             Character(value) => {
                 let chars = value.data.value.as_str().chars();
@@ -76,7 +77,7 @@ impl ExprChecker {
                     Some(value) => value,
                     None => return Result<HirId, AnalysisError>.Err(self.error(span, "empty character literal")),
                 };
-                self.node(span, self.ctx.primitives.character, false, HirKind.CharLiteral(u32(character)))
+                self.node(span, TypeId(CHAR_TYPE_ID), false, HirKind.CharLiteral(u32(character)))
             },
         };
 
@@ -89,16 +90,15 @@ impl ExprChecker {
                 return Result<HirId, AnalysisError>.Err(self.error(span, "extern C function calls require an ffi fn"));
             }
 
-            let width = if name == "c_char" {
-                8u32
+            let type_id = if name == "c_char" {
+                TypeId(C_CHAR_TYPE_ID)
             } elif name == "c_size" {
-                64u32
+                TypeId(C_SIZE_TYPE_ID)
+            } elif name == "c_uint" {
+                TypeId(C_UINT_TYPE_ID)
             } else {
-                32u32
+                TypeId(C_INT_TYPE_ID)
             };
-            let signed = name != "c_uint" && name != "c_size";
-            let interned = self.ctx.session.names.intern(name);
-            let type_id = self.ctx.session.types.primitive(TypeData.CScalar(width, signed, interned))?;
             return Result<HirId, AnalysisError>.Ok(self.node(span, type_id, false, HirKind.Ty));
         }
 
@@ -123,7 +123,7 @@ impl ExprChecker {
             Type => {
                 match self.ctx.session.types.require(type_id)? {
                     LiteralValue(bits, negative, value_type) => {
-                        if *value_type == self.ctx.primitives.boolean {
+                        if *value_type == TypeId(BOOL_TYPE_ID) {
                             return Result<HirId, AnalysisError>.Ok(self.node(span, *value_type, false, HirKind.BoolLiteral(*bits != 0)));
                         }
 
@@ -149,7 +149,7 @@ impl ExprChecker {
                 }
                 Result<HirId, AnalysisError>.Ok(self.node(span, type_id, false, HirKind.Ty))
             },
-            Constant => evaluate_constant(self.ctx, symbol, self.sizes),
+            Constant => evaluate_constant(self.ctx, symbol),
             Module => Result<HirId, AnalysisError>.Err(self.error(span, "module is not a value")),
         }
     }

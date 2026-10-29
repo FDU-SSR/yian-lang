@@ -221,7 +221,7 @@ fn displayable_type(types: TypeStore&, type_id: TypeId, depth: u64) -> bool {
         Integer(_, _) => true,
         Float(_) => true,
         Generic(_) => true,
-        CScalar(_, _, _) => true,
+        CScalar(_) => true,
         Opaque(_, _) => true,
         Closure(_, _, _, _, _, _) => true,
     }

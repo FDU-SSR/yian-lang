@@ -1,5 +1,6 @@
-from yianc.common.ids import TypeId, DefId, NameId;
+from yianc.common.ids import TypeId, DefId;
 from yianc.frontend.ast.operator import UnaryOperator, BinaryOperator;
+from yianc.analysis.ty.c_scalar import CScalarKind;
 from std.core.hash import Hash, Murmur3Hasher;
 from std.core.ops import PartialEq;
 
@@ -18,9 +19,7 @@ pub enum TypeKey {
         signed: bool
     },
     CScalar {
-        bits: u32,
-        signed: bool,
-        name: NameId
+        kind: CScalarKind
     },
     Float {
         bits: u32
@@ -85,7 +84,7 @@ impl PartialEq<TypeKey> for TypeKey {
             (TypeKey.IntLiteral, TypeKey.IntLiteral) => true,
             (TypeKey.FloatLiteral, TypeKey.FloatLiteral) => true,
             (TypeKey.Integer(bits, signed), TypeKey.Integer(other_bits, other_signed)) => *bits == *other_bits && *signed == *other_signed,
-            (TypeKey.CScalar(bits, signed, name), TypeKey.CScalar(other_bits, other_signed, other_name)) => *bits == *other_bits && *signed == *other_signed && *name == *other_name,
+            (TypeKey.CScalar(kind), TypeKey.CScalar(other_kind)) => *kind == *other_kind,
             (TypeKey.Float(bits), TypeKey.Float(other_bits)) => *bits == *other_bits,
             (TypeKey.SelfType(trait_id), TypeKey.SelfType(other_trait_id)) => *trait_id == *other_trait_id,
             (TypeKey.Pointer(pointee), TypeKey.Pointer(other_pointee)) => *pointee == *other_pointee,
@@ -137,11 +136,9 @@ impl Hash<Murmur3Hasher> for TypeKey {
                 bits.hash(hasher);
                 signed.hash(hasher);
             },
-            CScalar(bits, signed, name) => {
+            CScalar(kind) => {
                 9u32.hash(hasher);
-                bits.hash(hasher);
-                signed.hash(hasher);
-                name.hash(hasher);
+                kind.hash(hasher);
             },
             Float(bits) => {
                 10u32.hash(hasher);

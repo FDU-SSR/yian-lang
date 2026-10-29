@@ -1,10 +1,9 @@
 from yianc.common.ids import TypeId, HirId;
 from yianc.common.location import SourceSpan;
 from yianc.analysis.constant.floating import round_float, float_binary, integer_float, float_integer, is_nan;
-from yianc.analysis.constant.integer import normalized, cast_integer, integer_unary, integer_binary, compare;
+from yianc.analysis.constant.integer import checked_cast_integer, checked_untyped, integer_unary, integer_binary, compare;
 from yianc.analysis.constant.value import ConstValue, IntegerValue, IntegerWidth, ConstEvalError;
-from yianc.analysis.constant.big_integer import BigInteger;
-from yianc.analysis.hir.node import HirNode, Builtin, Binary;
+from yianc.analysis.hir.node import HirNode, HirKind, Builtin, Binary, Array as HirArray, ArrayRepeat as HirArrayRepeat, ArrayAccess;
 from yianc.analysis.hir.store import HirStore;
 from yianc.analysis.ty.store import TypeStore;
 from yianc.diagnostics.model import DiagnosticCode, AnalysisError, AnalysisErrorKind;
@@ -57,6 +56,9 @@ impl ConstantEvaluator {
                 self.unary(unary.op, operand, type_id, location)?
             },
             Binary(binary) => self.evaluate_binary(binary, type_id, location)?,
+            Array(value) => self.array_value(value)?,
+            ArrayRepeat(value) => self.repeat_value(value, type_id, location)?,
+            ArrayAccess(value) => self.index_value(value, location)?,
             _ => return self.literal(node),
         };
 
@@ -70,13 +72,100 @@ impl ConstantEvaluator {
             BoolLiteral(value) => ConstValue.Bool(*value),
             IntLiteral(value) => self.convert(ConstValue.Integer(*value), type_id, location)?,
             FloatLiteral(value) => ConstValue.Float(round_float(*value, self.float_width(type_id)?)),
-            CharLiteral(value) => ConstValue.Char(*value),
+            CharLiteral(value) => {
+                if *value > 0x10FFFF || (*value >= 0xD800 && *value <= 0xDFFF) {
+                    return Result<TypedConstant, AnalysisError>.Err(failed(ConstEvalError.InvalidCast, location));
+                }
+
+                ConstValue.Char(char(*value))
+            },
             StrLiteral(value) => ConstValue.String(*value),
             Ty => return self.type_literal(type_id, location),
             _ => return Result<TypedConstant, AnalysisError>.Err(failed(ConstEvalError.NotConstant, location)),
         };
 
         Result<TypedConstant, AnalysisError>.Ok(TypedConstant(value, type_id))
+    }
+
+    fn array_value(value: HirArray&) -> Result<ConstValue, AnalysisError> {
+        let elements = Vec<ConstValue>.new();
+
+        for id in value.elements {
+            match self.evaluate(*id) {
+                Ok(constant) => elements.push(constant.value),
+                Err(problem) => {
+                    elements.drop();
+                    return Result<ConstValue, AnalysisError>.Err(problem);
+                },
+            }
+        }
+
+        Result<ConstValue, AnalysisError>.Ok(ConstValue.Array(elements))
+    }
+
+    fn repeat_value(value: HirArrayRepeat&, type_id: TypeId, location: SourceSpan) -> Result<ConstValue, AnalysisError> {
+        let element_value = self.evaluate(value.element)?.value;
+        let transferred = false;
+        defer { if !transferred { element_value.drop(); } };
+        let length_type = match self.types.require(type_id)? {
+            Array(_, count) => *count,
+            _ => return Result<ConstValue, AnalysisError>.Err(AnalysisError.internal("repeat constant has no array type")),
+        };
+        let length = self.array_length(length_type, location)?;
+        let element = dyn element_value;
+        transferred = true;
+        Result<ConstValue, AnalysisError>.Ok(ConstValue.ArrayRepeat(element, length))
+    }
+
+    fn index_value(value: ArrayAccess&, location: SourceSpan) -> Result<ConstValue, AnalysisError> {
+        let base = self.evaluate(value.array)?.value;
+        defer base.drop();
+        let index_constant = self.evaluate(value.index)?.value;
+        defer index_constant.drop();
+        let index = match &index_constant {
+            Integer(number) => {
+                if number.is_negative() {
+                    return Result<ConstValue, AnalysisError>.Err(not_constant(location, "constant array index cannot be negative"));
+                }
+
+                number.raw_bits()
+            },
+            _ => return Result<ConstValue, AnalysisError>.Err(failed(ConstEvalError.InvalidOperator, location)),
+        };
+
+        if index >= value.length {
+            return Result<ConstValue, AnalysisError>.Err(AnalysisError.user(DiagnosticCode.Constant,
+                Option<SourceSpan>.Some(location), "constant array index is out of bounds"));
+        }
+
+        match &base {
+            Array(elements) => {
+                let selected = elements[index].clone();
+                Result<ConstValue, AnalysisError>.Ok(selected)
+            },
+            ArrayRepeat(element, _) => {
+                let pointer = *element;
+                Result<ConstValue, AnalysisError>.Ok(pointer.clone())
+            },
+            _ => Result<ConstValue, AnalysisError>.Err(AnalysisError.internal("array access base is not an array")),
+        }
+    }
+
+    fn array_length(length_type: TypeId, location: SourceSpan) -> Result<u64, AnalysisError> {
+        let literal = self.types.require(length_type)?;
+
+        match literal {
+            LiteralValue(value, negative, _) => {
+                let is_negative = *negative;
+
+                if is_negative {
+                    return Result<u64, AnalysisError>.Err(not_constant(location, "array length must be non-negative"));
+                }
+
+                Result<u64, AnalysisError>.Ok(*value)
+            },
+            _ => Result<u64, AnalysisError>.Err(AnalysisError.internal("array length is not a literal value")),
+        }
     }
 
     fn type_literal(type_id: TypeId, location: SourceSpan) -> Result<TypedConstant, AnalysisError> {
@@ -113,14 +202,6 @@ impl ConstantEvaluator {
     pub fn unary(op: UnaryOperator, operand: ConstValue, type_id: TypeId, location: SourceSpan) -> Result<ConstValue, AnalysisError> {
         defer operand.drop();
         let value = match &operand {
-            LargeInteger(integer) => {
-                let result = match op {
-                    Neg => integer.negated(),
-                    BitNot => integer.inverted(),
-                    _ => return Result<ConstValue, AnalysisError>.Err(failed(ConstEvalError.InvalidOperator, location)),
-                };
-                return self.convert(ConstValue.LargeInteger(result), type_id, location);
-            },
             Integer(integer) => {
                 let result = match integer_unary(op, *integer) {
                     Ok(value) => value,
@@ -210,40 +291,63 @@ impl ConstantEvaluator {
     pub fn convert(value: ConstValue, target: TypeId, location: SourceSpan) -> Result<ConstValue, AnalysisError> {
         defer value.drop();
         let ty = self.types.require(target)?;
+        let integer_target = match ty {
+            Integer(bits, signed) => Option<(u32, bool)>.Some((*bits, *signed)),
+            CScalar(kind) => Option<(u32, bool)>.Some((kind.bits(), kind.is_signed())),
+            _ => Option<(u32, bool)>.None,
+        };
+
+        if let Some((bits, signed)) = integer_target {
+            let width = match IntegerWidth.from_bits(bits) {
+                Ok(value) => value,
+                Err(error) => return Result<ConstValue, AnalysisError>.Err(failed(error, location))
+            };
+
+            let integer: IntegerValue;
+
+            match &value {
+                Integer(v) => integer = match checked_cast_integer(*v, width, signed) {
+                    Ok(value) => value,
+                    Err(error) => return Result<ConstValue, AnalysisError>.Err(failed(error, location)),
+                },
+                Char(v) => integer = match checked_cast_integer(IntegerValue.untyped(u64(u32(*v)), false), width, signed) {
+                    Ok(value) => value,
+                    Err(error) => return Result<ConstValue, AnalysisError>.Err(failed(error, location)),
+                },
+                Bool(_) => return Result<ConstValue, AnalysisError>.Err(not_constant(location, "cannot convert bool to an integer")),
+                Float(v) => integer = match float_integer(*v, width, signed) {
+                    Ok(value) => value,
+                    Err(error) => {
+                        if error == ConstEvalError.Overflow {
+                            return Result<ConstValue, AnalysisError>.Err(failed(ConstEvalError.Overflow, location));
+                        }
+                        return Result<ConstValue, AnalysisError>.Err(not_constant(location, "non-finite float cannot be cast to an integer"));
+                    },
+                },
+                _ => return Result<ConstValue, AnalysisError>.Err(failed(ConstEvalError.InvalidCast, location)),
+            }
+
+            return Result<ConstValue, AnalysisError>.Ok(ConstValue.Integer(integer));
+        }
 
         match ty {
-            Integer(bits, signed) | CScalar(bits, signed, _) => {
-                let width = match IntegerWidth.from_bits(*bits) {
-                    Ok(value) => value,
-                    Err(error) => return Result<ConstValue, AnalysisError>.Err(failed(error, location))
-                };
-
-                let integer: IntegerValue;
-
-                match &value {
-                    Integer(v) => integer = cast_integer(*v, width, *signed),
-                    LargeInteger(v) => integer = normalized(v.low_bits(), width, *signed),
-                    Char(v) => integer = normalized(u64(*v), width, *signed),
-                    Bool(_) => return Result<ConstValue, AnalysisError>.Err(not_constant(location, "cannot convert bool to an integer")),
-                    Float(v) => integer = match float_integer(*v, width, *signed) {
-                        Ok(value) => value,
-                        Err(_) => return Result<ConstValue, AnalysisError>.Err(not_constant(location, "non-finite float cannot be cast to an integer"))
-                    },
-                    _ => return Result<ConstValue, AnalysisError>.Err(failed(ConstEvalError.InvalidCast, location)),
-                }
-
-                Result<ConstValue, AnalysisError>.Ok(ConstValue.Integer(integer))
-            },
             IntLiteral => match &value {
-                Integer(v) => Result<ConstValue, AnalysisError>.Ok(ConstValue.LargeInteger(BigInteger.from_small(*v))),
-                LargeInteger(v) => Result<ConstValue, AnalysisError>.Ok(ConstValue.LargeInteger(v.clone())),
+                Integer(v) => {
+                    if v.is_untyped() {
+                        match checked_untyped(v.raw_bits(), v.is_negative()) {
+                            Ok(checked) => Result<ConstValue, AnalysisError>.Ok(ConstValue.Integer(checked)),
+                            Err(error) => Result<ConstValue, AnalysisError>.Err(failed(error, location)),
+                        }
+                    } else {
+                        Result<ConstValue, AnalysisError>.Err(failed(ConstEvalError.InvalidCast, location))
+                    }
+                },
                 _ => Result<ConstValue, AnalysisError>.Err(failed(ConstEvalError.InvalidCast, location))
             },
             Float(_) | FloatLiteral => {
                 let number = match &value {
                     Float(v) => *v,
                     Integer(v) => integer_float(*v),
-                    LargeInteger(v) => v.to_float(),
                     _ => return Result<ConstValue, AnalysisError>.Err(not_constant(location, "float cast requires a numeric value"))
                 };
 
@@ -255,9 +359,11 @@ impl ConstantEvaluator {
             },
             Char => {
                 let code = match &value {
-                    Integer(v) => u32(cast_integer(*v, IntegerWidth.W32, false).raw_bits()),
-                    LargeInteger(v) => u32(v.low_bits()),
-                    Char(v) => *v,
+                    Integer(v) => match checked_cast_integer(*v, IntegerWidth.W32, false) {
+                        Ok(value) => u32(value.raw_bits()),
+                        Err(error) => return Result<ConstValue, AnalysisError>.Err(failed(error, location)),
+                    },
+                    Char(v) => u32(*v),
                     Bool(v) => if *v { 1u32 } else { 0u32 },
                     _ => return Result<ConstValue, AnalysisError>.Err(failed(ConstEvalError.InvalidCast, location))
                 };
@@ -266,7 +372,7 @@ impl ConstantEvaluator {
                     return Result<ConstValue, AnalysisError>.Err(failed(ConstEvalError.InvalidCast, location));
                 }
 
-                Result<ConstValue, AnalysisError>.Ok(ConstValue.Char(code))
+                Result<ConstValue, AnalysisError>.Ok(ConstValue.Char(char(code)))
             },
             _ => Result<ConstValue, AnalysisError>.Err(failed(ConstEvalError.InvalidCast, location)),
         }
@@ -276,18 +382,6 @@ impl ConstantEvaluator {
         defer left.drop();
         defer right.drop();
         let ordered = op == BinaryOperator.Eq || op == BinaryOperator.Neq || op == BinaryOperator.Lt || op == BinaryOperator.Gt || op == BinaryOperator.Leq || op == BinaryOperator.Geq;
-        if is_integer_value(&left) && is_integer_value(&right) && (is_large(&left) || is_large(&right)) {
-            let a = large_copy(&left);
-            defer a.drop();
-            let b = large_copy(&right);
-            defer b.drop();
-            if ordered { return Result<ConstValue, AnalysisError>.Ok(ConstValue.Bool(compare_result(op, a.compare(&b)))); }
-            let result = match a.binary(op, &b) {
-                Ok(value) => value,
-                Err(error) => return Result<ConstValue, AnalysisError>.Err(failed(error, location)),
-            };
-            return self.convert(ConstValue.LargeInteger(result), type_id, location);
-        }
         let operands = (left, right);
 
         match &operands {
@@ -352,22 +446,6 @@ impl ConstantEvaluator {
             },
             _ => Result<ConstValue, AnalysisError>.Err(failed(ConstEvalError.InvalidOperator, location)),
         }
-    }
-}
-
-fn is_integer_value(value: ConstValue&) -> bool {
-    match value { Integer(_) | LargeInteger(_) => true, _ => false, }
-}
-
-fn is_large(value: ConstValue&) -> bool {
-    match value { LargeInteger(_) => true, _ => false, }
-}
-
-fn large_copy(value: ConstValue&) -> BigInteger {
-    match value {
-        LargeInteger(integer) => integer.clone(),
-        Integer(integer) => BigInteger.from_small(*integer),
-        _ => @panic("constant operand is not an integer"),
     }
 }
 

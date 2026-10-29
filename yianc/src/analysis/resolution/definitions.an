@@ -13,6 +13,7 @@ from yianc.diagnostics.model import DiagnosticCode, AnalysisError, AnalysisError
 from yianc.frontend.source import Span;
 from std.collections.hash_map import HashMap;
 from std.core.iter import Iterator, IntoIterator;
+from yianc.analysis.ty.store import ERROR_TYPE_ID, VOID_TYPE_ID;
 
 pub fn parameters(ctx: ResolutionContext&, unit: UnitId, scope: ScopeId, syntax: Vec<SyntaxParameter>&) -> Result<Vec<Parameter>, AnalysisError> {
     let result = Vec<Parameter>.new();
@@ -36,7 +37,7 @@ pub fn parameters(ctx: ResolutionContext&, unit: UnitId, scope: ScopeId, syntax:
 
                 let type_id = resolve_type(ctx, unit, scope, value.data.var_type)?;
 
-                if type_id == ctx.primitives.error {
+                if type_id == TypeId(ERROR_TYPE_ID) {
                     return Result<Vec<Parameter>, AnalysisError>.Err(ctx.error(unit, value.span, DiagnosticCode.Type, "parameter type cannot be inferred"));
                 }
 
@@ -115,7 +116,7 @@ fn resolve_one_definition(ctx: ResolutionContext&, index: u64) -> Result<(), Ana
         FuncDef(attrs, _, _, params, ret_type, body) => {
             let result = match ret_type {
                 Some(syntax) => resolve_type(ctx, unit, scope, *syntax)?,
-                None => ctx.primitives.void,
+                None => TypeId(VOID_TYPE_ID),
             };
             let params = parameters(ctx, unit, scope, params)?;
             let definition = *declaration.definition.unwrap();
@@ -261,7 +262,7 @@ fn resolve_one_definition(ctx: ResolutionContext&, index: u64) -> Result<(), Ana
 
                     let result = match &function.data.ret_type {
                         Some(value) => resolve_type(ctx, unit, scope, *value)?,
-                        None => ctx.primitives.void,
+                        None => TypeId(VOID_TYPE_ID),
                     };
                     accepted = true;
                     ctx.session.types.finish_definition(*declaration.definition.unwrap(), DefinitionBody.Function(CallableDefinition(values, result, Option<TypeId>.None, false, true, true, true, false, false, 0)))?;

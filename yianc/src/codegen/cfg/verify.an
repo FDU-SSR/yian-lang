@@ -1,8 +1,10 @@
 from yianc.codegen.cfg.dominance import Dominance, dominators;
-from yianc.codegen.cfg.ids import FunctionId, BlockId, ValueId;
+from yianc.codegen.cfg.ids import FunctionId, BlockId, ValueId, LocalId;
 from yianc.codegen.cfg.model import CfgModule, CfgFunction, Operation, ValueKind, Terminator, Instruction;
 from yianc.codegen.error import CodegenError;
 from yianc.codegen.types import BackendTypes;
+from yianc.codegen.cfg.type_contract import assert_cfg_type;
+from yianc.analysis.ty.store import INT_LITERAL_TYPE_ID, FLOAT_LITERAL_TYPE_ID;
 from yianc.analysis.ty.callable import store_signature;
 from yianc.analysis.ty.queries import struct_fields, enum_variants;
 from yianc.common.ids import TypeId;
@@ -535,15 +537,54 @@ fn field_type(types: BackendTypes&, aggregate: TypeId, field: u64) -> Result<Typ
 
 pub fn verify_cfg(module: CfgModule&, types: BackendTypes&) -> Result<(), CodegenError> {
     for index in 0u64..module.len() {
-        verify_function(*module.function(FunctionId(index)).unwrap(), types)?;
+        let function = *module.function(FunctionId(index)).unwrap();
+        assert_cfg_type(types.semantic_store(), function.callable);
+        assert_cfg_type(types.semantic_store(), function.result_type);
+
+        for parameter in function.parameters {
+            assert_cfg_type(types.semantic_store(), *parameter);
+        }
+
+        for value_index in 0u64..function.value_count() {
+            let value = function.value(ValueId(value_index))?;
+            assert_cfg_type(types.semantic_store(), value.type_id);
+        }
+
+        for local_index in 0u64..function.local_count() {
+            let local = function.local(LocalId(local_index))?;
+            assert_cfg_type(types.semantic_store(), local.type_id);
+        }
+
+        verify_function(function, types)?;
     }
     Result<(), CodegenError>.Ok(())
+}
+
+fn structural_literal(type_id: TypeId) {
+    if type_id.index == INT_LITERAL_TYPE_ID || type_id.index == FLOAT_LITERAL_TYPE_ID {
+        @panic("literal type reached CFG");
+    }
 }
 
 // Structural checks precede cleanup; SSA dominance applies to the retained graph.
 pub fn verify_structure(module: CfgModule&) -> Result<(), CodegenError> {
     for index in 0u64..module.len() {
         let function = *module.function(FunctionId(index)).unwrap();
+        structural_literal(function.callable);
+        structural_literal(function.result_type);
+
+        for parameter in function.parameters {
+            structural_literal(*parameter);
+        }
+
+        for value_index in 0u64..function.value_count() {
+            structural_literal(function.value(ValueId(value_index))?.type_id);
+        }
+
+        for local_index in 0u64..function.local_count() {
+            structural_literal(function.local(LocalId(local_index))?.type_id);
+        }
+
         if function.block_count() == 0u64 {
             return Result<(), CodegenError>.Err(CodegenError.invalid("CFG function has no entry block"));
         }

@@ -1,5 +1,6 @@
 from yianc.analysis.names import NameInterner;
 from yianc.analysis.ty.model import DefinitionHeader, NominalKind, TypeData;
+from yianc.analysis.ty.c_scalar import CScalarKind;
 from yianc.analysis.ty.store import TypeStore;
 from yianc.common.ids import SourceId, UnitId, TypeId;
 from yianc.common.location import SourceSpan;
@@ -85,7 +86,6 @@ fn main() {
     assert types.len() == before_reuse + 1u64:
     "only the deliberately changed nominal argument adds a type";
 
-    let c_int_name = names.intern("c_int");
-    let c_int_type = *types.primitive(TypeData.CScalar(32u32, true, c_int_name)).unwrap();
+    let c_int_type = *types.primitive(TypeData.CScalar(CScalarKind.Int)).unwrap();
     assert c_int_type != i32_type: "C ABI integer identity is distinct from language i32";
 }

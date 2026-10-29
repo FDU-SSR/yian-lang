@@ -4,6 +4,7 @@ from yianc.analysis.ty.callable import store_signature;
 from yianc.codegen.types import BackendTypes;
 from yianc.codegen.cfg.ids import FunctionId, BlockId, ValueId, LocalId;
 from yianc.codegen.cfg.model import CfgModule, CfgFunction, ValueKind, Operation, Terminator;
+from yianc.codegen.cfg.type_contract import assert_cfg_type;
 from yianc.codegen.error import CodegenError;
 from yianc.common.ids import HirId, TypeId, SymbolId;
 from yianc.common.location import SourceSpan;
@@ -53,10 +54,12 @@ impl Lowering {
     }
 
     pub fn zero(type_id: TypeId) -> ValueId {
+        assert_cfg_type(&self.session.types, type_id);
         self.function.add_value(type_id, ValueKind.Zero)
     }
 
     pub fn emit(span: SourceSpan, type_id: TypeId, operation: Operation) -> Result<ValueId, CodegenError> {
+        assert_cfg_type(&self.session.types, type_id);
         let block = match self.current {
             Some(value) => value,
             None => {
@@ -99,6 +102,7 @@ impl Lowering {
             Some(value) => value,
             None => return Result<LocalId, CodegenError>.Err(CodegenError.invalid("invalid lowered symbol")),
         };
+        assert_cfg_type(&self.session.types, record.type_id);
         let local = self.function.add_local(record.type_id);
         self.locals.insert(symbol, local);
         Result<LocalId, CodegenError>.Ok(local)
@@ -228,6 +232,13 @@ pub fn lower_module(session: AnalysisSession&, types: BackendTypes&, output: Ana
         for index in start..body.parameters.len() {
             parameters.push(session.symbols.get(body.parameters[index]).unwrap().type_id);
         }
+        assert_cfg_type(&session.types, callable);
+        assert_cfg_type(&session.types, signature.result);
+
+        for parameter in parameters {
+            assert_cfg_type(&session.types, *parameter);
+        }
+
         let function = CfgFunction.new(callable, signature.result, parameters);
         let owns_function = true;
         defer { if owns_function { function.drop(); } };

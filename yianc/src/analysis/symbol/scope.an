@@ -1,4 +1,4 @@
-from yianc.common.ids import NameId, SymbolId, ScopeId;
+from yianc.common.ids import NameId, SymbolId, ScopeId, TypeId;
 from yianc.analysis.symbol.model import Symbol, SymbolKind;
 from std.collections.hash_set import HashSet;
 from yianc.diagnostics.model import AnalysisError;
@@ -7,15 +7,25 @@ from std.collections.hash_map import HashMap;
 from std.core.iter import Iterator, IntoIterator;
 from std.core.ops import Index;
 
+// The callable role is metadata on the function-body root, not a user-visible symbol.
+enum ScopeKind {
+    Lexical,
+    Callable { result: TypeId }
+}
+
 pub struct Scope {
     parent: Option<ScopeId>,
     names: HashMap<NameId, SymbolId>,
-    ordered_names: Vec<NameId>,
+    kind: ScopeKind,
 }
 
 impl Scope {
     static fn new(parent: Option<ScopeId>) -> Self {
-        Self(parent, HashMap<NameId, SymbolId>.new(), Vec<NameId>.new())
+        Self(parent, HashMap<NameId, SymbolId>.new(), ScopeKind.Lexical)
+    }
+
+    static fn callable(parent: Option<ScopeId>, result: TypeId) -> Self {
+        Self(parent, HashMap<NameId, SymbolId>.new(), ScopeKind.Callable(result))
     }
 
     pub fn get(name: NameId) -> Option<SymbolId> {
@@ -31,7 +41,6 @@ impl Scope {
         }
 
         self.names.insert(name, symbol);
-        self.ordered_names.push(name);
         true
     }
 }
@@ -39,7 +48,6 @@ impl Scope {
 impl Drop for Scope {
     pub fn drop() {
         self.names.drop();
-        self.ordered_names.drop();
     }
 }
 
@@ -91,6 +99,39 @@ impl SymbolStore {
         Result<ScopeId, AnalysisError>.Ok(self.add_scope(Scope.new(parent)))
     }
 
+    // The concrete result belongs to this function-body root; declaration scopes stay lexical.
+    pub fn create_callable_scope(parent: ScopeId, result: TypeId) -> Result<ScopeId, AnalysisError> {
+        if self.scope(parent).is_none() {
+            return Result<ScopeId, AnalysisError>.Err(AnalysisError.internal("invalid parent scope"));
+        }
+
+        Result<ScopeId, AnalysisError>.Ok(self.add_scope(Scope.callable(Option<ScopeId>.Some(parent), result)))
+    }
+
+    // None means the scope is outside any callable; void functions report Some(void).
+    pub fn return_type(scope: ScopeId) -> Result<Option<TypeId>, AnalysisError> {
+        let current = Option<ScopeId>.Some(scope);
+
+        while current.is_some() {
+            let id = *current.unwrap();
+
+            if id.index >= self.scopes.len() {
+                return Result<Option<TypeId>, AnalysisError>.Err(AnalysisError.internal("invalid scope ID"));
+            }
+
+            let record = *self.scopes.get(id.index).unwrap();
+
+            match record.kind {
+                Callable(result) => return Result<Option<TypeId>, AnalysisError>.Ok(Option<TypeId>.Some(result)),
+                Lexical => {},
+            }
+
+            current = record.parent;
+        }
+
+        Result<Option<TypeId>, AnalysisError>.Ok(Option<TypeId>.None)
+    }
+
     pub fn bind(scope: ScopeId, name: NameId, symbol: SymbolId) -> Result<bool, AnalysisError> {
         if self.get(symbol).is_none() {
             return Result<bool, AnalysisError>.Err(AnalysisError.internal("invalid symbol ID"));
@@ -131,18 +172,32 @@ impl SymbolStore {
 
         while current.is_some() {
             let scope = *self.scope(*current.unwrap()).unwrap();
+            let names = Vec<NameId>.new();
+            defer names.drop();
+            let symbols = Vec<SymbolId>.new();
+            defer symbols.drop();
 
-            for name in scope.ordered_names {
-                if seen.contains(name) {
+            for entry in scope.names.entries() {
+                names.push(*entry[0]);
+                symbols.push(*entry[1]);
+            }
+
+            let index = 0u64;
+
+            while index < names.len() {
+                let name = names[index];
+                let symbol_id = symbols[index];
+                index += 1;
+
+                if seen.contains(&name) {
                     continue;
                 }
 
-                seen.insert(*name);
-                let symbol_id = scope.get(*name).unwrap();
-                let symbol = *self.get(*symbol_id).unwrap();
+                seen.insert(name);
+                let symbol = *self.get(symbol_id).unwrap();
 
                 if symbol.kind == SymbolKind.Type || symbol.kind == SymbolKind.Alias {
-                    self.bind(target, *name, *symbol_id)?;
+                    self.bind(target, name, symbol_id)?;
                 }
             }
 

@@ -4,10 +4,17 @@ from yianc.common.ids import TypeId, NameId;
 from yianc.common.location import SourceSpan;
 from yianc.frontend.ast.operator import BinaryOperator, UnaryOperator;
 from yianc.frontend.ast.atoms import BuiltinKind;
-from yianc.analysis.ty.store import TypeStore;
+from yianc.analysis.ty.store import TypeStore, INT_LITERAL_TYPE_ID, FLOAT_LITERAL_TYPE_ID;
 from std.collections.arena import Arena;
 from std.collections.hash_map import HashMap;
 from std.core.iter import Iterator, IntoIterator;
+
+// Direct placeholders are rejected without a store; nested graphs are checked at lowering boundaries.
+fn reject_literal(type_id: TypeId) {
+    if type_id.index == INT_LITERAL_TYPE_ID || type_id.index == FLOAT_LITERAL_TYPE_ID {
+        @panic("literal type reached CFG");
+    }
+}
 
 pub enum ValueKind {
     Integer { bits: u64 },
@@ -232,6 +239,13 @@ pub struct CfgFunction {
 impl CfgFunction {
     // Parameter storage transfers to the function.
     static pub fn new(callable: TypeId, result_type: TypeId, parameters: Vec<TypeId>) -> Self {
+        reject_literal(callable);
+        reject_literal(result_type);
+
+        for parameter in parameters {
+            reject_literal(*parameter);
+        }
+
         Self(callable, result_type, parameters, Arena<BasicBlock>.new(), Arena<Value>.new(), Arena<Local>.new())
     }
 
@@ -267,12 +281,14 @@ impl CfgFunction {
     }
 
     pub fn add_local(type_id: TypeId) -> LocalId {
+        reject_literal(type_id);
         let id = LocalId(self.locals.len());
         self.locals.alloc(Local(type_id));
         id
     }
 
     pub fn add_value(type_id: TypeId, kind: ValueKind) -> ValueId {
+        reject_literal(type_id);
         let id = ValueId(self.values.len());
         self.values.alloc(Value(type_id, kind));
         id
@@ -281,6 +297,10 @@ impl CfgFunction {
     // Operation ownership transfers on both success and failure.
     pub fn append(block: BlockId, span: SourceSpan, type_id: Option<TypeId>, operation: Operation)
     -> Result<Option<ValueId>, CodegenError> {
+        match type_id {
+            Some(value) => reject_literal(value),
+            None => {},
+        };
         let target = match self.block(block) {
             Ok(value) => value,
             Err(problem) => {

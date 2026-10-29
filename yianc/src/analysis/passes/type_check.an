@@ -122,7 +122,6 @@ fn check_one(ctx: ResolutionContext&, type_id: TypeId, options: AnalysisOptions&
         None => return Result<AnalyzedProcedure, AnalysisError>.Err(AnalysisError.internal("scheduled function has no body")),
     };
     let parent = *ctx.callable_scopes.get(&procedure.definition).unwrap();
-    let scope = ctx.session.symbols.create_scope(Option<ScopeId>.Some(*parent))?;
     let callable = signature(ctx, type_id)?;
     defer callable.drop();
     let location = ctx.span(procedure.unit, procedure.body.span);
@@ -131,7 +130,8 @@ fn check_one(ctx: ResolutionContext&, type_id: TypeId, options: AnalysisOptions&
         validate_concrete_value(ctx, parameter.type_id, location)?;
     }
 
-    let checker = ExprChecker.new(ctx, procedure.unit, scope, callable.result, options.sizes);
+    let scope = ctx.session.symbols.create_callable_scope(*parent, callable.result)?;
+    let checker = ExprChecker.new(ctx, procedure.unit, scope);
     defer checker.drop();
     checker.ffi_allowed = callable.is_ffi;
     let parameters = Vec<SymbolId>.new();

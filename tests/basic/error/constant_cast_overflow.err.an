@@ -1,0 +1,5 @@
+// Expected compilation error: an integer target conversion cannot truncate
+const BAD: u8 = u8(256u64);
+
+fn main() {
+}

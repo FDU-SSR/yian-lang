@@ -1,0 +1,5 @@
+// Expected compilation error: fixed-width constant arithmetic does not wrap
+const BAD: i32 = 2147483647i32 + 1i32;
+
+fn main() {
+}

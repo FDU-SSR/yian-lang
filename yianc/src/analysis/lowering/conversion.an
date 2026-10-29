@@ -1,17 +1,19 @@
 from yianc.analysis.lowering.checker import ExprChecker;
-from yianc.analysis.hir.node import HirKind, Binary, Unary, BitCast, Cast, Tuple, Array as HirArray, ArrayRepeat, Block, If, Match, MatchArm;
-from yianc.analysis.constant.value import IntegerWidth;
-from yianc.analysis.constant.integer import cast_integer;
+from yianc.analysis.hir.node import HirNode, HirKind, Binary, Unary, BitCast, Cast, Tuple, Array as HirArray, ArrayRepeat, Block, If, Match, MatchArm;
+from yianc.analysis.constant.value import IntegerValue, IntegerWidth;
+from yianc.analysis.constant.integer import cast_integer, integer_fits;
 from yianc.analysis.constant.floating import round_float, integer_float;
+from yianc.analysis.ty.model import TypeData;
 from yianc.analysis.ty.substitution import infer, substitute;
 from yianc.analysis.ty.callable import signature, schedule, instance_substitutions;
 from yianc.analysis.ty.relations import compatible, default_type;
 from yianc.analysis.ty.display import type_text;
 from yianc.common.ids import HirId, TypeId;
 from yianc.frontend.ast.operator import UnaryOperator, BinaryOperator;
-from yianc.diagnostics.model import AnalysisError;
+from yianc.diagnostics.model import DiagnosticCode, AnalysisError;
 from std.collections.hash_map import HashMap;
 from std.core.iter import Iterator, IntoIterator;
+from yianc.analysis.ty.store import FLOAT_LITERAL_TYPE_ID, INT_LITERAL_TYPE_ID;
 
 impl ExprChecker {
     pub fn match_argument(expected: TypeId, actual: TypeId, substitutions: HashMap<TypeId, TypeId>&) -> bool {
@@ -40,14 +42,10 @@ impl ExprChecker {
 
         match &node.kind {
             IntLiteral(integer) => {
-                if node.type_id == self.ctx.primitives.integer_literal {
+                if node.type_id == TypeId(INT_LITERAL_TYPE_ID) {
                     match target {
-                        Integer(bits, signed) | CScalar(bits, signed, _) => {
-                            // The lexer checks magnitudes and explicit suffixes. Contextual typing normalizes bits.
-                            let width = *IntegerWidth.from_bits(*bits).unwrap();
-                            let value = cast_integer(*integer, width, *signed);
-                            return Result<Option<HirId>, AnalysisError>.Ok(Option<HirId>.Some(self.node(node.span.span, expected, false, HirKind.IntLiteral(value))));
-                        },
+                        Integer(bits, signed) => return self.literal_cast(node, *integer, expected, *bits, *signed),
+                        CScalar(kind) => return self.literal_cast(node, *integer, expected, kind.bits(), kind.is_signed()),
                         Float(bits) => {
                             let value = integer_float(*integer);
                             let literal = self.node(node.span.span, expected, false, HirKind.FloatLiteral(round_float(value, *bits)));
@@ -63,7 +61,7 @@ impl ExprChecker {
                 }
             },
             FloatLiteral(value) => {
-                if node.type_id == self.ctx.primitives.float_literal {
+                if node.type_id == TypeId(FLOAT_LITERAL_TYPE_ID) {
                     match target {
                         Float(bits) => return Result<Option<HirId>, AnalysisError>.Ok(Option<HirId>.Some(self.node(node.span.span, expected, false, HirKind.FloatLiteral(round_float(*value, *bits))))),
                         _ => {},
@@ -73,7 +71,7 @@ impl ExprChecker {
             Binary(binary) => {
                 // Context types operands before arithmetic, so wrapping and rounding
                 // occur at each operation rather than only at an outer cast.
-                if (node.type_id == self.ctx.primitives.integer_literal || node.type_id == self.ctx.primitives.float_literal) && compatible(self.ctx, node.type_id, expected) {
+                if (node.type_id == TypeId(INT_LITERAL_TYPE_ID) || node.type_id == TypeId(FLOAT_LITERAL_TYPE_ID)) && compatible(self.ctx, node.type_id, expected) {
                     let left = self.coerce(binary.left, expected)?;
                     let right = self.coerce(binary.right, expected)?;
                     return Result<Option<HirId>, AnalysisError>.Ok(Option<HirId>.Some(self.node(node.span.span, expected, false, HirKind.Binary(Binary(binary.op, left, right)))));
@@ -136,7 +134,7 @@ impl ExprChecker {
                 }
             },
             Unary(unary) => {
-                if (node.type_id == self.ctx.primitives.integer_literal || node.type_id == self.ctx.primitives.float_literal) && compatible(self.ctx, node.type_id, expected) {
+                if (node.type_id == TypeId(INT_LITERAL_TYPE_ID) || node.type_id == TypeId(FLOAT_LITERAL_TYPE_ID)) && compatible(self.ctx, node.type_id, expected) {
                     let operand = self.coerce(unary.operand, expected)?;
                     return Result<Option<HirId>, AnalysisError>.Ok(Option<HirId>.Some(self.node(node.span.span, expected, false, HirKind.Unary(Unary(unary.op, operand)))));
                 }
@@ -293,6 +291,44 @@ impl ExprChecker {
         }
 
         Result<Option<HirId>, AnalysisError>.Ok(Option<HirId>.None)
+    }
+
+    // The literal keeps an exact carrier; the Cast records the checked conversion at the use boundary.
+    fn literal_cast(node: HirNode, integer: IntegerValue, expected: TypeId, bits: u32, signed: bool) -> Result<Option<HirId>, AnalysisError> {
+        let magnitude = integer.raw_bits();
+        let negative = integer.is_negative();
+        let carrier_bits = 32u32;
+        let carrier_signed = true;
+
+        if !negative {
+            if integer_fits(IntegerValue.untyped(magnitude, false), 32, true) {
+                carrier_bits = 32u32;
+            } elif integer_fits(IntegerValue.untyped(magnitude, false), 64, true) {
+                carrier_bits = 64u32;
+            } else {
+                carrier_bits = 64u32;
+                carrier_signed = false;
+            }
+        } else {
+            if integer_fits(IntegerValue.untyped(magnitude, true), 32, true) {
+                carrier_bits = 32u32;
+            } elif integer_fits(IntegerValue.untyped(magnitude, true), 64, true) {
+                carrier_bits = 64u32;
+            } else {
+                return Result<Option<HirId>, AnalysisError>.Err(self.ctx.error(self.unit, node.span.span, DiagnosticCode.Constant, "integer literal is out of the supported range"));
+            }
+        }
+
+        let carrier_type = self.ctx.session.types.primitive(TypeData.Integer(carrier_bits, carrier_signed))?;
+        let width = *IntegerWidth.from_bits(carrier_bits).unwrap();
+        let value = cast_integer(IntegerValue.untyped(magnitude, negative), width, carrier_signed);
+        let carrier = self.node(node.span.span, carrier_type, false, HirKind.IntLiteral(value));
+
+        if carrier_type == expected {
+            return Result<Option<HirId>, AnalysisError>.Ok(Option<HirId>.Some(carrier));
+        }
+
+        Result<Option<HirId>, AnalysisError>.Ok(Option<HirId>.Some(self.node(node.span.span, expected, false, HirKind.Cast(Cast(carrier, expected)))))
     }
 
     fn convert_function_address(id: HirId, expected: TypeId, parameters: Vec<TypeId>&, result: TypeId) -> Result<Option<HirId>, AnalysisError> {

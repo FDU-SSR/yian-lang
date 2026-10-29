@@ -1,0 +1,5 @@
+// Expected compilation error: an out-of-range intermediate value cannot be recovered later
+fn main() {
+    let x = comptime if ((18446744073709551615 + 1) - 18446744073709551615) > 0 { 1 } else { 0 };
+    assert x == 1;
+}

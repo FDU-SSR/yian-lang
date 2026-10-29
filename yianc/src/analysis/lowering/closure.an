@@ -14,6 +14,7 @@ from yianc.frontend.source import Span;
 from yianc.diagnostics.model import AnalysisError;
 from std.collections.hash_map import HashMap;
 from std.core.iter import Iterator, IntoIterator;
+from yianc.analysis.ty.store import VOID_TYPE_ID;
 
 impl ExprChecker {
     pub fn closure(span: Span, captures: Vec<CaptureItem&>&, syntax_parameters: Vec<SyntaxParameter>&, return_type: Option<TypeSyntax&>&, body: Block&) -> Result<HirId, AnalysisError> {
@@ -45,7 +46,7 @@ impl ExprChecker {
             }
         };
         let result = match return_type {
-            Some(value) => self.local_type(*value)?, None => self.ctx.primitives.void
+            Some(value) => self.local_type(*value)?, None => TypeId(VOID_TYPE_ID)
         };
         let scope = self.ctx.session.symbols.create_scope(Option<ScopeId>.Some(self.ctx.scopes[self.unit.index]))?;
         self.ctx.session.symbols.inherit_types(scope, self.scope)?;

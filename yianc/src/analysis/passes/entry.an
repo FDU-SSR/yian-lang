@@ -5,6 +5,7 @@ from yianc.common.ids import UnitId, TypeId;
 from yianc.common.location import SourceSpan;
 from yianc.diagnostics.model import AnalysisError, DiagnosticCode;
 from std.core.iter import Iterator, IntoIterator;
+from yianc.analysis.ty.store import VOID_TYPE_ID;
 
 fn failure(message: str) -> AnalysisError {
     AnalysisError.user(DiagnosticCode.Internal, Option<SourceSpan>.None, message)
@@ -39,7 +40,7 @@ fn register(ctx: ResolutionContext&, declaration: Declaration&) -> Result<Option
     let type_id = ctx.session.symbols.get(declaration.symbol).unwrap().type_id;
     match ctx.session.types.complete_definition(*declaration.definition.unwrap())? {
         Function(signature) => {
-            if signature.result != ctx.primitives.void {
+            if signature.result != TypeId(VOID_TYPE_ID) {
                 let name = type_text(ctx, signature.result);
                 defer name.drop();
                 let message = String.from(&"main must return void, not ");

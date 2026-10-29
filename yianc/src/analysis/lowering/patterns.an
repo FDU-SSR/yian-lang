@@ -16,6 +16,7 @@ from yianc.frontend.ast.operator import UnaryOperator, BinaryOperator;
 from yianc.diagnostics.model import AnalysisError, DiagnosticCode;
 from std.core.iter import Iterator, IntoIterator;
 from std.collections.hash_map import HashMap;
+from yianc.analysis.ty.store import ERROR_TYPE_ID, NEVER_TYPE_ID, STR_TYPE_ID, VOID_TYPE_ID;
 
 impl ExprChecker {
     fn bindings(id: PatternId, names: HashMap<NameId, SymbolId>&, replacements: Option<HashMap<SymbolId, SymbolId>&>) -> Result<(), AnalysisError> {
@@ -81,17 +82,16 @@ impl ExprChecker {
     fn range_endpoint(span: Span, literal: Literal, type_id: TypeId) -> Result<u64, AnalysisError> {
         let value = self.literal(span, &literal)?;
         let converted = self.coerce(value, type_id)?;
-        let evaluator = ConstantEvaluator.new(&self.ctx.session.types, &self.ctx.session.hir, self.sizes);
-        let constant = evaluator.evaluate(converted)?;
+        let constant = self.ctx.evaluator.evaluate(converted)?;
         defer constant.drop();
 
         match &constant.value {
             Integer(value) => match self.ctx.session.types.require(type_id)? {
                 Integer(bits, signed) => Result<u64, AnalysisError>.Ok(scalar_key(value.raw_bits(), *bits, *signed)),
-                CScalar(bits, signed, _) => Result<u64, AnalysisError>.Ok(scalar_key(value.raw_bits(), *bits, *signed)),
+                CScalar(kind) => Result<u64, AnalysisError>.Ok(scalar_key(value.raw_bits(), kind.bits(), kind.is_signed())),
                 _ => Result<u64, AnalysisError>.Err(self.error(span, "range requires an integer or character type")),
             },
-            Char(value) => Result<u64, AnalysisError>.Ok(u64(*value)),
+            Char(value) => Result<u64, AnalysisError>.Ok(u64(u32(*value))),
             _ => Result<u64, AnalysisError>.Err(self.error(span, "range endpoint must be an integer or character")),
         }
     }
@@ -99,13 +99,13 @@ impl ExprChecker {
     pub fn pattern_binding(binding: SyntaxPatternLet&) -> Result<HirId, AnalysisError> {
         let value = self.expression(binding.data.init_expr)?;
         let annotation = self.local_type(binding.data.var_type)?;
-        let expected = if annotation == self.ctx.primitives.error {
+        let expected = if annotation == TypeId(ERROR_TYPE_ID) {
             self.type_of(value)
         } else {
             annotation
         };
 
-        if annotation == self.ctx.primitives.error && self.pattern_tests_value(binding.data.pattern) {
+        if annotation == TypeId(ERROR_TYPE_ID) && self.pattern_tests_value(binding.data.pattern) {
             match self.ctx.session.types.require(expected)? {
                 Pointer(inner) => {
                     let direct_address = match &self.ctx.session.hir.require(value)?.kind {
@@ -127,7 +127,7 @@ impl ExprChecker {
             Some(branch) => {
                 let body = self.block(*branch)?;
 
-                if self.type_of(body) != self.ctx.primitives.never {
+                if self.type_of(body) != TypeId(NEVER_TYPE_ID) {
                     return Result<HirId, AnalysisError>.Err(self.error(branch.span, "The else block of a pattern declaration must diverge"));
                 }
 
@@ -139,7 +139,7 @@ impl ExprChecker {
         self.parameter_binding = binding.data.is_parameter;
         defer self.parameter_binding = previous_binding;
         let pattern = self.pattern(binding.data.pattern, expected, false)?;
-        Result<HirId, AnalysisError>.Ok(self.node(binding.span, self.ctx.primitives.void, false,
+        Result<HirId, AnalysisError>.Ok(self.node(binding.span, TypeId(VOID_TYPE_ID), false,
             HirKind.PatternLet(PatternLet(value, pattern, otherwise, binding.data.is_parameter))))
     }
 
@@ -253,10 +253,9 @@ impl ExprChecker {
 
                 let value = self.literal(span, literal)?;
                 let converted = self.coerce(value, expected)?;
-                let evaluator = ConstantEvaluator.new(&self.ctx.session.types, &self.ctx.session.hir, self.sizes);
-                let constant = evaluator.evaluate(converted)?;
+                let constant = self.ctx.evaluator.evaluate(converted)?;
 
-                if expected == self.ctx.primitives.string {
+                if expected == TypeId(STR_TYPE_ID) {
                     let name = self.ctx.session.names.intern("%literal_pattern");
                     let symbol = self.ctx.session.symbols.add(Symbol(name, SymbolKind.Variable, expected, self.unit, Option<SourceSpan>.Some(self.ctx.span(self.unit, span)), false, false, false, Option<SymbolId>.None, Option<DefId>.None));
                     let actual = self.node(span, expected, true, HirKind.Var(symbol));

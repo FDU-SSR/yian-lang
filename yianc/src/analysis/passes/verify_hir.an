@@ -19,6 +19,7 @@ from yianc.diagnostics.model import AnalysisError;
 from std.collections.hash_set import HashSet;
 from std.core.iter import Iterator, IntoIterator;
 from std.num.f64 import to_bits;
+from yianc.analysis.ty.store import BOOL_TYPE_ID, CHAR_TYPE_ID, FLOAT_LITERAL_TYPE_ID, INT_LITERAL_TYPE_ID, NEVER_TYPE_ID, STR_TYPE_ID, VOID_TYPE_ID;
 
 fn invalid(span: SourceSpan, message: str) -> AnalysisError {
     AnalysisError.internal(message).with_location(span)
@@ -104,7 +105,7 @@ impl HirVerifier {
 
     fn value(id: HirId, expected: TypeId, span: SourceSpan) -> Result<(), AnalysisError> {
         let actual = self.node(id, span)?.type_id;
-        if actual != expected && actual != self.ctx.primitives.never {
+        if actual != expected && actual != TypeId(NEVER_TYPE_ID) {
             return Result<(), AnalysisError>.Err(invalid(span, "exported HIR value has an inconsistent type"));
         }
         Result<(), AnalysisError>.Ok(())
@@ -173,24 +174,25 @@ impl HirVerifier {
     fn check_literals(node: HirNode&) -> Result<(), AnalysisError> {
         match &node.kind {
             BoolLiteral(_) => {
-                if node.type_id != self.ctx.primitives.boolean || node.is_place {
+                if node.type_id != TypeId(BOOL_TYPE_ID) || node.is_place {
                     return Result<(), AnalysisError>.Err(invalid(node.span, "exported boolean literal has an inconsistent type or place flag"));
                 }
             },
             CharLiteral(value) => {
-                if node.type_id != self.ctx.primitives.character || node.is_place || *value > 0x10FFFF || (*value >= 0xD800 && *value <= 0xDFFF) {
+                if node.type_id != TypeId(CHAR_TYPE_ID) || node.is_place || *value > 0x10FFFF || (*value >= 0xD800 && *value <= 0xDFFF) {
                     return Result<(), AnalysisError>.Err(invalid(node.span, "exported character literal is invalid"));
                 }
             },
             StrLiteral(name) => {
-                if node.type_id != self.ctx.primitives.string || node.is_place || self.ctx.session.names.get(*name).is_none() {
+                if node.type_id != TypeId(STR_TYPE_ID) || node.is_place || self.ctx.session.names.get(*name).is_none() {
                     return Result<(), AnalysisError>.Err(invalid(node.span, "exported string literal is invalid"));
                 }
             },
             IntLiteral(value) => {
                 let valid = match self.ctx.session.types.require(node.type_id)? {
-                    IntLiteral => value.is_untyped(),
-                    Integer(bits, signed) | CScalar(bits, signed, _) => !value.is_untyped() && value.storage_width().bits() == *bits && value.is_signed() == *signed,
+                    IntLiteral => false,
+                    Integer(bits, signed) => !value.is_untyped() && value.storage_width().bits() == *bits && value.is_signed() == *signed,
+                    CScalar(kind) => !value.is_untyped() && value.storage_width().bits() == kind.bits() && value.is_signed() == kind.is_signed(),
                     _ => false,
                 };
                 if !valid || node.is_place {
@@ -199,7 +201,7 @@ impl HirVerifier {
             },
             FloatLiteral(value) => {
                 let valid = match self.ctx.session.types.require(node.type_id)? {
-                    FloatLiteral => true,
+                    FloatLiteral => false,
                     Float(width) => to_bits(*value) == to_bits(round_float(*value, *width)),
                     _ => false,
                 };
@@ -433,7 +435,7 @@ impl HirVerifier {
                     self.value(*id, self.result, node.span)?;
                 },
                 None => {
-                    if self.result != self.ctx.primitives.void {
+                    if self.result != TypeId(VOID_TYPE_ID) {
                         return Result<(), AnalysisError>.Err(invalid(node.span, "exported return is missing a value"));
                     }
                 },
@@ -451,7 +453,7 @@ impl HirVerifier {
                         self.value(*id, expected, node.span)?;
                     },
                     None => {
-                        if expected != self.ctx.primitives.void {
+                        if expected != TypeId(VOID_TYPE_ID) {
                             return Result<(), AnalysisError>.Err(invalid(node.span, "exported break is missing its loop value"));
                         }
                     },
@@ -463,7 +465,7 @@ impl HirVerifier {
                 }
             },
             If(value) => {
-                self.value(value.cond, self.ctx.primitives.boolean, node.span)?;
+                self.value(value.cond, TypeId(BOOL_TYPE_ID), node.span)?;
                 match &value.else_branch {
                     Some(branch) => {
                         self.value(value.then_branch, node.type_id, node.span)?;
@@ -477,7 +479,7 @@ impl HirVerifier {
                     self.value(arm.body, node.type_id, arm.span)?;
                     match &arm.guard {
                         Some(guard) => {
-                            self.value(*guard, self.ctx.primitives.boolean, arm.span)?;
+                            self.value(*guard, TypeId(BOOL_TYPE_ID), arm.span)?;
                         },
                         None => {},
                     }
@@ -635,6 +637,9 @@ impl HirVisitor for HirVerifier {
             return Result<WalkControl, AnalysisError>.Err(invalid(node.span, "exported HIR contains an invalid source ID"));
         }
         self.ctx.session.types.require(node.type_id)?;
+        if node.type_id.index == INT_LITERAL_TYPE_ID || node.type_id.index == FLOAT_LITERAL_TYPE_ID {
+            return Result<WalkControl, AnalysisError>.Err(invalid(node.span, "exported HIR contains an unresolved literal type"));
+        }
         match &node.kind {
             Ty => {},
             _ => {
@@ -672,6 +677,9 @@ impl HirVisitor for HirVerifier {
         if self.ctx.session.source(node.span.source).is_none() {
             return Result<WalkControl, AnalysisError>.Err(invalid(node.span, "exported pattern contains an invalid source ID"));
         }
+        if node.type_id.index == INT_LITERAL_TYPE_ID || node.type_id.index == FLOAT_LITERAL_TYPE_ID {
+            return Result<WalkControl, AnalysisError>.Err(invalid(node.span, "exported pattern contains an unresolved literal type"));
+        }
 
         self.cache.validate_value(node.type_id, node.span)?;
         match &node.kind {
@@ -688,7 +696,7 @@ impl HirVisitor for HirVerifier {
             },
             LiteralPattern(value) => match &value.condition {
                 Some(condition) => {
-                    self.value(*condition, self.ctx.primitives.boolean, node.span)?;
+                    self.value(*condition, TypeId(BOOL_TYPE_ID), node.span)?;
                 },
                 None => {},
             },

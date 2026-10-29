@@ -1,0 +1,73 @@
+from std.core.hash import Hash, Murmur3Hasher;
+from std.core.ops import PartialEq;
+
+// C ABI scalar identities are fixed kinds; they do not borrow the compiler name table.
+pub enum CScalarKind {
+    Char,
+    Int,
+    UInt,
+    Size,
+}
+
+impl CScalarKind {
+    pub fn spelling() -> str {
+        match self {
+            Char => "c_char",
+            Int => "c_int",
+            UInt => "c_uint",
+            Size => "c_size",
+        }
+    }
+
+    pub fn bits() -> u32 {
+        match self {
+            Char => 8u32,
+            Int => 32u32,
+            UInt => 32u32,
+            Size => 64u32,
+        }
+    }
+
+    pub fn is_signed() -> bool {
+        match self {
+            Char => true,
+            Int => true,
+            UInt => false,
+            Size => false,
+        }
+    }
+}
+
+impl PartialEq<CScalarKind> for CScalarKind {
+    pub fn eq(other: CScalarKind&) -> bool {
+        match self {
+            Char => match other {
+                Char => true,
+                _ => false,
+            },
+            Int => match other {
+                Int => true,
+                _ => false,
+            },
+            UInt => match other {
+                UInt => true,
+                _ => false,
+            },
+            Size => match other {
+                Size => true,
+                _ => false,
+            },
+        }
+    }
+}
+
+impl Hash<Murmur3Hasher> for CScalarKind {
+    pub fn hash(hasher: Murmur3Hasher&) {
+        match self {
+            Char => 0u32.hash(hasher),
+            Int => 1u32.hash(hasher),
+            UInt => 2u32.hash(hasher),
+            Size => 3u32.hash(hasher),
+        }
+    }
+}

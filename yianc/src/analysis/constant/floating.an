@@ -1,4 +1,4 @@
-from yianc.analysis.constant.integer import magnitude, is_negative, normalized;
+from yianc.analysis.constant.integer import magnitude, is_negative, normalized, integer_fits;
 from yianc.analysis.constant.value import IntegerValue, IntegerWidth, ConstEvalError;
 from yianc.frontend.ast.operator import BinaryOperator;
 from std.num.f64 import from_bits, to_bits;
@@ -209,23 +209,26 @@ pub fn float_integer(value: f64, width: IntegerWidth, signed: bool) -> Result<In
         return Result<IntegerValue, ConstEvalError>.Ok(normalized(0, width, signed));
     }
 
-    // Truncation followed by fixed-width normalization uses only the low integer bits.
-    // Decomposing binary64 avoids undefined host conversion for large finite values.
+    // Decomposing binary64 yields the truncated magnitude before any width normalization.
     let significand = (1u64 << fraction_bits) | (bits & fraction_mask);
-    let integer = if power < i32(fraction_bits) {
+    let absolute = if power < i32(fraction_bits) {
         significand >> u32(i32(fraction_bits) - power)
     } else {
         let shift = u32(power - i32(fraction_bits));
-        if shift >= width.bits() {
-            0u64
-        } else {
-            significand << shift
+        if shift > 11u32 {
+            return Result<IntegerValue, ConstEvalError>.Err(ConstEvalError.Overflow);
         }
+        significand << shift
     };
+    let negative = (bits & sign_mask) != 0;
 
-    Result<IntegerValue, ConstEvalError>.Ok(normalized(if (bits & sign_mask) != 0 {
-            0u64 - integer
+    if !integer_fits(IntegerValue.untyped(absolute, negative), width.bits(), signed) {
+        return Result<IntegerValue, ConstEvalError>.Err(ConstEvalError.Overflow);
+    }
+
+    Result<IntegerValue, ConstEvalError>.Ok(normalized(if negative {
+            0u64 - absolute
         } else {
-            integer
+            absolute
         }, width, signed))
 }

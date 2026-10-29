@@ -1,26 +1,35 @@
 from yianc.analysis.resolution.context import ResolutionContext, DeclarationState;
 from yianc.analysis.lowering.checker import ExprChecker;
 from yianc.analysis.constant.evaluate import ConstantEvaluator, TypeSizeProvider;
-from yianc.analysis.hir.node import HirKind;
-from yianc.analysis.constant.value import IntegerValue;
+from yianc.analysis.hir.node import HirNode, HirKind, Array as HirArray, ArrayRepeat as HirArrayRepeat;
+from yianc.analysis.constant.value import ConstValue;
 from yianc.analysis.ty.relations import default_type;
 from yianc.analysis.resolution.types import resolve_type;
-from yianc.common.ids import SymbolId, HirId;
+from yianc.common.ids import SymbolId, HirId, UnitId;
+from yianc.frontend.source import Span;
 from yianc.diagnostics.model import AnalysisError, DiagnosticCode, AnalysisErrorKind;
 from std.core.iter import Iterator, IntoIterator;
+from yianc.analysis.ty.store import ERROR_TYPE_ID, VOID_TYPE_ID;
+from yianc.common.ids import TypeId;
 
-pub fn evaluate_constants(ctx: ResolutionContext&, sizes: Option<TypeSizeProvider&>) -> Result<(), AnalysisError> {
+pub fn evaluate_constants(ctx: ResolutionContext&) -> Result<(), AnalysisError> {
     for index in 0u64..ctx.len() {
         let declaration = ctx.declaration(index);
         match &declaration.item.data {
-            ConstDef(_, _, _, _) => { evaluate_constant(ctx, declaration.symbol, sizes)?; },
+            ConstDef(_, _, _, _) => { constant_template(ctx, declaration.symbol)?; },
             _ => {},
         }
     }
     Result<(), AnalysisError>.Ok(())
 }
 
-pub fn evaluate_constant(ctx: ResolutionContext&, symbol: SymbolId, sizes: Option<TypeSizeProvider&>) -> Result<HirId, AnalysisError> {
+pub fn evaluate_constant(ctx: ResolutionContext&, symbol: SymbolId) -> Result<HirId, AnalysisError> {
+    let template = constant_template(ctx, symbol)?;
+    copy_constant(ctx, template)
+}
+
+// Templates stay out of writable procedures; every public use receives an independent value tree.
+fn constant_template(ctx: ResolutionContext&, symbol: SymbolId) -> Result<HirId, AnalysisError> {
     match ctx.constants.get(&symbol) {
         Some(value) => return Result<HirId, AnalysisError>.Ok(*value),
         None => {},
@@ -56,20 +65,19 @@ pub fn evaluate_constant(ctx: ResolutionContext&, symbol: SymbolId, sizes: Optio
         _ => {},
     }
 
-    let checker = ExprChecker.new(ctx, declaration.unit, declaration.scope, ctx.primitives.void, sizes);
+    let checker = ExprChecker.new(ctx, declaration.unit, declaration.scope);
     defer checker.drop();
     let lowered = match &declaration.item.data {
         ConstDef(_, _, _, initializer) => checker.expression(*initializer)?,
         _ => return Result<HirId, AnalysisError>.Err(AnalysisError.internal("invalid constant definition")),
     };
-    let type_id = if record.type_id == ctx.primitives.error {
+    let type_id = if record.type_id == TypeId(ERROR_TYPE_ID) {
         default_type(ctx, checker.type_of(lowered))
     } else {
         record.type_id
     };
     let converted = checker.coerce(lowered, type_id)?;
-    let evaluator = ConstantEvaluator.new(&ctx.session.types, &ctx.session.hir, sizes);
-    let constant = match evaluator.evaluate(converted) {
+    let constant = match ctx.evaluator.evaluate(converted) {
         Ok(value) => value,
         Err(problem) => {
             if problem.kind == AnalysisErrorKind.NotConstant {
@@ -86,21 +94,74 @@ pub fn evaluate_constant(ctx: ResolutionContext&, symbol: SymbolId, sizes: Optio
         },
     };
     defer constant.drop();
-    let kind = match &constant.value {
-        Integer(value) => HirKind.IntLiteral(*value),
-        LargeInteger(value) => match value.small_magnitude() {
-            Some(bits) => HirKind.IntLiteral(IntegerValue.untyped(bits, value.is_negative())),
-            None => return Result<HirId, AnalysisError>.Err(AnalysisError.internal("constant definition has no fixed-width representation")),
-        },
-        Float(value) => HirKind.FloatLiteral(*value),
-        Bool(value) => HirKind.BoolLiteral(*value),
-        Char(value) => HirKind.CharLiteral(*value),
-        String(value) => HirKind.StrLiteral(*value),
-    };
+    let kind = materialize(ctx, &constant.value, type_id, declaration.unit, declaration.item.span)?;
     record.type_id = type_id;
     let result = checker.node(declaration.item.span, type_id, false, kind);
     ctx.constants.insert(symbol, result);
     declaration.state = DeclarationState.Complete;
 
     Result<HirId, AnalysisError>.Ok(result)
+}
+
+// Rebuilds a canonical pure-value tree from the evaluated constant.
+fn materialize(ctx: ResolutionContext&, value: ConstValue&, type_id: TypeId, unit: UnitId, span: Span) -> Result<HirKind, AnalysisError> {
+    match value {
+        Integer(inner) => Result<HirKind, AnalysisError>.Ok(HirKind.IntLiteral(*inner)),
+        Float(inner) => Result<HirKind, AnalysisError>.Ok(HirKind.FloatLiteral(*inner)),
+        Bool(inner) => Result<HirKind, AnalysisError>.Ok(HirKind.BoolLiteral(*inner)),
+        Char(inner) => Result<HirKind, AnalysisError>.Ok(HirKind.CharLiteral(u32(*inner))),
+        String(inner) => Result<HirKind, AnalysisError>.Ok(HirKind.StrLiteral(*inner)),
+        Array(elements) => {
+            let element_type = match ctx.session.types.require(type_id)? {
+                Array(element, _) => *element,
+                _ => return Result<HirKind, AnalysisError>.Err(AnalysisError.internal("array constant has no array type")),
+            };
+            let nodes = Vec<HirId>.new();
+            let accepted = false;
+            defer { if !accepted { nodes.drop(); } };
+
+            for element in *elements {
+                let kind = materialize(ctx, &*element, element_type, unit, span)?;
+                nodes.push(ctx.session.hir.add(HirNode(ctx.span(unit, span), element_type, false, kind)));
+            }
+
+            accepted = true;
+            Result<HirKind, AnalysisError>.Ok(HirKind.Array(HirArray(element_type, nodes)))
+        },
+        ArrayRepeat(element, _) => {
+            let element_type = match ctx.session.types.require(type_id)? {
+                Array(inner, _) => *inner,
+                _ => return Result<HirKind, AnalysisError>.Err(AnalysisError.internal("repeat constant has no array type")),
+            };
+            let kind = materialize(ctx, &**element, element_type, unit, span)?;
+            let node = ctx.session.hir.add(HirNode(ctx.span(unit, span), element_type, false, kind));
+            Result<HirKind, AnalysisError>.Ok(HirKind.ArrayRepeat(HirArrayRepeat(element_type, node)))
+        },
+    }
+}
+
+fn copy_constant(ctx: ResolutionContext&, id: HirId) -> Result<HirId, AnalysisError> {
+    let node = *ctx.session.hir.require(id)?;
+    let kind = match &node.kind {
+        IntLiteral(value) => HirKind.IntLiteral(*value),
+        FloatLiteral(value) => HirKind.FloatLiteral(*value),
+        BoolLiteral(value) => HirKind.BoolLiteral(*value),
+        CharLiteral(value) => HirKind.CharLiteral(*value),
+        StrLiteral(value) => HirKind.StrLiteral(*value),
+        Array(value) => {
+            let nodes = Vec<HirId>.new();
+            let accepted = false;
+            defer { if !accepted { nodes.drop(); } };
+
+            for element in value.elements {
+                nodes.push(copy_constant(ctx, *element)?);
+            }
+
+            accepted = true;
+            HirKind.Array(HirArray(value.element_type, nodes))
+        },
+        ArrayRepeat(value) => HirKind.ArrayRepeat(HirArrayRepeat(value.element_type, copy_constant(ctx, value.element)?)),
+        _ => return Result<HirId, AnalysisError>.Err(AnalysisError.internal("constant template contains a non-value node")),
+    };
+    Result<HirId, AnalysisError>.Ok(ctx.session.hir.add(HirNode(node.span, node.type_id, false, kind)))
 }

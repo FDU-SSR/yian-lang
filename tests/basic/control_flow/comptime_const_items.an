@@ -7,6 +7,35 @@ const MESSAGE: str = "constant\n";
 const WORD_SIZE: u64 = @sizeof<u64>;
 const RAW_BUILD: bool = IS_RAW_MODE;
 const BASE: u64 = 40u64;
+const VALUE_I8: i8 = 1;
+const VALUE_I16: i16 = 1;
+const VALUE_I32: i32 = 1;
+const VALUE_I64: i64 = 1;
+const VALUE_U8: u8 = 1;
+const VALUE_U16: u16 = 1;
+const VALUE_U32: u32 = 1;
+const VALUE_U64: u64 = 1;
+const VALUE_F16: f16 = 1.5;
+const VALUE_F32: f32 = 1.5;
+const VALUE_F64: f64 = 1.5;
+const VALUE_INT: int = 1;
+const VALUE_UINT: uint = 1;
+const VALUE_FLOAT: float = 1.5;
+const BYTES: u8[3] = [0, 128, 255];
+const MATRIX: i32[2][2] = [[1, 2], [3, 4]];
+const NAMES: str[2] = ["a", "b"];
+const FLAGS: bool[2] = [true, false];
+const LETTERS: char[3] = ['A', '中', '😀'];
+const SCALES: f32[2] = [1.5, 2.5];
+const MAX_CHAR: char = char(0x10FFFF);
+typedef Trio = i32[3];
+const TRIO: Trio = [1, 2, 3];
+const SEVENS: u8[2] = [7; 2];
+const EMPTY: u8[0] = [0; 0];
+const LENGTHS: u64[2] = [3, 5];
+const N: u64 = LENGTHS[0];
+const ROW: i32[2] = MATRIX[1];
+const VALUE: i32 = ROW[0];
 
 fn value<const N: u64>() -> u64 {
     N
@@ -59,7 +88,7 @@ fn case_comptime_constant_operations() {
     } else {
         0
     };
-    let casted: u8 = comptime if u8(257u64) == 1u8 {
+    let casted: u8 = comptime if u8(1u64) == 1u8 {
         1u8
     } else {
         0u8
@@ -115,7 +144,74 @@ fn case_nested_pointer_mode_selection() {
     assert selected == expected: "nested comptime branch selection";
 }
 
+fn case_builtin_widths() {
+    assert VALUE_I8 == 1i8: "i8 constant";
+    assert VALUE_I16 == 1i16: "i16 constant";
+    assert VALUE_I32 == 1i32: "i32 constant";
+    assert VALUE_I64 == 1i64: "i64 constant";
+    assert VALUE_U8 == 1u8: "u8 constant";
+    assert VALUE_U16 == 1u16: "u16 constant";
+    assert VALUE_U32 == 1u32: "u32 constant";
+    assert VALUE_U64 == 1u64: "u64 constant";
+    assert VALUE_F16 == 1.5f16: "f16 constant";
+    assert VALUE_F32 == 1.5f32: "f32 constant";
+    assert VALUE_F64 == 1.5f64: "f64 constant";
+    assert VALUE_INT == 1i32: "int alias constant";
+    assert VALUE_UINT == 1u32: "uint alias constant";
+    assert VALUE_FLOAT == 1.5f64: "float alias constant";
+    assert @sizeof<i8> == 1u64: "i8 size";
+    assert @sizeof<i16> == 2u64: "i16 size";
+    assert @sizeof<i32> == 4u64: "i32 size";
+    assert @sizeof<i64> == 8u64: "i64 size";
+    assert @sizeof<u8> == 1u64: "u8 size";
+    assert @sizeof<u16> == 2u64: "u16 size";
+    assert @sizeof<u32> == 4u64: "u32 size";
+    assert @sizeof<u64> == 8u64: "u64 size";
+    assert @sizeof<f16> == 2u64: "f16 size";
+    assert @sizeof<f32> == 4u64: "f32 size";
+    assert @sizeof<f64> == 8u64: "f64 size";
+    assert @sizeof<int> == 4u64: "int alias size";
+    assert @sizeof<uint> == 4u64: "uint alias size";
+    assert @sizeof<float> == 8u64: "float alias size";
+}
+
+fn case_array_constants() {
+    assert BYTES[2] == 255u8: "u8 array element";
+    assert MATRIX[1][1] == 4: "nested array element";
+    assert NAMES[1] == "b": "string array element";
+    assert FLAGS[1] == false: "bool array element";
+    assert LETTERS[2] == '😀': "unicode char array element";
+    assert u32(LETTERS[0]) == 65: "ascii char element";
+    assert u32(MAX_CHAR) == 0x10FFFF: "maximum unicode scalar";
+    assert SCALES[1] == 2.5f32: "float array element";
+    assert TRIO[2] == 3: "typedef array element";
+    assert SEVENS[1] == 7u8: "repeat array element";
+    assert @sizeof<u8[0]> == 0u64: "zero-length array";
+    let copied = BYTES;
+    copied[0] = 9;
+    assert BYTES[0] == 0u8: "array constant copy is independent";
+    let selected: i32 = match LETTERS[2] {
+        '😀' => 1,
+        _ => 0,
+    };
+    assert selected == 1: "char constant array with pattern match";
+}
+
+fn case_constant_index() {
+    assert N == 3u64: "scalar intermediate from an array index";
+    assert ROW[1] == 4: "sub-array index";
+    assert VALUE == 3: "nested constant index";
+    assert value<N>() == 3u64: "constant generic argument through scalar constant";
+    let selected: i32 = comptime if MATRIX[1][1] == 4 { 1 } else { 0 };
+    assert selected == 1: "nested comptime index";
+    let safe: i32 = comptime if false && (MATRIX[99][0] == 0) { 0 } else { 1 };
+    assert safe == 1: "short-circuited out-of-bounds index is not evaluated";
+}
+
 fn main() {
+    case_builtin_widths();
+    case_array_constants();
+    case_constant_index();
     case_constant_items_and_arguments();
     case_comptime_constant_operations();
     case_nested_pointer_mode_selection();

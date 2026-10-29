@@ -1,0 +1,5 @@
+// Expected compilation error: a surrogate code point is not a Unicode scalar value
+const BAD: char = char(0xD800);
+
+fn main() {
+}

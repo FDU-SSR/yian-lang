@@ -63,10 +63,12 @@ C 的声明与程序、case.json、命令行及预期输出均未改变；本轮
 | R06 | CVE-2023-39351 | 只读静态 RFX 字节输入 → YIAN 堆缓冲 | [C](../cve/CVE-2023-39351/c/src/reproducer.c) / [YIAN](../cve/CVE-2023-39351/yian/src/scenario.an) |
 | R08 | CVE-2023-45664 | 只读静态 GIF 输入 → YIAN 栈数组 | [C](../cve/CVE-2023-45664/c/src/reproducer.c) / [YIAN](../cve/CVE-2023-45664/yian/src/scenario.an) |
 
-这些项的 C 对象均为 const，不在本轮静态可变对象规则范围内。当前 YIAN const 表达标量与 str，
-不能直接声明上述只读静态聚合数组。不能以“固定输入可运行”替代仍要求的存储期对应。ASCII 静态输入已在 tinyproxy/RPC 中用 const str 保留；
-含任意字节的 PNG/GIF/RFX 等不能直接把大于 127 的字节写成 Unicode 字符串并声称字节相同。
-本次没有修改编译器以增加静态聚合/状态支持，也没有通过改短 C 的存储期消除表面差异。
+这些项的 C 对象均为 const，不在静态可变对象规则范围内。YIAN 现在可以声明固定数组常量
+（例如 `const TABLE: u16[4] = [1, 2, 3, 4];`），但常量仍是按值复制的临时值，没有对应的
+静态存储期；数组常量声明本身不能关闭这些差异。不能以“固定输入可运行”替代仍要求的
+存储期对应。ASCII 静态输入已在 tinyproxy/RPC 中用 const str 保留；含任意字节的
+PNG/GIF/RFX 等不能直接把大于 127 的字节写成 Unicode 字符串并声称字节相同。
+本任务没有修改这些 CVE 实例，也没有通过改短 C 的存储期消除表面差异。
 
 ## R13：HyperKit 的状态与部分输出
 

@@ -18,6 +18,7 @@ from yianc.diagnostics.model import AnalysisError, DiagnosticCode, AnalysisError
 from std.core.iter import Iterator, IntoIterator;
 from std.core.convert import From;
 from std.core.ops import Index;
+from yianc.analysis.ty.store import NEVER_TYPE_ID, STR_TYPE_ID, VOID_TYPE_ID;
 
 // The lowering target selects the outer owner and where a write failure goes.
 pub enum FormatDestination {
@@ -169,7 +170,7 @@ fn declare(checker: ExprChecker&, span: Span, role: str, init: HirId) -> Result<
     defer name.drop();
     let type_id = checker.type_of(init);
     let symbol = checker.bind(name.as_str(), type_id, span, SymbolKind.Variable)?;
-    let statement = checker.node(span, checker.ctx.primitives.void, false, HirKind.Let(HirLet(Option<HirId>.Some(init), Option<SymbolId>.Some(symbol))));
+    let statement = checker.node(span, TypeId(VOID_TYPE_ID), false, HirKind.Let(HirLet(Option<HirId>.Some(init), Option<SymbolId>.Some(symbol))));
     Result<(HirId, SymbolId), AnalysisError>.Ok((statement, symbol))
 }
 
@@ -255,7 +256,7 @@ fn panic_call(checker: ExprChecker&, span: Span, message: HirId) -> HirId {
     let types = Vec<TypeId>.new();
     let values = Vec<HirId>.new();
     values.push(message);
-    checker.node(span, checker.ctx.primitives.never, false, HirKind.Builtin(HirBuiltin(BuiltinKind.Panic, types, values)))
+    checker.node(span, TypeId(NEVER_TYPE_ID), false, HirKind.Builtin(HirBuiltin(BuiltinKind.Panic, types, values)))
 }
 
 fn unit_value(checker: ExprChecker&, span: Span, unit_type: TypeId) -> HirId {
@@ -264,21 +265,21 @@ fn unit_value(checker: ExprChecker&, span: Span, unit_type: TypeId) -> HirId {
 
 // A void continuation differs from the empty tuple value.
 fn void_value(checker: ExprChecker&, span: Span) -> HirId {
-    checker.node(span, checker.ctx.primitives.void, false, HirKind.Block(HirBlock(Vec<HirId>.new())))
+    checker.node(span, TypeId(VOID_TYPE_ID), false, HirKind.Block(HirBlock(Vec<HirId>.new())))
 }
 
 fn write_str_call(checker: ExprChecker&, span: Span, text_span: Span, receiver: HirId,
     formatter_type: TypeId, text: str) -> Result<HirId, AnalysisError> {
     let arguments = Vec<TypeId>.new();
     defer arguments.drop();
-    arguments.push(checker.ctx.primitives.string);
+    arguments.push(TypeId(STR_TYPE_ID));
     let name = checker.ctx.session.names.intern("write_str");
     let method = lookup_method_args(checker.ctx, formatter_type, name, Option<TypeId>.None,
         Option<Vec<TypeId>&>.Some(&arguments), checker.ctx.span(checker.unit, span))?;
     let values = Vec<HirId>.new();
     defer values.drop();
     let interned = checker.ctx.session.names.intern(text);
-    values.push(checker.node(text_span, checker.ctx.primitives.string, false, HirKind.StrLiteral(interned)));
+    values.push(checker.node(text_span, TypeId(STR_TYPE_ID), false, HirKind.StrLiteral(interned)));
     checker.call_values(span, method, &values, Option<HirId>.Some(receiver), Option<Span>.None)
 }
 
@@ -502,11 +503,11 @@ fn chain(checker: ExprChecker&, library: FormatLibrary&, receiver: HirId, parts:
         Value(expr, span) => {
             let value = checker.expression(*expr)?;
 
-            if checker.type_of(value) == checker.ctx.primitives.never {
+            if checker.type_of(value) == TypeId(NEVER_TYPE_ID) {
                 // A non-returning interpolation skips its own formatting call and all later positions.
                 let statements = Vec<HirId>.new();
                 statements.push(value);
-                return Result<HirId, AnalysisError>.Ok(checker.node(*span, checker.ctx.primitives.never, false, HirKind.Block(HirBlock(statements))));
+                return Result<HirId, AnalysisError>.Ok(checker.node(*span, TypeId(NEVER_TYPE_ID), false, HirKind.Block(HirBlock(statements))));
             }
 
             write_value_call(checker, *span, receiver, library, value)?
@@ -523,7 +524,7 @@ fn block(checker: ExprChecker&, span: Span, statements: Vec<HirId>, type_id: Typ
 // A single writable text expression lowers to one match that continues on success.
 fn single_write(checker: ExprChecker&, span: Span, library: FormatLibrary&, write: HirId,
     next: HirId, failure: FormatFailure) -> Result<HirId, AnalysisError> {
-    match_write(checker, span, library, write, next, checker.ctx.primitives.void, failure)
+    match_write(checker, span, library, write, next, TypeId(VOID_TYPE_ID), failure)
 }
 
 fn owned_string(checker: ExprChecker&, span: Span, library: FormatLibrary&, parts: Vec<FormatPart>&) -> Result<HirId, AnalysisError> {
@@ -532,7 +533,7 @@ fn owned_string(checker: ExprChecker&, span: Span, library: FormatLibrary&, part
     let (declaration, value) = declare(checker, span, "value", owned)?;
     statements.push(declaration);
     let cleanup = drop_call(checker, span, library.string_type, value)?;
-    statements.push(checker.node(span, checker.ctx.primitives.void, false, HirKind.Defer(cleanup)));
+    statements.push(checker.node(span, TypeId(VOID_TYPE_ID), false, HirKind.Defer(cleanup)));
     let writer = call_function1(checker, span, library.string_writer, reference_of(checker, span, variable(checker, span, value, true)))?;
     let (writer_declaration, writer_symbol) = declare(checker, span, "writer", writer)?;
     statements.push(writer_declaration);
@@ -541,11 +542,11 @@ fn owned_string(checker: ExprChecker&, span: Span, library: FormatLibrary&, part
     statements.push(formatter_declaration);
     let receiver = formatter_receiver(checker, span, formatter_symbol);
     let unit = void_value(checker, span);
-    statements.push(chain(checker, library, receiver, parts, 0u64, unit, checker.ctx.primitives.void, FormatFailure.Panic)?);
+    statements.push(chain(checker, library, receiver, parts, 0u64, unit, TypeId(VOID_TYPE_ID), FormatFailure.Panic)?);
     let (result_declaration, result_symbol) = declare(checker, span, "result", variable(checker, span, value, false))?;
     statements.push(result_declaration);
     let replacement = string_new(checker, span, library.string_type)?;
-    let assignment = checker.node(span, checker.ctx.primitives.void, false,
+    let assignment = checker.node(span, TypeId(VOID_TYPE_ID), false,
         HirKind.Binary(HirBinary(BinaryOperator.Assign, variable(checker, span, value, true), checker.coerce(replacement, library.string_type)?)));
     statements.push(assignment);
     statements.push(variable(checker, span, result_symbol, false));
@@ -578,8 +579,8 @@ fn append_target(checker: ExprChecker&, span: Span, library: FormatLibrary&, tar
     statements.push(formatter_declaration);
     let receiver = formatter_receiver(checker, span, formatter_symbol);
     let unit = void_value(checker, span);
-    statements.push(chain(checker, library, receiver, parts, 0u64, unit, checker.ctx.primitives.void, FormatFailure.Panic)?);
-    Result<HirId, AnalysisError>.Ok(block(checker, span, statements, checker.ctx.primitives.void))
+    statements.push(chain(checker, library, receiver, parts, 0u64, unit, TypeId(VOID_TYPE_ID), FormatFailure.Panic)?);
+    Result<HirId, AnalysisError>.Ok(block(checker, span, statements, TypeId(VOID_TYPE_ID)))
 }
 
 fn writer_target(checker: ExprChecker&, span: Span, library: FormatLibrary&, target: Expr&, parts: Vec<FormatPart>&) -> Result<HirId, AnalysisError> {
@@ -640,8 +641,8 @@ fn printer(checker: ExprChecker&, span: Span, library: FormatLibrary&, parts: Ve
     } else {
         finish_tail
     };
-    statements.push(chain(checker, library, receiver, parts, 0u64, tail, checker.ctx.primitives.void, FormatFailure.Panic)?);
-    Result<HirId, AnalysisError>.Ok(block(checker, span, statements, checker.ctx.primitives.void))
+    statements.push(chain(checker, library, receiver, parts, 0u64, tail, TypeId(VOID_TYPE_ID), FormatFailure.Panic)?);
+    Result<HirId, AnalysisError>.Ok(block(checker, span, statements, TypeId(VOID_TYPE_ID)))
 }
 
 pub fn lower_format(checker: ExprChecker&, span: Span, destination: FormatDestination, parts: Vec<FormatPart>&) -> Result<HirId, AnalysisError> {

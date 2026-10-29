@@ -8,6 +8,8 @@ from yianc.common.ids import HirId;
 from yianc.frontend.ast.operator import BinaryOperator, UnaryOperator;
 from yianc.frontend.source import Span;
 from yianc.diagnostics.model import AnalysisError;
+from yianc.analysis.ty.store import BOOL_TYPE_ID, U64_TYPE_ID, VOID_TYPE_ID;
+from yianc.common.ids import TypeId;
 
 impl ExprChecker {
     // Pointer operations preserve the declared pointee; references have identity equality only.
@@ -30,7 +32,7 @@ impl ExprChecker {
         };
 
         if same && comparable {
-            return Result<Option<HirId>, AnalysisError>.Ok(Option<HirId>.Some(self.node(span, self.ctx.primitives.boolean, false, HirKind.Binary(Binary(op, left, right)))));
+            return Result<Option<HirId>, AnalysisError>.Ok(Option<HirId>.Some(self.node(span, TypeId(BOOL_TYPE_ID), false, HirKind.Binary(Binary(op, left, right)))));
         }
 
         if same && op == BinaryOperator.Sub {
@@ -59,9 +61,9 @@ impl ExprChecker {
                 return Result<Option<HirId>, AnalysisError>.Err(self.error(span, "pointer assignment requires a place"));
             }
 
-            let offset = self.coerce(right, self.ctx.primitives.unsigned)?;
+            let offset = self.coerce(right, TypeId(U64_TYPE_ID))?;
             let result = if compound {
-                self.ctx.primitives.void
+                TypeId(VOID_TYPE_ID)
             } else {
                 left_type
             };
@@ -118,7 +120,7 @@ impl ExprChecker {
                 if is_integer(self.ctx, self.type_of(index)) {
                     match self.ctx.session.types.require(*count)? {
                         LiteralValue(length, _, _) => {
-                            let offset = self.coerce(index, self.ctx.primitives.unsigned)?;
+                            let offset = self.coerce(index, TypeId(U64_TYPE_ID))?;
                             return Result<HirId, AnalysisError>.Ok(self.node(span, *element, place, HirKind.ArrayAccess(ArrayAccess(object, offset, *element, *length))));
                         },
                         _ => {},
@@ -127,7 +129,7 @@ impl ExprChecker {
             },
             Slice(element) => {
                 if is_integer(self.ctx, self.type_of(index)) {
-                    let offset = self.coerce(index, self.ctx.primitives.unsigned)?;
+                    let offset = self.coerce(index, TypeId(U64_TYPE_ID))?;
                     return Result<HirId, AnalysisError>.Ok(self.node(span, *element, true, HirKind.SliceAccess(SliceAccess(object, offset, *element))));
                 }
             },

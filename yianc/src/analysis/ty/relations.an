@@ -3,11 +3,12 @@ from yianc.common.ids import TypeId;
 from yianc.analysis.ty.model import TypeData;
 from yianc.diagnostics.model import AnalysisError;
 from std.core.iter import Iterator, IntoIterator;
+from yianc.analysis.ty.store import F64_TYPE_ID, FLOAT_LITERAL_TYPE_ID, I32_TYPE_ID, INT_LITERAL_TYPE_ID, NEVER_TYPE_ID;
 
 pub fn is_integer(ctx: ResolutionContext&, id: TypeId) -> bool {
     match *ctx.session.types.get(id).unwrap() {
         Integer(_, _) => true,
-        CScalar(_, _, _) => true,
+        CScalar(_) => true,
         IntLiteral => true,
         _ => false,
     }
@@ -26,12 +27,12 @@ pub fn is_numeric(ctx: ResolutionContext&, id: TypeId) -> bool {
 }
 
 pub fn default_type(ctx: ResolutionContext&, id: TypeId) -> TypeId {
-    if id == ctx.primitives.integer_literal {
-        return ctx.primitives.integer;
+    if id == TypeId(INT_LITERAL_TYPE_ID) {
+        return TypeId(I32_TYPE_ID);
     }
 
-    if id == ctx.primitives.float_literal {
-        return ctx.primitives.float;
+    if id == TypeId(FLOAT_LITERAL_TYPE_ID) {
+        return TypeId(F64_TYPE_ID);
     }
 
     match *ctx.session.types.get(id).unwrap() {
@@ -53,17 +54,17 @@ pub fn default_type(ctx: ResolutionContext&, id: TypeId) -> TypeId {
 }
 
 pub fn compatible(ctx: ResolutionContext&, actual: TypeId, expected: TypeId) -> bool {
-    if actual == expected || actual == ctx.primitives.never {
+    if actual == expected || actual == TypeId(NEVER_TYPE_ID) {
         return true;
     }
 
-    if actual == ctx.primitives.integer_literal {
+    if actual == TypeId(INT_LITERAL_TYPE_ID) {
         return match *ctx.session.types.get(expected).unwrap() {
-            Integer(_, _) => true, CScalar(_, _, _) => true, Float(_) => true, IntLiteral => true, FloatLiteral => true, _ => false
+            Integer(_, _) => true, CScalar(_) => true, Float(_) => true, IntLiteral => true, FloatLiteral => true, _ => false
         };
     }
 
-    if actual == ctx.primitives.float_literal {
+    if actual == TypeId(FLOAT_LITERAL_TYPE_ID) {
         return match *ctx.session.types.get(expected).unwrap() {
             Float(_) => true,
             _ => false,

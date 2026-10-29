@@ -1,6 +1,7 @@
 from yianc.codegen.lowering.context import Lowering;
 from yianc.codegen.cfg.ids import LocalId, ValueId;
 from yianc.codegen.cfg.model import ValueKind, Operation, Terminator, IndexBounds;
+from yianc.codegen.cfg.type_contract import assert_cfg_type;
 from yianc.codegen.error import CodegenError;
 from yianc.analysis.hir.node import HirNode, Binary, Builtin;
 from yianc.analysis.ty.queries import struct_fields, enum_variants;
@@ -15,13 +16,9 @@ from std.core.ops import Index;
 impl Lowering {
     pub fn expression(id: HirId) -> Result<ValueId, CodegenError> {
         let node = self.session.hir.require(id)?;
+        assert_cfg_type(&self.session.types, node.type_id);
         if self.current.is_none() {
-            let type_id = match self.session.types.require(node.type_id)? {
-                IntLiteral => self.session.types.primitive(TypeData.Integer(32u32, true))?,
-                FloatLiteral => self.session.types.primitive(TypeData.Float(64u32))?,
-                _ => node.type_id,
-            };
-            return Result<ValueId, CodegenError>.Ok(self.zero(type_id));
+            return Result<ValueId, CodegenError>.Ok(self.zero(node.type_id));
         }
         match self.lower_expression(id) {
             Ok(value) => Result<ValueId, CodegenError>.Ok(value),
@@ -33,19 +30,11 @@ impl Lowering {
         let node = self.session.hir.require(id)?;
         let result = match &node.kind {
             IntLiteral(value) => {
-                let type_id = match self.session.types.require(node.type_id)? {
-                    IntLiteral => self.session.types.primitive(TypeData.Integer(32u32, true))?,
-                    _ => node.type_id,
-                };
-                self.function.add_value(type_id, ValueKind.Integer(
+                self.function.add_value(node.type_id, ValueKind.Integer(
                     if value.is_untyped() && value.is_negative() { 0u64 - value.raw_bits() } else { value.raw_bits() }))
             },
             FloatLiteral(value) => {
-                let type_id = match self.session.types.require(node.type_id)? {
-                    FloatLiteral => self.session.types.primitive(TypeData.Float(64u32))?,
-                    _ => node.type_id,
-                };
-                self.function.add_value(type_id, ValueKind.Float(*value))
+                self.function.add_value(node.type_id, ValueKind.Float(*value))
             },
             BoolLiteral(value) => self.function.add_value(node.type_id, ValueKind.Integer(if *value { 1u64 } else { 0u64 })),
             CharLiteral(value) => self.function.add_value(node.type_id, ValueKind.Integer(u64(*value))),
@@ -148,11 +137,7 @@ impl Lowering {
                     self.emit(node.span, node.type_id, Operation.Read(address))?
                 } else {
                     let operand = self.expression(value.operand)?;
-                    let type_id = match self.session.types.require(node.type_id)? {
-                        IntLiteral | FloatLiteral => self.function.value(operand)?.type_id,
-                        _ => node.type_id,
-                    };
-                    self.emit(node.span, type_id, Operation.Unary(value.op, operand))?
+                    self.emit(node.span, node.type_id, Operation.Unary(value.op, operand))?
                 }
             },
             Cast(value) => {
@@ -525,13 +510,7 @@ impl Lowering {
             }
             return self.emit(node.span, node.type_id, Operation.PointerOffset(left, right, value.op == BinaryOperator.Sub));
         }
-        // Mathematical literal types survive semantic checking; runtime CFG operands use their default type.
-        let type_id = match self.session.types.require(node.type_id)? {
-            IntLiteral => self.session.types.primitive(TypeData.Integer(32u32, true))?,
-            FloatLiteral => self.session.types.primitive(TypeData.Float(64u32))?,
-            _ => node.type_id,
-        };
-        self.emit(node.span, type_id, Operation.Binary(op, left, right))
+        self.emit(node.span, node.type_id, Operation.Binary(op, left, right))
     }
 
 }

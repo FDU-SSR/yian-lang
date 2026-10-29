@@ -245,7 +245,8 @@ impl BackendTypes {
         let value = match self.store.require(type_id)? {
             Bool => self.module.int_type(1u32),
             Char => self.module.int_type(32u32),
-            Integer(bits, _) | CScalar(bits, _, _) => self.module.int_type(*bits),
+            Integer(bits, _) => self.module.int_type(*bits),
+            CScalar(kind) => self.module.int_type(kind.bits()),
             Float(bits) => match *bits {
                 16 => self.module.half_type(),
                 32 => self.module.float_type(),

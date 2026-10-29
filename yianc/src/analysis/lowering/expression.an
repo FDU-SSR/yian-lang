@@ -17,13 +17,14 @@ from std.core.iter import Iterator, IntoIterator;
 from yianc.common.location import SourceSpan;
 from yianc.frontend.source import Span;
 from std.core.convert import From;
+from yianc.analysis.ty.store import BOOL_TYPE_ID, ERROR_TYPE_ID, NEVER_TYPE_ID, STR_TYPE_ID, VOID_TYPE_ID;
 
 impl ExprChecker {
     fn condition(condition: Condition&) -> Result<HirId, AnalysisError> {
         match condition {
             Expression(value) => {
                 let expression = self.expression(*value)?;
-                self.coerce(expression, self.ctx.primitives.boolean)
+                self.coerce(expression, TypeId(BOOL_TYPE_ID))
             },
             Let(value) => Result<HirId, AnalysisError>.Err(AnalysisError.internal("pattern conditions must be desugared before lowering")),
         }
@@ -89,7 +90,7 @@ impl ExprChecker {
                     return Result<HirId, AnalysisError>.Err(self.error(span, "unknown compile-time configuration"));
                 }
 
-                Result<HirId, AnalysisError>.Ok(self.node(span, self.ctx.primitives.boolean, false, HirKind.BoolLiteral(self.ctx.session.raw_pointers)))
+                Result<HirId, AnalysisError>.Ok(self.node(span, TypeId(BOOL_TYPE_ID), false, HirKind.BoolLiteral(self.ctx.session.raw_pointers)))
             },
             FormatTemplate(parts) => lower_format(self, span, FormatDestination.OwnedString, parts),
             Block(value) => self.block(*value),
@@ -97,10 +98,10 @@ impl ExprChecker {
                 let lowered = self.expression(*value)?;
                 let concrete = default_type(self.ctx, self.type_of(lowered));
                 lowered = self.coerce(lowered, concrete)?;
-                let result = if self.type_of(lowered) == self.ctx.primitives.never {
-                    self.ctx.primitives.never
+                let result = if self.type_of(lowered) == TypeId(NEVER_TYPE_ID) {
+                    TypeId(NEVER_TYPE_ID)
                 } else {
-                    self.ctx.primitives.void
+                    TypeId(VOID_TYPE_ID)
                 };
                 Result<HirId, AnalysisError>.Ok(self.node(span, result, false, HirKind.Semi(lowered)))
             },
@@ -110,7 +111,7 @@ impl ExprChecker {
                     Some(value) => Option<HirId>.Some(self.expression(*value)?),
                     None => Option<HirId>.None,
                 };
-                let type_id = if annotation == self.ctx.primitives.error {
+                let type_id = if annotation == TypeId(ERROR_TYPE_ID) {
                     match value {
                         Some(id) => default_type(self.ctx, self.type_of(id)),
                         None => return Result<HirId, AnalysisError>.Err(self.error(span, "uninitialized binding requires a type")),
@@ -143,7 +144,7 @@ impl ExprChecker {
                 let symbol = self.bind(name.data.name.as_str(), type_id, name.span, SymbolKind.Variable)?;
                 validate_value(self.ctx, type_id, self.ctx.span(self.unit, span))?;
 
-                Result<HirId, AnalysisError>.Ok(self.node(span, self.ctx.primitives.void, false, HirKind.Let(HirLet(converted, Option<SymbolId>.Some(symbol)))))
+                Result<HirId, AnalysisError>.Ok(self.node(span, TypeId(VOID_TYPE_ID), false, HirKind.Let(HirLet(converted, Option<SymbolId>.Some(symbol)))))
             },
             Unary(op, operand) => self.unary(span, *op, *operand),
             Binary(op, left, right) => self.binary(span, *op, *left, *right),
@@ -186,7 +187,7 @@ impl ExprChecker {
                 };
                 let previous = self.scope;
                 defer self.scope = previous;
-                let result_type = self.ctx.primitives.never;
+                let result_type = TypeId(NEVER_TYPE_ID);
 
                 for arm in *arms {
                     self.scope = self.ctx.session.symbols.create_scope(Option<ScopeId>.Some(previous))?;
@@ -194,14 +195,14 @@ impl ExprChecker {
                     let guard = match &arm.data.guard {
                         Some(condition) => {
                             let value = self.expression(*condition)?;
-                            Option<HirId>.Some(self.coerce(value, self.ctx.primitives.boolean)?)
+                            Option<HirId>.Some(self.coerce(value, TypeId(BOOL_TYPE_ID))?)
                         },
                         None => Option<HirId>.None,
                     };
                     let body = self.block(arm.data.body)?;
                     let type_id = self.type_of(body);
 
-                    if result_type == self.ctx.primitives.never {
+                    if result_type == TypeId(NEVER_TYPE_ID) {
                         result_type = type_id;
                     } elif !compatible(self.ctx, type_id, result_type) {
                         if compatible(self.ctx, result_type, type_id) {
@@ -232,24 +233,26 @@ impl ExprChecker {
                     return Result<HirId, AnalysisError>.Err(self.error(span, "'return' is not allowed inside a deferred action"));
                 }
 
+                let return_type = self.required_return_type(span)?;
+
                 let result = match value {
                     Some(value) => {
-                        if self.return_type == self.ctx.primitives.void {
+                        if return_type == TypeId(VOID_TYPE_ID) {
                             return Result<HirId, AnalysisError>.Err(self.error(value.span, "void function cannot return a value"));
                         }
 
                         let lowered = self.expression(*value)?;
-                        Option<HirId>.Some(self.coerce(lowered, self.return_type)?)
+                        Option<HirId>.Some(self.coerce(lowered, return_type)?)
                     },
                     None => {
-                        if self.return_type != self.ctx.primitives.void {
+                        if return_type != TypeId(VOID_TYPE_ID) {
                             return Result<HirId, AnalysisError>.Err(self.error(span, "return value is required"));
                         }
 
                         Option<HirId>.None
                     },
                 };
-                Result<HirId, AnalysisError>.Ok(self.node(span, self.ctx.primitives.never, false, HirKind.Return(result)))
+                Result<HirId, AnalysisError>.Ok(self.node(span, TypeId(NEVER_TYPE_ID), false, HirKind.Return(result)))
             },
             If(condition, then_branch, elif_branches, else_branch) => {
                 let cond = self.condition(condition)?;
@@ -272,9 +275,8 @@ impl ExprChecker {
             },
             ComptimeIf(condition, then_branch, else_branch) => {
                 let lowered_condition = self.expression(*condition)?;
-                let boolean_condition = self.coerce(lowered_condition, self.ctx.primitives.boolean)?;
-                let evaluator = ConstantEvaluator.new(&self.ctx.session.types, &self.ctx.session.hir, self.sizes);
-                let constant = match evaluator.evaluate(boolean_condition) {
+                let boolean_condition = self.coerce(lowered_condition, TypeId(BOOL_TYPE_ID))?;
+                let constant = match self.ctx.evaluator.evaluate(boolean_condition) {
                     Ok(value) => value,
                     Err(problem) => {
                         if problem.kind == AnalysisErrorKind.NotConstant {
@@ -325,9 +327,9 @@ impl ExprChecker {
                 };
                 let cond = self.condition(condition)?;
                 let body = self.block(*body)?;
-                let exit = self.node(span, self.ctx.primitives.never, false, HirKind.Break(Option<HirId>.None));
-                let branch = self.node(span, self.ctx.primitives.void, false, HirKind.If(HirIf(cond, body, Option<HirId>.Some(exit))));
-                Result<HirId, AnalysisError>.Ok(self.node(span, self.ctx.primitives.void, false, HirKind.Loop(branch)))
+                let exit = self.node(span, TypeId(NEVER_TYPE_ID), false, HirKind.Break(Option<HirId>.None));
+                let branch = self.node(span, TypeId(VOID_TYPE_ID), false, HirKind.If(HirIf(cond, body, Option<HirId>.Some(exit))));
+                Result<HirId, AnalysisError>.Ok(self.node(span, TypeId(VOID_TYPE_ID), false, HirKind.Loop(branch)))
             },
             Break(value) => {
                 if self.deferred != 0 {
@@ -347,7 +349,7 @@ impl ExprChecker {
                 let lowered = match value {
                     Some(expr) => Option<HirId>.Some(self.expression(*expr)?), None => Option<HirId>.None
                 };
-                let id = self.node(span, self.ctx.primitives.never, false, HirKind.Break(lowered));
+                let id = self.node(span, TypeId(NEVER_TYPE_ID), false, HirKind.Break(lowered));
                 self.loops[frame].add_break(id);
                 Result<HirId, AnalysisError>.Ok(id)
             },
@@ -360,7 +362,7 @@ impl ExprChecker {
                     return Result<HirId, AnalysisError>.Err(self.error(span, "'continue' is only allowed inside a loop"));
                 }
 
-                Result<HirId, AnalysisError>.Ok(self.node(span, self.ctx.primitives.never, false, HirKind.Continue))
+                Result<HirId, AnalysisError>.Ok(self.node(span, TypeId(NEVER_TYPE_ID), false, HirKind.Continue))
             },
             Defer(action) => {
                 if self.deferred != 0 {
@@ -370,26 +372,26 @@ impl ExprChecker {
                 self.deferred += 1;
                 defer self.deferred -= 1;
                 let action = self.expression(*action)?;
-                Result<HirId, AnalysisError>.Ok(self.node(span, self.ctx.primitives.void, false, HirKind.Defer(action)))
+                Result<HirId, AnalysisError>.Ok(self.node(span, TypeId(VOID_TYPE_ID), false, HirKind.Defer(action)))
             },
             Assert(condition, message) => {
                 let condition_id = self.expression(*condition)?;
-                condition_id = self.coerce(condition_id, self.ctx.primitives.boolean)?;
+                condition_id = self.coerce(condition_id, TypeId(BOOL_TYPE_ID))?;
                 let message_id = match message {
                     Some(value) => {
                         let lowered = self.expression(*value)?;
-                        self.coerce(lowered, self.ctx.primitives.string)?
+                        self.coerce(lowered, TypeId(STR_TYPE_ID))?
                     },
                     None => {
                         let interned = self.ctx.session.names.intern("assertion failed");
-                        self.node(span, self.ctx.primitives.string, false, HirKind.StrLiteral(interned))
+                        self.node(span, TypeId(STR_TYPE_ID), false, HirKind.StrLiteral(interned))
                     },
                 };
                 let args = Vec<HirId>.new();
                 args.push(message_id);
-                let failure = self.node(span, self.ctx.primitives.never, false, HirKind.Builtin(HirBuiltin(BuiltinKind.Panic, Vec<TypeId>.new(), args)));
-                let success = self.node(span, self.ctx.primitives.void, false, HirKind.Block(HirBlock(Vec<HirId>.new())));
-                Result<HirId, AnalysisError>.Ok(self.node(span, self.ctx.primitives.void, false, HirKind.If(HirIf(condition_id, success, Option<HirId>.Some(failure)))))
+                let failure = self.node(span, TypeId(NEVER_TYPE_ID), false, HirKind.Builtin(HirBuiltin(BuiltinKind.Panic, Vec<TypeId>.new(), args)));
+                let success = self.node(span, TypeId(VOID_TYPE_ID), false, HirKind.Block(HirBlock(Vec<HirId>.new())));
+                Result<HirId, AnalysisError>.Ok(self.node(span, TypeId(VOID_TYPE_ID), false, HirKind.If(HirIf(condition_id, success, Option<HirId>.Some(failure)))))
             },
             Builtin(kind, type_args, args) => {
                 self.builtin(span, *kind, type_args, args)
@@ -411,7 +413,7 @@ impl ExprChecker {
                     return Result<HirId, AnalysisError>.Err(self.error(span, "delete requires a pointer, slice, or reference"));
                 }
 
-                Result<HirId, AnalysisError>.Ok(self.node(span, self.ctx.primitives.void, false, HirKind.Delete(value)))
+                Result<HirId, AnalysisError>.Ok(self.node(span, TypeId(VOID_TYPE_ID), false, HirKind.Delete(value)))
             },
             For(_, _, _) => Result<HirId, AnalysisError>.Err(AnalysisError.internal("for must be desugared before lowering")),
             Matches(_, _) => Result<HirId, AnalysisError>.Err(AnalysisError.internal("matches operator must be desugared before lowering")),

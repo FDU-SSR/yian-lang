@@ -16,6 +16,7 @@ from yianc.analysis.passes.definite_assignment import check_assignment;
 from yianc.analysis.passes.coverage import check_coverage;
 from yianc.analysis.passes.verify_hir import verify_hir;
 from yianc.analysis.passes.address_storage import normalize_address_storage;
+from yianc.analysis.passes.finalize_hir_types import finalize_hir_types;
 from yianc.diagnostics.model import AnalysisError, AnalysisErrorKind, AnalysisStage;
 from yianc.diagnostics.order import order_diagnostics;
 from yianc.driver.dump import hir_dump;
@@ -94,14 +95,13 @@ impl MiddleEndDriver {
         let started = start_stage(&options, "analysis.restricted", AnalysisStage.Restricted);
         at_stage(check_restricted(session), "analysis.restricted", AnalysisStage.Restricted, &options, started)?;
         let context_started = start_stage(&options, "analysis.context", AnalysisStage.Resolve);
-        let context_result = ResolutionContext.new(session);
+        let context_result = ResolutionContext.new(session, options.sizes);
         match &context_result {
             Ok(_) => finish_stage(&options, "analysis.context", context_started, true),
             Err(_) => finish_stage(&options, "analysis.context", context_started, false),
         }
         let context = context_result?;
         defer context.drop();
-        context.sizes = options.sizes;
         let declaration_token = start_stage(&options, "analysis.collect_declarations", AnalysisStage.Resolve);
         at_stage(collect_declarations(&context), "analysis.collect_declarations", AnalysisStage.Resolve, &options, declaration_token)?;
         let import_token = start_stage(&options, "analysis.resolve_imports", AnalysisStage.Resolve);
@@ -113,7 +113,7 @@ impl MiddleEndDriver {
         let automatic_token = start_stage(&options, "analysis.register_automatic", AnalysisStage.Resolve);
         at_stage(register_automatic(&context), "analysis.register_automatic", AnalysisStage.Resolve, &options, automatic_token)?;
         let constant_token = start_stage(&options, "analysis.evaluate_constants", AnalysisStage.Resolve);
-        at_stage(evaluate_constants(&context, options.sizes), "analysis.evaluate_constants", AnalysisStage.Resolve, &options, constant_token)?;
+        at_stage(evaluate_constants(&context), "analysis.evaluate_constants", AnalysisStage.Resolve, &options, constant_token)?;
         let finalize_token = start_stage(&options, "analysis.finalize_types", AnalysisStage.Finalize);
         at_stage(finalize_types(&context), "analysis.finalize_types", AnalysisStage.Finalize, &options, finalize_token)?;
         let check_impl_token = start_stage(&options, "analysis.check_impls", AnalysisStage.Resolve);
@@ -150,6 +150,19 @@ impl MiddleEndDriver {
         match normalized {
             Ok(_) => {},
             Err(problem) => return Result<AnalysisReport, AnalysisError>.Err(problem.with_stage(AnalysisStage.TypeCheck)),
+        }
+        // Successful output is concretely typed regardless of the optional HIR verifier.
+        if report_value.ok() {
+            let finalize_token = start_stage(&options, "analysis.finalize_hir_types", AnalysisStage.TypeCheck);
+            let finalized = finalize_hir_types(&context, &output);
+            match &finalized {
+                Ok(_) => finish_stage(&options, "analysis.finalize_hir_types", finalize_token, true),
+                Err(_) => finish_stage(&options, "analysis.finalize_hir_types", finalize_token, false),
+            }
+            match finalized {
+                Ok(_) => {},
+                Err(problem) => return Result<AnalysisReport, AnalysisError>.Err(problem.with_stage(AnalysisStage.TypeCheck)),
+            }
         }
         // A callee failure leaves a partial call graph. It is never exported to the backend.
         if report_value.ok() && options.verify_hir {

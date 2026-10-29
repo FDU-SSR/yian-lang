@@ -17,29 +17,25 @@ from std.core.iter import Iterator, IntoIterator;
 from std.collections.hash_map import HashMap;
 from yianc.frontend.source import Span;
 from std.core.convert import From;
+from yianc.analysis.ty.store import BOOL_TYPE_ID, CHAR_TYPE_ID, C_CHAR_TYPE_ID, C_INT_TYPE_ID, C_SIZE_TYPE_ID, C_UINT_TYPE_ID, ERROR_TYPE_ID, F16_TYPE_ID, F32_TYPE_ID, F64_TYPE_ID, FLOAT_LITERAL_TYPE_ID, I8_TYPE_ID, I16_TYPE_ID, I32_TYPE_ID, I64_TYPE_ID, INT_LITERAL_TYPE_ID, NEVER_TYPE_ID, STR_TYPE_ID, U8_TYPE_ID, U16_TYPE_ID, U32_TYPE_ID, U64_TYPE_ID, VOID_TYPE_ID;
 
 pub fn scalar_name(ctx: ResolutionContext&, name: str) -> Option<TypeId> {
-    let signed = name.starts_with("i") || name == "int";
-    let bits = match name {
-        "i8" => 8u32, "u8" => 8u32, "i16" => 16u32, "u16" => 16u32,
-        "i32" => 32u32, "u32" => 32u32, "i64" => 64u32, "u64" => 64u32,
-        "int" => 32u32, "uint" => 32u32,
-        _ => 0u32,
-    };
-
-    if bits != 0 {
-        return Option<TypeId>.Some(*ctx.session.types.primitive(TypeData.Integer(bits, signed)).unwrap());
-    }
-
     match name {
-        "void" => Option<TypeId>.Some(ctx.primitives.void),
-        "f16" => Option<TypeId>.Some(*ctx.session.types.primitive(TypeData.Float(16)).unwrap()),
-        "f32" => Option<TypeId>.Some(*ctx.session.types.primitive(TypeData.Float(32)).unwrap()),
-        "f64" => Option<TypeId>.Some(ctx.primitives.float),
-        "float" => Option<TypeId>.Some(ctx.primitives.float),
-        "bool" => Option<TypeId>.Some(ctx.primitives.boolean),
-        "char" => Option<TypeId>.Some(ctx.primitives.character),
-        "str" => Option<TypeId>.Some(ctx.primitives.string),
+        "void" => Option<TypeId>.Some(TypeId(VOID_TYPE_ID)),
+        "i8" => Option<TypeId>.Some(TypeId(I8_TYPE_ID)),
+        "i16" => Option<TypeId>.Some(TypeId(I16_TYPE_ID)),
+        "i32" | "int" => Option<TypeId>.Some(TypeId(I32_TYPE_ID)),
+        "i64" => Option<TypeId>.Some(TypeId(I64_TYPE_ID)),
+        "u8" => Option<TypeId>.Some(TypeId(U8_TYPE_ID)),
+        "u16" => Option<TypeId>.Some(TypeId(U16_TYPE_ID)),
+        "u32" | "uint" => Option<TypeId>.Some(TypeId(U32_TYPE_ID)),
+        "u64" => Option<TypeId>.Some(TypeId(U64_TYPE_ID)),
+        "f16" => Option<TypeId>.Some(TypeId(F16_TYPE_ID)),
+        "f32" => Option<TypeId>.Some(TypeId(F32_TYPE_ID)),
+        "f64" | "float" => Option<TypeId>.Some(TypeId(F64_TYPE_ID)),
+        "bool" => Option<TypeId>.Some(TypeId(BOOL_TYPE_ID)),
+        "char" => Option<TypeId>.Some(TypeId(CHAR_TYPE_ID)),
+        "str" => Option<TypeId>.Some(TypeId(STR_TYPE_ID)),
         _ => Option<TypeId>.None,
     }
 }
@@ -166,16 +162,16 @@ pub fn resolve_const(ctx: ResolutionContext&, unit: UnitId, scope: ScopeId, expr
     match &expr.data {
         LiteralConstExpr(literal) => {
             let value_type = match &literal.data.suffix {
-                Unsuffixed => ctx.primitives.unsigned,
-                U64 => ctx.primitives.unsigned,
+                Unsuffixed => TypeId(U64_TYPE_ID),
+                U64 => TypeId(U64_TYPE_ID),
                 I8 => ctx.session.types.primitive(TypeData.Integer(8, true))?,
                 I16 => ctx.session.types.primitive(TypeData.Integer(16, true))?,
-                I32 => ctx.primitives.integer,
+                I32 => TypeId(I32_TYPE_ID),
                 I64 => ctx.session.types.primitive(TypeData.Integer(64, true))?,
                 U8 => ctx.session.types.primitive(TypeData.Integer(8, false))?,
                 U16 => ctx.session.types.primitive(TypeData.Integer(16, false))?,
                 U32 => ctx.session.types.primitive(TypeData.Integer(32, false))?,
-                Int => ctx.primitives.integer,
+                Int => TypeId(I32_TYPE_ID),
                 Uint => ctx.session.types.primitive(TypeData.Integer(32, false))?,
             };
             Result<TypeId, AnalysisError>.Ok(ctx.session.types.literal(literal.data.value, literal.data.negative, value_type))
@@ -209,34 +205,25 @@ fn resolve_arithmetic(ctx: ResolutionContext&, unit: UnitId, scope: ScopeId, exp
     defer value.drop();
     match &value.value {
         Integer(integer) => Result<TypeId, AnalysisError>.Ok(ctx.session.types.literal(magnitude(*integer), integer.is_negative(), value.type_id)),
-        LargeInteger(integer) => {
-            let magnitude = match integer.small_magnitude() {
-                Some(value) => value,
-                None => return Result<TypeId, AnalysisError>.Err(ctx.error(unit, expr.span, DiagnosticCode.Constant, "constant generic result exceeds its integer representation")),
-            };
-            let type_id = if integer.is_negative() { ctx.session.types.primitive(TypeData.Integer(64, true))? } else { ctx.primitives.unsigned };
-            Result<TypeId, AnalysisError>.Ok(ctx.session.types.literal(magnitude, integer.is_negative(), type_id))
-        },
         _ => Result<TypeId, AnalysisError>.Err(ctx.error(unit, expr.span, DiagnosticCode.Type, "type-level constants must be integer literals")),
     }
 }
 
 fn evaluate_const_tree(ctx: ResolutionContext&, unit: UnitId, scope: ScopeId, expr: ConstExpr&) -> Result<Option<ConstInteger>, AnalysisError> {
-    let evaluator = ConstantEvaluator.new(&ctx.session.types, &ctx.session.hir, Option<TypeSizeProvider&>.None);
-    let location = ctx.span(unit, expr.span);
+        let location = ctx.span(unit, expr.span);
     match &expr.data {
         LiteralConstExpr(literal) => {
             let id = resolve_const(ctx, unit, scope, expr)?;
             let type_id = match ctx.session.types.require(id)? { LiteralValue(_, _, type_id) => *type_id, _ => return Result<Option<ConstInteger>, AnalysisError>.Err(AnalysisError.internal("literal constant has no value")), };
-            type_id = if literal.data.suffix.spelling() == "" { ctx.primitives.integer_literal } else { type_id };
-            let value = evaluator.convert(ConstValue.Integer(IntegerValue.untyped(literal.data.value, literal.data.negative)), type_id, location)?;
+            type_id = if literal.data.suffix.spelling() == "" { TypeId(INT_LITERAL_TYPE_ID) } else { type_id };
+            let value = ctx.evaluator.convert(ConstValue.Integer(IntegerValue.untyped(literal.data.value, literal.data.negative)), type_id, location)?;
             Result<Option<ConstInteger>, AnalysisError>.Ok(Option<ConstInteger>.Some(ConstInteger(value, type_id)))
         },
         GenericConstExpr(_) => {
             let id = resolve_const(ctx, unit, scope, expr)?;
             match ctx.session.types.require(id)? {
                 LiteralValue(bits, negative, type_id) => {
-                    let value = evaluator.convert(ConstValue.Integer(IntegerValue.untyped(*bits, *negative)), *type_id, location)?;
+                    let value = ctx.evaluator.convert(ConstValue.Integer(IntegerValue.untyped(*bits, *negative)), *type_id, location)?;
                     Result<Option<ConstInteger>, AnalysisError>.Ok(Option<ConstInteger>.Some(ConstInteger(value, *type_id)))
                 },
                 _ => Result<Option<ConstInteger>, AnalysisError>.Ok(Option<ConstInteger>.None),
@@ -245,7 +232,7 @@ fn evaluate_const_tree(ctx: ResolutionContext&, unit: UnitId, scope: ScopeId, ex
         UnaryConstExpr(op, operand) => {
             let value = match evaluate_const_tree(ctx, unit, scope, *operand)? { Some(value) => value, None => return Result<Option<ConstInteger>, AnalysisError>.Ok(Option<ConstInteger>.None), };
             // Unary evaluation consumes the operand even when it reports a numeric error.
-            let result = evaluator.unary(*op, value.value, value.type_id, location)?;
+            let result = ctx.evaluator.unary(*op, value.value, value.type_id, location)?;
             Result<Option<ConstInteger>, AnalysisError>.Ok(Option<ConstInteger>.Some(ConstInteger(result, value.type_id)))
         },
         BinaryConstExpr(op, left, right) => {
@@ -259,13 +246,13 @@ fn evaluate_const_tree(ctx: ResolutionContext&, unit: UnitId, scope: ScopeId, ex
             let b = match &rhs { Some(value) => value, None => return Result<Option<ConstInteger>, AnalysisError>.Ok(Option<ConstInteger>.None), };
             let type_id = if a.type_id == b.type_id { a.type_id } elif compatible(ctx, a.type_id, b.type_id) { b.type_id } elif compatible(ctx, b.type_id, a.type_id) { a.type_id } else { return Result<Option<ConstInteger>, AnalysisError>.Err(ctx.error(unit, expr.span, DiagnosticCode.TypeMismatch, "type-level operands have incompatible types")); };
             lhs_taken = true;
-            let a_value = evaluator.convert(a.value, type_id, location)?;
+            let a_value = ctx.evaluator.convert(a.value, type_id, location)?;
             let consumed = false;
             defer { if !consumed { a_value.drop(); } };
             rhs_taken = true;
-            let b_value = evaluator.convert(b.value, type_id, location)?;
+            let b_value = ctx.evaluator.convert(b.value, type_id, location)?;
             consumed = true;
-            let result = evaluator.binary(*op, a_value, b_value, type_id, location)?;
+            let result = ctx.evaluator.binary(*op, a_value, b_value, type_id, location)?;
             Result<Option<ConstInteger>, AnalysisError>.Ok(Option<ConstInteger>.Some(ConstInteger(result, type_id)))
         },
     }
@@ -282,27 +269,34 @@ fn resolve_type_inner(ctx: ResolutionContext&, unit: UnitId, scope: ScopeId, syn
     match &syntax.data {
         IntType(signed, width) => ctx.session.types.primitive(TypeData.Integer(u32(*width * 8), *signed)),
         FloatType(width) => ctx.session.types.primitive(TypeData.Float(u32(*width * 8))),
-        BoolType => Result<TypeId, AnalysisError>.Ok(ctx.primitives.boolean),
-        StrType => Result<TypeId, AnalysisError>.Ok(ctx.primitives.string),
-        CharType => Result<TypeId, AnalysisError>.Ok(ctx.primitives.character),
-        VoidType => Result<TypeId, AnalysisError>.Ok(ctx.primitives.void),
-        NeverType => Result<TypeId, AnalysisError>.Ok(ctx.primitives.never),
-        DeducedType => Result<TypeId, AnalysisError>.Ok(ctx.primitives.error),
+        BoolType => Result<TypeId, AnalysisError>.Ok(TypeId(BOOL_TYPE_ID)),
+        StrType => Result<TypeId, AnalysisError>.Ok(TypeId(STR_TYPE_ID)),
+        CharType => Result<TypeId, AnalysisError>.Ok(TypeId(CHAR_TYPE_ID)),
+        VoidType => Result<TypeId, AnalysisError>.Ok(TypeId(VOID_TYPE_ID)),
+        NeverType => Result<TypeId, AnalysisError>.Ok(TypeId(NEVER_TYPE_ID)),
+        DeducedType => Result<TypeId, AnalysisError>.Ok(TypeId(ERROR_TYPE_ID)),
         CScalarType(name) => {
             if !ctx.session.unit(unit).unwrap().allows_ffi {
                 return Result<TypeId, AnalysisError>.Err(ctx.error(unit, syntax.span, DiagnosticCode.Access, "C ABI types require FFI permission"));
             }
 
-            let bits = if name.as_str() == "c_char" {
-                8u32
-            } elif name.as_str() == "c_size" || name.as_str() == "c_ptrdiff" {
-                64u32
-            } else {
-                32u32
-            };
-            let signed = name.as_str() != "c_size" && name.as_str() != "c_uint";
-            let id = ctx.session.names.intern(name.as_str());
-            ctx.session.types.primitive(TypeData.CScalar(bits, signed, id))
+            if name.as_str() == "c_char" {
+                return Result<TypeId, AnalysisError>.Ok(TypeId(C_CHAR_TYPE_ID));
+            }
+
+            if name.as_str() == "c_int" {
+                return Result<TypeId, AnalysisError>.Ok(TypeId(C_INT_TYPE_ID));
+            }
+
+            if name.as_str() == "c_uint" {
+                return Result<TypeId, AnalysisError>.Ok(TypeId(C_UINT_TYPE_ID));
+            }
+
+            if name.as_str() == "c_size" {
+                return Result<TypeId, AnalysisError>.Ok(TypeId(C_SIZE_TYPE_ID));
+            }
+
+            Result<TypeId, AnalysisError>.Err(AnalysisError.internal("unknown C scalar type"))
         },
         NamedType(name) => {
             let text = name.data.name.as_str();
@@ -474,9 +468,8 @@ fn named_constant(ctx: ResolutionContext&, unit: UnitId, symbol: SymbolId, span:
     let record = *ctx.session.symbols.get(symbol).unwrap();
 
     if record.kind == SymbolKind.Constant {
-        let expression = evaluate_constant(ctx, symbol, ctx.sizes)?;
-        let evaluator = ConstantEvaluator.new(&ctx.session.types, &ctx.session.hir, ctx.sizes);
-        let constant = evaluator.evaluate(expression)?;
+        let expression = evaluate_constant(ctx, symbol)?;
+        let constant = ctx.evaluator.evaluate(expression)?;
         defer constant.drop();
         return match &constant.value {
             Integer(value) => Result<TypeId, AnalysisError>.Ok(ctx.session.types.literal(magnitude(*value), value.is_negative(), constant.type_id)),

@@ -110,7 +110,7 @@ impl Lowering {
                                     0u64 - number.raw_bits()
                                 } else { number.raw_bits() }),
                             Bool(value) => ValueKind.Integer(if *value { 1u64 } else { 0u64 }),
-                            Char(value) => ValueKind.Integer(u64(*value)),
+                            Char(value) => ValueKind.Integer(u64(u32(*value))),
                             _ => return Result<(), CodegenError>.Err(CodegenError.invalid("literal pattern has no scalar value")),
                         };
                         let rhs = self.function.add_value(pattern.type_id, constant);
@@ -124,7 +124,8 @@ impl Lowering {
                 let width = 64u32;
                 let signed = false;
                 match self.session.types.require(pattern.type_id)? {
-                    Integer(bits, sign) | CScalar(bits, sign, _) => { width = *bits; signed = *sign; },
+                    Integer(bits, sign) => { width = *bits; signed = *sign; },
+                    CScalar(kind) => { width = kind.bits(); signed = kind.is_signed(); },
                     Char => { width = 32u32; },
                     _ => return Result<(), CodegenError>.Err(CodegenError.invalid("range pattern is not integer-like")),
                 }

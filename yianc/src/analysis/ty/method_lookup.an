@@ -1,7 +1,7 @@
 from yianc.analysis.resolution.context import ResolutionContext;
 from yianc.analysis.session.session import AnalysisSession;
 from yianc.analysis.ty.substitution import infer, substitute;
-from yianc.analysis.ty.store import TypeStore;
+from yianc.analysis.ty.store import TypeStore, VOID_TYPE_ID;
 from yianc.analysis.ty.model import Parameter;
 from yianc.analysis.ty.relations import compatible, default_type;
 from yianc.analysis.ty.display import type_text, stored_type_text;
@@ -244,7 +244,7 @@ pub fn lookup_method_with_generics(ctx: ResolutionContext&, target: TypeId, name
     let active = Vec<TraitQuery>.new();
     defer active.drop();
     let query_trait = match required {
-        Some(value) => value, None => ctx.primitives.void
+        Some(value) => value, None => TypeId(VOID_TYPE_ID)
     };
     let budget = query_budget(ctx.session, target, query_trait)?;
 

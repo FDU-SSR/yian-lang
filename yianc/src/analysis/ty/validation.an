@@ -121,7 +121,7 @@ pub fn validate_unsized(ctx: ResolutionContext&) -> Result<(), AnalysisError> {
 pub fn contains_ffi(store: TypeStore&, type_id: TypeId, opaque_only: bool) -> bool {
     match *store.get(type_id).unwrap() {
         Opaque(_, _) => true,
-        CScalar(_, _, _) => !opaque_only,
+        CScalar(_) => !opaque_only,
         CPointer(_) => !opaque_only,
         Pointer(inner) => contains_ffi(store, *inner, opaque_only),
         Reference(inner) => contains_ffi(store, *inner, opaque_only),
@@ -162,7 +162,7 @@ pub fn c_abi_type(store: TypeStore&, type_id: TypeId, result: bool, incomplete: 
     match *store.get(type_id).unwrap() {
         Void => result,
         Integer(_, _) => true,
-        CScalar(_, _, _) => true,
+        CScalar(_) => true,
         Float(bits) => *bits == 32 || *bits == 64,
         Opaque(_, _) => incomplete,
         CPointer(inner) => c_abi_type(store, *inner, false, true),

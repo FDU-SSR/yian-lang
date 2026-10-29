@@ -10,6 +10,7 @@ from yianc.common.traversal import WalkControl;
 from yianc.diagnostics.model import AnalysisError;
 from yianc.frontend.ast.operator import UnaryOperator;
 from std.collections.hash_set import HashSet;
+from yianc.analysis.ty.store import VOID_TYPE_ID;
 
 fn invalid(span: SourceSpan, message: str) -> AnalysisError {
     AnalysisError.internal(message).with_location(span)
@@ -74,7 +75,7 @@ fn spill(ctx: ResolutionContext&, unit: UnitId, value: HirId, type_id: TypeId, s
     let name = ctx.session.names.intern("%address_temp");
     let symbol = ctx.session.symbols.add(Symbol(name, SymbolKind.Variable, type_id, unit,
         Option<SourceSpan>.Some(span), false, false, false, Option<SymbolId>.None, Option<DefId>.None));
-    let init = ctx.session.hir.add(HirNode(span, ctx.primitives.void, false,
+    let init = ctx.session.hir.add(HirNode(span, TypeId(VOID_TYPE_ID), false,
         HirKind.Let(HirLet(Option<HirId>.Some(value), Option<SymbolId>.Some(symbol)))));
     let variable = ctx.session.hir.add(HirNode(span, type_id, true, HirKind.Var(symbol)));
     let statements = Vec<HirId>.new();

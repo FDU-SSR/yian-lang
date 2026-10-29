@@ -13,6 +13,7 @@ from yianc.frontend.source import Span;
 from yianc.diagnostics.model import AnalysisError;
 from std.collections.hash_map import HashMap;
 from std.core.iter import Iterator, IntoIterator;
+from yianc.analysis.ty.store import BOOL_TYPE_ID;
 
 fn truth(arena: AstArena&, span: Span, value: bool) -> Block& {
     let literal = arena.alloc_bool_literal(BoolLiteralData(value), span);
@@ -96,7 +97,7 @@ pub fn register_automatic(ctx: ResolutionContext&) -> Result<(), AnalysisError> 
                 let identity = ctx.session.types.register(DefinitionHeader(NominalKind.Method, name, ctx.span(declaration.unit, span), declaration.unit), generics.clone());
                 let params = Vec<Parameter>.new();
                 params.push(Parameter(ctx.session.names.intern("other"), ctx.session.types.reference(target), Option<SourceSpan>.Some(ctx.span(declaration.unit, span))));
-                ctx.session.types.finish_definition(identity, DefinitionBody.Method(CallableDefinition(params, ctx.primitives.boolean, Option<TypeId>.Some(target), false, false, false, false, false, true, generics.len())))?;
+                ctx.session.types.finish_definition(identity, DefinitionBody.Method(CallableDefinition(params, TypeId(BOOL_TYPE_ID), Option<TypeId>.Some(target), false, false, false, false, false, true, generics.len())))?;
                 let method = ctx.session.types.instance(identity, &generics)?;
                 ctx.callable_scopes.insert(identity, ctx.scopes[declaration.unit.index]);
                 ctx.session.definitions.register(Procedure(identity, method, declaration.unit, body, DefinitionKind.Method))?;

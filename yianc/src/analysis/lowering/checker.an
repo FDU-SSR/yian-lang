@@ -13,14 +13,13 @@ from yianc.frontend.source import Span;
 from yianc.diagnostics.model import DiagnosticCode, AnalysisError;
 from std.core.iter import Iterator, IntoIterator;
 from std.core.convert import From;
+from yianc.analysis.ty.store import NEVER_TYPE_ID, VOID_TYPE_ID;
 
 // The checker owns no session data. Lexical state is restored by defer on every error path.
 pub struct ExprChecker {
     pub ctx: ResolutionContext&,
     pub unit: UnitId,
     pub scope: ScopeId,
-    pub return_type: TypeId,
-    pub sizes: Option<TypeSizeProvider&>,
     pub ffi_allowed: bool,
     loops: Vec<LoopContext>,
     deferred: u64,
@@ -67,8 +66,8 @@ impl Drop for ExprChecker {
 }
 
 impl ExprChecker {
-    static pub fn new(ctx: ResolutionContext&, unit: UnitId, scope: ScopeId, result: TypeId, sizes: Option<TypeSizeProvider&>) -> Self {
-        Self(ctx, unit, scope, result, sizes, false, Vec<LoopContext>.new(), 0, false)
+    static pub fn new(ctx: ResolutionContext&, unit: UnitId, scope: ScopeId) -> Self {
+        Self(ctx, unit, scope, false, Vec<LoopContext>.new(), 0, false)
     }
 
     pub fn node(span: Span, type_id: TypeId, place: bool, kind: HirKind) -> HirId {
@@ -77,6 +76,14 @@ impl ExprChecker {
 
     pub fn type_of(id: HirId) -> TypeId {
         self.ctx.session.hir.get(id).unwrap().type_id
+    }
+
+    // The nearest callable scope supplies the result context; module/const scopes have none.
+    fn required_return_type(span: Span) -> Result<TypeId, AnalysisError> {
+        match self.ctx.session.symbols.return_type(self.scope)? {
+            Some(value) => Result<TypeId, AnalysisError>.Ok(value),
+            None => Result<TypeId, AnalysisError>.Err(self.error(span, "return is only allowed inside a callable")),
+        }
     }
 
     fn error(span: Span, message: str) -> AnalysisError {
@@ -130,7 +137,7 @@ impl ExprChecker {
     pub fn coerce(id: HirId, expected: TypeId) -> Result<HirId, AnalysisError> {
         let node = *self.ctx.session.hir.get(id).unwrap();
 
-        if node.type_id == expected || node.type_id == self.ctx.primitives.never {
+        if node.type_id == expected || node.type_id == TypeId(NEVER_TYPE_ID) {
             return Result<HirId, AnalysisError>.Ok(id);
         }
 
@@ -202,7 +209,7 @@ impl ExprChecker {
             statements.push(self.pattern_binding(*binding)?);
         }
 
-        let result = self.ctx.primitives.void;
+        let result = TypeId(VOID_TYPE_ID);
         let terminated = false;
 
         for statement in block.data.stmts {
@@ -211,7 +218,7 @@ impl ExprChecker {
 
             if !terminated {
                 result = self.type_of(lowered);
-                terminated = result == self.ctx.primitives.never;
+                terminated = result == TypeId(NEVER_TYPE_ID);
             }
         }
 
