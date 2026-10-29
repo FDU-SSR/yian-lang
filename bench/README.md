@@ -29,8 +29,10 @@ bench/
 
 2026-10-28 已按新规范改写 22 个 C/YIAN 配对：17 个支持规模参数的程序在运行时读取 argv，
 五个大型 AWFY 的业务函数保持为普通函数，BG 使用与 C 相同的输出/退出码。
-[当前审查](../docs/c-to-yian-review.md) 仍列出 5 个基准的未解决差异：
-permute/storage/fasta/spectralnorm 的存储期，以及 call_abi 的优化后调用边界。
+v0.3 将静态可变状态改为入口持有的堆对象：permute/storage 的计数器在工作单元之间复用，
+fasta 的 seed/checksum/概率表放在堆上；CD 两个地址标记也由入口分配并在所有帧间共享。
+spectralnorm 的三个堆数组已符合新规则。[当前审查](../docs/c-to-yian-review.md) 仅剩
+call_abi 的优化后调用边界这一项基准差异。
 call_abi 当前不能作为三态实际调用开销证据。已有 results/ 与论文样本属于改写前记录，
 本次没有重测；它们不是当前源码的性能验收。22 对均共用同一份 .an 编译 raw/fat。
 

@@ -695,12 +695,12 @@ fn put_into_map(voxel_map: RBTree<Vec<Motion&>>&, voxel: Vector2D&, motion: Moti
     list.push(motion);
 }
 
-fn recurse_voxels(voxel_map: RBTree<Vec<Motion&>>&, seen: RBTree<bool>&, next_voxel: Vector2D&, motion: Motion&) {
+fn recurse_voxels(voxel_map: RBTree<Vec<Motion&>>&, seen: RBTree<u8&>&, next_voxel: Vector2D&, motion: Motion&, marker: u8&) {
     if !is_in_voxel(next_voxel, motion) {
         return;
     }
     let key: Key = Key.Voxel(next_voxel.x, next_voxel.y);
-    if RBTree_put(seen, &key, true).is_some() {
+    if RBTree_put(seen, &key, marker).is_some() {
         return;
     }
     put_into_map(voxel_map, next_voxel, motion);
@@ -715,20 +715,20 @@ fn recurse_voxels(voxel_map: RBTree<Vec<Motion&>>&, seen: RBTree<bool>&, next_vo
     let child5: Vector2D = v2_plus(child0, vertical);
     let child6: Vector2D = v2_minus(child1, vertical);
     let child7: Vector2D = v2_plus(child1, vertical);
-    recurse_voxels(voxel_map, seen, &child0, motion);
-    recurse_voxels(voxel_map, seen, &child1, motion);
-    recurse_voxels(voxel_map, seen, &child2, motion);
-    recurse_voxels(voxel_map, seen, &child3, motion);
-    recurse_voxels(voxel_map, seen, &child4, motion);
-    recurse_voxels(voxel_map, seen, &child5, motion);
-    recurse_voxels(voxel_map, seen, &child6, motion);
-    recurse_voxels(voxel_map, seen, &child7, motion);
+    recurse_voxels(voxel_map, seen, &child0, motion, marker);
+    recurse_voxels(voxel_map, seen, &child1, motion, marker);
+    recurse_voxels(voxel_map, seen, &child2, motion, marker);
+    recurse_voxels(voxel_map, seen, &child3, motion, marker);
+    recurse_voxels(voxel_map, seen, &child4, motion, marker);
+    recurse_voxels(voxel_map, seen, &child5, motion, marker);
+    recurse_voxels(voxel_map, seen, &child6, motion, marker);
+    recurse_voxels(voxel_map, seen, &child7, motion, marker);
 }
 
-fn draw_motion_on_voxel_map(voxel_map: RBTree<Vec<Motion&>>&, motion: Motion&) {
-    let seen: RBTree<bool> = RBTree_new<bool>();
+fn draw_motion_on_voxel_map(voxel_map: RBTree<Vec<Motion&>>&, motion: Motion&, marker: u8&) {
+    let seen: RBTree<u8&> = RBTree_new<u8&>();
     let start_voxel: Vector2D = voxel_hash(&motion.pos_one);
-    recurse_voxels(voxel_map, &seen, &start_voxel, motion);
+    recurse_voxels(voxel_map, &seen, &start_voxel, motion, marker);
     RBTree_free_nodes(&seen);
 }
 
@@ -741,9 +741,9 @@ pub fn CollisionDetector_new() -> CollisionDetector {
     return CollisionDetector(state=RBTree_new<Vector3D>());
 }
 
-pub fn CollisionDetector_handle_new_frame(self: CollisionDetector&, frame: Aircraft[]) -> i64 {
+pub fn CollisionDetector_handle_new_frame(self: CollisionDetector&, frame: Aircraft[], voxel_marker: u8&, frame_marker: u8&) -> i64 {
     let motions: Vec<Motion&> = Vec<Motion&>.new();
-    let seen: RBTree<bool> = RBTree_new<bool>();
+    let seen: RBTree<u8&> = RBTree_new<u8&>();
 
     let i: u64 = 0;
     while i < frame.len() {
@@ -751,7 +751,7 @@ pub fn CollisionDetector_handle_new_frame(self: CollisionDetector&, frame: Aircr
         let new_position: Vector3D = frame[u64(i)].position;
         let key: Key = Key.Sign(callsign);
         let old_opt: Option<Vector3D> = RBTree_put(&self.state, &key, new_position);
-        RBTree_put(&seen, &key, true);
+        RBTree_put(&seen, &key, frame_marker);
 
         let old_position: Vector3D = new_position;
         match old_opt {
@@ -788,7 +788,7 @@ pub fn CollisionDetector_handle_new_frame(self: CollisionDetector&, frame: Aircr
     let voxel_map: RBTree<Vec<Motion&>> = RBTree_new<Vec<Motion&>>();
     let mi: u64 = 0;
     while mi < motions.len() {
-        draw_motion_on_voxel_map(&voxel_map, motions[u64(mi)]);
+        draw_motion_on_voxel_map(&voxel_map, motions[u64(mi)], voxel_marker);
         mi += 1;
     }
 
@@ -851,7 +851,7 @@ fn simulate(aircraft: Vec<i32>, time: f64) -> Vec<Aircraft> {
     return frame;
 }
 
-fn benchmark(num_aircrafts: i32) -> i64 {
+fn benchmark(num_aircrafts: i32, voxel_marker: u8&, frame_marker: u8&) -> i64 {
     let aircraft: Vec<i32> = Vec<i32>.new();
     let a: u64 = 0;
     while i32(a) < num_aircrafts {
@@ -865,7 +865,7 @@ fn benchmark(num_aircrafts: i32) -> i64 {
     while i32(frame_index) < 200 {
         let time: f64 = f64(i32(frame_index)) / 10.0;
         let frame: Vec<Aircraft> = simulate(aircraft, time);
-        actual_collisions += CollisionDetector_handle_new_frame(&detector, frame.deref());
+        actual_collisions += CollisionDetector_handle_new_frame(&detector, frame.deref(), voxel_marker, frame_marker);
         frame.drop();
         frame_index += 1;
     }
@@ -903,9 +903,14 @@ fn main() {
     }
     for argument in &argv { argument.drop(); }
     argv.drop();
+    // Two distinct C static marker addresses are shared by all work units.
+    let voxel_marker: u8& = dyn 0u8;
+    let frame_marker: u8& = dyn 0u8;
     let i: u64 = 0;
     while i < ITER {
-        assert benchmark(AIRCRAFT) == 10830: "cd: collision count is not correct";
+        assert benchmark(AIRCRAFT, voxel_marker, frame_marker) == 10830: "cd: collision count is not correct";
         i += 1;
     }
+    del frame_marker;
+    del voxel_marker;
 }

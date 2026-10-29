@@ -86,17 +86,17 @@ fn free_tree(arr: Option<array_tree[]>) {
     del view;
 }
 
-fn benchmark_storage(root_depth: i32) -> i32 {
+fn benchmark_storage(root_depth: i32, count: i32&) -> i32 {
     let random: Random = Random(74755);
     Random_init(&random, 74755);
 
-    let count: i32 = 0;
+    *count = 0;
     let root_count: i32 = 0;
-    let result: Option<array_tree[]> = build_tree_depth(root_depth, &random, &count, &root_count);
+    let result: Option<array_tree[]> = build_tree_depth(root_depth, &random, count, &root_count);
 
     free_tree(result);
 
-    return count;
+    return *count;
 }
 
 // Decimal prefix parsing for the C atoi/atoll workload argument.
@@ -126,10 +126,13 @@ fn main() {
     }
     for argument in &argv { argument.drop(); }
     argv.drop();
+    // The static counter is shared across work units; Random stays automatic.
+    let count: i32& = dyn 0i32;
     let iter: u64 = 0;
     while iter < ITER {
-        let result: i32 = benchmark_storage(7);
+        let result: i32 = benchmark_storage(7, count);
         assert result == 5461: "storage count not expected";
         iter += 1;
     }
+    del count;
 }

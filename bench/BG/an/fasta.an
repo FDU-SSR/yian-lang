@@ -72,42 +72,50 @@ fn random_fasta_compute_only(
 fn main() {
     let alu_bytes: u8[] = ALU.as_slice();
 
-    let g_seed: i32 = 42;
-    let checksum: i64 = 0;
+    let g_seed: i32& = dyn 42i32;
+    let checksum: i64& = dyn 0i64;
 
-    let iub: AminoAcid[15] = [
-        AminoAcid(b'a', 0.27),
-        AminoAcid(b'c', 0.12),
-        AminoAcid(b'g', 0.12),
-        AminoAcid(b't', 0.27),
-        AminoAcid(b'B', 0.02),
-        AminoAcid(b'D', 0.02),
-        AminoAcid(b'H', 0.02),
-        AminoAcid(b'K', 0.02),
-        AminoAcid(b'M', 0.02),
-        AminoAcid(b'N', 0.02),
-        AminoAcid(b'R', 0.02),
-        AminoAcid(b'S', 0.02),
-        AminoAcid(b'V', 0.02),
-        AminoAcid(b'W', 0.02),
-        AminoAcid(b'Y', 0.02),
-    ];
-    let homosapiens: AminoAcid[4] = [
-        AminoAcid(b'a', 0.3029549426680),
-        AminoAcid(b'c', 0.1979883004921),
-        AminoAcid(b'g', 0.1979883004921),
-        AminoAcid(b't', 0.3010684568318),
-    ];
+    let iub: AminoAcid[] = {
+        let allocation = dyn[15] AminoAcid(0u8, 0.0);
+        allocation[0u64..15u64]
+    };
+    iub[u64(0)] = AminoAcid(b'a', 0.27);
+    iub[u64(1)] = AminoAcid(b'c', 0.12);
+    iub[u64(2)] = AminoAcid(b'g', 0.12);
+    iub[u64(3)] = AminoAcid(b't', 0.27);
+    iub[u64(4)] = AminoAcid(b'B', 0.02);
+    iub[u64(5)] = AminoAcid(b'D', 0.02);
+    iub[u64(6)] = AminoAcid(b'H', 0.02);
+    iub[u64(7)] = AminoAcid(b'K', 0.02);
+    iub[u64(8)] = AminoAcid(b'M', 0.02);
+    iub[u64(9)] = AminoAcid(b'N', 0.02);
+    iub[u64(10)] = AminoAcid(b'R', 0.02);
+    iub[u64(11)] = AminoAcid(b'S', 0.02);
+    iub[u64(12)] = AminoAcid(b'V', 0.02);
+    iub[u64(13)] = AminoAcid(b'W', 0.02);
+    iub[u64(14)] = AminoAcid(b'Y', 0.02);
+    let homosapiens: AminoAcid[] = {
+        let allocation = dyn[4] AminoAcid(0u8, 0.0);
+        allocation[0u64..4u64]
+    };
+    homosapiens[u64(0)] = AminoAcid(b'a', 0.3029549426680);
+    homosapiens[u64(1)] = AminoAcid(b'c', 0.1979883004921);
+    homosapiens[u64(2)] = AminoAcid(b'g', 0.1979883004921);
+    homosapiens[u64(3)] = AminoAcid(b't', 0.3010684568318);
 
     let n: i32 = 25000000;
 
-    make_cumulative(iub[0u64..15u64], 15, &checksum);
-    make_cumulative(homosapiens[0u64..4u64], 4, &checksum);
-    random_fasta_compute_only(homosapiens[0u64..4u64], 4, n * 5, &g_seed, &checksum);
-    random_fasta_compute_only(iub[0u64..15u64], 15, n * 3, &g_seed, &checksum);
-    repeat_fasta_compute_only(alu_bytes, n * 2, &checksum);
+    make_cumulative(iub[0u64..15u64], 15, checksum);
+    make_cumulative(homosapiens[0u64..4u64], 4, checksum);
+    random_fasta_compute_only(homosapiens[0u64..4u64], 4, n * 5, g_seed, checksum);
+    random_fasta_compute_only(iub[0u64..15u64], 15, n * 3, g_seed, checksum);
+    repeat_fasta_compute_only(alu_bytes, n * 2, checksum);
 
-    let res: i32 = i32(checksum) % 256;
+    let res: i32 = i32(*checksum) % 256;
     assert res == -71: "fasta: checksum is not correct";
     @print(f"checksum: {res}\n");
+    del homosapiens;
+    del iub;
+    del checksum;
+    del g_seed;
 }

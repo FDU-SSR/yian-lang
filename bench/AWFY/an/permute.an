@@ -41,16 +41,16 @@ fn permute_inner(n: i32, v: i32[], count: i32&) {
     }
 }
 
-fn benchmark_permute() -> i32 {
-    let count: i32 = 0;
+fn benchmark_permute(count: i32&) -> i32 {
+    *count = 0;
     let v: i32[] = {
         let extent: u64 = u64(6);
         let allocation = dyn[extent] 0i32;
         allocation[0u64..u64(extent)]
     };
-    permute_inner(6, v[0u64..6u64], &count);
+    permute_inner(6, v[0u64..6u64], count);
     del v;
-    return count;
+    return *count;
 }
 
 // Decimal prefix parsing for the C atoi/atoll workload argument.
@@ -80,10 +80,13 @@ fn main() {
     }
     for argument in &argv { argument.drop(); }
     argv.drop();
+    // One heap object replaces the C static counter across all work units.
+    let count: i32& = dyn 0i32;
     let iter: u64 = 0;
     while iter < ITER {
-        let result: i32 = benchmark_permute();
+        let result: i32 = benchmark_permute(count);
         assert result == 8660: "permute count not expected";
         iter += 1;
     }
+    del count;
 }
