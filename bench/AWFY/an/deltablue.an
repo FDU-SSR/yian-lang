@@ -495,7 +495,7 @@ pub fn Constraint_recalculate(self: Constraint&) {
 }
 
     // Upstream AbstractConstraint.satisfy.
-pub fn Constraint_satisfy(self: Constraint&, mark: i32, planner: Planner&) -> Option<Constraint&> {
+pub fn Constraint_satisfy(self: Constraint&, mark: i32, planner: Planner&, overridden_out: Option<Constraint&>&) -> bool {
     Constraint_choose_method(self, mark);
 
     if Constraint_is_satisfied(self) {
@@ -516,11 +516,13 @@ pub fn Constraint_satisfy(self: Constraint&, mark: i32, planner: Planner&) -> Op
             assert false: "Cycle encountered";
         }
         out.mark = mark;
-        return overridden;
+        *overridden_out = overridden;
+        return true;
     }
 
     assert Constraint_get_strength(self) != S_REQUIRED: "Could not satisfy a required constraint";
-    return Option<Constraint&>.None;
+    *overridden_out = Option<Constraint&>.None;
+    return false;
 }
 
     // Upstream AbstractConstraint.destroyConstraint.
@@ -635,10 +637,13 @@ pub fn Planner_new_mark(self: Planner&) -> i32 {
     // Upstream incrementalAdd.
 pub fn Planner_incremental_add(self: Planner&, c: Constraint&) {
     let mark: i32 = Planner_new_mark(self);
-    let cur: Option<Constraint&> = Constraint_satisfy(c, mark, self);
-    while cur.is_some() {
-        let overridden: Constraint& = *cur.unwrap();
-        cur = Constraint_satisfy(overridden, mark, self);
+    let cur: Option<Constraint&> = Option<Constraint&>.None;
+    if Constraint_satisfy(c, mark, self, &cur) {
+        while cur.is_some() {
+            let overridden: Constraint& = *cur.unwrap();
+            cur = Option<Constraint&>.None;
+            Constraint_satisfy(overridden, mark, self, &cur);
+        }
     }
 }
 

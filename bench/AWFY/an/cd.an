@@ -591,7 +591,7 @@ fn motion_delta(m: Motion&) -> Vector3D {
     return v3_minus(m.pos_two, m.pos_one);
 }
 
-fn motion_find_intersection(m1: Motion&, m2: Motion&) -> Option<Vector3D> {
+fn motion_find_intersection(m1: Motion&, m2: Motion&, out: Vector3D&) -> i32 {
     let init1: Vector3D = m1.pos_one;
     let init2: Vector3D = m2.pos_one;
     let vec1: Vector3D = motion_delta(m1);
@@ -603,16 +603,17 @@ fn motion_find_intersection(m1: Motion&, m2: Motion&) -> Option<Vector3D> {
         // Equal-velocity parallel/stationary motion has constant distance.
         let dist: f64 = v3_magnitude(v3_minus(init2, init1));
         if dist <= radius {
-            return Option<Vector3D>.Some(v3_times(v3_plus(init1, init2), 0.5));
+            *out = v3_times(v3_plus(init1, init2), 0.5);
+            return 1;
         }
-        return Option<Vector3D>.None;
+        return 0;
     }
 
     let b: f64 = 2.0 * v3_dot(v3_minus(init1, init2), v3_minus(vec1, vec2));
     let c: f64 = -radius * radius + v3_squared_magnitude(v3_minus(init2, init1));
     let discr: f64 = b * b - 4.0 * a * c;
     if discr < 0.0 {
-        return Option<Vector3D>.None;
+        return 0;
     }
 
     let root: f64 = sqrt(discr);  // Take one square root per discriminant, equivalent to upstream.
@@ -627,10 +628,11 @@ fn motion_find_intersection(m1: Motion&, m2: Motion&) -> Option<Vector3D> {
         let result2: Vector3D = v3_plus(init2, v3_times(vec2, v));
         let result: Vector3D = v3_times(v3_plus(result1, result2), 0.5);
         if result.x >= 0.0 && result.x <= 1000.0 && result.y >= 0.0 && result.y <= 1000.0 && result.z >= 0.0 && result.z <= 10.0 {
-            return Option<Vector3D>.Some(result);
+            *out = result;
+            return 1;
         }
     }
-    return Option<Vector3D>.None;
+    return 0;
 }
 
 fn is_in_voxel(voxel: Vector2D&, motion: Motion&) -> bool {
@@ -803,12 +805,9 @@ pub fn CollisionDetector_handle_new_frame(self: CollisionDetector&, frame: Aircr
             while a < list.len() {
                 let b: u64 = a + 1;
                 while b < list.len() {
-                    match motion_find_intersection(list[u64(a)], list[u64(b)]) {
-                        Some(position) => {
-                            collisions += 1;
-                        },
-                        None => {
-                        },
+                    let position: Vector3D = Vector3D(0.0, 0.0, 0.0);
+                    if motion_find_intersection(list[u64(a)], list[u64(b)], &position) != 0 {
+                        collisions += 1;
                     }
                     b += 1;
                 }

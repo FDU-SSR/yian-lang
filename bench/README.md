@@ -27,14 +27,15 @@ bench/
 
 当前评测来源与许可登记见 `bench/SUITES.md`。
 
-2026-10-28 已按新规范改写 22 个 C/YIAN 配对：17 个支持规模参数的程序在运行时读取 argv，
-五个大型 AWFY 的业务函数保持为普通函数，BG 使用与 C 相同的输出/退出码。
-v0.3 将静态可变状态改为入口持有的堆对象：permute/storage 的计数器在工作单元之间复用，
-fasta 的 seed/checksum/概率表放在堆上；CD 两个地址标记也由入口分配并在所有帧间共享。
-spectralnorm 的三个堆数组已符合新规则。[当前审查](../docs/c-to-yian-review.md) 仅剩
-call_abi 的优化后调用边界这一项基准差异。
-call_abi 当前不能作为三态实际调用开销证据。已有 results/ 与论文样本属于改写前记录，
-本次没有重测；它们不是当前源码的性能验收。22 对均共用同一份 .an 编译 raw/fat。
+22 个 C/YIAN 配对按 [翻译规范](../docs/c-to-yian.md) 核对：17 个支持规模参数的程序读取 argv，
+五个大型 AWFY 的业务函数是普通函数，BG 使用与 C 相同的输出/退出码。
+静态可变状态由入口持有堆对象：permute/storage 的计数器在工作单元之间复用，
+fasta 的 seed/checksum/概率表位于堆上；CD 两个地址标记在所有帧间共享，spectralnorm 使用三个堆数组。
+CD 的 motion_find_intersection 返回 0/1 并通过 out 写回碰撞点；DeltaBlue 的 Constraint_satisfy
+返回 bool 并通过 overridden_out 写回可空约束，保留成功但没有被替换约束的情况。
+[审查清单](../docs/c-to-yian-review.md) 仅列规则未覆盖的情况。
+call_abi 的调用边界属于规范已覆盖的实验要求，其 native -O2 内联问题仍在，因此不能作为三态实际调用开销证据。
+已有 results/ 与论文样本是历史测量，未对当前改写源码重测；22 对均共用同一份 .an 编译 raw/fat。
 
 
 这些命令用于编译、运行和测量所选基准，不属于默认局部验收。执行仓库验证前应检查集合、基准数、规模和采样次数；性能测量需要明确授权。
