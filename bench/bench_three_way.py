@@ -108,7 +108,7 @@ class Check:
         if self.stdout_eq is not None:
             parts.append(f"stdout=={self.stdout_eq!r}")
         for needle in self.stdout_contains:
-            parts.append(f"stdout 含 {needle!r}")
+            parts.append(f"stdout contains {needle!r}")
         if self.stdout_int_mod is not None:
             parts.append(f"stdout%{self.stdout_int_mod[0]}=={self.stdout_int_mod[1]}")
         return ", ".join(parts)
@@ -198,9 +198,9 @@ def _load_json(path: Path, what: str) -> dict[str, object]:
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
-        raise SystemExit(f"[{what}] 读取 {path} 失败: {exc}") from exc
+        raise SystemExit(f"[{what}] failed to read {path}: {exc}") from exc
     if not isinstance(data, dict):
-        raise SystemExit(f"[{what}] {path}: 顶层必须是 JSON 对象")
+        raise SystemExit(f"[{what}] {path}: top level must be a JSON object")
     return data
 
 
@@ -208,7 +208,7 @@ def _as_str_list(value: object, where: str) -> tuple[str, ...]:
     if value is None:
         return ()
     if not isinstance(value, list) or any(not isinstance(item, str) for item in value):
-        raise SystemExit(f"[spec] {where}: 期望字符串数组, 实际 {value!r}")
+        raise SystemExit(f"[spec] {where}: expected a string array, got {value!r}")
     return tuple(value)
 
 
@@ -217,19 +217,19 @@ def load_spec(
 ) -> BenchSpec:
     data = _load_json(spec_path, "spec")
     if data.get("name") != name:
-        raise SystemExit(f"[spec] {spec_path}: name 应为 {name!r}, 实际 {data.get('name')!r}")
+        raise SystemExit(f"[spec] {spec_path}: name should be {name!r}, got {data.get('name')!r}")
     if data.get("source") != source:
-        raise SystemExit(f"[spec] {spec_path}: source 应为 {source!r}, 实际 {data.get('source')!r}")
+        raise SystemExit(f"[spec] {spec_path}: source should be {source!r}, got {data.get('source')!r}")
     check_raw = data.get("check")
     if not isinstance(check_raw, dict):
-        raise SystemExit(f"[spec] {spec_path}: 缺少 check 对象")
+        raise SystemExit(f"[spec] {spec_path}: missing check object")
     int_mod_raw = check_raw.get("stdout_int_mod")
     int_mod: tuple[int, int] | None = None
     if int_mod_raw is not None:
         if not isinstance(int_mod_raw, list) or len(int_mod_raw) != 2 or any(
             not isinstance(item, int) for item in int_mod_raw
         ):
-            raise SystemExit(f"[spec] {spec_path}: stdout_int_mod 期望 [模, 期望余数]")
+            raise SystemExit(f"[spec] {spec_path}: stdout_int_mod expects [modulus, expected remainder]")
         int_mod = (int(int_mod_raw[0]), int(int_mod_raw[1]))
     eq_raw = check_raw.get("stdout_eq")
     check = Check(
@@ -242,7 +242,7 @@ def load_spec(
     scale: Scale | None = None
     if scale_raw is not None:
         if not isinstance(scale_raw, dict) or "default" not in scale_raw:
-            raise SystemExit(f"[spec] {spec_path}: scale 需要 default (快速档值 fast 可选)")
+            raise SystemExit(f"[spec] {spec_path}: scale requires default (fast profile value optional)")
         fast_raw = scale_raw.get("fast")
         scale = Scale(
             default=int(scale_raw["default"]),
@@ -250,7 +250,7 @@ def load_spec(
             c=str(scale_raw.get("c", "none")),
         )
         if scale.c not in ("argv", "none"):
-            raise SystemExit(f"[spec] {spec_path}: scale.c 只能是 \"argv\" 或 \"none\"")
+            raise SystemExit(f"[spec] {spec_path}: scale.c must be \"argv\" or \"none\"")
     return BenchSpec(
         name=name,
         source=source,
@@ -285,36 +285,36 @@ def discover() -> list[BenchSpec]:
             else:
                 fat[path.stem] = path
         if not fat:
-            raise SystemExit(f"[discover] {an_dir} 下没有 .an 基准")
+            raise SystemExit(f"[discover] no .an benchmarks under {an_dir}")
         orphans = sorted(set(raw) - set(fat))
         if orphans:
-            raise SystemExit(f"[discover] 裸态覆盖源缺少同名胖态源: {', '.join(orphans)}")
+            raise SystemExit(f"[discover] raw override sources have no same-name fat source: {', '.join(orphans)}")
         for name in sorted(fat):
             c_src = c_dir / f"{name}.c"
             if not c_src.exists():
-                raise SystemExit(f"[discover] {source_dir.name}/{name} 缺少 C 参考: {c_src}")
+                raise SystemExit(f"[discover] {source_dir.name}/{name} missing C reference: {c_src}")
             spec_path = spec_dir / f"{name}.json"
             if not spec_path.exists():
-                raise SystemExit(f"[discover] {source_dir.name}/{name} 缺少 spec: {spec_path}")
+                raise SystemExit(f"[discover] {source_dir.name}/{name} missing spec: {spec_path}")
             specs.append(
                 load_spec(spec_path, source_dir.name, name, fat[name], raw.get(name, fat[name]), c_src)
             )
     if not specs:
-        raise SystemExit(f"[discover] {BENCH_DIR} 下没有带 C 参考与 spec 的基准")
+        raise SystemExit(f"[discover] no benchmarks with a C reference and spec under {BENCH_DIR}")
     return specs
 
 
 def load_sets() -> dict[str, SetDef]:
     """Read bench/sets/*.json."""
     if not SETS_DIR.is_dir():
-        raise SystemExit(f"[sets] 缺少目录 {SETS_DIR}")
+        raise SystemExit(f"[sets] missing directory {SETS_DIR}")
     sets: dict[str, SetDef] = {}
     for path in sorted(SETS_DIR.glob("*.json")):
         data = _load_json(path, "sets")
         name = str(data.get("name", path.stem))
         scale = str(data.get("scale", "full"))
         if scale not in SCALE_PROFILES:
-            raise SystemExit(f"[sets] {path}: scale 只能是 {'/'.join(SCALE_PROFILES)}")
+            raise SystemExit(f"[sets] {path}: scale must be one of {'/'.join(SCALE_PROFILES)}")
         sets[name] = SetDef(
             name=name,
             scale=scale,
@@ -324,7 +324,7 @@ def load_sets() -> dict[str, SetDef]:
             note=str(data.get("note", "")),
         )
     if DEFAULT_SET not in sets:
-        raise SystemExit(f"[sets] 缺少默认集合 {DEFAULT_SET}")
+        raise SystemExit(f"[sets] missing default set {DEFAULT_SET}")
     return sets
 
 
@@ -347,7 +347,7 @@ def resolve_set(
     """Expand set patterns into benchmarks; reject patterns matching nothing to catch misspellings."""
     for pattern in (*set_def.include, *set_def.exclude):
         if not any(_match(pattern, spec) for spec in specs):
-            raise SystemExit(f"[select] 集合 {set_def.name} 的成员 {pattern!r} 没有匹配任何基准")
+            raise SystemExit(f"[select] set {set_def.name} member {pattern!r} matched no benchmark")
     chosen = [
         spec
         for spec in specs
@@ -360,10 +360,10 @@ def resolve_set(
         wanted = set(bench_filter)
         unknown = sorted(item for item in wanted if not any(_match(item, spec) for spec in specs))
         if unknown:
-            raise SystemExit(f"[select] 未知基准: {', '.join(unknown)}")
+            raise SystemExit(f"[select] unknown benchmark(s): {', '.join(unknown)}")
         chosen = [spec for spec in chosen if spec.key in wanted or spec.name in wanted]
     if not chosen:
-        raise SystemExit("[select] 选出的基准为空 (检查 --set/--scale/--source/--bench)")
+        raise SystemExit("[select] selected no benchmarks (check --set/--scale/--source/--bench)")
     return sorted(chosen, key=lambda spec: spec.key)
 
 
@@ -394,7 +394,7 @@ def materialize(spec: BenchSpec, profile: str) -> tuple[Path, Path]:
         )
         if count != 1:
             raise SystemExit(
-                f"[scale] {src}: 需要恰好 1 行 `{SCALE_MARKER}` 标记, 实际 {count} 行"
+                f"[scale] {src}: expected exactly 1 `{SCALE_MARKER}` marker line, got {count}"
             )
         dst = out_dir / src.name
         dst.write_text(patched, encoding="utf-8")
@@ -421,7 +421,7 @@ def compile_c(spec: BenchSpec) -> Path:
     )
     if res.returncode != 0:
         raise SystemExit(
-            f"[compile] {spec.key} (c) 失败 ({C_COMPILER} {' '.join(C_FLAGS)}):\n{res.stdout}\n{res.stderr}"
+            f"[compile] {spec.key} (c) failed ({C_COMPILER} {' '.join(C_FLAGS)}):\n{res.stdout}\n{res.stderr}"
         )
     return binary
 
@@ -440,7 +440,7 @@ def compile_an(spec: BenchSpec, profile: str, raw: bool, compiler: Path) -> Path
     environment = os.environ.copy()
     res = subprocess.run(cmd, capture_output=True, text=True, cwd=ROOT, env=environment)
     if res.returncode != 0:
-        raise SystemExit(f"[compile] {spec.key} ({state}) 失败:\n{res.stdout}\n{res.stderr}")
+        raise SystemExit(f"[compile] {spec.key} ({state}) failed:\n{res.stdout}\n{res.stderr}")
     return binary
 
 
@@ -478,7 +478,7 @@ def _run(binary: Path, argv: list[str], pin: int | None) -> tuple[float, int, st
     match = _RSS_RE.search(res.stderr)
     if match is None:
         raise SystemExit(
-            f"[run] {binary}: 无法从 /usr/bin/time -v 输出解析 Maximum resident set size:\n"
+            f"[run] {binary}: cannot parse Maximum resident set size from /usr/bin/time -v output:\n"
             f"{res.stderr}"
         )
     return wall_ms, int(match.group(1)), res.stdout, res.returncode
@@ -524,8 +524,8 @@ def measure_triple(
     c_check_ok = spec.check.ok(warm["c"][3], warm["c"][2])
     if not c_check_ok:
         print(
-            f"[{spec.key}] 警告: C 基线未通过权威值校验 "
-            f"(exit={warm['c'][3]}, stdout={warm['c'][2].strip()!r}); 该基准的 C 比值不可用",
+            f"[{spec.key}] warning: C baseline failed the authoritative check "
+            f"(exit={warm['c'][3]}, stdout={warm['c'][2].strip()!r}); C ratios for this benchmark are unusable",
             file=sys.stderr,
         )
     yian_stdout_match = (
@@ -535,14 +535,14 @@ def measure_triple(
     )
     if not yian_stdout_match:
         print(
-            f"[{spec.key}] 警告: 两态 warmup 的结果不一致或未通过 spec.check "
+            f"[{spec.key}] warning: the two YIAN states' warmup results disagree or failed spec.check "
             f"(raw exit={warm['raw'][3]}, fat exit={warm['fat'][3]})",
             file=sys.stderr,
         )
     for state in ("raw", "fat"):
         if warm[state][3] != spec.check.rc:
             print(
-                f"[{spec.key}] 警告: {state} 态 warmup 退出码 {warm[state][3]} (应为 {spec.check.rc})",
+                f"[{spec.key}] warning: {state} warmup exit code {warm[state][3]} (expected {spec.check.rc})",
                 file=sys.stderr,
             )
 
@@ -551,7 +551,7 @@ def measure_triple(
         used_runs = 3
         print(
             f"[{spec.key}] warmup {warm_sec:.1f}s > {max_state_sec:.0f}s, "
-            f"测量次数降到 {used_runs}",
+            f"measurement runs reduced to {used_runs}",
             file=sys.stderr,
         )
 
@@ -677,51 +677,52 @@ def _ratio_usable(row: Row) -> bool:
 def render_md(rows: list[Row], fingerprint: dict[str, str]) -> str:
     lines: list[str] = []
     lines.append(
-        f"# C / raw / fat 三态实测结果 — 集合 `{fingerprint['set']}` (规模档 `{fingerprint['scale']}`)\n"
+        f"# C / raw / fat three-state measurements - set `{fingerprint['set']}` (scale `{fingerprint['scale']}`)\n"
     )
     lines.append(
-        "由 `bench/bench_three_way.py` 生成; 三态同一算法与规模, 差异只在实现与指针表示"
-        " (C 为 clang `-O2` 参考实现)。集合成员与规模档见 `bench/sets/<set>.json` 与各基准的"
-        " `specs/<name>.json`。\n"
+        "Generated by `bench/bench_three_way.py`; all three states use the same algorithm and scale, "
+        "differing only in implementation and pointer representation (C is the clang `-O2` reference). "
+        "Set members and scale profiles are in `bench/sets/<set>.json` and each benchmark's "
+        "`specs/<name>.json`.\n"
     )
-    lines.append("## 环境指纹\n")
-    lines.append("| 项 | 值 |")
+    lines.append("## Environment fingerprint\n")
+    lines.append("| item | value |")
     lines.append("| --- | --- |")
-    lines.append(f"| 主机 | {fingerprint['hostname']} |")
-    lines.append(f"| 架构 / 逻辑核 | {fingerprint['machine']} / {fingerprint['cpu_count']} |")
-    lines.append(f"| C 编译器 | `{fingerprint['clang']}` (`{fingerprint['cflags']}`) |")
+    lines.append(f"| host | {fingerprint['hostname']} |")
+    lines.append(f"| architecture / logical cores | {fingerprint['machine']} / {fingerprint['cpu_count']} |")
+    lines.append(f"| C compiler | `{fingerprint['clang']}` (`{fingerprint['cflags']}`) |")
     lines.append(f"| Python | {fingerprint['python']} |")
     lines.append(
-        f"| YIAN 编译器 | `{fingerprint['yianc']}` (SHA-256 `{fingerprint['yianc_sha256']}`, "
-        f"来源 `{fingerprint['yianc_source']}`, 本次调用: {fingerprint['yianc_used']}) |"
+        f"| YIAN compiler | `{fingerprint['yianc']}` (SHA-256 `{fingerprint['yianc_sha256']}`, "
+        f"source `{fingerprint['yianc_source']}`, used this run: {fingerprint['yianc_used']}) |"
     )
-    lines.append(f"| YIAN 优化级 | `{fingerprint['opt']}` (两态相同) |")
-    lines.append(f"| 绑核 | `taskset -c {fingerprint['pin']}` |")
-    lines.append(f"| 每态测量次数 | {fingerprint['runs']} (另加 1 次 warmup) |")
-    lines.append(f"| 集合 / 规模档 | `{fingerprint['set']}` / `{fingerprint['scale']}` |")
+    lines.append(f"| YIAN opt level | `{fingerprint['opt']}` (same for both modes) |")
+    lines.append(f"| pinning | `taskset -c {fingerprint['pin']}` |")
+    lines.append(f"| runs per mode | {fingerprint['runs']} (plus 1 warmup) |")
+    lines.append(f"| set / scale | `{fingerprint['set']}` / `{fingerprint['scale']}` |")
     lines.append(f"| commit | `{fingerprint['commit']}` |")
-    lines.append(f"| 日期 | {fingerprint['date']} |")
+    lines.append(f"| date | {fingerprint['date']} |")
     lines.append("")
 
-    lines.append("## 结果\n")
+    lines.append("## Results\n")
     lines.append(
-        "| 基准 | C 最小 (ms) | raw 最小 (ms) | fat 最小 (ms) | raw/C | fat/C | fat/raw "
-        "| C 峰值 RSS (MB) | raw 峰值 RSS (MB) | fat 峰值 RSS (MB) | 裸态源 | raw/fat 校验且一致 | C 校验 |"
+        "| benchmark | C min (ms) | raw min (ms) | fat min (ms) | raw/C | fat/C | fat/raw "
+        "| C peak RSS (MB) | raw peak RSS (MB) | fat peak RSS (MB) | raw source | raw/fat stdout match | C check |"
     )
     lines.append("| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- | --- | --- |")
     for row in rows:
         ratio_rc = _ratio(row, "raw", "c")
         ratio_fc = _ratio(row, "fat", "c")
         ratio_fr = _ratio(row, "fat", "raw")
-        raw_src = f"`{row.spec.raw_src.name}`" if row.spec.raw_override else "同名"
-        c_flag = "是" if row.c_check_ok else "**否**"
+        raw_src = f"`{row.spec.raw_src.name}`" if row.spec.raw_override else "same"
+        c_flag = "yes" if row.c_check_ok else "**no**"
         if not _ratio_usable(row):
             ratio_rc = ratio_fc = float("nan")
         lines.append(
             f"| {row.spec.key} | {_fmt_ms(row.times['c'].min)} | {_fmt_ms(row.times['raw'].min)} "
             f"| {_fmt_ms(row.times['fat'].min)} | {ratio_rc:.2f}× | {ratio_fc:.2f}× | {ratio_fr:.2f}× "
             f"| {_fmt_mb(row.rss_mb['c'])} | {_fmt_mb(row.rss_mb['raw'])} | {_fmt_mb(row.rss_mb['fat'])} "
-            f"| {raw_src} | {'是' if row.yian_stdout_match else '**否**'} | {c_flag} |"
+            f"| {raw_src} | {'yes' if row.yian_stdout_match else '**no**'} | {c_flag} |"
         )
     usable = [row for row in rows if _ratio_usable(row)]
     geo_raw = _geomean([_ratio(row, "raw", "c") for row in usable])
@@ -729,24 +730,25 @@ def render_md(rows: list[Row], fingerprint: dict[str, str]) -> str:
     if geo_raw is not None and geo_fat is not None:
         lines.append("")
         lines.append(
-            f"几何平均比值 (C 为基线, n={len(usable)}): raw/C **{geo_raw:.2f}×** / "
-            f"fat/C **{geo_fat:.2f}×** (比值可用 = C 校验通过且 raw/fat 语义一致)。"
+            f"Geometric mean ratio (C baseline, n={len(usable)}): raw/C **{geo_raw:.2f}×** / "
+            f"fat/C **{geo_fat:.2f}×** (ratio usable = C check passes and raw/fat semantics match)."
         )
         totals = {state: sum(row.times[state].min for row in rows) / 1000.0 for state in STATES}
         lines.append(
-            f"单趟全量耗时 (各基准最小值之和): C **{totals['c']:.1f} s** / "
-            f"raw **{totals['raw']:.1f} s** / fat **{totals['fat']:.1f} s**。"
+            f"Single full pass (sum of per-benchmark minima): C **{totals['c']:.1f} s** / "
+            f"raw **{totals['raw']:.1f} s** / fat **{totals['fat']:.1f} s**."
         )
     lines.append("")
     lines.append(
-        "比值均为最小值之比; 各基准不可加。`--raw-pointers` 关闭全部指针安全检查与锁槽/帧锁"
-        "发射, 因此 raw/C 是裸态实现相对 C 的开销, fat/raw 是完整胖指针相对裸指针的总开销。\n"
+        "All ratios are ratios of minima; benchmarks are not additive. `--raw-pointers` disables all pointer "
+        "safety checks and lock-slot/frame-lock emission, so raw/C is the raw implementation's overhead relative "
+        "to C, and fat/raw is the total overhead of full fat pointers over raw pointers.\n"
     )
 
-    lines.append("## 重复性\n")
+    lines.append("## Repeatability\n")
     lines.append(
-        "| 基准 | C 中位 | C 最小 | C 最大 | C CV% | raw 中位 | raw 最小 | raw 最大 | raw CV% "
-        "| fat 中位 | fat 最小 | fat 最大 | fat CV% | 次数 |"
+        "| benchmark | C median | C min | C max | C CV% | raw median | raw min | raw max | raw CV% "
+        "| fat median | fat min | fat max | fat CV% | runs |"
     )
     lines.append(
         "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |"
@@ -760,47 +762,51 @@ def render_md(rows: list[Row], fingerprint: dict[str, str]) -> str:
         lines.append(f"| {row.spec.key} | {cells} | {row.runs} |")
     lines.append("")
     lines.append(
-        "正式指标取**最小值**: 机器处于高压/热态时, 同一二进制重复运行会落在相差约 20% 的"
-        "两个性能状态上 (进程级内存布局/频率假象, 与代码无关)。最小值估计无干扰性能, "
-        "中位数与 CV 用于判断重复性。\n"
+        "Formal metrics use the **minimum**: when the machine is under load or hot, repeated runs of the same "
+        "binary fall into two performance states about 20% apart (a process-level memory-layout/frequency artifact "
+        "unrelated to the code). The minimum estimates interference-free performance, and the median and CV judge "
+        "repeatability.\n"
     )
 
-    lines.append("## 协议\n")
+    lines.append("## Protocol\n")
     lines.append(
-        f"- 编译: C `{C_COMPILER} {' '.join(C_FLAGS)} bench/<SOURCE>/c/<name>.c`; "
-        f"YIAN `yianc {OPT_LEVEL} lib/src <src>`, 裸态追加 `--raw-pointers`。"
+        f"- Compilation: C `{C_COMPILER} {' '.join(C_FLAGS)} bench/<SOURCE>/c/<name>.c`; "
+        f"YIAN `yianc {OPT_LEVEL} lib/src <src>`, with `--raw-pointers` added in raw mode."
     )
     lines.append(
-        "- 规模与 argv: 见各基准 `specs/<name>.json` 的 `scale`; argv 只覆盖 C 的外层重复次数, "
-        "与 `scale`; fast 档对声明了 `scale.fast` 的基准生成缩小规模的构建副本, 并把同一数值"
-        "作为 argv 传给 C 参考, 保证三态工作量一致。"
+        "- Scale and argv: see `scale` in each benchmark's `specs/<name>.json`; argv only covers the C outer "
+        "repetition count, consistent with `scale`; the fast profile generates a reduced-scale build copy for "
+        "benchmarks that declare `scale.fast`, and passes the same value to the C reference as argv, keeping the "
+        "three states' workloads equal."
     )
     lines.append(
-        "- 测量: 每基准三态各 1 次 warmup (不计入样本) 后按 C→raw→fat **逐次轮转**测量; "
-        "正式指标取各态最小值, 并记录中位数/四分位距/CV/峰值 RSS。"
+        "- Measurement: after one warmup per state per benchmark (excluded from samples), measure in "
+        "**round-robin** order C->raw->fat; formal metrics use each state's minimum and record median/IQR/CV/peak RSS."
     )
     lines.append(
-        f"- 降噪: `taskset -c {fingerprint['pin']}`; 逐次轮转消除跨时段漂移; 三态产物同目录、"
-        "等长路径 (argv[0] 长度影响分配密集型基准的进程布局)。"
+        f"- Noise reduction: `taskset -c {fingerprint['pin']}`; round-robin measurement reduces drift across time; "
+        "all three artifacts use the same directory and equal-length paths (argv[0] length affects process layout "
+        "for allocation-heavy benchmarks)."
     )
     lines.append(
-        "- 语义护栏: C warmup 必须通过 spec 的权威值校验 (见 `specs/<name>.json` 的 `check`); "
-        "raw 与 fat 的 stdout/退出码必须逐字节一致。报告中标 `否` 即该基准比值不可用。"
+        "- Semantic guard: C warmup must pass the spec's authoritative check (see `check` in "
+        "`specs/<name>.json`); raw and fat stdout/exit codes must match byte for byte. A `no` in the report makes "
+        "that benchmark's ratios unusable."
     )
     return "\n".join(lines).rstrip("\n") + "\n"
 
 
 def write_csv(rows: list[Row], fingerprint: dict[str, str], path: Path) -> None:
     header = (
-        f"# bench/results/{path.name} — C / raw / fat 三态性能结果 "
-        "(bench/bench_three_way.py 生成)"
+        f"# bench/results/{path.name} - C / raw / fat three-state performance results "
+        "(generated by bench/bench_three_way.py)"
     )
     comments = [
         header,
-        "# 列: bench 形如 <SOURCE>/<name>; <state>_min_ms/<state>_med_ms/<state>_cv_pct 各态最小值"
-        "(正式指标)/中位数/变异系数, state ∈ {c,raw,fat}; ratio_raw_c = raw_min/c_min, "
-        "ratio_fat_c = fat_min/c_min, ratio_fat_raw = fat_min/raw_min; <state>_rss_mb 峰值常驻; "
-        "runs, stdout_match (raw/fat), c_check (C 权威值), c_argv, raw_source",
+        "# columns: bench is <SOURCE>/<name>; <state>_min_ms/<state>_med_ms/<state>_cv_pct are each state's "
+        "minimum (formal metric)/median/coefficient of variation, state ∈ {c,raw,fat}; ratio_raw_c = raw_min/c_min, "
+        "ratio_fat_c = fat_min/c_min, ratio_fat_raw = fat_min/raw_min; <state>_rss_mb is peak resident memory; "
+        "runs, stdout_match (raw/fat), c_check (C authoritative value), c_argv, raw_source",
         f"# fingerprint: hostname={fingerprint['hostname']} machine={fingerprint['machine']} "
         f"cpu_count={fingerprint['cpu_count']} clang={fingerprint['clang']} cflags={fingerprint['cflags']}",
         f"# env: python={fingerprint['python']} yianc={fingerprint['yianc']} "
@@ -844,24 +850,24 @@ def write_csv(rows: list[Row], fingerprint: dict[str, str], path: Path) -> None:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="C / raw / fat 三态性能实测 (以 C 为基线)")
+    parser = argparse.ArgumentParser(description="C / raw / fat three-state performance measurement (C as baseline)")
     parser.add_argument("--set", dest="bench_set", default=DEFAULT_SET,
-                        help=f"集合名 (默认 {DEFAULT_SET}; --list-sets 查看)")
+                        help=f"set name (default {DEFAULT_SET}; see --list-sets)")
     parser.add_argument("--scale", choices=SCALE_PROFILES,
-                        help="规模档 (默认取集合的 scale)")
-    parser.add_argument("--source", help="只测指定来源 (逗号分隔, 如 AWFY,BG)")
+                        help="scale profile (default: the set's scale)")
+    parser.add_argument("--source", help="only measure the named sources (comma-separated, e.g. AWFY,BG)")
     parser.add_argument("--bench", dest="bench_keys",
-                        help="只测指定基准 (SOURCE/name 或 name, 逗号分隔)")
+                        help="only measure the named benchmarks (SOURCE/name or name, comma-separated)")
     parser.add_argument("--names", dest="bench_keys", help=argparse.SUPPRESS)  # Compatibility option aliases.
-    parser.add_argument("--list-sets", action="store_true", help="列出集合与成员数后退出")
+    parser.add_argument("--list-sets", action="store_true", help="list sets and member counts, then exit")
     parser.add_argument("--runs", type=int, default=None,
-                        help="每态测量次数 (默认取集合的 runs)")
-    parser.add_argument("--pin", type=int, help="taskset 绑定的 CPU 编号")
+                        help="measured runs per state (default: the set's runs)")
+    parser.add_argument("--pin", type=int, help="CPU number for taskset pinning")
     parser.add_argument("--yianc", metavar="PATH", help="Native compiler (default: nonempty YIANC, then PATH)")
     parser.add_argument("--max-state-sec", type=float, default=DEFAULT_MAX_STATE_SEC,
-                        help="三态 warmup 合计超过该秒数则测量次数降到 3 (fast 档不降次)")
-    parser.add_argument("--no-compile", action="store_true", help="不重新编译, 复用已有二进制")
-    parser.add_argument("--compile-only", action="store_true", help="只编译不测量")
+                        help="reduce measured runs to 3 when the combined three-state warmup exceeds this many seconds (fast profile never reduces)")
+    parser.add_argument("--no-compile", action="store_true", help="reuse existing binaries without recompiling")
+    parser.add_argument("--compile-only", action="store_true", help="compile only, do not measure")
     args = parser.parse_args()
 
     specs = discover()
@@ -887,7 +893,7 @@ def main() -> int:
 
     if args.bench_set not in sets:
         raise SystemExit(
-            f"[args] 未知集合 {args.bench_set!r}; 可用: {', '.join(sorted(sets))}"
+            f"[args] unknown set {args.bench_set!r}; available: {', '.join(sorted(sets))}"
         )
     set_def = sets[args.bench_set]
     profile = args.scale or set_def.scale
@@ -897,8 +903,8 @@ def main() -> int:
     runs = args.runs if args.runs is not None else set_def.runs
 
     print(
-        f"[bench] 集合 {set_def.name} 规模档 {profile} 基准 {len(chosen)} 项 "
-        f"测量 {runs} 次 (fast 档不降次)",
+        f"[bench] set {set_def.name} scale {profile} benchmarks {len(chosen)} "
+        f"measuring {runs} runs (fast profile never reduces)",
         file=sys.stderr,
     )
     if not args.no_compile:

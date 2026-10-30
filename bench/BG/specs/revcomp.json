@@ -11,5 +11,5 @@
       "128"
     ]
   },
-  "note": "rc==0, stdout 含 \"128\" (Checksum:)"
+  "note": "rc==0, stdout contains \"128\" (Checksum:)"
 }

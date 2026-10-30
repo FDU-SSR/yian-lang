@@ -8,7 +8,7 @@
   "check": {
     "rc": 0
   },
-  "note": "rc==0 (内部断言: 追逐校验和 == ROUNDS·NODES·(NODES+1)/2); 节点数取到超过 LLC",
+  "note": "rc==0 (internal assertion: chase checksum == ROUNDS·NODES·(NODES+1)/2); node count exceeds LLC",
   "scale": {
     "default": 4000000,
     "fast": 2000000,

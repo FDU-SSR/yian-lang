@@ -9,7 +9,7 @@
   "check": {
     "rc": 0
   },
-  "note": "官方工作单元: 8 皇后连续求解 10 次, 结果 true; 外层默认 276923 次",
+  "note": "Official work unit: 10 consecutive 8-queens solves, result true; default 276923 outer iterations",
   "scale": {
     "default": 276923,
     "fast": 65000,

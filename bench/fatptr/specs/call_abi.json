@@ -8,7 +8,7 @@
   "check": {
     "rc": 0
   },
-  "note": "rc==0 (内部断言: 两被调者校验和 == ROUNDS·(193·Σn + 3744·CALLS)); 当前 native -O2 会内联 YIAN 两个被调者，C 的 noinline 仍有效，尚不能作为三态真实调用成本证据; mix_in 传一个 24 B 胖参, mix_wide 传两个",
+  "note": "rc==0 (internal assertion: two-callee checksum == ROUNDS·(193·Σn + 3744·CALLS)); current native -O2 inlines both YIAN callees while C's noinline remains effective, so this is not yet evidence of the real three-state call cost; mix_in passes one 24 B fat argument, mix_wide passes two",
   "scale": {
     "default": 4096,
     "fast": 1024,

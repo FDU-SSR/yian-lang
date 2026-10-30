@@ -8,7 +8,7 @@
   "check": {
     "rc": 0
   },
-  "note": "fat/raw stdout 一致 (无 C 权威; 对照态是 libc malloc/free)",
+  "note": "fat/raw stdout identical (no C authority; comparison state is libc malloc/free)",
   "scale": {
     "default": 20000,
     "fast": 2000,

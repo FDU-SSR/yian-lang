@@ -19,5 +19,5 @@
     "BG/spectralnorm"
   ],
   "exclude": [],
-  "note": "论文使用的 14 个基准 (9 AWFY + 5 BG); 三态与 ASan 对比都用这一档"
+  "note": "The paper's 14 benchmarks (9 AWFY + 5 BG); both three-state and ASan comparisons use this profile"
 }

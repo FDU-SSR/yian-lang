@@ -31,7 +31,7 @@ from std.core.env import args;
 //   - Release all Variables/Constraints after each test; change() deletes its EditConstraint
 //       after destroyConstraint. Allocation counts match upstream.
 //     (chainTest: n+1 Variable, n Equality + 1 Stay + 1 Edit; projectionTest:
-//      2n+2 Variable, n Stay + n Scale + 4 Edit)。
+//      2n+2 Variable, n Stay + n Scale + 4 Edit).
 //   - Planner.propagateFrom is outside the chainTest/projectionTest work-unit call paths.
 //
 // Both modes share this source: T& links constraints/variables; lists use Vec<Constraint&>.

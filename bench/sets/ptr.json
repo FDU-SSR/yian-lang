@@ -6,5 +6,5 @@
     "tag:ptr"
   ],
   "exclude": [],
-  "note": "对象/指针图密集 (方向 A/B 的改动看这一组)"
+  "note": "Object/pointer graph intensive (use this group for direction A/B changes)"
 }

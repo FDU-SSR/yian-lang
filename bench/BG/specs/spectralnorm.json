@@ -11,5 +11,5 @@
       "78"
     ]
   },
-  "note": "rc==0, stdout 含 \"78\""
+  "note": "rc==0, stdout contains \"78\""
 }

@@ -1,18 +1,19 @@
-# 评测来源与许可
+# Benchmark sources and licenses
 
-本文件登记仓库中实际运行的基准及其来源。评测集合、规模档、运行协议和结果文件见
-[`bench/README.md`](README.md)。
+This file registers the benchmarks actually run in the repository and their
+sources. Sets, scale profiles, run protocol, and result files are documented in
+[`bench/README.md`](README.md).
 
-| 来源 | 目录 | 成员 | 许可与来源说明 |
+| Source | Directory | Members | License and source notes |
 | --- | --- | ---: | --- |
-| Are We Fast Yet（`smarr/are-we-fast-yet`） | `bench/AWFY/` | 14 | 上游来源与许可因基准而异：部分实现来自 Benchmarks Game（Revised BSD）；Richards 和 DeltaBlue 的 Java 实现带 MIT 许可，其更早来源见对应源文件头注释。AWFY 的 C 参考实现由本仓库编写。 |
-| The Computer Language Benchmarks Game | `bench/BG/` | 5 | Revised BSD；基准源文件头注释记录具体来源与版权信息。 |
-| 本仓库编写的分配器负载 | `bench/ALLOC/` | 4 | 本仓库代码；fat/raw 两态对照 libc `malloc`/`free`。 |
-| 本仓库编写的机制微基准 | `bench/fatptr/` | 3 | 本仓库代码；比较表示尺寸、传参、拷贝与指针追逐的成本。 |
-| 对应基准的 C 参考实现 | `bench/AWFY/c/`、`bench/BG/c/`、`bench/fatptr/c/` | 22 | 本仓库编写；用于对齐工作量与结果校验；判据见 [C → YIAN 规范](../docs/c-to-yian.md)，当前差异与局部证据见 [审查报告](../docs/c-to-yian-review.md)。 |
+| Are We Fast Yet (`smarr/are-we-fast-yet`) | `bench/AWFY/` | 14 | Upstream sources and licenses vary by benchmark: some implementations come from the Benchmarks Game (Revised BSD); the Java implementations of Richards and DeltaBlue carry the MIT license, and their earlier sources appear in the header comments of the corresponding source files. The AWFY C reference implementations are written in this repository. |
+| The Computer Language Benchmarks Game | `bench/BG/` | 5 | Revised BSD; source file header comments record the specific source and copyright information. |
+| Allocator workloads written in this repository | `bench/ALLOC/` | 4 | Repository code; fat/raw two-state comparison against libc `malloc`/`free`. |
+| Mechanism microbenchmarks written in this repository | `bench/fatptr/` | 3 | Repository code; compares representation size, argument passing, copying, and pointer-chasing costs. |
+| C reference implementations for the corresponding benchmarks | `bench/AWFY/c/`, `bench/BG/c/`, `bench/fatptr/c/` | 22 | Written in this repository; used to align workload and check results; criteria are in the [C → YIAN specification](../docs/c-to-yian.md), and current differences and local evidence are in the [review report](../docs/c-to-yian-review.md). |
 
-上游主页：
+Upstream home pages:
 
 - [Are We Fast Yet](https://github.com/smarr/are-we-fast-yet)
 - [The Computer Language Benchmarks Game](https://benchmarksgame-team.pages.debian.net/benchmarksgame/)
-- [Benchmarks Game 许可说明](https://benchmarksgame-team.pages.debian.net/benchmarksgame/license.html)
+- [Benchmarks Game license](https://benchmarksgame-team.pages.debian.net/benchmarksgame/license.html)

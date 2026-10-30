@@ -274,19 +274,19 @@ def fingerprint(compiler: Path, set_name: str, profile: str, fast: tuple[str, ..
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="C plain / C ASan / YIAN fat 性能对比")
-    parser.add_argument("--set", dest="bench_set", default="paper", help="集合名 (默认 paper)")
-    parser.add_argument("--scale", choices=btw.SCALE_PROFILES, help="规模档 (默认取集合的 scale)")
-    parser.add_argument("--bench", dest="bench_keys", help="只测指定基准, 逗号分隔")
-    parser.add_argument("--exclude", help="排除的基准, 逗号分隔")
-    parser.add_argument("--fast", help="对指定基准改用 fast 规模档, 逗号分隔")
-    parser.add_argument("--runs", type=int, help="每腿测量次数 (默认取集合的 runs)")
-    parser.add_argument("--pin", type=int, default=4, help="taskset 绑定的 CPU (默认 4; 0 表示不绑核)")
-    parser.add_argument("--yianc", metavar="PATH", help="Native compiler (默认 YIANC, 再退回 PATH)")
-    parser.add_argument("--no-sens", action="store_true", help="跳过 binarytree 的 ASan 敏感性腿")
-    parser.add_argument("--no-compile", action="store_true", help="复用已有二进制")
+    parser = argparse.ArgumentParser(description="C plain / C ASan / YIAN fat performance comparison")
+    parser.add_argument("--set", dest="bench_set", default="paper", help="set name (default: paper)")
+    parser.add_argument("--scale", choices=btw.SCALE_PROFILES, help="scale profile (default: the set's scale)")
+    parser.add_argument("--bench", dest="bench_keys", help="only measure the named benchmarks, comma-separated")
+    parser.add_argument("--exclude", help="benchmarks to exclude, comma-separated")
+    parser.add_argument("--fast", help="use the fast scale profile for the named benchmarks, comma-separated")
+    parser.add_argument("--runs", type=int, help="measured runs per leg (default: the set's runs)")
+    parser.add_argument("--pin", type=int, default=4, help="CPU for taskset pinning (default: 4; 0 disables pinning)")
+    parser.add_argument("--yianc", metavar="PATH", help="Native compiler (default: YIANC, then PATH)")
+    parser.add_argument("--no-sens", action="store_true", help="skip the binarytree ASan sensitivity leg")
+    parser.add_argument("--no-compile", action="store_true", help="reuse existing binaries")
     parser.add_argument("--samples", metavar="PATH",
-                        help="原始样本输出 (默认 bench/results/asan-samples.txt)")
+                        help="raw sample output (default: bench/results/asan-samples.txt)")
     args = parser.parse_args()
 
     specs = btw.discover()

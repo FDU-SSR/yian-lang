@@ -66,12 +66,12 @@ _SCALE_LINE_RE = re.compile(
 def discover(names: str | None) -> list[str]:
     found = sorted(path.stem for path in AN_DIR.glob("*.an") if not path.name.endswith(RAW_SUFFIX))
     if not found:
-        raise SystemExit(f"[discover] {AN_DIR} 下没有基准")
+        raise SystemExit(f"[discover] no benchmarks under {AN_DIR}")
     if names:
         wanted = [name.strip() for name in names.split(",") if name.strip()]
         missing = [name for name in wanted if name not in found]
         if missing:
-            raise SystemExit(f"[args] 未知基准: {', '.join(missing)}")
+            raise SystemExit(f"[args] unknown benchmark(s): {', '.join(missing)}")
         return wanted
     return found
 
@@ -79,10 +79,10 @@ def discover(names: str | None) -> list[str]:
 def load_spec(name: str) -> dict[str, object]:
     path = SPEC_DIR / f"{name}.json"
     if not path.exists():
-        raise SystemExit(f"[spec] 缺少 {path}")
+        raise SystemExit(f"[spec] missing {path}")
     data = json.loads(path.read_text(encoding="utf-8"))
     if not isinstance(data, dict) or data.get("name") != name:
-        raise SystemExit(f"[spec] {path}: name 字段应为 {name!r}")
+        raise SystemExit(f"[spec] {path}: name field should be {name!r}")
     return data
 
 
@@ -114,11 +114,11 @@ def source_path(name: str, raw: bool, spec: dict[str, object], profile: str) -> 
             lambda match: f"{match.group('head')}{value}{match.group('tail')}", text
         )
         if count != 1:
-            raise SystemExit(f"[scale] {candidate}: 需要恰好 1 行 `{SCALE_MARKER}` 标记, 实际 {count}")
+            raise SystemExit(f"[scale] {candidate}: expected exactly 1 `{SCALE_MARKER}` marker line, got {count}")
         dst = out_dir / candidate.name
         dst.write_text(patched, encoding="utf-8")
         return dst
-    raise SystemExit(f"[src] {name}: 找不到合适的源")
+    raise SystemExit(f"[src] {name}: no suitable source found")
 
 
 def compile_one(
@@ -139,7 +139,7 @@ def compile_one(
     environment = os.environ.copy()
     proc = subprocess.run(cmd, capture_output=True, text=True, cwd=compiler_root, env=environment)
     if proc.returncode != 0:
-        raise SystemExit(f"[compile] {name} ({'raw' if raw else 'fat'}) 失败:\n{proc.stdout}\n{proc.stderr}")
+        raise SystemExit(f"[compile] {name} ({'raw' if raw else 'fat'}) failed:\n{proc.stdout}\n{proc.stderr}")
     return binary
 
 
@@ -154,7 +154,7 @@ def run_one(binary: Path, pin: int | None) -> tuple[float, float, str]:
     wall_ms = (time.monotonic() - start) * 1000.0
     match = _RSS_RE.search(proc.stderr)
     if proc.returncode != 0 or match is None:
-        raise SystemExit(f"[run] {binary} 失败 (退出码 {proc.returncode}):\n{proc.stdout}\n{proc.stderr}")
+        raise SystemExit(f"[run] {binary} failed (exit code {proc.returncode}):\n{proc.stdout}\n{proc.stderr}")
     return wall_ms, int(match.group(1)) / 1024.0, proc.stdout
 
 
@@ -164,12 +164,12 @@ def _git_head() -> str:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="堆分配器基准 (fat vs raw)")
-    parser.add_argument("--names", help="只跑指定基准 (逗号分隔)")
-    parser.add_argument("--scale", choices=PROFILES, default="full", help="规模档 (默认 full)")
-    parser.add_argument("--runs", type=int, default=None, help="每个二进制的测量次数 (默认 fast=3 / full=7)")
-    parser.add_argument("--pin", type=int, default=None, help="taskset 绑定的 CPU 编号")
-    parser.add_argument("--compiler-root", type=Path, default=ROOT, help="标准库和输入文件所在源码树 (默认本仓库)")
+    parser = argparse.ArgumentParser(description="Heap allocator benchmarks (fat vs raw)")
+    parser.add_argument("--names", help="only run the named benchmarks (comma-separated)")
+    parser.add_argument("--scale", choices=PROFILES, default="full", help="scale profile (default: full)")
+    parser.add_argument("--runs", type=int, default=None, help="measured runs per binary (default: fast=3 / full=7)")
+    parser.add_argument("--pin", type=int, default=None, help="CPU number for taskset pinning")
+    parser.add_argument("--compiler-root", type=Path, default=ROOT, help="source tree containing the standard library and inputs (default: this repository)")
     parser.add_argument("--yianc", metavar="PATH", help="Native compiler (default: nonempty YIANC, then PATH)")
     args = parser.parse_args()
 
@@ -185,11 +185,11 @@ def main() -> int:
     compiler_hash = file_sha256(compiler)
     runs = args.runs if args.runs is not None else DEFAULT_RUNS[args.scale]
     names = discover(args.names)
-    print(f"标准库/输入源码树: {root}")
-    print(f"Native yianc: {compiler}  SHA-256: {compiler_hash}  来源: {compiler_source}")
-    print(f"集合: ALLOC  规模档: {args.scale}  采样: 每态 {runs} 次取最小墙钟 / 最大峰值 RSS; 绑核: {args.pin if args.pin is not None else '否'}")
+    print(f"Standard library/input source tree: {root}")
+    print(f"Native yianc: {compiler}  SHA-256: {compiler_hash}  source: {compiler_source}")
+    print(f"Set: ALLOC  scale: {args.scale}  sampling: {runs} runs per state, minimum wall time / maximum peak RSS; pinning: {args.pin if args.pin is not None else 'none'}")
     print("")
-    header = "| 基准 | fat 最小 (ms) | raw 最小 (ms) | fat/raw | fat 峰值 RSS (MB) | raw 峰值 RSS (MB) | 输出一致 | 规模 |"
+    header = "| benchmark | fat min (ms) | raw min (ms) | fat/raw | fat peak RSS (MB) | raw peak RSS (MB) | stdout match | scale |"
     print(header)
     print("| --- | ---: | ---: | ---: | ---: | ---: | --- | ---: |")
     csv_rows: list[str] = []
@@ -207,8 +207,8 @@ def main() -> int:
             )
         fat, raw_result = results["fat"], results["raw"]
         ratio = fat[0] / raw_result[0] if raw_result[0] else float("nan")
-        match = "是" if fat[2] == raw_result[2] else "**否**"
-        scale_text = str(value) if value is not None else "默认"
+        match = "yes" if fat[2] == raw_result[2] else "**no**"
+        scale_text = str(value) if value is not None else "default"
         print(
             f"| {name} | {fat[0]:.1f} | {raw_result[0]:.1f} | {ratio:.2f}× "
             f"| {fat[1]:.1f} | {raw_result[1]:.1f} | {match} | {scale_text} |"
@@ -220,11 +220,11 @@ def main() -> int:
 
     RESULTS_DIR.mkdir(parents=True, exist_ok=True)
     md = [
-        f"# 分配器基准 (fat vs raw) — 规模档 `{args.scale}`",
+        f"# Allocator benchmarks (fat vs raw) - scale `{args.scale}`",
         "",
-        "由 `bench/bench_allocator.py` 生成; 分配器基准没有 C 参考, 对照态是 libc `malloc`/`free`。",
-        f"采样: 每态 {runs} 次取最小墙钟 / 最大峰值 RSS; 绑核: {args.pin if args.pin is not None else '否'}; "
-        f"commit: `{_git_head()}`; 日期: {datetime.date.today().isoformat()}",
+        "Generated by `bench/bench_allocator.py`; allocator benchmarks have no C reference, and the comparison state is libc `malloc`/`free`.",
+        f"Sampling: {runs} runs per state, minimum wall time / maximum peak RSS; pinning: {args.pin if args.pin is not None else 'none'}; "
+        f"commit: `{_git_head()}`; date: {datetime.date.today().isoformat()}",
         f"Native yianc: `{compiler}` (SHA-256 `{compiler_hash}`, source `{compiler_source}`).",
         "",
         header,
@@ -234,7 +234,7 @@ def main() -> int:
     ]
     (RESULTS_DIR / "alloc.md").write_text("\n".join(md) + "\n", encoding="utf-8")
     (RESULTS_DIR / "alloc.csv").write_text(
-        "# bench/results/alloc.csv — 分配器基准 (fat vs raw)\n"
+        "# bench/results/alloc.csv - allocator benchmarks (fat vs raw)\n"
         f"# scale: {args.scale}  runs: {runs}  pin: {args.pin if args.pin is not None else 'none'}"
         f"  commit: {_git_head()}  date: {datetime.date.today().isoformat()}\n"
         f"# yianc: {compiler}  sha256: {compiler_hash}  source: {compiler_source}\n"

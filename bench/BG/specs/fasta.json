@@ -11,5 +11,5 @@
       "-71"
     ]
   },
-  "note": "rc==0, stdout 含 \"-71\""
+  "note": "rc==0, stdout contains \"-71\""
 }

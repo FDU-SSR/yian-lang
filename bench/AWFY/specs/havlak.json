@@ -8,7 +8,7 @@
   "check": {
     "rc": 0
   },
-  "note": "官方工作单元: input=1500, loops=6102, nodes=5213; 外层默认 47 次",
+  "note": "Official work unit: input=1500, loops=6102, nodes=5213; default 47 outer iterations",
   "scale": {
     "default": 47,
     "c": "argv"

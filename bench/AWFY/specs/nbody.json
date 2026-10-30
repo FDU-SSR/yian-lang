@@ -8,7 +8,7 @@
   "check": {
     "rc": 0
   },
-  "note": "官方工作单元: 250000 步, 最终能量 -0.1690859889909308; 外层默认 196 次",
+  "note": "Official work unit: 250000 steps, final energy -0.1690859889909308; default 196 outer iterations",
   "scale": {
     "default": 196,
     "c": "argv"

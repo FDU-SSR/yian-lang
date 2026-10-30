@@ -8,7 +8,7 @@
   "check": {
     "rc": 0
   },
-  "note": "官方工作单元: queuePacketCount=23246、holdCount=9297; 外层默认 3303 次",
+  "note": "Official work unit: queuePacketCount=23246, holdCount=9297; default 3303 outer iterations",
   "scale": {
     "default": 3303,
     "c": "argv"

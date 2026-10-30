@@ -8,7 +8,7 @@
 //       LoopStructureGraph / LoopTesterApp / SimpleLoop use
 //       `// Copyright 2011 Google Inc.` + Apache-2.0 (licenses/LICENSE-APACHE);
 //       UnionFindNode.java and som/*.java use MIT (Copyright (c) 2001-2016 Stefan Marr /
-//       AWFY AUTHORS.md, licenses/LICENSE-MIT)。
+//       AWFY AUTHORS.md, licenses/LICENSE-MIT).
 //
 // Structures use structs, pointer arrays, and linear sets. BasicBlock.name is unique, so number is indexed
 // by name. findSet path compression applies iter.union(parent) to every nodeList node,

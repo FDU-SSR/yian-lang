@@ -8,7 +8,7 @@
   "check": {
     "rc": 0
   },
-  "note": "官方工作单元: flags 大小 5000, 结果 669; 外层默认 268657 次",
+  "note": "Official work unit: flags size 5000, result 669; default 268657 outer iterations",
   "scale": {
     "default": 268657,
     "fast": 59000,

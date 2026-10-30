@@ -8,7 +8,7 @@
   "check": {
     "rc": 0
   },
-  "note": "官方工作单元: 13 个盘, 结果 8191; 外层默认 41065 次",
+  "note": "Official work unit: 13 disks, result 8191; default 41065 outer iterations",
   "scale": {
     "default": 41065,
     "c": "argv"

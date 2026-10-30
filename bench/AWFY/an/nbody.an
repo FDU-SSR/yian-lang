@@ -5,7 +5,7 @@ from std.core.env import args;
 // Reference: AWFY benchmarks/Java/src/NBody.java; see AWFY LICENSE.md.
 // Semantic reference: bench/AWFY/c/nbody.c, the project's C implementation.
 // Scale: each work unit performs 250000 advance steps; final energy is
-//       -0.1690859889909308。
+//       -0.1690859889909308.
 //
 // Distances use std.num.f64.sqrt (llvm.sqrt.f64 -> sqrtsd), the same primitive as the C reference's
 //     libm sqrt; assert the exact official final energy.

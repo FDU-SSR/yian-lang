@@ -8,7 +8,7 @@
   "check": {
     "rc": 0
   },
-  "note": "官方工作单元: chainTest(12000) 与 projectionTest(12000), 保留内部正确性检查; 外层默认 134 次",
+  "note": "Official work unit: chainTest(12000) and projectionTest(12000), preserving internal correctness checks; default 134 outer iterations",
   "scale": {
     "default": 134,
     "c": "argv"

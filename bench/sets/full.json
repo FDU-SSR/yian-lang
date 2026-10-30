@@ -6,5 +6,5 @@
     "*"
   ],
   "exclude": [],
-  "note": "全部三态基准、源内默认规模; 正式记录与对外引用只用这一档"
+  "note": "All three-state benchmarks at source default scale; formal records and external references use only this profile"
 }

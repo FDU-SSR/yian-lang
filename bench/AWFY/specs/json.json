@@ -8,7 +8,7 @@
   "check": {
     "rc": 0
   },
-  "note": "官方工作单元: 根与 head 为 object, operations 数量 156; 外层默认 14286 次",
+  "note": "Official work unit: root and head are objects, 156 operations; default 14286 outer iterations",
   "scale": {
     "default": 14286,
     "c": "argv"
