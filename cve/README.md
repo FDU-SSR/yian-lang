@@ -1,25 +1,37 @@
-# CVE 机制见证项目
+# CVE mechanism witness project
 
-数据集包含 38 个编号，每个编号是一对程序，位于 `cve/<编号>/`：`c/` 是带缺陷的
-参考程序，`yian/` 是对应的 YIAN 改写。
-翻译、表示差异和语义对应的审查统一采用
-[C → YIAN 改写规范](../docs/c-to-yian.md)；本文只记录数据集现状和运行器行为。
-规范为 v0.5 初稿。[审查清单](../docs/c-to-yian-review.md) 仅记录规则未覆盖的情况，
-各案例 README 记录具体表示和局部验证范围。
+The dataset contains 38 identifiers, each of which is a pair of programs under
+`cve/<identifier>/`: `c/` is the vulnerable reference program and `yian/` is the
+corresponding YIAN rewrite. Translation, representation differences and semantic
+correspondence are reviewed uniformly against the
+[C → YIAN specification](../docs/c-to-yian.md); this document records only the
+current dataset and runner behavior. The specification is a v0.5 draft. The
+[review checklist](../docs/c-to-yian-review.md) records only situations the rules
+do not cover, and each case README records its concrete representation and local
+verification scope.
 
-38 个案例都有 `README.md`，记录 C 与 YIAN 的函数对应、表示差异和第一次非法操作。
-其中 15 个按 note.md 的 P0/P1 名单和上游记录重写（Linux cleanup 只重写 YIAN 一侧），
-另 23 个保留较早的最小化见证，并已按同一契约审计：输入由同一 `args` 或同一字节序列驱动，
-硬编码的触发值改为从输入派生。tx、svc_insts 和 tinyproxy 的可变静态表已使用入口持有的堆对象。
-ScreenPressor、FreeType、HyperKit、LibreDWG、RemoteFX 和 stb_image 的只读静态数组
-使用数组常量与调用方持有的局部副本；FreeType 的 PNG 签名也使用数组常量。
-各数组元素与 C 逐项一致，存储表示按只读静态数组条款核对。
-状态返回值与输出参数分别表示：解析、解码和分配函数保留 C 的状态/计数及写回顺序；
-可空指针使用 Option<指针或切片>。HyperKit 调用者忽略失败状态并继续使用保留的 iovec。
-未据此宣称 38 对完全通过规范。项目与 `tests/` 下的编译器回归测试独立；
-目录完整或 guard 命中不单独证明与上游缺陷的对应关系。
+All 38 cases have a `README.md` recording the C-to-YIAN function correspondence,
+representation differences and first illegal operation. Fifteen were rewritten
+according to the note.md P0/P1 list and upstream records (the Linux cleanup case
+rewrites only the YIAN side); the other 23 retain earlier minimized witnesses,
+audited against the same contract: input is driven by the same `args` or the same
+byte sequence, and hard-coded trigger values are derived from the input. The
+mutable static tables of tx, svc_insts and tinyproxy use heap objects held by the
+entry point. The read-only static arrays of ScreenPressor, FreeType, HyperKit,
+LibreDWG, RemoteFX and stb_image use array constants and caller-held local
+copies; the FreeType PNG signature also uses an array constant. Every array
+element matches C item by item, and the storage representation is checked against
+the read-only static array clause.
 
-## 目录
+Status return values and output parameters are represented separately: parsing,
+decoding and allocation functions preserve C's status/count and write-back order;
+nullable pointers use Option<pointer or slice>. HyperKit callers ignore the
+failure status and continue using the retained iovec. This does not claim that
+all 38 pairs fully conform to the specification. The project is independent of
+the compiler regression tests under `tests/`; directory completeness or a guard
+hit alone does not prove correspondence with the upstream defect.
+
+## Layout
 
 ```text
 cve/
@@ -44,45 +56,59 @@ cve/
     yian/
 ```
 
-YIAN 的 `main.an` 是进程入口，`scenario.an` 组织触发输入和执行过程，`support.an` 保存
-原见证的类型与辅助函数；没有辅助定义的案例不包含 `support.an`。包名为 `witness`，
-导入使用 `witness.scenario` 和 `witness.support`。项目不使用 FFI。
+YIAN `main.an` is the process entry, `scenario.an` organizes the trigger input
+and execution, and `support.an` holds the original witness's types and helper
+functions; cases without helper definitions have no `support.an`. The package
+name is `witness`, and imports use `witness.scenario` and `witness.support`. The
+projects do not use FFI.
 
-C 的进程入口与复现实现分别位于 `src/main.c` 和 `src/reproducer.c`，接口位于
-`include/reproducer.h`。CMake 编译翻译单元并链接为 `build/reproducer`。
-YIAN 经 `anx build` 生成 `build/app`。
+The C process entry and reproducer implementation are in `src/main.c` and
+`src/reproducer.c`, with the interface in `include/reproducer.h`. CMake compiles
+the translation units and links them as `build/reproducer`. `anx build` produces
+`build/app` for YIAN.
 
-## 见证与来源
+## Witnesses and provenance
 
-每个编号只保留当前使用的一份 C 项目和一份 YIAN 项目；`case.json` 记录该见证的参数、
-ASan 类别、YIAN 退出码和安全诊断，不记录旧副本或逐例哈希。
+Each identifier keeps only one C project and one YIAN project currently in use;
+`case.json` records that witness's arguments, ASan class, YIAN exit code and
+safety diagnostic, and does not record old copies or per-case hashes.
 
-每个案例的 `README.md` 记录 C 与 YIAN 的函数对应、输入与第一次非法操作、表示差异和
-运行命令；15 个上游重写案例另有版本/修复与替代设施的记录。所有案例都是缩减模型，
-不声称是上游项目的完整移植；部分上游项目不是 C 项目，C 文件是模型而不是原始源码。
+Each case's `README.md` records the C-to-YIAN function correspondence, input and
+first illegal operation, representation differences and run command; the 15
+upstream rewrite cases additionally record the version/fix and replacement
+facilities. All cases are reduced models and do not claim to be complete ports
+of the upstream projects; some upstream projects are not C projects, and the C
+files are models rather than original source.
 
-### 语言设施与失败语义
+### Language facilities and failure semantics
 
-YIAN 提供 `@print`/`@println`/`@eprint`/`@eprintln` 以及 `std.core.io`，但见证不使用
-标准输出。C 的 `printf` 语句已移除，因为它们不参与触发；唯一保留的是 CVE-2022-31003 的
-`printf("option o, value: %s", rest)`，它本身就是第一次越界读取的载体。运行器只比较退出码
-和安全诊断，不比较 stdout。
+YIAN provides `@print`/`@println`/`@eprint`/`@eprintln` and `std.core.io`, but
+the witnesses do not use standard output. C `printf` statements were removed
+because they do not participate in triggering; the only one retained is
+CVE-2022-31003's `printf("option o, value: %s", rest)`, which is itself the
+carrier of the first out-of-bounds read. The runner compares only exit codes and
+safety diagnostics, not stdout.
 
-`dyn` 分配失败是运行时资源错误 `R002`（`yian: runtime error [R002]: memory allocation
-failed`）：写入标准错误后立即 `_exit(1)`，不展开调用栈，也不返回 NULL。因此 C 的
-`malloc` 失败分支没有可返回的值与之对应；触发路径上的分配不会失败。
+A failed `dyn` allocation is runtime resource error `R002`
+(`yian: runtime error [R002]: memory allocation failed`): after writing to
+standard error the program calls `_exit(1)` immediately, does not unwind the call
+stack, and does not return NULL. C's `malloc` failure branch therefore has no
+return value to correspond to; allocations on the trigger path do not fail.
 
-较早的 C 见证来自历史数据集提交
-`70db192f4299eb63765f561999ef87ac5362704f`，原路径为
-`tests/fat_cve/cve/<编号>/<编号>.c`。当前 C 项目在该形状上做了本地入口适配：引入本地
-头文件，把 `main` 改名为 `cve_reproduce`，触发逻辑不变。这一条只说明文件来源，不证明
-与上游缺陷的逐行对应。
+The earlier C witnesses come from historical dataset commit
+`70db192f4299eb63765f561999ef87ac5362704f`, with original paths
+`tests/fat_cve/cve/<identifier>/<identifier>.c`. The current C projects adapt
+that shape with a local entry: they include a local header and rename `main` to
+`cve_reproduce`, with the trigger logic unchanged. This records only file
+provenance and does not prove line-by-line correspondence with the upstream
+defect.
 
-## 运行
+## Running
 
-从仓库根目录执行；本机需有匹配源码的 native `yianc` 和 `anx`。
-C 对照还需要 CMake 和支持 AddressSanitizer 的 C 编译器，默认使用 clang。
-运行器不安装、刷新或回退工具链。
+Run from the repository root; the machine needs native `yianc` and `anx`
+matching the sources. C comparison also needs CMake and a C compiler that
+supports AddressSanitizer, clang by default. The runner does not install,
+refresh or fall back to a toolchain.
 
 ```sh
 python scripts/run_cve.py --list
@@ -93,32 +119,43 @@ python scripts/run_cve.py --case CVE-2023-45664 --language both
 python scripts/run_cve.py --case CVE-2020-15999 --language c --build-only
 ```
 
-`--case` 可重复，按完整编号精确选择；缺少选择时退出 2，不隐式运行整组。
-`--list` 和 `--check-layout` 不启动编译器。布局检查验证项目文件、`expected.txt`
-与 `case.json` 的预期结果一致。`--build-only` 只验证构建，结果为 `BUILD_ONLY`，
-不表示漏洞已触发。
+`--case` may be repeated and selects by full identifier exactly; a missing
+selection exits 2 and does not implicitly run the whole set. `--list` and
+`--check-layout` start no compiler. The layout check verifies that project
+files, `expected.txt` and `case.json` expectations agree. `--build-only`
+verifies only the build, reports `BUILD_ONLY`, and does not mean the
+vulnerability was triggered.
 
-`--language yian|c|both` 默认 `yian`。`--anx`、`--yianc` 和 `--cc` 指定工具，
-分别默认读取 `ANX`、`YIANC`、`CC`，缺省使用 PATH。`--timeout` 默认每个子进程 60 秒。
-YIAN 构建采用 `-O0`、默认受检 fat 指针。CMake 启用 ASan，并关闭泄漏检查以聚焦内存
-访问和释放错误。Clang 构建显式启用 use-after-return 检测。两侧使用 `case.json` 的
-同一组 `args`。
+`--language yian|c|both` defaults to `yian`. `--anx`, `--yianc` and `--cc` select
+tools and default to `ANX`, `YIANC` and `CC` respectively, falling back to PATH.
+`--timeout` defaults to 60 seconds per child process. YIAN builds with `-O0` and
+default checked fat pointers. CMake enables ASan and disables leak checking to
+focus on memory access and release errors. Clang builds explicitly enable
+use-after-return detection. Both sides use the same `args` from `case.json`.
 
-整组命令为 `python scripts/run_cve.py --all`，选择 38 个 YIAN 项目；
-增加 `--language both` 则选择 38 个 C 项目和 38 个 YIAN 项目。
-在 Agent 工作中，这些属于需要明确授权的批量运行；文档示例不构成执行授权。
-`scripts/rerun_paper_experiments.sh` 的 CVE 阶段只调用默认 YIAN 选择，不包含编译器
-safety 套件或 C 对照。
+The whole-set command is `python scripts/run_cve.py --all`, selecting 38 YIAN
+projects; adding `--language both` selects 38 C projects and 38 YIAN projects.
+In agent work these are batch runs requiring explicit authorization;
+documentation examples do not constitute execution authorization. The CVE phase
+of `scripts/rerun_paper_experiments.sh` invokes only the default YIAN selection
+and does not include the compiler safety suite or C comparison.
 
-## 判定与报告
+## Verdict and reporting
 
-- YIAN：构建必须成功，运行退出码必须为 1，且输出包含该案例声明的完整安全诊断。
-- C：构建必须成功并完成运行。原缺陷可以静默存在，ASan 是否命中只作为观测记录
-  （报告的 `asan` 字段），不作为失败条件。`c.expected_asan` 描述期望的观测类别。
-  目录完整不表示所有 C 项目都能触发相应错误。
-- 构建失败、超时、普通崩溃或诊断不匹配均为失败，不能算作安全检查成功。
-- 成功退出 0，选择错误退出 2，工具、构建或运行验证失败退出 1。
+- YIAN: the build must succeed, the run exit code must be 1, and the output must
+  contain the complete safety diagnostic declared for the case.
+- C: the build must succeed and the run must complete. The original defect may
+  exist silently; whether ASan fires is only an observation (the report's `asan`
+  field), not a failure condition. `c.expected_asan` describes the expected
+  observation class. A complete directory does not mean every C project can
+  trigger the corresponding error.
+- A build failure, timeout, ordinary crash or diagnostic mismatch is a failure
+  and does not count as a safety check success.
+- Success exits 0, a selection error exits 2, and a tool, build or run
+  verification failure exits 1.
 
-输出日志与 `report.json` 位于 `build/cve/`；报告记录实际选中的执行、工具路径、
-工具二进制哈希及当前项目源码哈希。每次运行覆盖汇总报告，只能用报告中的选中范围解释结果。
-先前的正反例结果不等价于此布局的一次完整运行。
+Output logs and `report.json` are under `build/cve/`; the report records the
+executions actually selected, tool paths, tool binary hashes and current project
+source hashes. Each run overwrites the summary report, and only the selected
+scope in the report can explain the results. Earlier positive/negative results
+are not equivalent to one complete run of this layout.
