@@ -1,11 +1,12 @@
 from yianc.package.model import PackageMap;
+from yianc.package.provenance import within;
 from yianc.driver.trace import CompilerTrace;
 from yianc.driver.profile import ProfileKind;
 from std.collections.hash_set import HashSet;
 from std.collections.sort import sort_by;
 from std.core.convert import From;
-from std.core.fs import Directory, canonicalize, create_dir_all, remove_file, remove_dir, rename;
-from std.core.io import IoError;
+from std.core.fs import Directory, canonicalize, create_dir_all, metadata, remove_file, remove_dir, rename;
+from std.core.io import File, OpenMode, Read, IoError;
 from std.core.iter import Iterator, IntoIterator;
 from std.core.ops import Index;
 from std.core.fmt import ToString;
@@ -171,12 +172,41 @@ fn clean_directory(paths: Vec<String>&, directory: str) {
 struct NativeInputs {
     sources: Vec<String>,
     components: Vec<String>,
+    c_sources: Vec<NativeCSource>,
+    archives: Vec<String>,
+}
+
+struct NativeCSource {
+    path: String,
+    include_dirs: Vec<String>,
+}
+
+impl Drop for NativeCSource {
+    pub fn drop() {
+        self.path.drop();
+        release_strings(&self.include_dirs);
+    }
+}
+
+struct NativeObjectSet {
+    objects: Vec<String>,
+    archives: Vec<String>,
+}
+
+impl Drop for NativeObjectSet {
+    pub fn drop() {
+        release_strings(&self.objects);
+        release_strings(&self.archives);
+    }
 }
 
 impl Drop for NativeInputs {
     pub fn drop() {
         release_strings(&self.sources);
         release_strings(&self.components);
+        for source in self.c_sources { source.drop(); }
+        self.c_sources.drop();
+        release_strings(&self.archives);
     }
 }
 
@@ -186,6 +216,35 @@ fn unique(values: Vec<String>&, text: str) {
     }
 
     values.push(String.from(&text));
+}
+
+fn has_native_c_source(values: Vec<NativeCSource>&, path: str) -> bool {
+    for source in *values {
+        if source.path.as_str() == path { return true; }
+    }
+    false
+}
+
+fn has_text(values: Vec<String>&, text: str) -> bool {
+    for value in *values {
+        if value.as_str() == text { return true; }
+    }
+    false
+}
+
+fn is_regular_archive(path: str) -> bool {
+    let file = match File.open(path, OpenMode.Read) {
+        Ok(value) => value,
+        Err(problem) => { problem.drop(); return false; },
+    };
+    defer file.drop();
+    let header: u8[8] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8];
+    match file.read_exact(header.as_slice()) {
+        Ok(_) => header[0] == b'!' && header[1] == b'<' && header[2] == b'a' &&
+            header[3] == b'r' && header[4] == b'c' && header[5] == b'h' &&
+            header[6] == b'>' && header[7] == b'\n',
+        Err(problem) => { problem.drop(); false },
+    }
 }
 
 pub struct NativeDriver {
@@ -255,7 +314,8 @@ impl NativeDriver {
 
     // Package names remain borrowed from the immutable map throughout this traversal.
     fn native_inputs() -> Result<NativeInputs, DriverError> {
-        let inputs = NativeInputs(Vec<String>.new(), Vec<String>.new());
+        let inputs = NativeInputs(sources=Vec<String>.new(), components=Vec<String>.new(),
+            c_sources=Vec<NativeCSource>.new(), archives=Vec<String>.new());
         let accepted = false;
         defer { if !accepted { inputs.drop(); } };
         let map = match self.packages {
@@ -270,10 +330,18 @@ impl NativeDriver {
         let seen = HashSet<str>.new();
         defer seen.drop();
 
+        let native_root_index = 0u64;
+        native_root_index = map.native_root_count();
+        while native_root_index > 0u64 {
+            native_root_index -= 1u64;
+            match map.native_root(native_root_index) { Some(name) => pending.push(name), None => {}, }
+        }
         match map.root_name() {
             Some(name) => pending.push(name),
             None => {
-                for index in 0u64..map.len() {
+                let index = map.len();
+                while index > 0u64 {
+                    index -= 1u64;
                     pending.push(map.at(index).unwrap().name.as_str());
                 }
             },
@@ -288,8 +356,10 @@ impl NativeDriver {
                     DriverError.message("packages", "native dependency has no package record")),
             };
 
-            for dependency in package.dependencies {
-                pending.push(dependency.as_str());
+            let dependency_index = package.dependencies.len();
+            while dependency_index > 0u64 {
+                dependency_index -= 1u64;
+                pending.push(package.dependencies[dependency_index].as_str());
             }
 
             match &package.native_llvm {
@@ -317,10 +387,94 @@ impl NativeDriver {
                 },
                 None => {},
             }
+
+            match &package.native_c {
+                Some(native) => {
+                    let root = package.source_root.as_path().parent().unwrap();
+                    let canonical_root = match canonicalize(root.as_str()) {
+                        Ok(value) => value,
+                        Err(problem) => return Result<NativeInputs, DriverError>.Err(io_error("native package", problem)),
+                    };
+                    defer canonical_root.drop();
+
+                    for source in native.sources {
+                        let joined = root.join(source.as_str());
+                        defer joined.drop();
+                        let path = match canonicalize(joined.as_str()) {
+                            Ok(value) => value,
+                            Err(problem) => return Result<NativeInputs, DriverError>.Err(io_error("native source", problem)),
+                        };
+                        defer path.drop();
+                        if !within(path.as_str(), canonical_root.as_str()) {
+                            return Result<NativeInputs, DriverError>.Err(
+                                DriverError.message("native source", "native source escapes package"));
+                        }
+                        let source_info = match metadata(path.as_str()) {
+                            Ok(value) => value,
+                            Err(problem) => return Result<NativeInputs, DriverError>.Err(io_error("native source", problem)),
+                        };
+                        if !source_info.is_file() {
+                            return Result<NativeInputs, DriverError>.Err(
+                                DriverError.message("native source", "native source is not a file"));
+                        }
+                        if !has_native_c_source(&inputs.c_sources, path.as_str()) {
+                            let include_dirs = Vec<String>.new();
+                            let kept = false;
+                            defer { if !kept { release_strings(&include_dirs); } };
+                            for include in native.include_dirs {
+                                let include_joined = root.join(include.as_str());
+                                defer include_joined.drop();
+                                let include_path = match canonicalize(include_joined.as_str()) {
+                                    Ok(value) => value,
+                                    Err(problem) => return Result<NativeInputs, DriverError>.Err(io_error("native include directory", problem)),
+                                };
+                                defer include_path.drop();
+                                if !within(include_path.as_str(), canonical_root.as_str()) {
+                                    return Result<NativeInputs, DriverError>.Err(
+                                        DriverError.message("native include directory", "include directory escapes package"));
+                                }
+                                let include_info = match metadata(include_path.as_str()) {
+                                    Ok(value) => value,
+                                    Err(problem) => return Result<NativeInputs, DriverError>.Err(io_error("native include directory", problem)),
+                                };
+                                if !include_info.is_dir() {
+                                    return Result<NativeInputs, DriverError>.Err(
+                                        DriverError.message("native include directory", "include path is not a directory"));
+                                }
+                                unique(&include_dirs, include_path.as_str());
+                            }
+                            inputs.c_sources.push(NativeCSource(String.from(&path.as_str()), include_dirs));
+                            kept = true;
+                        }
+                    }
+
+                    for archive in native.archives {
+                        let joined = root.join(archive.as_str());
+                        defer joined.drop();
+                        let path = match canonicalize(joined.as_str()) {
+                            Ok(value) => value,
+                            Err(problem) => return Result<NativeInputs, DriverError>.Err(io_error("native archive", problem)),
+                        };
+                        defer path.drop();
+                        if !within(path.as_str(), canonical_root.as_str()) || !is_regular_archive(path.as_str()) {
+                            return Result<NativeInputs, DriverError>.Err(
+                                DriverError.message("native archive", "archive is outside package or not a regular ar archive"));
+                        }
+                        unique(&inputs.archives, path.as_str());
+                    }
+                },
+                None => {},
+            }
         }
 
         sort_by(inputs.sources.as_slice(), less);
         sort_by(inputs.components.as_slice(), less);
+        for source in inputs.c_sources {
+            if has_text(&inputs.sources, source.path.as_str()) {
+                return Result<NativeInputs, DriverError>.Err(
+                    DriverError.message("native source", "source is declared as both LLVM and generic C"));
+            }
+        }
         accepted = true;
         Result<NativeInputs, DriverError>.Ok(inputs)
     }
@@ -363,61 +517,97 @@ impl NativeDriver {
         Result<(), DriverError>.Ok(())
     }
 
-    fn native_objects(directory: str, temporary: Vec<String>&, trace: Option<CompilerTrace&>) -> Result<Vec<String>, DriverError> {
+    fn native_objects(directory: str, temporary: Vec<String>&, trace: Option<CompilerTrace&>) -> Result<NativeObjectSet, DriverError> {
         let prepare_token = match &trace { Some(observer) => observer.start_pass("native.prepare", "native", "native input discovery", ProfileKind.Pass), None => 0u64, };
         let inputs_result = self.native_inputs();
         let inputs = match inputs_result {
             Ok(value) => { match &trace { Some(observer) => observer.finish("native.prepare", prepare_token), None => {}, }; value },
-            Err(problem) => { match &trace { Some(observer) => observer.fail("native.prepare", prepare_token), None => {}, }; return Result<Vec<String>, DriverError>.Err(problem); },
+            Err(problem) => { match &trace { Some(observer) => observer.fail("native.prepare", prepare_token), None => {}, }; return Result<NativeObjectSet, DriverError>.Err(problem); },
         };
         defer inputs.drop();
         let objects = Vec<String>.new();
+        let archives = copied(&inputs.archives);
         let accepted = false;
-        defer { if !accepted { release_strings(&objects); } };
-        if inputs.sources.is_empty() && inputs.components.is_empty() {
+        defer { if !accepted { release_strings(&objects); release_strings(&archives); } };
+        if inputs.sources.is_empty() && inputs.components.is_empty() && inputs.c_sources.is_empty() {
             accepted = true;
-            return Result<Vec<String>, DriverError>.Ok(objects);
+            return Result<NativeObjectSet, DriverError>.Ok(NativeObjectSet(objects, archives));
         }
 
-        self.validate_llvm()?;
-        let query = Vec<String>.new();
-        defer release_strings(&query);
-        query.push(String.from(&"--cflags"));
-        let text = text_query(&query)?;
-        defer text.drop();
-        let flags = split_flags(text.as_str())?;
-        defer release_strings(&flags);
-        let index = 0u64;
+        if !inputs.sources.is_empty() || !inputs.components.is_empty() {
+            self.validate_llvm()?;
+            let query = Vec<String>.new();
+            defer release_strings(&query);
+            query.push(String.from(&"--cflags"));
+            let text = text_query(&query)?;
+            defer text.drop();
+            let flags = split_flags(text.as_str())?;
+            defer release_strings(&flags);
+            let index = 0u64;
+            for source in inputs.sources {
+                let name = String.from(&"native_llvm_");
+                defer name.drop();
+                let number = index.to_string();
+                defer number.drop();
+                name.push_str(number.as_str());
+                name.push_str(".o");
+                let output = Path.new(directory).join(name.as_str());
+                defer output.drop();
+                temporary.push(String.from(&output.as_str()));
+                let arguments = copied(&flags);
+                defer release_strings(&arguments);
+                arguments.push(String.from(&"-O2"));
+                arguments.push(String.from(&"-fPIC"));
+                arguments.push(String.from(&"-c"));
+                arguments.push(String.from(&source.as_str()));
+                arguments.push(String.from(&"-o"));
+                arguments.push(String.from(&output.as_str()));
+                let compile_token = match &trace { Some(observer) => observer.start_pass("native.c_shim_compile", "native", "compile LLVM native source", ProfileKind.Pass), None => 0u64, };
+                match self.run(&arguments) {
+                    Ok(_) => match &trace { Some(observer) => observer.finish("native.c_shim_compile", compile_token), None => {}, },
+                    Err(problem) => { match &trace { Some(observer) => observer.fail("native.c_shim_compile", compile_token), None => {}, }; return Result<NativeObjectSet, DriverError>.Err(problem); },
+                }
+                objects.push(String.from(&output.as_str()));
+                index += 1u64;
+            }
+        }
 
-        for source in inputs.sources {
-            let name = String.from(&"native_");
+        let c_index = 0u64;
+        for source in inputs.c_sources {
+            let name = String.from(&"native_c_");
             defer name.drop();
-            let number = index.to_string();
+            let number = c_index.to_string();
             defer number.drop();
             name.push_str(number.as_str());
             name.push_str(".o");
             let output = Path.new(directory).join(name.as_str());
             defer output.drop();
             temporary.push(String.from(&output.as_str()));
-            let arguments = copied(&flags);
+            let arguments = Vec<String>.new();
             defer release_strings(&arguments);
             arguments.push(String.from(&"-O2"));
             arguments.push(String.from(&"-fPIC"));
+            arguments.push(String.from(&"-std=c11"));
+            for include in source.include_dirs {
+                let flag = String.from(&"-I");
+                flag.push_str(include.as_str());
+                arguments.push(flag);
+            }
             arguments.push(String.from(&"-c"));
-            arguments.push(String.from(&source.as_str()));
+            arguments.push(String.from(&source.path.as_str()));
             arguments.push(String.from(&"-o"));
             arguments.push(String.from(&output.as_str()));
             let compile_token = match &trace { Some(observer) => observer.start_pass("native.c_shim_compile", "native", "compile package C shim", ProfileKind.Pass), None => 0u64, };
             match self.run(&arguments) {
                 Ok(_) => match &trace { Some(observer) => observer.finish("native.c_shim_compile", compile_token), None => {}, },
-                Err(problem) => { match &trace { Some(observer) => observer.fail("native.c_shim_compile", compile_token), None => {}, }; return Result<Vec<String>, DriverError>.Err(problem); },
+                Err(problem) => { match &trace { Some(observer) => observer.fail("native.c_shim_compile", compile_token), None => {}, }; return Result<NativeObjectSet, DriverError>.Err(problem); },
             }
             objects.push(String.from(&output.as_str()));
-            index += 1u64;
+            c_index += 1u64;
         }
 
         accepted = true;
-        Result<Vec<String>, DriverError>.Ok(objects)
+        Result<NativeObjectSet, DriverError>.Ok(NativeObjectSet(objects, archives))
     }
 
     fn link_flags(trace: Option<CompilerTrace&>) -> Result<Vec<String>, DriverError> {
@@ -548,7 +738,7 @@ impl NativeDriver {
         arguments = Vec<String>.new();
 
         let native = self.native_objects(directory.as_str(), &temporary, trace)?;
-        defer release_strings(&native);
+        defer native.drop();
         let flags_token = match &trace { Some(observer) => observer.start_pass("native.link_flags", "native", "resolve native link flags", ProfileKind.Pass), None => 0u64, };
         let flags_result = self.link_flags(trace);
         let flags = match flags_result {
@@ -560,8 +750,13 @@ impl NativeDriver {
         defer destination.drop();
         temporary.push(String.from(&destination.as_str()));
         arguments.push(String.from(&object));
-        for path in native { arguments.push(String.from(&path.as_str())); }
+        for path in native.objects { arguments.push(String.from(&path.as_str())); }
         arguments.push(String.from(&archive.as_str()));
+        if !native.archives.is_empty() {
+            arguments.push(String.from(&"-Wl,--start-group"));
+            for path in native.archives { arguments.push(String.from(&path.as_str())); }
+            arguments.push(String.from(&"-Wl,--end-group"));
+        }
         for flag in flags { arguments.push(String.from(&flag.as_str())); }
         for search in *searches {
             let flag = String.from(&"-L");

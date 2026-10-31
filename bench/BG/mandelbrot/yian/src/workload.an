@@ -1,0 +1,72 @@
+// bench/BG/mandelbrot/yian/src/workload.an — Benchmarks Game scalar Mandelbrot.
+// Source: bench/BG/mandelbrot/c/upstream/main.c (mandelbrot-gcc-2; revised BSD).
+// Scale: default side=2000; fast side=200.
+
+from std.core.io import BufWriter, Stdout, Write;
+from std.core.vec import Vec;
+
+pub fn run(n: i32) -> i32 {
+    if n <= 0 || n > 2000 { return 2; }
+
+    let size: i32 = n;
+    let dimension: f64 = f64(size);
+    let row_byte_count: u64 = (u64(size) + 7u64) / 8u64;
+    let row: Vec<u8> = Vec<u8>.with_capacity(row_byte_count);
+    defer row.drop();
+
+    let output_stream: Stdout = Stdout.new();
+    let output: BufWriter<Stdout> = BufWriter<Stdout>.new(&output_stream);
+    @print(f"P4\n{size} {size}\n");
+
+    let y: i32 = 0;
+    while y < size {
+        let ci: f64 = 2.0 * f64(y) / dimension - 1.0;
+        let x: i32 = 0;
+        let byte_accumulator: u64 = 0u64;
+        let bit_count: u64 = 0u64;
+
+        while x < size {
+            let cr: f64 = 2.0 * f64(x) / dimension - 1.5;
+            let zr: f64 = 0.0;
+            let zi: f64 = 0.0;
+            let tr: f64 = 0.0;
+            let ti: f64 = 0.0;
+            let iteration: i32 = 0;
+
+            while iteration < 50 && tr + ti <= 4.0 {
+                zi = 2.0 * zr * zi + ci;
+                zr = tr - ti + cr;
+                tr = zr * zr;
+                ti = zi * zi;
+                iteration += 1;
+            }
+
+            byte_accumulator = byte_accumulator * 2u64;
+            if tr + ti <= 4.0 {
+                byte_accumulator += 1u64;
+            }
+            bit_count += 1u64;
+
+            if bit_count == 8u64 {
+                row.push(u8(byte_accumulator));
+                byte_accumulator = 0u64;
+                bit_count = 0u64;
+            }
+            x += 1;
+        }
+
+        if bit_count > 0u64 {
+            byte_accumulator = byte_accumulator * (1u64 << (8u64 - bit_count));
+            row.push(u8(byte_accumulator));
+        }
+        output.write_all(row.as_slice()).unwrap();
+        row.clear();
+        y += 1;
+    }
+
+    output.finish().unwrap();
+    output.drop();
+    output_stream.drop();
+
+    return 0;
+}

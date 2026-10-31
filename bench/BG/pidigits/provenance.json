@@ -1,0 +1,75 @@
+{
+  "format": 2,
+  "task": "pidigits",
+  "description_url": "https://benchmarksgame-team.pages.debian.net/benchmarksgame/description/pidigits.html",
+  "source": {
+    "url": "https://benchmarksgame-team.pages.debian.net/benchmarksgame/program/pidigits-gcc-2.html",
+    "retrieved_at": "2026-10-31T10:42:07Z",
+    "extracted_sha256": "048d2b2e34361f01e2c661b7b788c2826f10003defe96e0ffb0cb38d28830446",
+    "extraction": "First HTML pre block; remove HTML tags, HTML-unescape once, UTF-8 encode; preserve leading and trailing whitespace.",
+    "archive_path": "c/upstream/main.c"
+  },
+  "files": [
+    {
+      "path": "c/upstream/main.c",
+      "sha256": "048d2b2e34361f01e2c661b7b788c2826f10003defe96e0ffb0cb38d28830446",
+      "license_id": "BSD-3-Clause"
+    },
+    {
+      "path": "c/src/main.c",
+      "sha256": "048d2b2e34361f01e2c661b7b788c2826f10003defe96e0ffb0cb38d28830446",
+      "license_id": "BSD-3-Clause"
+    },
+    {
+      "path": "LICENSE-BenchmarksGame.txt",
+      "sha256": "32ef9bf57891917e5a636ebccf3ff6d14536a3a794075ef0887b412cdebfd89e",
+      "license_id": "BSD-3-Clause"
+    }
+  ],
+  "patches": [],
+  "fixtures": [
+    {
+      "input_url": null,
+      "input_path": null,
+      "input_sha256": null,
+      "output_url": "https://benchmarksgame-team.pages.debian.net/benchmarksgame/download/pidigits-output.txt",
+      "output_path": "fixtures/official-output.txt",
+      "output_sha256": "dbf95cc20ad23ff1a385d30436f0c63b5ae7f41bb1003cf204f5e4888b74a39c",
+      "argv": [
+        "27"
+      ],
+      "derived_output": {
+        "path": "fixtures/official-output-n27.txt",
+        "sha256": "ab4264eca722a55e8a6458574e6e607450b978c5f95aedc426ae0615c48cbbba",
+        "derived_from_url": "https://benchmarksgame-team.pages.debian.net/benchmarksgame/download/pidigits-output.txt",
+        "derived_from_path": "fixtures/official-output.txt",
+        "derived_from_sha256": "dbf95cc20ad23ff1a385d30436f0c63b5ae7f41bb1003cf204f5e4888b74a39c",
+        "transformation": "Extract the first 27 digits from the three official 10-digit rows; emit two complete rows and one 7-digit row padded with three ASCII spaces to the gcc2 width of 10, followed by tab, colon, 27, and newline. No candidate implementation generates expected bytes."
+      }
+    }
+  ],
+  "translation": [
+    {
+      "c_symbol": "main",
+      "yian_symbol": "c_decimal / main / workload.run / close_all / append_unsigned",
+      "differences": [
+        "Both parse argv[1] as the requested digit count. YIAN uses the standard argument vector and explicitly drops its owned strings and vector.",
+        "C keeps six global mpz_t values; YIAN keeps six local Option<BigInt> handles and explicitly closes every initialized handle on allocation failure, invalid digit, and success.",
+        "Both compute two truncating quotient estimates each loop, emit only when the quotients compare equal, and preserve the gcc2 production and extraction operation order. The project shim exposes individual GMP arithmetic primitives only; the LFT loop and digit decisions remain in YIAN.",
+        "C emits through stdio; YIAN buffers bytes and implements ten-digit row labels and partial-row space padding in YIAN. The external archive is shared and is not instrumented by YIAN guards or ASan."
+      ]
+    }
+  ],
+  "dependencies": [
+    {
+      "name": "GMP 6.3.0 project-local static archive",
+      "url": "https://ftp.gnu.org/gnu/gmp/gmp-6.3.0.tar.xz",
+      "commit": null,
+      "path": "../../native/gmp/lib/libgmp.a",
+      "sha256": "e7af54fb60c6bb6b30837d503effe0125aa56faa81f6923fd884aec8ec1e1e99",
+      "license_id": "GMP dual license; see bench/native/manifest.json license files",
+      "retrieved_at": "2026-10-31T10:22:10Z",
+      "note": "C links this exact archive directly; YIAN links it through the declared gmp package and per-operation shim. Matching configured header SHA-256 is 1898d81c30bf177e9094a33b84b14916145662fde326086c8954910d8b52f41b. Archive/header/source/license/build identities are authoritative in bench/native/manifest.json."
+    }
+  ]
+}

@@ -20,7 +20,7 @@ sys.path.insert(0, str(SCRIPTS))
 import check_lsp
 import run_tests
 from _toolchain.native import NativeToolError, file_sha256, resolve_native, resolve_native_selection
-from bench import bench_allocator, bench_three_way
+from bench import bench_allocator, bench_asan, bench_three_way
 
 
 class NativeWorkflowTests(unittest.TestCase):
@@ -166,11 +166,14 @@ class NativeWorkflowTests(unittest.TestCase):
             root = Path(temporary)
             explicit = root / "explicit compiler"
             configured = root / "environment compiler"
-            explicit.symlink_to(system_elf)
-            configured.symlink_to(system_elf)
+            explicit_anx = root / "explicit anx"
+            configured_anx = root / "environment anx"
+            for path in (explicit, configured, explicit_anx, configured_anx):
+                path.symlink_to(system_elf)
             path_dir = root / "path"
             path_dir.mkdir()
             (path_dir / "yianc").symlink_to(system_elf)
+            (path_dir / "anx").symlink_to(system_elf)
 
             selected, source = resolve_native_selection(
                 explicit=str(explicit), configured=str(configured), default="yianc", search_path=str(path_dir)
@@ -184,6 +187,25 @@ class NativeWorkflowTests(unittest.TestCase):
                 explicit=None, configured="", default="yianc", search_path=str(path_dir)
             )
             self.assertEqual((selected, source), (system_elf, "PATH"))
+            anx, anx_source = bench_three_way._resolve_anx_selection(
+                explicit=str(explicit_anx),
+                search_path=str(path_dir),
+            )
+            self.assertEqual((anx, anx_source), (system_elf, "explicit"))
+            with patch.dict(os.environ, {"ANX": str(configured_anx)}):
+                anx, anx_source = bench_three_way._resolve_anx_selection(None, search_path=str(path_dir))
+            self.assertEqual((anx, anx_source), (system_elf, "ANX"))
+            with patch.dict(os.environ, {"ANX": ""}):
+                anx, anx_source = bench_three_way._resolve_anx_selection(None, search_path=str(path_dir))
+            self.assertEqual((anx, anx_source), (system_elf, "PATH"))
+            self.assertEqual(
+                bench_asan.btw._resolve_anx_selection(str(explicit_anx), search_path=str(path_dir)),
+                (system_elf, "explicit"),
+            )
+            self.assertEqual(
+                bench_allocator._resolve_anx_selection(str(explicit_anx), search_path=str(path_dir)),
+                (system_elf, "explicit"),
+            )
             self.assertEqual(file_sha256(system_elf), hashlib.sha256(system_elf.read_bytes()).hexdigest())
 
             marker = root / "invalid compiler executed"
@@ -198,73 +220,95 @@ class NativeWorkflowTests(unittest.TestCase):
                     search_path=str(path_dir),
                 )
             self.assertFalse(marker.exists(), "an invalid configured compiler must not fall back or execute")
+            with patch.dict(os.environ, {"ANX": str(invalid)}):
+                with self.assertRaisesRegex(NativeToolError, "not an ELF"):
+                    bench_three_way._resolve_anx_selection(None, search_path=str(path_dir))
+            self.assertFalse(marker.exists(), "an invalid configured anx must not fall back or execute")
 
             with patch.object(bench_three_way, "_tool_version", return_value="clang"), patch.object(
                 bench_three_way, "_git_head", return_value="abc123"
             ):
                 fingerprint = bench_three_way.machine_fingerprint(
-                    None, 1, "fast", "fast", system_elf, "explicit", True
+                    None, 1, "fast", "fast", system_elf, "explicit", True,
+                    anx=system_elf, anx_source="PATH",
                 )
             self.assertEqual(fingerprint["yianc"], str(system_elf))
             self.assertEqual(fingerprint["yianc_sha256"], file_sha256(system_elf))
             self.assertEqual(fingerprint["yianc_source"], "explicit")
             self.assertEqual(fingerprint["yianc_used"], "yes")
+            self.assertEqual(fingerprint["anx"], str(system_elf))
+            self.assertEqual(fingerprint["anx_sha256"], file_sha256(system_elf))
+            self.assertEqual(fingerprint["anx_source"], "PATH")
+            self.assertEqual(fingerprint["project_layout"], "2")
+
+            with patch.object(
+                bench_three_way,
+                "resolve_native_selection",
+                side_effect=AssertionError("--list-sets must not resolve native tools"),
+            ):
+                with patch.object(bench_three_way.sys, "argv", ["bench_three_way.py", "--list-sets"]):
+                    with redirect_stdout(StringIO()), redirect_stderr(StringIO()):
+                        self.assertEqual(bench_three_way.main(), 0)
 
     def test_bench_compilers_use_native_fat_raw_argv(self) -> None:
         compiler = Path(sys.executable).resolve(strict=True)
         with tempfile.TemporaryDirectory(prefix="native benchmark argv ") as temporary:
             root = Path(temporary)
-            lib_root = root / "source tree with spaces" / "lib" / "src"
-            lib_root.mkdir(parents=True)
-            source = root / "case.an"
-            source.write_text("", encoding="utf-8")
-            raw_source = root / "case.raw.an"
-            raw_source.write_text("", encoding="utf-8")
-
+            anx = root / "anx with spaces"
+            anx.touch()
+            compiler_root = root / "compiler source tree with spaces"
             three_output = root / "three way output"
-            three_spec = SimpleNamespace(key="BG/case")
-            fake_success = SimpleNamespace(returncode=0, stdout="", stderr="")
+            project = SimpleNamespace(raw_overlay=Path("raw"))
+            three_spec = SimpleNamespace(
+                key="AWFY/case", source="AWFY", name="case", project=project,
+                scale_value=lambda profile: 17 if profile == "fast" else None,
+            )
             with patch.object(bench_three_way, "spec_bin", return_value=three_output), patch.object(
-                bench_three_way,
-                "materialize",
-                return_value=(source, raw_source),
-            ), patch.object(bench_three_way.subprocess, "run", return_value=fake_success) as process:
-                bench_three_way.compile_an(three_spec, "fast", raw=False, compiler=compiler)
-                fat_command = process.call_args.args[0]
-                self.assertEqual(fat_command[:2], [str(compiler), bench_three_way.OPT_LEVEL])
-                self.assertNotIn("--raw-pointers", fat_command)
-                bench_three_way.compile_an(three_spec, "fast", raw=True, compiler=compiler)
-                raw_command = process.call_args.args[0]
-                self.assertEqual(raw_command[:2], [str(compiler), bench_three_way.OPT_LEVEL])
-                self.assertIn("--raw-pointers", raw_command)
-                self.assertNotIn("yianc.main", raw_command)
+                bench_three_way.projects, "build_yian", return_value=three_output
+            ) as build_yian:
+                bench_three_way.compile_an(three_spec, "fast", raw=False, compiler=compiler, anx=anx)
                 self.assertEqual(
-                    process.call_args.kwargs["env"].get("PYTHONPATH"),
-                    os.environ.get("PYTHONPATH"),
+                    build_yian.call_args.args,
+                    (project, "fast", False, 17, compiler, anx, bench_three_way.ROOT, three_output),
                 )
+                bench_three_way.compile_an(three_spec, "fast", raw=True, compiler=compiler, anx=anx)
+                self.assertEqual(
+                    build_yian.call_args.args,
+                    (project, "fast", True, 17, compiler, anx, bench_three_way.ROOT, three_output),
+                )
+                self.assertEqual(build_yian.call_count, 2)
+
+            with patch.object(bench_three_way, "spec_bin", return_value=three_output), patch.object(
+                bench_three_way.projects, "build_c", return_value=three_output
+            ) as build_c:
+                bench_three_way.compile_c(three_spec)
+                build_c.assert_called_once_with(project, asan=False, output=three_output)
+            with patch.object(bench_asan, "ASAN_DIR", root / "asan"), patch.object(
+                bench_asan.btw.projects, "build_c", return_value=root / "asan" / "AWFY_case"
+            ) as build_asan:
+                asan_spec = SimpleNamespace(source="AWFY", name="case", key="AWFY/case", project=project)
+                bench_asan.compile_asan_ref(asan_spec)
+                self.assertEqual(build_asan.call_args.args, (project,))
+                self.assertEqual(build_asan.call_args.kwargs, {
+                    "asan": True, "output": root / "asan" / "AWFY_case"
+                })
 
             allocator_output = root / "allocator output"
+            alloc_project = SimpleNamespace(raw_overlay=Path("raw"))
             with patch.object(bench_allocator, "BUILD_DIR", allocator_output), patch.object(
-                bench_allocator, "source_path", return_value=source
-            ), patch.object(bench_allocator.subprocess, "run", return_value=fake_success) as process:
+                bench_allocator, "_allocator_projects", return_value={"case": alloc_project}
+            ), patch.object(bench_allocator.projects, "build_yian", return_value=allocator_output / "case.fat") as build_alloc:
                 bench_allocator.compile_one(
-                    "case", False, lib_root.parents[1], {}, "full", compiler
+                    "case", False, compiler_root, {}, "full", compiler, anx=anx
                 )
-                fat_command = process.call_args.args[0]
-                self.assertEqual(fat_command[:2], [str(compiler), bench_allocator.OPT_LEVEL])
-                self.assertIn(str(lib_root), fat_command)
-                self.assertNotIn("--raw-pointers", fat_command)
+                self.assertEqual(build_alloc.call_args.args, (
+                    alloc_project, "full", False, None, compiler, anx, compiler_root,
+                    allocator_output / "case.fat",
+                ))
                 bench_allocator.compile_one(
-                    "case", True, lib_root.parents[1], {}, "full", compiler
+                    "case", True, compiler_root, {}, "full", compiler, anx=anx
                 )
-                raw_command = process.call_args.args[0]
-                self.assertEqual(raw_command[:2], [str(compiler), bench_allocator.OPT_LEVEL])
-                self.assertIn("--raw-pointers", raw_command)
-                self.assertNotIn("yianc.main", raw_command)
-                self.assertEqual(
-                    process.call_args.kwargs["env"].get("PYTHONPATH"),
-                    os.environ.get("PYTHONPATH"),
-                )
+                self.assertEqual(build_alloc.call_count, 2)
 
     def test_runner_pointer_modes_and_safety_na_reporting(self) -> None:
         toolchain = SimpleNamespace(name="native")

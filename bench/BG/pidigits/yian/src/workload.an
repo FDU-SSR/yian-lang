@@ -1,0 +1,139 @@
+// bench/BG/pidigits/yian/src/workload.an — Benchmarks Game pidigits.
+// Source: bench/BG/pidigits/c/upstream/main.c (pidigits-gcc-2; revised BSD).
+// GMP supplies integer arithmetic only; state transitions and output stay here.
+
+from gmp.api import BigInt, add, cmp, create, destroy, get_si, mul, mul_si, tdiv_q;
+from std.core.io import BufWriter, Stdout, Write;
+from std.core.option import Option;
+from std.core.vec import Vec;
+
+fn close_all(
+    u: Option<BigInt>&,
+    v: Option<BigInt>&,
+    w: Option<BigInt>&,
+    n1: Option<BigInt>&,
+    n2: Option<BigInt>&,
+    d: Option<BigInt>&
+) {
+    if u.is_some() { destroy(u.unwrap()); }
+    if v.is_some() { destroy(v.unwrap()); }
+    if w.is_some() { destroy(w.unwrap()); }
+    if n1.is_some() { destroy(n1.unwrap()); }
+    if n2.is_some() { destroy(n2.unwrap()); }
+    if d.is_some() { destroy(d.unwrap()); }
+}
+
+fn append_unsigned(output: Vec<u8>&, value: u64) {
+    let digits: u8[20] = [0u8; 20];
+    let position: u64 = 20u64;
+    let remaining: u64 = value;
+    if remaining == 0u64 {
+        output.push(b'0');
+        return;
+    }
+    while remaining > 0u64 {
+        position -= 1u64;
+        digits[position] = b'0' + u8(remaining % 10u64);
+        remaining /= 10u64;
+    }
+    while position < 20u64 {
+        output.push(digits[position]);
+        position += 1u64;
+    }
+}
+
+pub fn run(n: i32) -> i32 {
+    if n <= 0 || n > 10000 {
+        return 2;
+    }
+
+    let u: Option<BigInt> = Option<BigInt>.None;
+    let v: Option<BigInt> = Option<BigInt>.None;
+    let w: Option<BigInt> = Option<BigInt>.None;
+    let n1: Option<BigInt> = Option<BigInt>.None;
+    let n2: Option<BigInt> = Option<BigInt>.None;
+    let d: Option<BigInt> = Option<BigInt>.None;
+    u = create(0i64);
+    if u.is_none() { close_all(&u, &v, &w, &n1, &n2, &d); return 1; }
+    v = create(0i64);
+    if v.is_none() { close_all(&u, &v, &w, &n1, &n2, &d); return 1; }
+    w = create(0i64);
+    if w.is_none() { close_all(&u, &v, &w, &n1, &n2, &d); return 1; }
+    n1 = create(4i64);
+    if n1.is_none() { close_all(&u, &v, &w, &n1, &n2, &d); return 1; }
+    n2 = create(3i64);
+    if n2.is_none() { close_all(&u, &v, &w, &n1, &n2, &d); return 1; }
+    d = create(1i64);
+    if d.is_none() { close_all(&u, &v, &w, &n1, &n2, &d); return 1; }
+
+    let output: Vec<u8> = Vec<u8>.new();
+    let k: i64 = 1i64;
+    let produced: i32 = 0;
+    loop {
+        tdiv_q(u.unwrap(), n1.unwrap(), d.unwrap());
+        tdiv_q(v.unwrap(), n2.unwrap(), d.unwrap());
+
+        if cmp(u.unwrap(), v.unwrap()) == 0 {
+            let digit: i64 = get_si(u.unwrap());
+            if digit < 0i64 || digit > 9i64 {
+                close_all(&u, &v, &w, &n1, &n2, &d);
+                output.drop();
+                return 1;
+            }
+            output.push(b'0' + u8(digit));
+            produced += 1;
+            if produced % 10 == 0 {
+                output.push(b'\t');
+                output.push(b':');
+                append_unsigned(&output, u64(produced));
+                output.push(b'\n');
+            }
+            if produced == n {
+                break;
+            }
+
+            // extract: U=-10U; U=D*U; N1=10N1+U; N2=10N2+U.
+            mul_si(u.unwrap(), u.unwrap(), -10i64);
+            mul(u.unwrap(), d.unwrap(), u.unwrap());
+            mul_si(n1.unwrap(), n1.unwrap(), 10i64);
+            add(n1.unwrap(), n1.unwrap(), u.unwrap());
+            mul_si(n2.unwrap(), n2.unwrap(), 10i64);
+            add(n2.unwrap(), n2.unwrap(), u.unwrap());
+        } else {
+            // produce: preserve the source's two quotient estimates and update order.
+            let k2: i64 = k * 2i64;
+            mul_si(u.unwrap(), n1.unwrap(), k2 - 1i64);
+            add(v.unwrap(), n2.unwrap(), n2.unwrap());
+            mul_si(w.unwrap(), n1.unwrap(), k - 1i64);
+            add(n1.unwrap(), u.unwrap(), v.unwrap());
+            mul_si(u.unwrap(), n2.unwrap(), k + 2i64);
+            add(n2.unwrap(), w.unwrap(), u.unwrap());
+            mul_si(d.unwrap(), d.unwrap(), k2 + 1i64);
+            k += 1i64;
+        }
+    }
+
+    if produced % 10 != 0 {
+        let padding: i32 = 10 - (n % 10);
+        let spaces: i32 = 0;
+        while spaces < padding {
+            output.push(b' ');
+            spaces += 1;
+        }
+        output.push(b'\t');
+        output.push(b':');
+        append_unsigned(&output, u64(n));
+        output.push(b'\n');
+    }
+
+    close_all(&u, &v, &w, &n1, &n2, &d);
+
+    let stdout: Stdout = Stdout.new();
+    let buffered: BufWriter<Stdout> = BufWriter<Stdout>.new(&stdout);
+    buffered.write_all(output.as_slice()).unwrap();
+    buffered.finish().unwrap();
+    buffered.drop();
+    stdout.drop();
+    output.drop();
+    return 0;
+}

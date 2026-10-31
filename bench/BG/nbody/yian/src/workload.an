@@ -1,0 +1,182 @@
+// bench/BG/nbody/yian/src/workload.an — Benchmarks Game five-body n-body task.
+//
+// Source: bench/BG/nbody/c/upstream/main.c (nbody-gcc-1; revised BSD).
+// Scale: default 5,000,000 steps; the runner materializes fast 100,000 steps
+// at this marker. This is the BG task with energy before and after the steps.
+
+from std.num.f64 import sqrt;
+
+const PI: f64 = 3.141592653589793;
+const DAYS_PER_YEAR: f64 = 365.24;
+
+struct Planet {
+    x: f64,
+    y: f64,
+    z: f64,
+    vx: f64,
+    vy: f64,
+    vz: f64,
+    mass: f64,
+}
+
+fn advance(nbodies: i32, bodies: Planet[], dt: f64) {
+    let i: u64 = 0;
+    while i < u64(nbodies) {
+        let body: Planet = bodies[i];
+        let j: u64 = i + 1u64;
+        while j < u64(nbodies) {
+            let other: Planet = bodies[j];
+            let dx: f64 = body.x - other.x;
+            let dy: f64 = body.y - other.y;
+            let dz: f64 = body.z - other.z;
+            let distance: f64 = sqrt(dx * dx + dy * dy + dz * dz);
+            let magnitude: f64 = dt / (distance * distance * distance);
+
+            body.vx -= dx * other.mass * magnitude;
+            body.vy -= dy * other.mass * magnitude;
+            body.vz -= dz * other.mass * magnitude;
+            other.vx += dx * body.mass * magnitude;
+            other.vy += dy * body.mass * magnitude;
+            other.vz += dz * body.mass * magnitude;
+
+            bodies[j] = other;
+            j += 1u64;
+        }
+        bodies[i] = body;
+        i += 1u64;
+    }
+
+    let position_index: u64 = 0;
+    while position_index < u64(nbodies) {
+        let body: Planet = bodies[position_index];
+        body.x += dt * body.vx;
+        body.y += dt * body.vy;
+        body.z += dt * body.vz;
+        bodies[position_index] = body;
+        position_index += 1u64;
+    }
+}
+
+fn energy(nbodies: i32, bodies: Planet[]) -> f64 {
+    let total: f64 = 0.0;
+    let i: u64 = 0;
+    while i < u64(nbodies) {
+        let body: Planet = bodies[i];
+        total += 0.5 * body.mass * (body.vx * body.vx + body.vy * body.vy + body.vz * body.vz);
+
+        let j: u64 = i + 1u64;
+        while j < u64(nbodies) {
+            let other: Planet = bodies[j];
+            let dx: f64 = body.x - other.x;
+            let dy: f64 = body.y - other.y;
+            let dz: f64 = body.z - other.z;
+            let distance: f64 = sqrt(dx * dx + dy * dy + dz * dz);
+            total -= (body.mass * other.mass) / distance;
+            j += 1u64;
+        }
+        i += 1u64;
+    }
+    return total;
+}
+
+fn offset_momentum(nbodies: i32, bodies: Planet[]) {
+    let px: f64 = 0.0;
+    let py: f64 = 0.0;
+    let pz: f64 = 0.0;
+    let solar_mass: f64 = 4.0 * PI * PI;
+    let i: u64 = 0;
+    while i < u64(nbodies) {
+        let body: Planet = bodies[i];
+        px += body.vx * body.mass;
+        py += body.vy * body.mass;
+        pz += body.vz * body.mass;
+        i += 1u64;
+    }
+    let sun: Planet = bodies[0u64];
+    sun.vx = -px / solar_mass;
+    sun.vy = -py / solar_mass;
+    sun.vz = -pz / solar_mass;
+    bodies[0u64] = sun;
+}
+
+fn init_bodies(bodies: Planet[]) {
+    let solar_mass: f64 = 4.0 * PI * PI;
+    bodies[0u64] = Planet(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, solar_mass);
+    bodies[1u64] = Planet(
+        4.84143144246472090e+00,
+        -1.16032004402742839e+00,
+        -1.03622044471123109e-01,
+        1.66007664274403694e-03 * DAYS_PER_YEAR,
+        7.69901118419740425e-03 * DAYS_PER_YEAR,
+        -6.90460016972063023e-05 * DAYS_PER_YEAR,
+        9.54791938424326609e-04 * solar_mass
+    );
+    bodies[2u64] = Planet(
+        8.34336671824457987e+00,
+        4.12479856412430479e+00,
+        -4.03523417114321381e-01,
+        -2.76742510726862411e-03 * DAYS_PER_YEAR,
+        4.99852801234917238e-03 * DAYS_PER_YEAR,
+        2.30417297573763929e-05 * DAYS_PER_YEAR,
+        2.85885980666130812e-04 * solar_mass
+    );
+    bodies[3u64] = Planet(
+        1.28943695621391310e+01,
+        -1.51111514016986312e+01,
+        -2.23307578892655734e-01,
+        2.96460137564761618e-03 * DAYS_PER_YEAR,
+        2.37847173959480950e-03 * DAYS_PER_YEAR,
+        -2.96589568540237556e-05 * DAYS_PER_YEAR,
+        4.36624404335156298e-05 * solar_mass
+    );
+    bodies[4u64] = Planet(
+        1.53796971148509165e+01,
+        -2.59193146099879641e+01,
+        1.79258772950371181e-01,
+        2.68067772490389322e-03 * DAYS_PER_YEAR,
+        1.62824170038242295e-03 * DAYS_PER_YEAR,
+        -9.51592254519715870e-05 * DAYS_PER_YEAR,
+        5.15138902046611451e-05 * solar_mass
+    );
+}
+
+fn print_fixed_9(value: f64) {
+    let negative: bool = value < 0.0;
+    let magnitude: f64 = if negative { -value } else { value };
+    let scaled: u64 = u64(magnitude * 1000000000.0 + 0.5);
+    let whole: u64 = scaled / 1000000000u64;
+    let fraction: u64 = scaled % 1000000000u64;
+    let d0: u64 = fraction / 100000000u64;
+    let d1: u64 = (fraction / 10000000u64) % 10u64;
+    let d2: u64 = (fraction / 1000000u64) % 10u64;
+    let d3: u64 = (fraction / 100000u64) % 10u64;
+    let d4: u64 = (fraction / 10000u64) % 10u64;
+    let d5: u64 = (fraction / 1000u64) % 10u64;
+    let d6: u64 = (fraction / 100u64) % 10u64;
+    let d7: u64 = (fraction / 10u64) % 10u64;
+    let d8: u64 = fraction % 10u64;
+    if negative {
+        @print("-");
+    }
+    @print(f"{whole}.{d0}{d1}{d2}{d3}{d4}{d5}{d6}{d7}{d8}\n");
+}
+
+pub fn run(n: i32) -> i32 {
+    if n <= 0 || n > 5000000 { return 2; }
+
+    let steps: i32 = n;
+    let bodies: Planet[5] = [Planet(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0); 5];
+    let body_slice: Planet[] = bodies[0u64..5u64];
+    init_bodies(body_slice);
+    offset_momentum(5, body_slice);
+    print_fixed_9(energy(5, body_slice));
+
+    let i: i32 = 1;
+    while i <= steps {
+        advance(5, body_slice, 0.01);
+        i += 1;
+    }
+    print_fixed_9(energy(5, body_slice));
+
+    return 0;
+}

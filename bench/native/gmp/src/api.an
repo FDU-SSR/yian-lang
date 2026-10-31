@@ -1,0 +1,78 @@
+from std.core.option import Option;
+
+opaque type GmpHandle;
+
+pub struct BigInt {
+    handle: cptr<GmpHandle>,
+}
+
+extern "C" {
+    fn bg_gmp_create(value: i64) -> cptr<GmpHandle>;
+    fn bg_gmp_destroy(value: cptr<GmpHandle>);
+    fn bg_gmp_add(dst: cptr<GmpHandle>, left: cptr<GmpHandle>, right: cptr<GmpHandle>);
+    fn bg_gmp_mul(dst: cptr<GmpHandle>, left: cptr<GmpHandle>, right: cptr<GmpHandle>);
+    fn bg_gmp_mul_si(dst: cptr<GmpHandle>, value: cptr<GmpHandle>, factor: i64);
+    fn bg_gmp_tdiv_q(dst: cptr<GmpHandle>, num: cptr<GmpHandle>, den: cptr<GmpHandle>);
+    fn bg_gmp_cmp(left: cptr<GmpHandle>, right: cptr<GmpHandle>) -> i32;
+    fn bg_gmp_get_si(value: cptr<GmpHandle>) -> i64;
+}
+
+ffi fn require_live(value: BigInt&) {
+    if value.handle == @ffi_null<GmpHandle>() {
+        @panic("gmp: operation on a closed integer");
+    }
+}
+
+pub ffi fn create(value: i64) -> Option<BigInt> {
+    let handle: cptr<GmpHandle> = bg_gmp_create(value);
+    if handle == @ffi_null<GmpHandle>() {
+        return Option<BigInt>.None;
+    }
+    Option<BigInt>.Some(BigInt(handle=handle))
+}
+
+pub ffi fn destroy(value: BigInt&) {
+    if value.handle == @ffi_null<GmpHandle>() {
+        return;
+    }
+    bg_gmp_destroy(value.handle);
+    value.handle = @ffi_null<GmpHandle>();
+}
+
+pub ffi fn add(dst: BigInt&, left: BigInt&, right: BigInt&) {
+    require_live(dst);
+    require_live(left);
+    require_live(right);
+    bg_gmp_add(dst.handle, left.handle, right.handle);
+}
+
+pub ffi fn mul(dst: BigInt&, left: BigInt&, right: BigInt&) {
+    require_live(dst);
+    require_live(left);
+    require_live(right);
+    bg_gmp_mul(dst.handle, left.handle, right.handle);
+}
+
+pub ffi fn mul_si(dst: BigInt&, value: BigInt&, factor: i64) {
+    require_live(dst);
+    require_live(value);
+    bg_gmp_mul_si(dst.handle, value.handle, factor);
+}
+
+pub ffi fn tdiv_q(dst: BigInt&, num: BigInt&, den: BigInt&) {
+    require_live(dst);
+    require_live(num);
+    require_live(den);
+    bg_gmp_tdiv_q(dst.handle, num.handle, den.handle);
+}
+
+pub ffi fn cmp(left: BigInt&, right: BigInt&) -> i32 {
+    require_live(left);
+    require_live(right);
+    bg_gmp_cmp(left.handle, right.handle)
+}
+
+pub ffi fn get_si(value: BigInt&) -> i64 {
+    require_live(value);
+    bg_gmp_get_si(value.handle)
+}

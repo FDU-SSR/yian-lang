@@ -57,6 +57,48 @@ def _package_closure(root: Path, package_root: Path, seen: set[Path]) -> None:
         _package_closure(root, package_root / value["path"], seen)
 
 
+def _native_c_inputs(package_root: Path, document: dict[str, Any]) -> set[Path]:
+    native = document.get("native", {})
+    if not isinstance(native, dict):
+        raise IdentityError(f"invalid native table in {package_root / 'package.anx'}")
+    declaration = native.get("c", {})
+    if not isinstance(declaration, dict):
+        raise IdentityError(f"invalid native.c table in {package_root / 'package.anx'}")
+    if set(declaration) - {"sources", "include-dirs", "archives"}:
+        raise IdentityError(f"unknown native.c field in {package_root / 'package.anx'}")
+
+    files: set[Path] = set()
+    for field, suffix, directory in (
+        ("sources", ".c", False),
+        ("include-dirs", "", True),
+        ("archives", ".a", False),
+    ):
+        values = declaration.get(field, [])
+        if not isinstance(values, list) or any(not isinstance(value, str) or not value for value in values):
+            raise IdentityError(f"invalid native.c {field} in {package_root / 'package.anx'}")
+        for value in values:
+            relative = Path(value)
+            if relative.is_absolute() or ".." in relative.parts or (suffix and relative.suffix != suffix):
+                raise IdentityError(f"native.c {field} escapes package or has invalid suffix: {value}")
+            resolved = (package_root / relative).resolve()
+            if not resolved.is_relative_to(package_root):
+                raise IdentityError(f"native.c {field} escapes package: {value}")
+            if directory:
+                if not resolved.is_dir():
+                    raise IdentityError(f"native.c include directory is missing: {value}")
+                for path in resolved.rglob("*"):
+                    canonical = path.resolve()
+                    if not canonical.is_relative_to(package_root):
+                        raise IdentityError(f"native.c include tree escapes package: {path}")
+                    if canonical.is_file():
+                        files.add(canonical)
+            elif not resolved.is_file():
+                raise IdentityError(f"native.c file is missing: {value}")
+            else:
+                files.add(resolved)
+    return files
+
+
 def component_source_files(root: Path, component: str) -> tuple[Path, ...]:
     try:
         relative_root = COMPONENT_ROOTS[component]
@@ -69,6 +111,12 @@ def component_source_files(root: Path, component: str) -> tuple[Path, ...]:
     for package_root in seen:
         manifest = package_root / "package.anx"
         files.add(manifest)
+        try:
+            with manifest.open("rb") as stream:
+                document = tomllib.load(stream)
+        except (OSError, tomllib.TOMLDecodeError) as error:
+            raise IdentityError(f"cannot read package manifest {manifest}: {error}") from error
+        files.update(_native_c_inputs(package_root, document))
         for subdirectory in (package_root / "src", package_root / "native"):
             if not subdirectory.is_dir():
                 continue

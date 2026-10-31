@@ -10,7 +10,7 @@ from anx.diagnostics.model import AX_DUPLICATE_PACKAGE, AX_ENTRY_MISMATCH;
 from anx.diagnostics.model import AX_NESTED_SOURCE_ROOTS, AX_NO_PROJECT_ROOT;
 from anx.diagnostics.model import AX_RESERVED_PACKAGE_NAME, Diagnostic, release_diagnostics;
 from anx.manifest.load import read_manifest;
-from anx.manifest.model import Manifest, NativeLLVM, PackageKind;
+from anx.manifest.model import Manifest, NativeC, NativeLLVM, PackageKind;
 from anx.project.model import LoadReport, Package, Project, SourceFile;
 
 const MANIFEST_NAME: str = "package.anx";
@@ -594,6 +594,10 @@ fn package_from_record(record: PackageRecord&, layout: PackageLayout&, records: 
         Some(value) => Option<NativeLLVM>.Some(value.clone_native()),
         None => Option<NativeLLVM>.None,
     };
+    let native_c = match record.manifest.native_c() {
+        Some(value) => Option<NativeC>.Some(value.clone_native()),
+        None => Option<NativeC>.None,
+    };
     let entry = match &layout.entry {
         Some(value) => Option<PathBuf>.Some(PathBuf.from(value.as_str())),
         None => Option<PathBuf>.None,
@@ -604,7 +608,7 @@ fn package_from_record(record: PackageRecord&, layout: PackageLayout&, records: 
     let package = Package.new(record.manifest.name(), record.manifest.kind(), record.manifest.version(),
         PathBuf.from(record.root.as_str()), manifest_path,
         PathBuf.from(layout.source_root.as_str()), entry, dependencies, dev_dependencies,
-        record.manifest.allows_ffi(), native);
+        record.manifest.allows_ffi(), native, native_c);
     package
 }
 
@@ -833,7 +837,7 @@ pub fn load(root: str, std_root: str) -> LoadReport {
     packages.push(Package.new(STD_PACKAGE, PackageKind.Lib, "", std_package_root,
         PathBuf.from(std_manifest_path.as_str()), PathBuf.from(std_path.as_str()),
         Option<PathBuf>.None, Vec<String>.new(), Vec<String>.new(), true,
-        Option<NativeLLVM>.None));
+        Option<NativeLLVM>.None, Option<NativeC>.None));
     std_manifest_path.drop();
 
     add_nested_source_diagnostics(&packages, &diagnostics);

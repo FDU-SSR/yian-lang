@@ -1,0 +1,59 @@
+{
+  "format": 2,
+  "task": "mandelbrot",
+  "description_url": "https://benchmarksgame-team.pages.debian.net/benchmarksgame/description/mandelbrot.html",
+  "source": {
+    "url": "https://benchmarksgame-team.pages.debian.net/benchmarksgame/program/mandelbrot-gcc-2.html",
+    "retrieved_at": "2026-10-31T10:42:07Z",
+    "extracted_sha256": "ff0d4b64c72a72fda8d374a963310b2eff9f6c2d48945df883f3380abb90f33c",
+    "extraction": "First HTML pre block; remove HTML tags, HTML-unescape once, UTF-8 encode; preserve leading and trailing whitespace.",
+    "archive_path": "c/upstream/main.c"
+  },
+  "files": [
+    {
+      "path": "c/upstream/main.c",
+      "sha256": "ff0d4b64c72a72fda8d374a963310b2eff9f6c2d48945df883f3380abb90f33c",
+      "license_id": "BSD-3-Clause"
+    },
+    {
+      "path": "c/src/main.c",
+      "sha256": "5ebaf745490d20f0082726ba1f1087b8b18b6c9cb604b628ee559482a1606ba3",
+      "license_id": "BSD-3-Clause"
+    },
+    {
+      "path": "LICENSE-BenchmarksGame.txt",
+      "sha256": "32ef9bf57891917e5a636ebccf3ff6d14536a3a794075ef0887b412cdebfd89e",
+      "license_id": "BSD-3-Clause"
+    }
+  ],
+  "patches": [
+    {
+      "path": "c/src/main.c",
+      "reason": "Use an unsigned byte accumulator so the eight-bit left shifts and N=9 zero-padding behavior are defined; preserve the scalar pixel and row-packing algorithm.",
+      "diff": "--- c/upstream/main.c\n+++ c/src/main.c\n@@ -11,7 +11,7 @@\n int main (int argc, char **argv)\n {\n     int w, h, bit_num = 0;\n-    char byte_acc = 0;\n+    unsigned char byte_acc = 0;\n     int i, iter = 50;\n     double x, y, limit = 2.0;\n     double Zr, Zi, Cr, Ci, Tr, Ti;"
+    }
+  ],
+  "fixtures": [
+    {
+      "input_url": null,
+      "input_path": null,
+      "input_sha256": null,
+      "output_url": "https://benchmarksgame-team.pages.debian.net/benchmarksgame/download/mandelbrot-output.txt",
+      "output_path": "fixtures/official-output.pbm",
+      "output_sha256": "97610473750700638fc63d13cfa49d339b67c18e7f26b3f9c9acb61e746472d5",
+      "argv": [
+        "200"
+      ]
+    }
+  ],
+  "translation": [
+    {
+      "c_symbol": "main",
+      "yian_symbol": "main",
+      "differences": [
+        "Both preserve the scalar 50-iteration escape test, f64 coordinate formulas, row-major order and complete P4 output. C uses double loop counters and an unsigned char accumulator; YIAN converts bounded i32 coordinates to f64 and uses a u64 accumulator before storing each byte in a row Vec.",
+        "C parses side length from argv and prints bytes with putc; YIAN receives the selected side through the bench-scale marker and writes a buffered row slice. Both pack MSB-first and zero the low unused bits at each row end."
+      ]
+    }
+  ]
+}

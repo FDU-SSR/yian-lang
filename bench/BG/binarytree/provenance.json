@@ -1,0 +1,81 @@
+{
+  "format": 2,
+  "task": "binarytrees",
+  "description_url": "https://benchmarksgame-team.pages.debian.net/benchmarksgame/description/binarytrees.html",
+  "source": {
+    "url": "https://benchmarksgame-team.pages.debian.net/benchmarksgame/program/binarytrees-gcc-1.html",
+    "retrieved_at": "2026-10-31T10:42:07Z",
+    "extracted_sha256": "0896dbbe8f2026c48a7f681cae56480b44dff6d114092f36f01474e58603c009",
+    "extraction": "First HTML pre block; remove HTML tags, HTML-unescape once, UTF-8 encode; preserve leading and trailing whitespace.",
+    "archive_path": "c/upstream/main.c"
+  },
+  "files": [
+    {
+      "path": "c/upstream/main.c",
+      "sha256": "0896dbbe8f2026c48a7f681cae56480b44dff6d114092f36f01474e58603c009",
+      "license_id": "BSD-3-Clause"
+    },
+    {
+      "path": "c/src/main.c",
+      "sha256": "0896dbbe8f2026c48a7f681cae56480b44dff6d114092f36f01474e58603c009",
+      "license_id": "BSD-3-Clause"
+    },
+    {
+      "path": "LICENSE-BenchmarksGame.txt",
+      "sha256": "32ef9bf57891917e5a636ebccf3ff6d14536a3a794075ef0887b412cdebfd89e",
+      "license_id": "BSD-3-Clause"
+    }
+  ],
+  "patches": [],
+  "fixtures": [
+    {
+      "input_url": null,
+      "input_path": null,
+      "input_sha256": null,
+      "output_url": "https://benchmarksgame-team.pages.debian.net/benchmarksgame/download/binarytrees-output.txt",
+      "output_path": "fixtures/official-output.txt",
+      "output_sha256": "b7f92c56b5d8aeb0a4d698842d1d87a57b4909865c3c84e5e10313e16663c3cb",
+      "argv": [
+        "10"
+      ]
+    }
+  ],
+  "translation": [
+    {
+      "c_symbol": "NewTreeNode",
+      "yian_symbol": "NewTreeNode",
+      "differences": [
+        "C allocates one treeNode with malloc; YIAN allocates one treeNode with dyn and returns Option<treeNode&>."
+      ]
+    },
+    {
+      "c_symbol": "ItemCheck",
+      "yian_symbol": "ItemCheck",
+      "differences": [
+        "C uses null child pointers and returns long; YIAN matches Option<treeNode&> children and returns i64."
+      ]
+    },
+    {
+      "c_symbol": "BottomUpTree",
+      "yian_symbol": "BottomUpTree",
+      "differences": [
+        "Both recursively allocate one same-layout node at every position, including leaves; YIAN stores each child as Option<treeNode&>."
+      ]
+    },
+    {
+      "c_symbol": "DeleteTree",
+      "yian_symbol": "DeleteTree",
+      "differences": [
+        "Both release recursively in postorder; C uses free and YIAN uses del after recursively releasing both children."
+      ]
+    },
+    {
+      "c_symbol": "main",
+      "yian_symbol": "main",
+      "differences": [
+        "C reads N from argv; YIAN compiles N from its bench-scale marker.",
+        "Both report stretch, every per-depth temporary-tree batch, and long-lived-tree checks in the official output order."
+      ]
+    }
+  ]
+}

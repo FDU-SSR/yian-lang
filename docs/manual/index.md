@@ -43,7 +43,7 @@
 | [20](20.anx_overview.md) | anx 概览 | `anx/src/`：模块地图、build 数据流、compiler 契约 |
 | [21](21.anx_manifest.md) | 清单解析与诊断 | `anx/src/manifest/`、`diagnostics/model.an` |
 | [22](22.anx_project.md) | 项目模型与文件归属 | `anx/src/project/model.an`、`project/load.an` |
-| [23](23.anx_graph.md) | 依赖图与 v2 包图 | `anx/src/project/`、native `yianc` 的日常 package-map consumer |
+| [23](23.anx_graph.md) | 依赖图与 v2/v3 包图 | `anx/src/project/`、native `yianc` 的日常 package-map consumer |
 | [24](24.anx_cli.md) | CLI 与标准库定位 | `anx/src/main.an`、`project/paths.an` |
 | [25](25.anx_tests.md) | anx 项目测试与仓库 fixtures | `anx/src/driver/test.an`、`scripts/run_tests.py` |
 

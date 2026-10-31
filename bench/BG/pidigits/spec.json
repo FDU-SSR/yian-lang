@@ -1,0 +1,19 @@
+{
+  "name": "pidigits",
+  "source": "BG",
+  "tags": [
+    "numeric",
+    "alloc"
+  ],
+  "argv": [],
+  "check": {
+    "rc": 0
+  },
+  "note": "Official pidigits-gcc-2 two-approximation stream with GMP arithmetic primitives; emits ten-digit rows and pads a partial final row.",
+  "scale": {
+    "default": 10000,
+    "fast": 1000,
+    "c": "argv"
+  },
+  "io": {}
+}

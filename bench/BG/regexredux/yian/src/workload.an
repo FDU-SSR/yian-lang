@@ -1,0 +1,239 @@
+from pcre2.api import Matcher, Pattern, compile, create_matcher, destroy_matcher, destroy_pattern, find;
+from std.core.io import BufWriter, Read, Stdin, Stdout, Write;
+from std.core.option import Option;
+from std.core.vec import Vec;
+
+fn count_pattern(index: u64) -> str {
+    if index == 0u64 { return "agggtaaa|tttaccct"; }
+    if index == 1u64 { return "[cgt]gggtaaa|tttaccc[acg]"; }
+    if index == 2u64 { return "a[act]ggtaaa|tttacc[agt]t"; }
+    if index == 3u64 { return "ag[act]gtaaa|tttac[agt]ct"; }
+    if index == 4u64 { return "agg[act]taaa|ttta[agt]cct"; }
+    if index == 5u64 { return "aggg[acg]aaa|ttt[cgt]ccct"; }
+    if index == 6u64 { return "agggt[cgt]aa|tt[acg]accct"; }
+    if index == 7u64 { return "agggta[cgt]a|t[acg]taccct"; }
+    return "agggtaa[cgt]|[acg]ttaccct";
+}
+
+fn replacement_pattern(index: u64) -> str {
+    if index == 0u64 { return "tHa[Nt]"; }
+    if index == 1u64 { return "aND|caN|Ha[DS]|WaS"; }
+    if index == 2u64 { return "a[NSt]|BY"; }
+    if index == 3u64 { return "<[^>]*>"; }
+    return "\\|[^|][^|]*\\|";
+}
+
+fn replacement_text(index: u64) -> str {
+    if index == 0u64 { return "<4>"; }
+    if index == 1u64 { return "<3>"; }
+    if index == 2u64 { return "<2>"; }
+    if index == 3u64 { return "|"; }
+    return "-";
+}
+
+fn append_unsigned(output: Vec<u8>&, value: u64) {
+    let digits: u8[20] = [0u8; 20];
+    let position: u64 = 20u64;
+    let remaining: u64 = value;
+    if remaining == 0u64 {
+        output.push(b'0');
+        return;
+    }
+    while remaining > 0u64 {
+        position -= 1u64;
+        digits[position] = b'0' + u8(remaining % 10u64);
+        remaining /= 10u64;
+    }
+    while position < 20u64 {
+        output.push(digits[position]);
+        position += 1u64;
+    }
+}
+
+fn read_input() -> Option<Vec<u8>> {
+    let input: Vec<u8> = Vec<u8>.with_capacity(16384u64);
+    let buffer: u8[16384] = [0u8; 16384];
+    let stdin: Stdin = Stdin.new();
+    loop {
+        let amount: u64 = match stdin.read(buffer.as_slice()) {
+            Ok(value) => value,
+            Err(error) => {
+                error.drop();
+                input.drop();
+                stdin.drop();
+                return Option<Vec<u8>>.None;
+            },
+        };
+        if amount == 0u64 { break; }
+        input.extend_from_slice(buffer[0u64..amount]);
+    }
+    stdin.drop();
+    Option<Vec<u8>>.Some(input)
+}
+
+fn replace_into(
+    matcher: Matcher&,
+    pattern_text: str,
+    replacement: str,
+    source: u8[],
+    destination: Vec<u8>&
+) -> bool {
+    destination.clear();
+    let pattern_option: Option<Pattern> = compile(pattern_text);
+    if pattern_option.is_none() {
+        return false;
+    }
+
+    let position: u64 = 0u64;
+    let valid: bool = true;
+    loop {
+        let start: u64 = 0u64;
+        let end: u64 = 0u64;
+        let status: i32 = find(matcher, pattern_option.unwrap(), source, position, &start, &end);
+        if status == 0 { break; }
+        if status != 1 || start < position || end < start || end > source.len() || end <= position {
+            valid = false;
+            break;
+        }
+        destination.extend_from_slice(source[position..start]);
+        destination.extend_from_slice(replacement.as_slice());
+        position = end;
+    }
+
+    if valid {
+        destination.extend_from_slice(source[position..source.len()]);
+    }
+    destroy_pattern(pattern_option.unwrap());
+    if !valid {
+        destination.clear();
+        return false;
+    }
+    return true;
+}
+
+fn count_matches(matcher: Matcher&, pattern_text: str, subject: u8[]) -> Option<u64> {
+    let pattern_option: Option<Pattern> = compile(pattern_text);
+    if pattern_option.is_none() {
+        return Option<u64>.None;
+    }
+
+    let position: u64 = 0u64;
+    let count: u64 = 0u64;
+    let valid: bool = true;
+    loop {
+        let start: u64 = 0u64;
+        let end: u64 = 0u64;
+        let status: i32 = find(matcher, pattern_option.unwrap(), subject, position, &start, &end);
+        if status == 0 { break; }
+        if status != 1 || start < position || end < start || end > subject.len() || end <= position {
+            valid = false;
+            break;
+        }
+        count += 1u64;
+        position = end;
+    }
+
+    destroy_pattern(pattern_option.unwrap());
+    if !valid {
+        return Option<u64>.None;
+    }
+    Option<u64>.Some(count)
+}
+
+fn process(matcher: Matcher&, input: u8[]) -> Option<Vec<u8>> {
+    let sequences: Vec<u8> = Vec<u8>.with_capacity(input.len());
+    if !replace_into(matcher, ">.*\\n|\\n", "", input, &sequences) {
+        sequences.drop();
+        return Option<Vec<u8>>.None;
+    }
+
+    let before: Vec<u8> = Vec<u8>.with_capacity(sequences.len());
+    before.extend_from_slice(sequences.as_slice());
+    let after: Vec<u8> = Vec<u8>.with_capacity(sequences.len());
+    let replacement_index: u64 = 0u64;
+    while replacement_index < 5u64 {
+        if !replace_into(
+            matcher,
+            replacement_pattern(replacement_index),
+            replacement_text(replacement_index),
+            before.as_slice(),
+            &after
+        ) {
+            sequences.drop();
+            before.drop();
+            after.drop();
+            return Option<Vec<u8>>.None;
+        }
+        let temporary: Vec<u8> = before.take();
+        before = after.take();
+        after = temporary;
+        replacement_index += 1u64;
+    }
+
+    let output: Vec<u8> = Vec<u8>.with_capacity(512u64);
+    let pattern_index: u64 = 0u64;
+    while pattern_index < 9u64 {
+        let pattern: str = count_pattern(pattern_index);
+        let count = match count_matches(matcher, pattern, sequences.as_slice()) {
+            Some(value) => value,
+            None => {
+                output.drop();
+                sequences.drop();
+                before.drop();
+                after.drop();
+                return Option<Vec<u8>>.None;
+            },
+        };
+        output.extend_from_slice(pattern.as_slice());
+        output.push(b' ');
+        append_unsigned(&output, count);
+        output.push(b'\n');
+        pattern_index += 1u64;
+    }
+
+    let replaced_size: u64 = before.len();
+    output.push(b'\n');
+    append_unsigned(&output, input.len());
+    output.push(b'\n');
+    append_unsigned(&output, sequences.len());
+    output.push(b'\n');
+    append_unsigned(&output, replaced_size);
+    output.push(b'\n');
+
+    sequences.drop();
+    before.drop();
+    after.drop();
+    Option<Vec<u8>>.Some(output)
+}
+
+pub fn run() -> i32 {
+    let input_option = read_input();
+    if input_option.is_none() {
+        return 1;
+    }
+    let input = input_option.unwrap();
+
+    let matcher_option = create_matcher();
+    if matcher_option.is_none() {
+        input.drop();
+        return 1;
+    }
+    let matcher = matcher_option.unwrap();
+
+    let output_option = process(matcher, input.as_slice());
+    destroy_matcher(matcher);
+    input.drop();
+    if output_option.is_none() {
+        return 1;
+    }
+    let output = output_option.unwrap();
+
+    let stdout: Stdout = Stdout.new();
+    let buffered: BufWriter<Stdout> = BufWriter<Stdout>.new(&stdout);
+    buffered.write_all(output.as_slice()).unwrap();
+    buffered.finish().unwrap();
+    buffered.drop();
+    stdout.drop();
+    output.drop();
+    return 0;
+}

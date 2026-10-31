@@ -3,24 +3,23 @@
 
 Benchmarks are organized by source, focus set, and fast/full scale:
 
-  bench/<SOURCE>/an/<name>.an       Fat source; <name>.raw.an is an optional raw override
-  bench/<SOURCE>/c/<name>.c         Authoritative C reference
-  bench/<SOURCE>/specs/<name>.json  Arguments, authoritative checks, focus tags, and scales
+  bench/<SOURCE>/<name>/spec.json   Arguments, checks, tags, and scales
+  bench/<SOURCE>/<name>/yian/       YIAN package; raw/ is an optional source overlay
+  bench/<SOURCE>/<name>/c/          Authoritative CMake project
   bench/sets/<set>.json             Set members, default scale, and sample count
   bench/results/<set>.{md,csv}      Generated results with environment fingerprint and commit
 
 Protocol:
-  - Same algorithm/scale: C uses clang -O2 -ffp-contract=off -lm bench/<SOURCE>/c/<name>.c;
-    raw uses yianc -O2 --raw-pointers lib/src <src>; fat uses yianc -O2 lib/src <src>.
-  - fast substitutes declared scale.fast values at // bench-scale source markers, generating
-    build/bench/src/<profile>/<SOURCE>/<name>.an. Pass the same scale as C argv when
-    scale.c == 'argv'. Benchmarks without a fast declaration use the same scale in both profiles.
+  - CMake builds the C target with C11, clang -O2, and -ffp-contract=off; anx builds staged
+    YIAN package roots with yianc -O2, adding --raw-pointers in raw mode.
+  - fast substitutes declared scale.fast values in an isolated YIAN package copy. BG numeric tasks pass the
+    selected full/fast dimension to C as one argv value; BG stdin tasks use the selected FASTA input file.
   - Artifacts use equal-length paths under build/bench/{cbin,yraw,yfat}/<SOURCE>_<name>.
   - CPU affinity via taskset -c <cpu> is optional, but required for formal records.
   - Warm up each mode once, then rotate C/raw/fat for N measured rounds. Report minimum time,
     median, interquartile range, CV, and peak RSS per mode.
-  - Semantic guards: C warmup must pass authoritative spec checks; raw/fat warmup stdout and exit
-    codes must match byte-for-byte and both exits must be zero. Otherwise ratios are unavailable.
+  - Semantic guards: C warmup must pass its rc check. BG warmups and every measured sample must also match the
+    C warmup's complete stdout bytes and expected rc. A failed sample remains in the row and disables its ratios.
 
 Usage:
   python3 bench/bench_three_way.py --list-sets          # List sets, scales, and member counts
@@ -30,6 +29,7 @@ Usage:
   python3 bench/bench_three_way.py --bench AWFY/queen,BG/fasta
   python3 bench/bench_three_way.py --source AWFY --set fast
   python3 bench/bench_three_way.py --set fast --yianc /path/to/yianc
+  python3 bench/bench_three_way.py --set fast --anx /path/to/anx
   python3 bench/bench_three_way.py --compile-only | --no-compile | --runs N | --pin 4
 
 Output:
@@ -59,25 +59,29 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 
 from _toolchain.native import file_sha256, resolve_native_selection
 
+try:
+    from . import execution, projects
+except ImportError:  # Direct script execution puts bench/ on sys.path.
+    import execution
+    import projects
+
 ROOT = Path(__file__).resolve().parent.parent
-LIB = ROOT / "lib" / "src"
 BENCH_DIR = ROOT / "bench"
 SETS_DIR = BENCH_DIR / "sets"
 RESULTS_DIR = BENCH_DIR / "results"
 OUT_DIR = ROOT / "build" / "bench"
-SRC_BUILD_DIR = OUT_DIR / "src"
 PARTIAL_MD = RESULTS_DIR / "partial.md"
 PARTIAL_CSV = RESULTS_DIR / "partial.csv"
 
-RESERVED_DIRS = {"sets", "results"}
 DEFAULT_SET = "full"
 SCALE_PROFILES = ("fast", "full")
-SCALE_MARKER = "// bench-scale"
+FastaInput = execution.FastaInput
+IOSpec = execution.IOSpec
 
 
 @dataclass(frozen=True)
 class Check:
-    """Authoritative C result declared in bench/<SOURCE>/specs/<name>.json."""
+    """Authoritative C result declared in each project's spec.json."""
 
     rc: int = 0
     stdout_eq: str | None = None
@@ -129,14 +133,13 @@ class BenchSpec:
 
     name: str
     source: str
-    fat_src: Path
-    raw_src: Path
-    c_src: Path
+    project: projects.BenchmarkProject
     argv: tuple[str, ...]
     check: Check
     tags: tuple[str, ...]
     note: str
     scale: Scale | None = None
+    io: IOSpec | None = None
 
     @property
     def key(self) -> str:
@@ -144,16 +147,23 @@ class BenchSpec:
 
     @property
     def raw_override(self) -> bool:
-        return self.raw_src != self.fat_src
+        return self.project.raw_overlay is not None
 
     def scale_value(self, profile: str) -> int | None:
         """Scale substituted in this profile's source copy; None uses the default (always None for full)."""
-        if self.scale is None or profile != "fast":
+        if self.scale is None or profile not in SCALE_PROFILES or profile != "fast":
             return None
         return self.scale.fast
 
     def run_argv(self, profile: str) -> tuple[str, ...]:
-        """Runtime arguments shared by all modes, including fast scale passed to C."""
+        """Runtime arguments shared by all modes, including BG full/fast dimensions."""
+        if profile not in SCALE_PROFILES:
+            raise ValueError(f"profile must be one of {SCALE_PROFILES}, got {profile!r}")
+        if self.source == "BG" and self.scale is not None and self.scale.c == "argv":
+            value = self.scale.default
+            if profile == "fast" and self.scale.fast is not None:
+                value = self.scale.fast
+            return (*self.argv, str(value))
         value = self.scale_value(profile)
         if value is not None and self.scale is not None and self.scale.c == "argv":
             return (*self.argv, str(value))
@@ -212,14 +222,35 @@ def _as_str_list(value: object, where: str) -> tuple[str, ...]:
     return tuple(value)
 
 
-def load_spec(
-    spec_path: Path, source: str, name: str, fat_src: Path, raw_src: Path, c_src: Path
-) -> BenchSpec:
+def _load_io(value: object, where: str) -> IOSpec:
+    if not isinstance(value, dict):
+        raise SystemExit(f"[spec] {where}: io must be an object")
+    unknown = set(value) - {"stdin"}
+    if unknown:
+        raise SystemExit(f"[spec] {where}: unsupported io field(s): {', '.join(sorted(unknown))}")
+    if "stdin" not in value:
+        return IOSpec()
+    stdin = value["stdin"]
+    if not isinstance(stdin, dict) or set(stdin) != {"fasta_n"}:
+        raise SystemExit(f"[spec] {where}: io.stdin must contain only fasta_n")
+    fasta = stdin["fasta_n"]
+    if not isinstance(fasta, dict) or set(fasta) != {"full", "fast"}:
+        raise SystemExit(f"[spec] {where}: fasta_n must contain exactly full and fast")
+    dimensions: dict[str, int] = {}
+    for name in ("full", "fast"):
+        number = fasta[name]
+        if not isinstance(number, int) or isinstance(number, bool) or number <= 0:
+            raise SystemExit(f"[spec] {where}: fasta_n.{name} must be a positive integer")
+        dimensions[name] = number
+    return IOSpec(stdin=FastaInput(**dimensions))
+
+
+def load_spec(spec_path: Path, project: projects.BenchmarkProject) -> BenchSpec:
     data = _load_json(spec_path, "spec")
-    if data.get("name") != name:
-        raise SystemExit(f"[spec] {spec_path}: name should be {name!r}, got {data.get('name')!r}")
-    if data.get("source") != source:
-        raise SystemExit(f"[spec] {spec_path}: source should be {source!r}, got {data.get('source')!r}")
+    if data.get("name") != project.name:
+        raise SystemExit(f"[spec] {spec_path}: name should be {project.name!r}, got {data.get('name')!r}")
+    if data.get("source") != project.source:
+        raise SystemExit(f"[spec] {spec_path}: source should be {project.source!r}, got {data.get('source')!r}")
     check_raw = data.get("check")
     if not isinstance(check_raw, dict):
         raise SystemExit(f"[spec] {spec_path}: missing check object")
@@ -243,62 +274,64 @@ def load_spec(
     if scale_raw is not None:
         if not isinstance(scale_raw, dict) or "default" not in scale_raw:
             raise SystemExit(f"[spec] {spec_path}: scale requires default (fast profile value optional)")
+        default_raw = scale_raw["default"]
         fast_raw = scale_raw.get("fast")
+        if not isinstance(default_raw, int) or isinstance(default_raw, bool) or default_raw <= 0:
+            raise SystemExit(f"[spec] {spec_path}: scale.default must be a positive integer")
+        if fast_raw is not None and (
+            not isinstance(fast_raw, int) or isinstance(fast_raw, bool) or fast_raw <= 0
+        ):
+            raise SystemExit(f"[spec] {spec_path}: scale.fast must be a positive integer when present")
         scale = Scale(
-            default=int(scale_raw["default"]),
-            fast=int(fast_raw) if fast_raw is not None else None,
+            default=default_raw,
+            fast=fast_raw,
             c=str(scale_raw.get("c", "none")),
         )
         if scale.c not in ("argv", "none"):
             raise SystemExit(f"[spec] {spec_path}: scale.c must be \"argv\" or \"none\"")
+    io = _load_io(data["io"], f"{spec_path}: io") if "io" in data else None
+    if project.source == "BG":
+        if io is None:
+            raise SystemExit(f"[spec] {spec_path}: BG cases must declare io (use {{}} for file stdout without stdin)")
+        if check.rc != 0:
+            raise SystemExit(f"[spec] {spec_path}: every aligned BG task must exit successfully (check.rc=0)")
+        if check.stdout_eq is not None or check.stdout_contains or check.stdout_int_mod is not None:
+            raise SystemExit(f"[spec] {spec_path}: BG file output uses rc checks only; byte checks use fixtures/references")
+        if io.stdin is not None and (scale is not None or data.get("argv", [])):
+            raise SystemExit(f"[spec] {spec_path}: BG stdin dimensions belong in io.stdin.fasta_n, not argv/scale")
+        if io.stdin is None and scale is None:
+            raise SystemExit(f"[spec] {spec_path}: BG numeric tasks require a scale dimension")
+        if scale is not None and scale.c != "argv":
+            raise SystemExit(f"[spec] {spec_path}: BG numeric dimensions require scale.c=\"argv\"")
+        if scale is not None and data.get("argv", []) != []:
+            raise SystemExit(f"[spec] {spec_path}: BG numeric dimensions use scale, so argv must be empty")
     return BenchSpec(
-        name=name,
-        source=source,
-        fat_src=fat_src,
-        raw_src=raw_src,
-        c_src=c_src,
+        name=project.name,
+        source=project.source,
+        project=project,
         argv=_as_str_list(data.get("argv"), f"{spec_path}: argv"),
         check=check,
         tags=_as_str_list(data.get("tags"), f"{spec_path}: tags"),
         note=str(data.get("note", "")),
         scale=scale,
+        io=io,
     )
 
 
 def discover() -> list[BenchSpec]:
-    """Discover three-mode benchmarks under bench/<SOURCE>/{an,c,specs}.
+    """Discover paired projects under bench/<SOURCE>/<name>.
 
     Sources without c/, such as allocator-only bench/ALLOC, are handled by bench_allocator.py.
     """
-    specs: list[BenchSpec] = []
-    for source_dir in sorted(
-        path for path in BENCH_DIR.iterdir() if path.is_dir() and path.name not in RESERVED_DIRS
-    ):
-        an_dir, c_dir, spec_dir = source_dir / "an", source_dir / "c", source_dir / "specs"
-        if not an_dir.is_dir() or not c_dir.is_dir():
-            continue
-        fat: dict[str, Path] = {}
-        raw: dict[str, Path] = {}
-        for path in sorted(an_dir.glob("*.an")):
-            if path.name.endswith(RAW_SUFFIX):
-                raw[path.name[: -len(RAW_SUFFIX)]] = path
-            else:
-                fat[path.stem] = path
-        if not fat:
-            raise SystemExit(f"[discover] no .an benchmarks under {an_dir}")
-        orphans = sorted(set(raw) - set(fat))
-        if orphans:
-            raise SystemExit(f"[discover] raw override sources have no same-name fat source: {', '.join(orphans)}")
-        for name in sorted(fat):
-            c_src = c_dir / f"{name}.c"
-            if not c_src.exists():
-                raise SystemExit(f"[discover] {source_dir.name}/{name} missing C reference: {c_src}")
-            spec_path = spec_dir / f"{name}.json"
-            if not spec_path.exists():
-                raise SystemExit(f"[discover] {source_dir.name}/{name} missing spec: {spec_path}")
-            specs.append(
-                load_spec(spec_path, source_dir.name, name, fat[name], raw.get(name, fat[name]), c_src)
-            )
+    try:
+        projects_found = projects.discover_projects(BENCH_DIR)
+    except ValueError as error:
+        raise SystemExit(f"[discover] {error}") from error
+    specs = [
+        load_spec(project.spec_path, project)
+        for project in projects_found
+        if project.c is not None
+    ]
     if not specs:
         raise SystemExit(f"[discover] no benchmarks with a C reference and spec under {BENCH_DIR}")
     return specs
@@ -367,95 +400,227 @@ def resolve_set(
     return sorted(chosen, key=lambda spec: spec.key)
 
 
-_SCALE_LINE_RE = re.compile(
-    r"^(?P<head>\s*let\s+[A-Za-z_]\w*\s*:\s*[A-Za-z_]\w*\s*=\s*)(?P<value>\d+)(?P<tail>;\s*"
-    + re.escape(SCALE_MARKER)
-    + r".*)$",
-    re.MULTILINE,
-)
-
-
-def materialize(spec: BenchSpec, profile: str) -> tuple[Path, Path]:
-    """Return (fat source,raw source) for the scale profile.
-
-    When fast and scale.fast is declared, replace // bench-scale numbers and generate
-    build/bench/src/<profile>/<SOURCE>/<name>.an; otherwise use repository sources.
-    """
-    value = spec.scale_value(profile)
-    if value is None:
-        return spec.fat_src, spec.raw_src
-    out_dir = SRC_BUILD_DIR / profile / spec.source
-    out_dir.mkdir(parents=True, exist_ok=True)
-
-    def emit(src: Path) -> Path:
-        text = src.read_text(encoding="utf-8")
-        patched, count = _SCALE_LINE_RE.subn(
-            lambda match: f"{match.group('head')}{value}{match.group('tail')}", text
-        )
-        if count != 1:
-            raise SystemExit(
-                f"[scale] {src}: expected exactly 1 `{SCALE_MARKER}` marker line, got {count}"
-            )
-        dst = out_dir / src.name
-        dst.write_text(patched, encoding="utf-8")
-        return dst
-
-    fat = emit(spec.fat_src)
-    raw = emit(spec.raw_src) if spec.raw_override else fat
-    return fat, raw
-
-
 def spec_bin(spec: BenchSpec, state: str) -> Path:
     return OUT_DIR / STATE_DIR[state] / f"{spec.source}_{spec.name}"
 
 
 def compile_c(spec: BenchSpec) -> Path:
-    """Compile C with clang -O2 -ffp-contract=off -lm; stop on failure."""
+    """Build the project's plain CMake target; stop on failure."""
     binary = spec_bin(spec, "c")
-    binary.parent.mkdir(parents=True, exist_ok=True)
-    res = subprocess.run(
-        [C_COMPILER, *C_FLAGS, str(spec.c_src), "-o", str(binary)],
-        capture_output=True,
-        text=True,
-        cwd=ROOT,
-    )
-    if res.returncode != 0:
-        raise SystemExit(
-            f"[compile] {spec.key} (c) failed ({C_COMPILER} {' '.join(C_FLAGS)}):\n{res.stdout}\n{res.stderr}"
-        )
-    return binary
+    try:
+        return projects.build_c(spec.project, asan=False, output=binary)
+    except (ValueError, RuntimeError) as error:
+        raise SystemExit(f"[compile] {spec.key} (c) failed: {error}") from error
 
 
-def compile_an(spec: BenchSpec, profile: str, raw: bool, compiler: Path) -> Path:
-    """Compile one YIAN mode; stop on failure because compile errors invalidate the baseline."""
+def compile_an(
+    spec: BenchSpec, profile: str, raw: bool, compiler: Path, *, anx: Path | None = None
+) -> Path:
+    """Build one isolated YIAN package mode through the shared project builder."""
     state = "raw" if raw else "fat"
     binary = spec_bin(spec, state)
-    fat_src, raw_src = materialize(spec, profile)
-    src = raw_src if raw else fat_src
-    cmd = [str(compiler), OPT_LEVEL]
-    if raw:
-        cmd.append("--raw-pointers")
-    cmd += [str(LIB), str(src), "-o", str(binary)]
-    binary.parent.mkdir(parents=True, exist_ok=True)
-    environment = os.environ.copy()
-    res = subprocess.run(cmd, capture_output=True, text=True, cwd=ROOT, env=environment)
-    if res.returncode != 0:
-        raise SystemExit(f"[compile] {spec.key} ({state}) failed:\n{res.stdout}\n{res.stderr}")
-    return binary
+    try:
+        anx_path = anx
+        if anx_path is None:
+            anx_path, _ = _resolve_anx_selection(None)
+        return projects.build_yian(
+            spec.project, profile, raw, spec.scale_value(profile), compiler, anx_path, ROOT, binary
+        )
+    except (ValueError, RuntimeError) as error:
+        raise SystemExit(f"[compile] {spec.key} ({state}) failed: {error}") from error
 
 
 OPT_LEVEL = "-O2"
 C_COMPILER = "clang"
-C_FLAGS = ["-O2", "-ffp-contract=off", "-lm"]
+C_FLAGS = ["-O2", "-ffp-contract=off"]
 TIME_BIN = "/usr/bin/time"
 DEFAULT_RUNS = 5
 DEFAULT_MAX_STATE_SEC = 120.0
-RAW_SUFFIX = ".raw.an"
-
 STATES = ("c", "raw", "fat")
 STATE_DIR = {"c": "cbin", "raw": "yraw", "fat": "yfat"}
 
 _RSS_RE = re.compile(r"Maximum resident set size \(kbytes\): (\d+)")
+
+
+def _resolve_anx_selection(
+    explicit: str | None, *, search_path: str | None = None
+) -> tuple[Path, str]:
+    selected, source = resolve_native_selection(
+        explicit=explicit, configured=os.environ.get("ANX"), default="anx", search_path=search_path
+    )
+    return selected, "ANX" if source == "YIANC" else source
+
+
+def _selected_report_identity(
+    selections: list[tuple[BenchSpec, str]], input_root: Path
+) -> dict[str, str]:
+    """Serialize project, input, oracle, and fixed native dependency identities for reports."""
+    native_root = BENCH_DIR / "native"
+    manifest_path = native_root / "manifest.json"
+    manifest: dict[str, object] = {}
+    if manifest_path.is_file():
+        manifest = _load_json(manifest_path, "native manifest")
+    native_libraries = manifest.get("libraries", [])
+    archive_index: dict[Path, dict[str, object]] = {}
+    if isinstance(native_libraries, list):
+        for library in native_libraries:
+            if not isinstance(library, dict):
+                continue
+            archives = library.get("archives", [])
+            if not isinstance(archives, list):
+                continue
+            for archive in archives:
+                if isinstance(archive, dict) and isinstance(archive.get("path"), str):
+                    archive_path = native_root / archive["path"]
+                    archive_index[archive_path.resolve()] = {
+                        "name": library.get("name"),
+                        "version": library.get("version"),
+                        "path": archive["path"],
+                        "manifest_sha256": archive.get("sha256"),
+                        "actual_sha256": file_sha256(archive_path) if archive_path.is_file() else "missing",
+                        "instrumentation": library.get("instrumentation", {}),
+                    }
+
+    cases: list[dict[str, object]] = []
+    selected_archives: dict[str, dict[str, object]] = {}
+    fasta_generator: projects.BenchmarkProject | None = None
+    for spec, profile in selections:
+        project = spec.project
+        case: dict[str, object] = {
+            "project": spec.key,
+            "profile": profile,
+            "project_digest": "n/a",
+            "dimension": None,
+            "input": None,
+            "oracles": [],
+            "dependencies": [],
+        }
+        project_root = getattr(project, "root", None)
+        if isinstance(project_root, Path) and project_root.is_dir():
+            case["project_digest"] = projects.project_digest(project)
+            if spec.source == "BG" and spec.scale is not None and spec.scale.c == "argv":
+                argv = spec.run_argv(profile)
+                case["dimension"] = int(argv[-1]) if argv else None
+            elif spec.source == "BG" and spec.io is not None and spec.io.stdin is not None:
+                n = spec.io.stdin.for_profile(profile)
+                case["dimension"] = n
+                input_path = input_root / f"fasta-n{n}.fasta"
+                input_identity: dict[str, object] = {
+                    "path": input_path.relative_to(ROOT).as_posix()
+                    if input_path.is_relative_to(ROOT) else str(input_path),
+                    "fasta_n": n,
+                }
+                if input_path.is_file():
+                    input_identity["size_bytes"] = input_path.stat().st_size
+                    input_identity["sha256"] = file_sha256(input_path)
+                if spec.io is not None and spec.io.stdin is not None:
+                    if fasta_generator is None:
+                        generators = [
+                            item for item in projects.discover_projects(BENCH_DIR)
+                            if item.key == "BG/fasta"
+                        ]
+                        if len(generators) != 1:
+                            raise ValueError(
+                                f"{spec.key}: expected one registered BG/fasta input generator, found {len(generators)}"
+                            )
+                        fasta_generator = generators[0]
+                    input_identity["generator_project"] = fasta_generator.key
+                    input_identity["generator_project_digest"] = projects.project_digest(fasta_generator)
+                    metadata_path = input_path.with_suffix(".json")
+                    if metadata_path.is_file():
+                        metadata = _load_json(metadata_path, "generated input metadata")
+                        input_identity["generation_metadata_sha256"] = file_sha256(metadata_path)
+                        input_identity["generator_project_digest_used"] = metadata.get(
+                            "generator_project_digest", "unknown"
+                        )
+                        input_identity["generator_binary_sha256"] = metadata.get(
+                            "generator_binary_sha256", "unknown"
+                        )
+                        input_identity["oracle_sha256"] = metadata.get("oracle_sha256", "unknown")
+                case["input"] = input_identity
+
+            provenance_path = project_root / "provenance.json"
+            if provenance_path.is_file():
+                provenance = _load_json(provenance_path, "project provenance")
+                oracles: list[dict[str, object]] = []
+                fixtures = provenance.get("fixtures", [])
+                if isinstance(fixtures, list):
+                    for fixture in fixtures:
+                        if not isinstance(fixture, dict):
+                            continue
+                        selected = fixture.get("derived_output")
+                        if isinstance(selected, dict):
+                            selected_path = selected.get("path")
+                            selected_sha = selected.get("sha256")
+                        else:
+                            selected_path = fixture.get("output_path")
+                            selected_sha = fixture.get("output_sha256")
+                        record: dict[str, object] = {
+                            "path": selected_path,
+                            "sha256": selected_sha,
+                            "official_path": fixture.get("output_path"),
+                            "official_sha256": fixture.get("output_sha256"),
+                        }
+                        if isinstance(selected_path, str) and isinstance(selected_sha, str):
+                            oracle_path = project_root / selected_path
+                            if oracle_path.is_file():
+                                record["size_bytes"] = oracle_path.stat().st_size
+                                record["actual_sha256"] = file_sha256(oracle_path)
+                        oracles.append(record)
+                case["oracles"] = oracles
+
+                dependencies: list[dict[str, object]] = []
+                declared = provenance.get("dependencies", [])
+                if isinstance(declared, list):
+                    for dependency in declared:
+                        if not isinstance(dependency, dict):
+                            continue
+                        item = {
+                            "name": dependency.get("name"),
+                            "path": dependency.get("path"),
+                            "sha256": dependency.get("sha256"),
+                            "license_id": dependency.get("license_id"),
+                        }
+                        dependencies.append(item)
+                        relative = dependency.get("path")
+                        if isinstance(relative, str):
+                            resolved = (project_root / relative).resolve()
+                            native = archive_index.get(resolved)
+                            if native is not None:
+                                dependencies[-1]["native_archive"] = native
+                                selected_archives[str(native["name"])] = native
+                case["dependencies"] = dependencies
+        cases.append(case)
+
+    result = _summarize_case_identity(cases)
+    result["native_manifest_sha256"] = file_sha256(manifest_path) if manifest_path.is_file() else "n/a"
+    return result
+
+
+def _summarize_case_identity(cases: list[dict[str, object]]) -> dict[str, str]:
+    selected_archives: dict[str, dict[str, object]] = {}
+    for case in cases:
+        dependencies = case.get("dependencies", [])
+        if not isinstance(dependencies, list):
+            continue
+        for dependency in dependencies:
+            if not isinstance(dependency, dict):
+                continue
+            archive = dependency.get("native_archive")
+            if isinstance(archive, dict) and isinstance(archive.get("name"), str):
+                selected_archives[archive["name"]] = archive
+    instrumentation = []
+    for name, archive in sorted(selected_archives.items()):
+        flags = archive.get("instrumentation", {})
+        if isinstance(flags, dict):
+            instrumentation.append(
+                f"{name}: ASan={flags.get('asan', 'unknown')}, YIAN guards={flags.get('yian_guards', 'unknown')}"
+            )
+    return {
+        "native_archives": json.dumps(list(selected_archives.values()), sort_keys=True, separators=(",", ":")),
+        "external_instrumentation": "; ".join(instrumentation) if instrumentation else "no selected static library archive",
+        "project_metadata": json.dumps(cases, sort_keys=True, separators=(",", ":")),
+    }
 
 
 def _env_plain() -> dict[str, str]:
@@ -482,6 +647,17 @@ def _run(binary: Path, argv: list[str], pin: int | None) -> tuple[float, int, st
             f"{res.stderr}"
         )
     return wall_ms, int(match.group(1)), res.stdout, res.returncode
+
+
+def _check_file_result(spec: BenchSpec, result: execution.RunResult) -> bool:
+    """Check a file result without decoding BG's complete stdout."""
+    if spec.source == "BG" and spec.io is not None:
+        return result.rc == spec.check.rc
+    try:
+        output = result.stdout.read_text(encoding="utf-8")
+    except (OSError, UnicodeError):
+        return False
+    return spec.check.ok(result.rc, output)
 
 
 def _stats(samples: list[float]) -> Stats:
@@ -516,6 +692,60 @@ def measure_triple(
     """
     argv = list(spec.run_argv(profile))
     bins = {state: spec_bin(spec, state) for state in STATES}
+
+    if spec.source == "BG" and spec.io is not None:
+        # Prepare or validate the FASTA input before the consumer timing window.
+        stdin_path = execution.prepare_input(spec, profile, OUT_DIR / "inputs")
+        output_root = OUT_DIR / "file-runs" / "three-way" / spec.source / spec.name / profile
+        output_root.mkdir(parents=True, exist_ok=True)
+
+        def run_file(state: str, kind: str) -> execution.RunResult:
+            output = output_root / f"{kind}-{state}.stdout"
+            return execution.run_file(bins[state], tuple(argv), stdin_path, output, pin)
+
+        warm_start = time.monotonic()
+        warm_files = {state: run_file(state, "warm") for state in STATES}
+        warm_sec = time.monotonic() - warm_start
+        c_reference = warm_files["c"]
+        c_check_ok = _check_file_result(spec, c_reference)
+        yian_stdout_match = all(
+            _check_file_result(spec, warm_files[state])
+            and execution.output_equal(warm_files[state], c_reference)
+            for state in ("raw", "fat")
+        )
+
+        used_runs = runs
+        if warm_sec > max_state_sec and runs > 3:
+            used_runs = 3
+            print(
+                f"[{spec.key}] warmup {warm_sec:.1f}s > {max_state_sec:.0f}s, "
+                f"measurement runs reduced to {used_runs}",
+                file=sys.stderr,
+            )
+
+        samples: dict[str, list[float]] = {state: [] for state in STATES}
+        rss: dict[str, list[int]] = {state: [] for state in STATES}
+        for _ in range(used_runs):
+            for state in STATES:
+                result = run_file(state, "sample")
+                samples[state].append(result.wall_ms)
+                rss[state].append(result.rss_kb)
+                sample_ok = _check_file_result(spec, result) and execution.output_equal(result, c_reference)
+                if state == "c":
+                    c_check_ok = c_check_ok and sample_ok
+                else:
+                    yian_stdout_match = yian_stdout_match and sample_ok
+
+        return Row(
+            spec=spec,
+            times={state: _stats(samples[state]) for state in STATES},
+            rss_mb={state: max(rss[state]) / 1024.0 for state in STATES},
+            rss_samples=rss,
+            runs=used_runs,
+            yian_stdout_match=yian_stdout_match,
+            c_check_ok=c_check_ok,
+            exit_codes={state: warm_files[state].rc for state in STATES},
+        )
 
     t0 = time.monotonic()
     warm = {state: _run(bins[state], argv, pin) for state in STATES}
@@ -581,7 +811,11 @@ def write_samples(rows: list[Row], path: Path) -> None:
         f"C / raw / fat raw samples, measured {datetime.date.today():%Y-%m-%d}.",
         "Each pair is wall_ms (peak_rss_kb); one line per benchmark and state.",
     ]
+    name_counts: dict[str, int] = {}
+    for row in rows:
+        name_counts[row.spec.name] = name_counts.get(row.spec.name, 0) + 1
     for row in sorted(rows, key=lambda item: item.spec.name):
+        label = row.spec.key if name_counts[row.spec.name] > 1 else row.spec.name
         for state in STATES:
             stats = row.times[state]
             pairs = ", ".join(
@@ -589,7 +823,7 @@ def write_samples(rows: list[Row], path: Path) -> None:
                 for wall, peak in zip(stats.samples, row.rss_samples[state])
             )
             lines.append(
-                f"- {row.spec.name} / {state} ({len(stats.samples)} runs): {pairs}"
+                f"- {label} / {state} ({len(stats.samples)} runs): {pairs}"
             )
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
@@ -628,7 +862,12 @@ def machine_fingerprint(
     compiler: Path,
     compiler_source: str,
     compiler_used: bool,
+    *,
+    anx: Path | None = None,
+    anx_source: str = "n/a",
 ) -> dict[str, str]:
+    if anx is None:
+        anx, anx_source = _resolve_anx_selection(None)
     return {
         "set": bench_set,
         "scale": profile,
@@ -642,6 +881,12 @@ def machine_fingerprint(
         "yianc_sha256": file_sha256(compiler),
         "yianc_source": compiler_source,
         "yianc_used": "yes" if compiler_used else "no (--no-compile; existing artifacts reused)",
+        "anx": str(anx),
+        "anx_sha256": file_sha256(anx),
+        "anx_source": anx_source,
+        "cmake": _tool_version("cmake"),
+        "project_layout": "2",
+        "project_digests": "n/a",
         "opt": OPT_LEVEL,
         "pin": str(pin) if pin is not None else "none",
         "runs": str(runs),
@@ -670,7 +915,7 @@ def _ratio(row: Row, num: str, den: str) -> float:
 
 
 def _ratio_usable(row: Row) -> bool:
-    """C ratios are usable only when the C baseline and both mode guards pass."""
+    """Ratios require every recorded C/YIAN sample to satisfy the semantic guard."""
     return row.c_check_ok and row.yian_stdout_match
 
 
@@ -683,7 +928,7 @@ def render_md(rows: list[Row], fingerprint: dict[str, str]) -> str:
         "Generated by `bench/bench_three_way.py`; all three states use the same algorithm and scale, "
         "differing only in implementation and pointer representation (C is the clang `-O2` reference). "
         "Set members and scale profiles are in `bench/sets/<set>.json` and each benchmark's "
-        "`specs/<name>.json`.\n"
+        "`spec.json`.\n"
     )
     lines.append("## Environment fingerprint\n")
     lines.append("| item | value |")
@@ -702,7 +947,20 @@ def render_md(rows: list[Row], fingerprint: dict[str, str]) -> str:
     lines.append(f"| set / scale | `{fingerprint['set']}` / `{fingerprint['scale']}` |")
     lines.append(f"| commit | `{fingerprint['commit']}` |")
     lines.append(f"| date | {fingerprint['date']} |")
+    for key in (
+        "anx", "anx_sha256", "anx_source", "cmake", "project_layout",
+        "project_digests", "native_manifest_sha256", "native_archives", "external_instrumentation",
+    ):
+        if key in fingerprint:
+            lines.append(f"| {key} | `{fingerprint[key]}` |")
     lines.append("")
+    if "project_metadata" in fingerprint:
+        lines.append("## Project, input, and oracle identity\n")
+        for case in json.loads(fingerprint["project_metadata"]):
+            lines.append(
+                f"- `{case['project']}`: `{json.dumps(case, sort_keys=True, separators=(',', ':'))}`"
+            )
+        lines.append("")
 
     lines.append("## Results\n")
     lines.append(
@@ -714,10 +972,10 @@ def render_md(rows: list[Row], fingerprint: dict[str, str]) -> str:
         ratio_rc = _ratio(row, "raw", "c")
         ratio_fc = _ratio(row, "fat", "c")
         ratio_fr = _ratio(row, "fat", "raw")
-        raw_src = f"`{row.spec.raw_src.name}`" if row.spec.raw_override else "same"
+        raw_src = "`raw/src/main.an`" if row.spec.raw_override else "`yian/src/main.an`"
         c_flag = "yes" if row.c_check_ok else "**no**"
         if not _ratio_usable(row):
-            ratio_rc = ratio_fc = float("nan")
+            ratio_rc = ratio_fc = ratio_fr = float("nan")
         lines.append(
             f"| {row.spec.key} | {_fmt_ms(row.times['c'].min)} | {_fmt_ms(row.times['raw'].min)} "
             f"| {_fmt_ms(row.times['fat'].min)} | {ratio_rc:.2f}× | {ratio_fc:.2f}× | {ratio_fr:.2f}× "
@@ -731,7 +989,7 @@ def render_md(rows: list[Row], fingerprint: dict[str, str]) -> str:
         lines.append("")
         lines.append(
             f"Geometric mean ratio (C baseline, n={len(usable)}): raw/C **{geo_raw:.2f}×** / "
-            f"fat/C **{geo_fat:.2f}×** (ratio usable = C check passes and raw/fat semantics match)."
+            f"fat/C **{geo_fat:.2f}×** (every warmup and measured sample passed its rc/output checks)."
         )
         totals = {state: sum(row.times[state].min for row in rows) / 1000.0 for state in STATES}
         lines.append(
@@ -770,14 +1028,13 @@ def render_md(rows: list[Row], fingerprint: dict[str, str]) -> str:
 
     lines.append("## Protocol\n")
     lines.append(
-        f"- Compilation: C `{C_COMPILER} {' '.join(C_FLAGS)} bench/<SOURCE>/c/<name>.c`; "
-        f"YIAN `yianc {OPT_LEVEL} lib/src <src>`, with `--raw-pointers` added in raw mode."
+        f"- Compilation: CMake builds each project's `bench_app` target with `{C_COMPILER} {' '.join(C_FLAGS)}`; "
+        f"anx builds each staged YIAN package with `yianc {OPT_LEVEL}`, adding `--raw-pointers` in raw mode."
     )
     lines.append(
-        "- Scale and argv: see `scale` in each benchmark's `specs/<name>.json`; argv only covers the C outer "
-        "repetition count, consistent with `scale`; the fast profile generates a reduced-scale build copy for "
-        "benchmarks that declare `scale.fast`, and passes the same value to the C reference as argv, keeping the "
-        "three states' workloads equal."
+        "- Scale and input: numeric BG tasks pass the selected full/fast dimension once to C and compile the "
+        "same YIAN dimension into an isolated package copy. BG stdin tasks generate FASTA input from the selected, "
+        "source-matched C fasta project before consumer timing; all legs reopen that same file for every run."
     )
     lines.append(
         "- Measurement: after one warmup per state per benchmark (excluded from samples), measure in "
@@ -789,9 +1046,9 @@ def render_md(rows: list[Row], fingerprint: dict[str, str]) -> str:
         "for allocation-heavy benchmarks)."
     )
     lines.append(
-        "- Semantic guard: C warmup must pass the spec's authoritative check (see `check` in "
-        "`specs/<name>.json`); raw and fat stdout/exit codes must match byte for byte. A `no` in the report makes "
-        "that benchmark's ratios unusable."
+        "- Output and semantic guard: BG stdout is written to binary files; size/hash and complete-byte checks "
+        "run after timing. Every BG warmup and sample must pass the expected rc and match the same-scale C "
+        "warmup. A failed run remains recorded and makes all ratios for that benchmark unavailable."
     )
     return "\n".join(lines).rstrip("\n") + "\n"
 
@@ -813,9 +1070,17 @@ def write_csv(rows: list[Row], fingerprint: dict[str, str], path: Path) -> None:
         f"yianc_sha256={fingerprint['yianc_sha256']} yianc_source={fingerprint['yianc_source']} "
         f"yianc_used={fingerprint['yianc_used']} opt={fingerprint['opt']} pin={fingerprint['pin']} "
         f"runs={fingerprint['runs']}",
+        f"# anx: {fingerprint.get('anx', 'n/a')} sha256={fingerprint.get('anx_sha256', 'n/a')} "
+        f"source={fingerprint.get('anx_source', 'n/a')} cmake={fingerprint.get('cmake', 'n/a')} "
+        f"project_layout={fingerprint.get('project_layout', 'n/a')}",
         f"# set: {fingerprint['set']}  scale: {fingerprint['scale']}",
         f"# commit: {fingerprint['commit']}",
         f"# date: {fingerprint['date']}",
+        f"# project_digests: {fingerprint.get('project_digests', 'n/a')}",
+        f"# native_manifest_sha256: {fingerprint.get('native_manifest_sha256', 'n/a')}",
+        f"# native_archives: {fingerprint.get('native_archives', '[]')}",
+        f"# external_instrumentation: {fingerprint.get('external_instrumentation', 'n/a')}",
+        f"# project_metadata: {fingerprint.get('project_metadata', '[]')}",
     ]
     lines = list(comments)
     lines.append(
@@ -826,16 +1091,19 @@ def write_csv(rows: list[Row], fingerprint: dict[str, str], path: Path) -> None:
         + ",runs,stdout_match,c_check,c_argv,raw_source"
     )
     for row in rows:
-        raw_src = row.spec.raw_src.name if row.spec.raw_override else row.spec.fat_src.name
+        raw_src = "raw/src/main.an" if row.spec.raw_override else "yian/src/main.an"
         argv = " ".join(row.spec.run_argv(fingerprint["scale"]))
+        ratios = (
+            (f"{_ratio(row, 'raw', 'c'):.3f}", f"{_ratio(row, 'fat', 'c'):.3f}", f"{_ratio(row, 'fat', 'raw'):.3f}")
+            if _ratio_usable(row)
+            else ("nan", "nan", "nan")
+        )
         fields = [row.spec.key]
         for state in STATES:
             stats = row.times[state]
             fields += [f"{stats.min:.1f}", f"{stats.med:.1f}", f"{stats.cv:.2f}"]
         fields += [
-            f"{_ratio(row, 'raw', 'c'):.3f}",
-            f"{_ratio(row, 'fat', 'c'):.3f}",
-            f"{_ratio(row, 'fat', 'raw'):.3f}",
+            *ratios,
         ]
         fields += [f"{row.rss_mb[state]:.1f}" for state in STATES]
         fields += [
@@ -864,6 +1132,7 @@ def main() -> int:
                         help="measured runs per state (default: the set's runs)")
     parser.add_argument("--pin", type=int, help="CPU number for taskset pinning")
     parser.add_argument("--yianc", metavar="PATH", help="Native compiler (default: nonempty YIANC, then PATH)")
+    parser.add_argument("--anx", metavar="PATH", help="Native project builder (default: nonempty ANX, then PATH)")
     parser.add_argument("--max-state-sec", type=float, default=DEFAULT_MAX_STATE_SEC,
                         help="reduce measured runs to 3 when the combined three-state warmup exceeds this many seconds (fast profile never reduces)")
     parser.add_argument("--no-compile", action="store_true", help="reuse existing binaries without recompiling")
@@ -888,6 +1157,7 @@ def main() -> int:
             configured=os.environ.get("YIANC"),
             default="yianc",
         )
+        anx, anx_source = _resolve_anx_selection(args.anx)
     except ValueError as error:
         parser.error(str(error))
 
@@ -910,8 +1180,8 @@ def main() -> int:
     if not args.no_compile:
         for spec in chosen:
             compile_c(spec)
-            compile_an(spec, profile, raw=False, compiler=compiler)
-            compile_an(spec, profile, raw=True, compiler=compiler)
+            compile_an(spec, profile, raw=False, compiler=compiler, anx=anx)
+            compile_an(spec, profile, raw=True, compiler=compiler, anx=anx)
             scale_value = spec.scale_value(profile)
             scale_note = f" scale={scale_value}" if scale_value is not None else ""
             print(f"[compile] {spec.key} ok{scale_note}", file=sys.stderr)
@@ -919,7 +1189,11 @@ def main() -> int:
         return 0
 
     fingerprint = machine_fingerprint(
-        args.pin, runs, set_def.name, profile, compiler, compiler_source, not args.no_compile
+        args.pin, runs, set_def.name, profile, compiler, compiler_source, not args.no_compile,
+        anx=anx, anx_source=anx_source,
+    )
+    fingerprint["project_digests"] = ";".join(
+        f"{spec.key}={projects.project_digest(spec.project)}" for spec in chosen
     )
     max_state_sec = float("inf") if profile == "fast" else args.max_state_sec
     rows: list[Row] = []
@@ -928,13 +1202,22 @@ def main() -> int:
         rows.append(row)
         scale_value = spec.scale_value(profile)
         scale_note = f" scale={scale_value}" if scale_value is not None else ""
+        ratio_note = (
+            f"raw/C {_ratio(row, 'raw', 'c'):.2f}x fat/C {_ratio(row, 'fat', 'c'):.2f}x"
+            if _ratio_usable(row)
+            else "ratios unavailable (semantic check failed)"
+        )
         print(
             f"[measure] {spec.key}{scale_note}: C {row.times['c'].min:.1f}ms "
             f"raw {row.times['raw'].min:.1f}ms fat {row.times['fat'].min:.1f}ms "
-            f"raw/C {_ratio(row, 'raw', 'c'):.2f}x fat/C {_ratio(row, 'fat', 'c'):.2f}x "
+            f"{ratio_note} "
             f"({row.runs} runs)",
             file=sys.stderr,
         )
+
+    fingerprint.update(_selected_report_identity(
+        [(spec, profile) for spec in chosen], OUT_DIR / "inputs"
+    ))
 
     # Temporary --bench/--source subsets leave set results intact; named sets write results/<set>.{md,csv}.
     partial = bool(bench_filter or source_filter)

@@ -84,6 +84,8 @@ class PackageMap:
 
         version = data.get("format")
         if version != SUPPORTED_FORMAT:
+            if version == 3:
+                raise CompilerError(f"{source} declares format 3; Python recovery supports format 2 only")
             raise CompilerError(
                 f"{source} declares format {version!r}; "
                 f"this compiler requires format {SUPPORTED_FORMAT}"

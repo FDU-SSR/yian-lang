@@ -146,7 +146,7 @@ profiling session 将 `MergeFunctions` 设为 `false`；优化级别仍按 `-O`/
 yianc --packages pkg.json files...
 ```
 
-接受一个 **v2** 契约的 JSON 文件（由 `anx build` 生成）：
+接受由 `anx build` 生成的 **v2 或 v3** 契约 JSON 文件：
 
 ```json
 {
@@ -176,15 +176,15 @@ yianc --packages pkg.json files...
 }
 ```
 
-- `format`：契约版本，只接受 `2`；其它取值直接报错，不回退猜测。
+- `format`：契约版本，接受 `2` 或 `3`；其它取值直接报错，不回退猜测。v2 不可包含 v3 的 `nativeC` 或 `nativeRoots` 字段。
 - `root`：本次构建的根包规范名，程序入口取 `packages[root].entry`；省略时退回 Standalone 的入口查找（非标准库文件中唯一的 `main`）。
 - `packages`：包规范名 → 该包的全部信息。`sourceRoot` 是源码根；`kind` 取 `"bin"`/`"lib"`/`"hybrid"`；`entry` 只有 `"bin"`/`"hybrid"` 才有；`dependencies` 是**直接**依赖的规范名列表。`std` 必须存在。
-- 每个包的 `ffi` 是布尔值，只对该包源码生效；未写时按 `false` 处理。有 `[native.llvm]` 的包另带 `nativeLLVM`，包含 LLVM 主版本 `22`、组件数组和相对包根的 C shim 路径数组。编译器会重新校验这些字段。
+- 每个包的 `ffi` 是布尔值，只对该包源码生效；未写时按 `false` 处理。有 `[native.llvm]` 的包另带 `nativeLLVM`，包含 LLVM 主版本 `22`、组件数组和相对包根的 C shim 路径数组。v3 可包含 `nativeC`，其 `sources`、`includeDirs`、`archives` 分别列出包内 `.c` 源、头文件目录和普通 `.a` 归档；每包仍须 `ffi = true`。顶层 `nativeRoots` 只增加 native 输入闭包，不授予导入权限。编译器会重新校验这些字段。
 - 包 `P` 的可见集合 = `{P} ∪ packages[P].dependencies ∪ {"std"}`；导入第一段不在集合内报「未声明依赖」，完全不在 `packages` 中报「未知包」。
 - 导入方所属的包由「文件落在哪个 `sourceRoot` 之下」确定，命中多个时取最长前缀。
 - 导入路径必须解析到一个存在的 `.an` 文件（`from pkg import x` 中的 `pkg` 是目录，会报错），且任何包的 `entry` 都不可被导入。
 
-不传 `--packages` 时为 Standalone 模式：`std` 查标准库查找表，其余各段按导入方文件目录相对解析，导入的文件必须已经出现在本次命令行里。标准库根由 `--compiler-root` / `YIAN_LIB` / `YIAN_ROOT` 配置，包模式下取 v2 的 `std.sourceRoot`；它不从输入路径推断，因此不会因为路径里出现 `lib` 就获得标准库权限。受限内建只在标准库根与仓库自身的低层测试夹具根（`tests/basic/std`、`tests/safety/std`）中可用。
+不传 `--packages` 时为 Standalone 模式：`std` 查标准库查找表，其余各段按导入方文件目录相对解析，导入的文件必须已经出现在本次命令行里。标准库根由 `--compiler-root` / `YIAN_LIB` / `YIAN_ROOT` 配置，包模式下取 v2/v3 的 `std.sourceRoot`；它不从输入路径推断，因此不会因为路径里出现 `lib` 就获得标准库权限。受限内建只在标准库根与仓库自身的低层测试夹具根（`tests/basic/std`、`tests/safety/std`）中可用。
 
 通常不直接使用，由 `anx build` / `anx check` 自动生成并传入。
 
@@ -253,7 +253,7 @@ yianc --allow-ffi --link-lib m --link-search /path/to/libs lib/src main.an
 
 `--allow-ffi` 只授予独立编译源码 FFI 权限；包模式的权限由各包的 `ffi` 字段决定。`--link-lib NAME` 和 `--link-search DIR` 可重复，分别向生成可执行文件时的链接命令加入 `-lNAME` 和 `-LDIR`。它们只在 `-t exe` 的最终链接步骤使用；`-t ll` 与 `-t bc` 保留外部符号。编译器会拒绝非法库名。
 
-声明 `[native.llvm]` 的包使用 LLVM 22 的 `llvm-config` 确定组件及系统库参数，要求 Linux x86-64 LP64 环境和 x86-64 Linux C 链接器。`-t exe` 编译并链接包内 C shim、YIAN 运行时、LLVM 组件及系统库。语言层的 C ABI 限制与封送操作见 [FFI 参考](grammar/17.ffi.md)。
+声明 `[native.llvm]` 的包使用 LLVM 22 的 `llvm-config` 确定组件及系统库参数，要求 Linux x86-64 LP64 环境和 x86-64 Linux C 链接器。`[native.c]` 的 shim 使用 `-O2 -fPIC -std=c11` 和所属包的 include dirs；所有程序、运行时和 shim 对象先链接，之后按可达包顺序将显式归档放入一个 linker group。没有 LLVM 声明时不查询 `llvm-config`。`-t exe` 编译并链接包内 native 输入、YIAN 运行时及所需系统库。Python recovery 仍只接受 v2。语言层的 C ABI 限制与封送操作见 [FFI 参考](grammar/17.ffi.md)。
 
 ### 2.13 前端观察与 Python recovery CLI
 

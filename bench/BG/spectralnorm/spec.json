@@ -1,0 +1,18 @@
+{
+  "name": "spectralnorm",
+  "source": "BG",
+  "tags": [
+    "numeric"
+  ],
+  "argv": [],
+  "check": {
+    "rc": 0
+  },
+  "note": "Official spectral-norm output at fixed precision; C receives n as argv and YIAN selects n through the build-time scale marker.",
+  "scale": {
+    "default": 8000,
+    "fast": 1000,
+    "c": "argv"
+  },
+  "io": {}
+}

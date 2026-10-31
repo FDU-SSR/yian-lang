@@ -48,6 +48,68 @@ fn write_native(writer: Writer&, package: Package&) {
     }
 }
 
+fn write_native_c_paths(writer: Writer&, package: Package&, kind: u8) {
+    let root = package.root();
+    let count = match package.native_c() {
+        Some(native) => match kind {
+            0u8 => native.sources_len(),
+            1u8 => native.include_dirs_len(),
+            _ => native.archives_len(),
+        },
+        None => 0u64,
+    };
+    writer.begin_array();
+    let index = 0u64;
+    while index < count {
+        let absolute = match package.native_c() {
+            Some(native) => match kind {
+                0u8 => native.source(index),
+                1u8 => native.include_dir(index),
+                _ => native.archive(index),
+            },
+            None => "",
+        };
+        let relative = if absolute == root { "." }
+            else {
+                let start = root.as_slice().len() + 1u64;
+                str.from_slice_unchecked(absolute.as_slice()[start..absolute.as_slice().len()])
+            };
+        writer.write_string(relative);
+        index += 1u64;
+    }
+    writer.end_array();
+}
+
+fn write_native_c(writer: Writer&, package: Package&) {
+    match package.native_c() {
+        None => {},
+        Some(_) => {
+            writer.key("nativeC");
+            writer.begin_object();
+            writer.key("sources");
+            write_native_c_paths(writer, package, 0u8);
+            writer.key("includeDirs");
+            write_native_c_paths(writer, package, 1u8);
+            writer.key("archives");
+            write_native_c_paths(writer, package, 2u8);
+            writer.end_object();
+        },
+    }
+}
+
+fn project_has_native_c(project: Project&) -> bool {
+    let index = 0u64;
+    while index < project.package_count() {
+        if project.package(index).native_c().is_some() { return true; }
+        index += 1u64;
+    }
+    false
+}
+
+fn root_has_native_input(package: Package&) -> bool {
+    package.native_c().is_some() || package.native_llvm().is_some()
+}
+
 fn write_package(writer: Writer&, package: Package&) {
     writer.begin_object();
     writer.key("sourceRoot");
@@ -66,6 +128,7 @@ fn write_package(writer: Writer&, package: Package&) {
         Some(_) => { writer.key("nativeLLVM"); write_native(writer, package); },
         None => {},
     }
+    write_native_c(writer, package);
     writer.end_object();
 }
 
@@ -74,7 +137,7 @@ pub fn package_map_json(project: Project&) -> String {
     defer writer.drop();
     writer.begin_object();
     writer.key("format");
-    writer.write_u64(2u64);
+    writer.write_u64(if project_has_native_c(project) { 3u64 } else { 2u64 });
     writer.key("root");
     writer.write_string(project.root_package());
     writer.key("packages");
@@ -87,6 +150,11 @@ pub fn package_map_json(project: Project&) -> String {
         index += 1u64;
     }
     writer.end_object();
+    if project_has_native_c(project) {
+        writer.key("nativeRoots");
+        writer.begin_array();
+        writer.end_array();
+    }
     writer.end_object();
     match writer.finish() {
         Ok(text) => text,
@@ -97,9 +165,13 @@ pub fn package_map_json(project: Project&) -> String {
 pub fn test_package_map_json(project: Project&, test_root: str, test_entry: str) -> String {
     let writer = Writer.new();
     defer writer.drop();
+    let root_index = project.package_index(project.root_package()).unwrap();
+    let root = project.package(*root_index);
+    let native_root = root.kind() == PackageKind.Bin && root_has_native_input(root);
+    let format3 = project_has_native_c(project) || native_root;
     writer.begin_object();
     writer.key("format");
-    writer.write_u64(2u64);
+    writer.write_u64(if format3 { 3u64 } else { 2u64 });
     writer.key("root");
     writer.write_string("__anx_test");
     writer.key("packages");
@@ -112,8 +184,6 @@ pub fn test_package_map_json(project: Project&, test_root: str, test_entry: str)
         index += 1u64;
     }
 
-    let root_index = project.package_index(project.root_package()).unwrap();
-    let root = project.package(*root_index);
     writer.key("__anx_test");
     writer.begin_object();
     writer.key("sourceRoot");
@@ -140,6 +210,12 @@ pub fn test_package_map_json(project: Project&, test_root: str, test_entry: str)
     writer.end_array();
     writer.end_object();
     writer.end_object();
+    if format3 {
+        writer.key("nativeRoots");
+        writer.begin_array();
+        if native_root { writer.write_string(root.name()); }
+        writer.end_array();
+    }
     writer.end_object();
     match writer.finish() {
         Ok(text) => text,

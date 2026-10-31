@@ -1,0 +1,89 @@
+{
+  "format": 2,
+  "task": "fasta",
+  "description_url": "https://benchmarksgame-team.pages.debian.net/benchmarksgame/description/fasta.html",
+  "source": {
+    "url": "https://benchmarksgame-team.pages.debian.net/benchmarksgame/program/fasta-gcc-1.html",
+    "retrieved_at": "2026-10-31T10:42:07Z",
+    "extracted_sha256": "29ecdd18431bfc65861f9ae537307bf45846e7225d40b28993381f28f005279b",
+    "extraction": "First HTML pre block; remove HTML tags, HTML-unescape once, UTF-8 encode; preserve leading and trailing whitespace.",
+    "archive_path": "c/upstream/main.c"
+  },
+  "files": [
+    {
+      "path": "c/upstream/main.c",
+      "sha256": "29ecdd18431bfc65861f9ae537307bf45846e7225d40b28993381f28f005279b",
+      "license_id": "BSD-3-Clause"
+    },
+    {
+      "path": "c/src/main.c",
+      "sha256": "29ecdd18431bfc65861f9ae537307bf45846e7225d40b28993381f28f005279b",
+      "license_id": "BSD-3-Clause"
+    },
+    {
+      "path": "LICENSE-BenchmarksGame.txt",
+      "sha256": "32ef9bf57891917e5a636ebccf3ff6d14536a3a794075ef0887b412cdebfd89e",
+      "license_id": "BSD-3-Clause"
+    }
+  ],
+  "patches": [],
+  "fixtures": [
+    {
+      "input_url": null,
+      "input_path": null,
+      "input_sha256": null,
+      "output_url": "https://benchmarksgame-team.pages.debian.net/benchmarksgame/download/fasta-output.txt",
+      "output_path": "fixtures/official-output.fasta",
+      "output_sha256": "62d1e8d0df7938d2aefda9a37887e0389231ea72c099c29a51afb6edca1bdc73",
+      "argv": [
+        "1000"
+      ]
+    }
+  ],
+  "translation": [
+    {
+      "c_symbol": "gen_random",
+      "yian_symbol": "gen_random",
+      "differences": [
+        "C stores the initial LCG state in a function-static long; YIAN passes one owned i64 seed by reference from main. Both update it with the same IA/IC/IM recurrence and return maximum*seed/IM in the same floating-point operation order."
+      ]
+    },
+    {
+      "c_symbol": "makeCumulative",
+      "yian_symbol": "makeCumulative",
+      "differences": [
+        "Both replace each entry probability with the running sum in source order; YIAN uses u8 symbols and f64 fields in AminoAcid."
+      ]
+    },
+    {
+      "c_symbol": "selectRandom",
+      "yian_symbol": "selectRandom",
+      "differences": [
+        "Both draw one LCG value and use the same lower-bound binary-search decisions over cumulative probabilities."
+      ]
+    },
+    {
+      "c_symbol": "makeRandomFasta",
+      "yian_symbol": "makeRandomFasta",
+      "differences": [
+        "Both emit the record header and generated sequence in lines of at most 60 symbols. YIAN writes bytes through a buffered Stdout writer and carries the RNG state explicitly."
+      ]
+    },
+    {
+      "c_symbol": "makeRepeatFasta",
+      "yian_symbol": "makeRepeatFasta",
+      "differences": [
+        "C copies ALU into a temporary mutable NUL-terminated buffer; YIAN uses a byte-slice offset modulo the same 287-byte source sequence to emit identical 60-column lines."
+      ]
+    },
+    {
+      "c_symbol": "main",
+      "yian_symbol": "main",
+      "differences": [
+        "C reads n from argv; YIAN selects n through its bench-scale marker, with full/fast values 25000000/100000.",
+        "Both build the official IUB and Homo sapiens probability tables and emit ONE(2n), TWO(3n), THREE(5n) in that order; random generation continues from the TWO stream into THREE.",
+        "C has static probability arrays and output calls; YIAN uses owned dynamic amino-acid arrays and an 8192-byte buffered writer, then releases owned state."
+      ]
+    }
+  ]
+}

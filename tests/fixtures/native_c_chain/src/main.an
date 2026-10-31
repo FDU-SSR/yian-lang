@@ -1,0 +1,12 @@
+extern "C" {
+    fn native_answer() -> c_int;
+}
+
+ffi fn native_answer_value() -> i32 {
+    i32(native_answer())
+}
+
+fn main() {
+    assert native_answer_value() == 42;
+    @print("42\n");
+}

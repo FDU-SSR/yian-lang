@@ -1,51 +1,58 @@
-# bench/ - benchmark suite
+# Benchmark projects
 
-The suite organizes benchmarks by **source** directory, by **focus** set, and by
-**scale** profile (fast/full). Every set runs three states (C / raw / fat), with
-the C reference providing the authoritative result values. The allocator suite
-uses the two YIAN states, fat and raw.
+Projects are organized by source and selected through set manifests. Each
+three-state project has a CMake C reference and an anx YIAN package; the runner
+builds C, raw YIAN, and fat YIAN from the same project inputs. The four
+`ALLOC` projects instead compare fat YIAN with libc allocation and have no C
+reference.
 
 ## Layout
 
 ```text
 bench/
-├── AWFY/            Source: Are We Fast Yet (Java microbenchmark rewrites from smarr/are-we-fast-yet)
-│   ├── an/*.an        Fat-mode sources; <name>.raw.an is the raw-mode override (same directory)
-│   ├── c/*.c          C reference implementations (result checks)
-│   └── specs/*.json   argv / authoritative check / focus tags / scale profile
-├── BG/              Source: The Computer Language Benchmarks Game (Revised BSD)
-├── ALLOC/           Allocator suite (two states: fat vs libc malloc/free, no C reference)
-│   ├── an/  specs/
-├── fatptr/          Mechanism microbenchmarks (representation size/copy/chase, written in this repository)
-│   ├── an/  c/  specs/
-├── sets/*.json      Set manifests: members + default scale + run count (paper.json = the paper's 14 benchmarks)
-├── results/         Generated: <set>.{md,csv}, asan.{md,csv}, asan-samples.txt, alloc/partial
-├── bench_three_way.py Three-state runner (C / raw / fat)
-├── bench_asan.py    ASan cross-comparison runner (C plain / C ASan / YIAN fat)
-├── bench_allocator.py Allocator runner (fat / raw)
-├── SUITES.md        Source and license registry
-└── README.md
+├── AWFY/<name>/       14 Are We Fast Yet projects
+├── BG/<name>/         10 official Benchmarks Game projects, source and oracle provenance
+├── fatptr/<name>/      3 representation/call/copy projects written here
+├── ALLOC/<name>/       4 allocator projects, fat/raw only
+├── native/             fixed GMP and PCRE2 packages, source, licenses, and rebuild material
+├── sets/*.json         full (27), bg (10), paper (14), fast (8), and focus selections
+├── results/            versioned historical reports and runner output locations
+├── projects.py         project discovery, dependency staging, build, and digest
+├── execution.py        controlled file-based stdin/stdout and output identity
+├── bench_three_way.py  C / raw / fat runner
+├── bench_asan.py       C plain / C ASan / YIAN fat runner
+├── bench_allocator.py  fat / libc allocator runner
+└── SUITES.md           source and license registry
 ```
 
-The current sources and licenses are registered in `bench/SUITES.md`.
+Each paired project contains `spec.json`, `yian/package.anx` and
+`yian/src/main.an`, plus `c/CMakeLists.txt` and C source. Optional raw-mode
+overrides live under `raw/`. The ten BG projects also contain official-source
+archives, licenses, fixture files, and `provenance.json`. CMake and anx select
+the same project-local static archive for pidigits (GMP) and regexredux
+(PCRE2); those libraries are shared by all states but are not ASan-instrumented
+or covered by YIAN guards. See [`native/README.md`](native/README.md).
 
-The 22 C/YIAN pairs are reviewed against the
-[translation specification](../docs/c-to-yian.md): 17 programs with scale
-parameters read argv, the five large AWFY business functions are ordinary
-functions, and BG uses the same output and exit codes as C. Static mutable state
-is held in heap objects owned by the entry point: permute/storage counters are
-reused across work units; fasta's seed/checksum/probability tables are on the
-heap; CD shares two address markers across all frames; spectralnorm uses three
-heap arrays. CD's motion_find_intersection returns 0/1 and writes the collision
-point through out; DeltaBlue's Constraint_satisfy returns bool and writes a
-nullable constraint through overridden_out, preserving the successful case where
-no constraint was replaced. The [review checklist](../docs/c-to-yian-review.md)
-lists only situations the rules do not cover. call_abi's call boundary is an
-experimental requirement already covered by the specification; its native -O2
-inlining issue remains, so it is not evidence of the actual three-state call
-cost. The existing results/ and paper samples are historical measurements and
-have not been rerun against the current rewritten sources; all 22 pairs compile
-raw and fat from the same .an sources.
+The suite contains 31 projects: 27 C/YIAN pairs (14 AWFY, 10 BG, and 3 fatptr)
+plus 4 two-state allocator projects. `full` selects all 27 pairs. `bg` selects
+the ten official BG tasks; `paper` remains the same 14 IDs (9 AWFY and the five
+original BG IDs), and `fast` remains eight IDs. Set membership and task scales
+are in `sets/*.json` and each project's `spec.json`.
+
+The paired projects are reviewed against the
+[C → YIAN translation specification](../docs/c-to-yian.md); the
+[review checklist](../docs/c-to-yian-review.md) records uncovered translation
+cases and limits. AWFY retains its documented state and output-parameter
+rewrites. Each BG project records the mapping of every upstream C function,
+source/license hashes, representation differences, and any small C portability
+patch. `call_abi` still has an -O2 inlining issue, so it is not evidence of the
+three-state cost of the call boundary.
+
+The stored `full` result report and frozen paper samples predate this project
+layout and the current BG implementations. Their embedded commit, date, and
+environment describe those historical runs; their measurements must not be
+attributed to the current 27-pair suite. No benchmark or paper data is refreshed
+by this documentation or by local task probes.
 
 These commands compile, run, and measure selected benchmarks and are not part of
 default local acceptance. Before running repository validation, check the set,
@@ -56,7 +63,8 @@ explicit authorization.
 
 ```bash
 python3 bench/bench_three_way.py --list-sets           # List sets, scales, and member counts.
-python3 bench/bench_three_way.py --set full            # Full scale: all 22 benchmarks, for formal records.
+python3 bench/bench_three_way.py --set full            # Full scale: all 27 paired projects.
+python3 bench/bench_three_way.py --set bg              # All ten official BG tasks.
 python3 bench/bench_three_way.py --set fast --pin 4    # Fast: representative subset at reduced scale.
 python3 bench/bench_three_way.py --set ptr             # Focus: object/pointer graphs.
 python3 bench/bench_three_way.py --set numeric         # Focus: numeric calculations/loops.
@@ -69,7 +77,8 @@ python3 bench/bench_three_way.py --set fast --yianc "$HOME/.local/bin/yianc"
 
 | Set | Contents | Default scale | Purpose |
 | --- | --- | --- | --- |
-| `full` | All three-state benchmarks | `full` | Formal baseline and external reference |
+| `full` | All 27 C/YIAN pairs | `full` | Complete paired-project selection |
+| `bg` | All 10 BG tasks | `full` | Official Benchmarksgame project selection |
 | `fast` | 8 representative benchmarks | `fast` | Representative subset at reduced scale; duration depends on the machine |
 | `ptr` | tag `ptr` | `full` | Pointers and object graphs |
 | `numeric` | tag `numeric` | `full` | Numeric and loop changes |
@@ -77,10 +86,11 @@ python3 bench/bench_three_way.py --set fast --yianc "$HOME/.local/bin/yianc"
 | `alloc-heavy` | tag `alloc` + storage/json | `full` | Allocation-heavy but still three-state |
 | `micro` | tag `micro` (three fatptr benchmarks) | `full` | Representation and ABI size/check readings |
 
-AWFY and BG members: AWFY has 14 benchmarks (bounce, cd, deltablue, havlak, json,
-list, mand, nbody, permute, queen, richards, sieve, storage, towers); BG has 5
-(binarytree, fann, fasta, revcomp, spectralnorm); fatptr has 3 (call_abi,
-copy_struct, chase).
+AWFY has 14 projects (bounce, cd, deltablue, havlak, json, list, mand, nbody,
+permute, queen, richards, sieve, storage, towers). BG has 10 (binarytree, fann,
+fasta, knucleotide, mandelbrot, nbody, pidigits, regexredux, revcomp,
+spectralnorm). `BG/nbody` and `AWFY/nbody` have distinct project IDs. The three
+fatptr projects are call_abi, copy_struct, and chase.
 
 Sets are defined only in `bench/sets/`. A new set must state which mechanism
 focus it covers (`ptr`/`numeric`/`string`/`alloc`/`control`; `control` is
@@ -91,12 +101,12 @@ focuses.
 
 - **full** (default, formal records): the sources' default scale, one warmup plus
   five measured runs per state, taking the minimum.
-- **fast** (frequent development runs): for benchmarks that declare `scale.fast`
-  in `specs/<name>.json`, replace the number on the `// bench-scale` marker line
-  with the fast value, generate a build copy under
-  `build/bench/src/fast/<SOURCE>/`, and compile that copy; pass the same value to
-  C, raw, and fat as argv so all three states do equal work. Other benchmarks use
-  the same scale in both profiles. The fast profile does not trigger run
+- **fast** (frequent development runs): for projects that declare `scale.fast`
+  in `bench/<SOURCE>/<name>/spec.json`, stage an isolated copy under
+  `build/bench/projects/fast/<SOURCE>/<name>/<state>/` and replace the root
+  YIAN `// bench-scale` marker. Numeric BG projects receive the same selected
+  dimension once as C argv. Other projects use their declared full dimension.
+  The fast profile does not trigger run
   reduction: one warmup plus three measured runs per state, taking the minimum.
 
 | Benchmark | Marked scale value | full | fast |
@@ -127,14 +137,15 @@ comparisons should verify workload, cache behavior, and sampling conditions.
 
 | State | Compile/run |
 | --- | --- |
-| C | `clang -O2 -ffp-contract=off bench/<SOURCE>/c/<name>.c -lm` (argv in the spec) |
-| raw | `yianc -O2 --raw-pointers lib/src <src>` + libc `malloc`/`free` |
-| fat | `yianc -O2 lib/src <src>` (fat pointers are the default) |
+| C | Project CMake build, `clang -O2 -ffp-contract=off`, target `bench_app` |
+| raw | anx project build with native yianc `-O2 --raw-pointers` |
+| fat | anx project build with native yianc `-O2` (fat pointers are the default) |
 
-Both runners invoke only native `yianc`, selecting in the order `--yianc PATH`,
-nonempty `YIANC`, then `PATH`, and rejecting scripts, directories, non-executable
-files, and non-ELF files. Reports record the canonical compiler path, SHA-256, and
-selection source. `bench_allocator.py --compiler-root PATH` only sets the
+The runners select native `anx` through `--anx PATH`, nonempty `ANX`, then `PATH`;
+anx selects native `yianc` through `--yianc PATH`, nonempty `YIANC`, then `PATH`.
+Both reject scripts, directories, non-executable files, and non-ELF files.
+Reports record canonical tool paths, SHA-256 values, and selection sources.
+`bench_allocator.py --compiler-root PATH` only sets the
 standard-library and input source root; it does not select the compiler.
 
 - Artifacts: `build/bench/{cbin,yraw,yfat}/<SOURCE>_<name>` (all three states use
@@ -154,10 +165,13 @@ standard-library and input source root; it does not select the compiler.
   threshold scripts are written. Noise magnitude depends on the sampling
   environment; judging changes requires repeated measurements and the sample
   distribution.
+- BG input files are generated once before the consumer legs; each run opens a
+  fresh copy of the same input and writes binary output to a file. File hashing
+  and byte comparison are outside the measured interval.
 - Translation follows the
-  [C → YIAN syntax rewrite rules](../docs/c-to-yian.md); workload review is part
-  of that specification. Existing result tables are runner observations and do
-  not mean the draft has passed item-by-item review.
+  [C → YIAN syntax rewrite rules](../docs/c-to-yian.md); each BG README maps its
+  C functions to YIAN and records representation differences. A small oracle
+  probe and C comparison do not prove equivalence at every scale.
 - **Review the run scope first**: bench commands compile and run the selected
   workloads, including warmup and repeated sampling; benchmarks measure
   performance and are not default local tests. Repository tasks must define the
@@ -175,23 +189,26 @@ per-benchmark ratios for the three comparisons, and geometric means:
 - (ii) C ASan / YIAN fat (cross-toolchain)
 - (iii) YIAN fat / C plain (full stack versus uninstrumented C)
 
+GMP and PCRE2 are the same fixed project-local static libraries in all legs.
+They are not ASan-instrumented; allocations intercepted by ASan do not make
+library code instrumented, and library operations are outside YIAN guard coverage.
+
 ```bash
 python3 bench/bench_asan.py --set paper --runs 5 --pin 4
 python3 bench/bench_asan.py --bench BG/fasta --runs 1 --pin 0
-python3 bench/bench_asan.py --set paper --runs 5 --pin 4
 ```
 
 Results are written to `results/asan.md`, `results/asan.csv`, and
 `results/asan-samples.txt` (raw `wall_ms (peak_rss_kb)` samples, comparable with
-the frozen samples under the paper's data/). `--set paper` selects the paper's 14
-benchmarks; the semantic guard requires C warmup to pass the spec's `check`, ASan
-stdout/exit codes to match C plain, and the YIAN leg to pass the same spec's
-output/exit checks.
+the frozen samples under the paper's data/). `--set paper` selects the paper's
+14 benchmarks; `--set full` selects all 27 paired projects. The semantic guard
+requires C warmup to pass the spec's `check`, ASan stdout/exit codes to match C
+plain, and the YIAN leg to pass the same spec's output/exit checks.
 
-`BG/binarytree` fixes `N=16`: ASan takes about 2.5 s with peak RSS about 0.7 GB.
-The N=20 ASan configuration exceeds 9 GB peak RSS and 4 minutes per run, so it is
-not used. `--fast` can still lower individual benchmarks that declare
-`scale.fast`.
+`BG/binarytree` declares its scale in `bench/BG/binarytree/spec.json`;
+`--fast` can lower projects that declare a `scale.fast` value. ASan result files
+from previous source revisions are historical and do not cover the ten current
+BG projects as a batch.
 
 ## Allocator suite
 
@@ -208,12 +225,15 @@ mixed-size churn, grow-free, and varied-size grow-free. Results are written to
 
 ## Result archive
 
-Only the full profile and allocator records (`full.{md,csv}`, `alloc.{md,csv}`)
-are versioned under `bench/results/`; other sets
-(`ptr`/`numeric`/`string`/`alloc-heavy`/`micro`) and temporary subsets
-(`partial.*`) are excluded by `.gitignore`. The dates, commits, and environment
-fingerprints in a report define the scope of that measurement and do not
-represent current source performance.
+The versioned `full.{md,csv}` and `alloc.{md,csv}` files are historical
+snapshots. In particular, `full` records 22 paired projects from its recorded
+commit; the current `full` selector has 27. The checked-in `paper.json` still
+selects 14 IDs, but the historical paper samples predate the current BG source
+replacement. Dates, commits, and machine fingerprints scope those records; they
+do not establish performance for current project digests. Generated reports
+include project IDs/digests, input and native-library identity, compiler
+identity, checks, and measurement settings. A change to a set does not rewrite
+old results, and no sample refresh is implicit.
 
 ## Paper reproduction
 
@@ -241,12 +261,13 @@ environment variables can override the defaults.
 
 ## Adding a benchmark
 
-1. Put it in the matching source directory (create
-   `bench/<SOURCE>/{an,c,specs}` for a new source);
-2. `an/<name>.an` (add `<name>.raw.an` when raw-mode semantics differ),
-   `c/<name>.c` (review against the specification above), and
-   `specs/<name>.json` (`argv`, `check`, `tags`, optional `scale`);
-3. Register the source and scale alignment in `bench/README.md`; run all three
-   states and confirm the C authoritative value.
+1. Create `bench/<SOURCE>/<name>/` with `spec.json`, `yian/package.anx`, and
+   `yian/src/main.an`; add `raw/src/main.an` only when raw mode needs an overlay.
+2. Add `c/CMakeLists.txt` and the C reference for paired workloads. Add fixtures,
+   source/license hashes, full function mapping, and translation differences for
+   upstream workloads.
+3. Register membership in any relevant set and document source/license details
+   in `bench/SUITES.md`. Define an authorized local oracle probe before making
+   broader execution or measurement claims.
 
 The source and license registry is in `bench/SUITES.md`.

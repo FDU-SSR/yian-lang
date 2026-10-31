@@ -1,0 +1,117 @@
+// bench/BG/spectralnorm/yian/src/workload.an — Benchmarks Game spectral norm.
+//
+// Source: bench/BG/spectralnorm/c/upstream/main.c (spectralnorm-gcc-3; revised BSD).
+// Scale: default n=8000; the runner materializes fast n=1000 at this marker.
+//
+// Preserve the source's ten pairs of AtAv calls and its final dot(u,v)/dot(v,v)
+// calculation. C's global tmp pointer is an explicit YIAN slice argument.
+
+from std.num.f64 import sqrt;
+
+fn A(i: u64, j: u64) -> i32 {
+    return i32((i + j) * (i + j + 1) / 2 + i + 1);
+}
+
+fn dot(v: f64[], u: f64[], n: i32) -> f64 {
+    let sum: f64 = 0.0;
+    let i: u64 = 0;
+    while i < u64(n) {
+        sum += v[i] * u[i];
+        i += 1;
+    }
+    return sum;
+}
+
+fn mult_Av(v: f64[], out: f64[], n: i32) {
+    let i: u64 = 0;
+    while i < u64(n) {
+        let sum: f64 = 0.0;
+        let j: u64 = 0;
+        while j < u64(n) {
+            sum += v[j] / f64(A(i, j));
+            j += 1;
+        }
+        out[i] = sum;
+        i += 1;
+    }
+}
+
+fn mult_Atv(v: f64[], out: f64[], n: i32) {
+    let i: u64 = 0;
+    while i < u64(n) {
+        let sum: f64 = 0.0;
+        let j: u64 = 0;
+        while j < u64(n) {
+            sum += v[j] / f64(A(j, i));
+            j += 1;
+        }
+        out[i] = sum;
+        i += 1;
+    }
+}
+
+fn mult_AtAv(v: f64[], out: f64[], n: i32, tmp: f64[]) {
+    mult_Av(v, tmp, n);
+    mult_Atv(tmp, out, n);
+}
+
+// The upstream C uses printf("%.9f"). Emit the same fixed nine fractional
+// digits for this positive spectral norm without changing the math result.
+fn print_fixed_9(value: f64) {
+    let scaled: u64 = u64(value * 1000000000.0 + 0.5);
+    let whole: u64 = scaled / 1000000000u64;
+    let fraction: u64 = scaled % 1000000000u64;
+    let d0: u64 = fraction / 100000000u64;
+    let d1: u64 = (fraction / 10000000u64) % 10u64;
+    let d2: u64 = (fraction / 1000000u64) % 10u64;
+    let d3: u64 = (fraction / 100000u64) % 10u64;
+    let d4: u64 = (fraction / 10000u64) % 10u64;
+    let d5: u64 = (fraction / 1000u64) % 10u64;
+    let d6: u64 = (fraction / 100u64) % 10u64;
+    let d7: u64 = (fraction / 10u64) % 10u64;
+    let d8: u64 = fraction % 10u64;
+    @print(f"{whole}.{d0}{d1}{d2}{d3}{d4}{d5}{d6}{d7}{d8}\n");
+}
+
+pub fn run(n: i32) -> i32 {
+    if n <= 0 || n > 8000 { return 2; }
+
+
+    let extent: u64 = u64(n);
+    let u: f64[] = {
+        let allocation = dyn[extent] 0.0;
+        allocation[0u64..extent]
+    };
+    let v: f64[] = {
+        let allocation = dyn[extent] 0.0;
+        allocation[0u64..extent]
+    };
+    let tmp: f64[] = {
+        let allocation = dyn[extent] 0.0;
+        allocation[0u64..extent]
+    };
+
+    let i: u64 = 0;
+    while i < extent {
+        u[i] = 1.0;
+        i += 1;
+    }
+
+    let iteration: u64 = 0;
+    while iteration < 10 {
+        mult_AtAv(u, v, n, tmp);
+        mult_AtAv(v, u, n, tmp);
+        iteration += 1;
+    }
+
+    let dot_uv: f64 = dot(u, v, n);
+    let dot_vv: f64 = dot(v, v, n);
+    let spectral_norm: f64 = sqrt(dot_uv / dot_vv);
+    print_fixed_9(spectral_norm);
+
+    del u;
+    del v;
+    del tmp;
+
+    return 0;
+}

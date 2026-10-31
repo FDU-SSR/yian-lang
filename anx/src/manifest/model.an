@@ -55,6 +55,44 @@ impl Drop for NativeLLVM {
     }
 }
 
+pub struct NativeC { sources: Vec<PathBuf>, include_dirs: Vec<PathBuf>, archives: Vec<PathBuf> }
+
+impl NativeC {
+    static pub fn new(sources: Vec<PathBuf>, include_dirs: Vec<PathBuf>, archives: Vec<PathBuf>) -> Self {
+        Self(sources=sources, include_dirs=include_dirs, archives=archives)
+    }
+    pub fn sources_len() -> u64 { self.sources.len() }
+    pub fn source(index: u64) -> str { self.sources[index].as_str() }
+    pub fn include_dirs_len() -> u64 { self.include_dirs.len() }
+    pub fn include_dir(index: u64) -> str { self.include_dirs[index].as_str() }
+    pub fn archives_len() -> u64 { self.archives.len() }
+    pub fn archive(index: u64) -> str { self.archives[index].as_str() }
+
+    pub fn clone_native() -> NativeC {
+        let sources = Vec<PathBuf>.new();
+        for source in self.sources { sources.push(PathBuf.from(source.as_str())); }
+        let include_dirs = Vec<PathBuf>.new();
+        for path in self.include_dirs { include_dirs.push(PathBuf.from(path.as_str())); }
+        let archives = Vec<PathBuf>.new();
+        for archive in self.archives { archives.push(PathBuf.from(archive.as_str())); }
+        NativeC.new(sources, include_dirs, archives)
+    }
+}
+
+impl Drop for NativeC {
+    pub fn drop() {
+        let index = 0u64;
+        while index < self.sources.len() { self.sources[index].drop(); index += 1u64; }
+        self.sources.drop();
+        index = 0u64;
+        while index < self.include_dirs.len() { self.include_dirs[index].drop(); index += 1u64; }
+        self.include_dirs.drop();
+        index = 0u64;
+        while index < self.archives.len() { self.archives[index].drop(); index += 1u64; }
+        self.archives.drop();
+    }
+}
+
 pub struct Manifest {
     name: String,
     kind: PackageKind,
@@ -64,15 +102,16 @@ pub struct Manifest {
     dev_dependencies: Vec<DependencySpec>,
     ffi_allowed: bool,
     native_llvm: Option<NativeLLVM>,
+    native_c: Option<NativeC>,
 }
 
 impl Manifest {
     static pub fn new(name: str, kind: PackageKind, entry: Option<String>, version: str,
         dependencies: Vec<DependencySpec>, dev_dependencies: Vec<DependencySpec>, ffi_allowed: bool,
-        native_llvm: Option<NativeLLVM>) -> Self {
+        native_llvm: Option<NativeLLVM>, native_c: Option<NativeC>) -> Self {
         Self(name=String.from(&name), kind=kind, entry=entry, version=String.from(&version),
             dependencies=dependencies, dev_dependencies=dev_dependencies, ffi_allowed=ffi_allowed,
-            native_llvm=native_llvm)
+            native_llvm=native_llvm, native_c=native_c)
     }
     pub fn name() -> str { self.name.as_str() }
     pub fn kind() -> PackageKind { self.kind }
@@ -88,6 +127,9 @@ impl Manifest {
     pub fn native_llvm() -> Option<NativeLLVM&> {
         match &self.native_llvm { Some(value) => Option<NativeLLVM&>.Some(value), None => Option<NativeLLVM&>.None }
     }
+    pub fn native_c() -> Option<NativeC&> {
+        match &self.native_c { Some(value) => Option<NativeC&>.Some(value), None => Option<NativeC&>.None }
+    }
 }
 
 impl Drop for Manifest {
@@ -102,6 +144,7 @@ impl Drop for Manifest {
         while index < self.dev_dependencies.len() { self.dev_dependencies[index].drop(); index += 1u64; }
         self.dev_dependencies.drop();
         match self.native_llvm.take() { Some(value) => value.drop(), None => {}, }
+        match self.native_c.take() { Some(value) => value.drop(), None => {}, }
     }
 }
 

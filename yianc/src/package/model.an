@@ -8,6 +8,23 @@ pub struct NativeLLVM {
     pub sources: Vec<String>,
 }
 
+pub struct NativeC {
+    pub sources: Vec<String>,
+    pub include_dirs: Vec<String>,
+    pub archives: Vec<String>,
+}
+
+impl Drop for NativeC {
+    pub fn drop() {
+        for source in self.sources { source.drop(); }
+        for path in self.include_dirs { path.drop(); }
+        for archive in self.archives { archive.drop(); }
+        self.sources.drop();
+        self.include_dirs.drop();
+        self.archives.drop();
+    }
+}
+
 impl Drop for NativeLLVM {
     pub fn drop() {
         for component in self.components {
@@ -31,6 +48,7 @@ pub struct PackageSpec {
     pub dependencies: Vec<String>,
     pub allows_ffi: bool,
     pub native_llvm: Option<NativeLLVM>,
+    pub native_c: Option<NativeC>,
 }
 
 impl Drop for PackageSpec {
@@ -54,21 +72,36 @@ impl Drop for PackageSpec {
             Some(value) => value.drop(),
             None => {}
         }
+
+        match &self.native_c {
+            Some(value) => value.drop(),
+            None => {}
+        }
     }
 }
 
 pub struct PackageMap {
     root: Option<String>,
-    packages: Vec<PackageSpec>
+    packages: Vec<PackageSpec>,
+    native_roots: Vec<String>,
 }
 
 impl PackageMap {
     static fn new() -> Self {
-        Self(Option<String>.None, Vec<PackageSpec>.new())
+        Self(Option<String>.None, Vec<PackageSpec>.new(), Vec<String>.new())
     }
 
     pub fn root_name() -> Option<str> {
         match &self.root {
+            Some(name) => Option<str>.Some(name.as_str()),
+            None => Option<str>.None,
+        }
+    }
+
+    pub fn native_root_count() -> u64 { self.native_roots.len() }
+
+    pub fn native_root(index: u64) -> Option<str> {
+        match self.native_roots.as_slice().get(index) {
             Some(name) => Option<str>.Some(name.as_str()),
             None => Option<str>.None,
         }
@@ -160,5 +193,8 @@ impl Drop for PackageMap {
             Some(root) => root.drop(),
             None => {}
         }
+
+        for root in self.native_roots { root.drop(); }
+        self.native_roots.drop();
     }
 }

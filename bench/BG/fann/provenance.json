@@ -1,0 +1,68 @@
+{
+  "format": 2,
+  "task": "fannkuchredux",
+  "description_url": "https://benchmarksgame-team.pages.debian.net/benchmarksgame/description/fannkuchredux.html",
+  "source": {
+    "url": "https://benchmarksgame-team.pages.debian.net/benchmarksgame/program/fannkuchredux-gcc-1.html",
+    "retrieved_at": "2026-10-31T10:42:07Z",
+    "extracted_sha256": "0240c14bb25b31bbb685cd25314b1a6349319cabbb08158db32e8f335e6ab233",
+    "extraction": "First HTML pre block; remove HTML tags, HTML-unescape once, UTF-8 encode; preserve leading and trailing whitespace.",
+    "archive_path": "c/upstream/main.c"
+  },
+  "files": [
+    {
+      "path": "c/upstream/main.c",
+      "sha256": "0240c14bb25b31bbb685cd25314b1a6349319cabbb08158db32e8f335e6ab233",
+      "license_id": "BSD-3-Clause"
+    },
+    {
+      "path": "c/src/main.c",
+      "sha256": "0240c14bb25b31bbb685cd25314b1a6349319cabbb08158db32e8f335e6ab233",
+      "license_id": "BSD-3-Clause"
+    },
+    {
+      "path": "LICENSE-BenchmarksGame.txt",
+      "sha256": "32ef9bf57891917e5a636ebccf3ff6d14536a3a794075ef0887b412cdebfd89e",
+      "license_id": "BSD-3-Clause"
+    }
+  ],
+  "patches": [],
+  "fixtures": [
+    {
+      "input_url": null,
+      "input_path": null,
+      "input_sha256": null,
+      "output_url": "https://benchmarksgame-team.pages.debian.net/benchmarksgame/download/fannkuchredux-output.txt",
+      "output_path": "fixtures/official-output.txt",
+      "output_sha256": "2dc0a3cd4a547ba69389f97f3b447bd4d487fe6216c3cacd2f9bf8c908dc127f",
+      "argv": [
+        "7"
+      ]
+    }
+  ],
+  "translation": [
+    {
+      "c_symbol": "max",
+      "yian_symbol": "max",
+      "differences": [
+        "Both return the larger of the maximum-so-far and the current permutation flip count."
+      ]
+    },
+    {
+      "c_symbol": "fannkuchredux",
+      "yian_symbol": "fannkuchredux",
+      "differences": [
+        "C uses three n-element VLAs; YIAN uses three owned n-element full-range i32 slices and explicitly drops them before return.",
+        "C prints the checksum at the final permutation and returns the maximum; YIAN returns both values in FannResult for main to print."
+      ]
+    },
+    {
+      "c_symbol": "main",
+      "yian_symbol": "main",
+      "differences": [
+        "C parses n from argv with default 7; YIAN compiles n through the bench-scale marker, with full/fast values 11/9.",
+        "Both print checksum then Pfannkuchen(n) maximum-flips line and exit with status 0; YIAN does not use the maximum as its exit code."
+      ]
+    }
+  ]
+}

@@ -1,0 +1,9 @@
+[package]
+name = "gmp"
+kind = "lib"
+ffi = true
+
+[native.c]
+sources = ["native/shim.c"]
+include-dirs = ["include", "native"]
+archives = ["lib/libgmp.a"]

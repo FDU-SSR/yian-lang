@@ -3,14 +3,17 @@
 
 Each benchmark is built three ways over the same source:
 
-  c_plain   clang -O2
-  c_asan    clang -O2 -fsanitize=address   (ASAN_OPTIONS=detect_leaks=0)
-  an_check  the YIAN compiler in fat-pointer mode
+  c_plain   CMake bench_app target, clang -O2
+  c_asan    CMake bench_app target, clang -O2 -fsanitize=address (ASAN_OPTIONS=detect_leaks=0)
+  an_check  anx builds the YIAN package in fat-pointer mode
 
 binarytree additionally gets ``c_asan_sens``: the same ASan binary with
 ``quarantine_size_mb=0``, which isolates the runtime cost of ASan's quarantine.
 All legs run adjacent within one session, one warmup plus N measured runs, so
 drift between legs stays small.
+BG stdin files are generated and hash-identified before timing; each run reopens
+the same input and writes stdout to a binary file. A failed warmup/sample stays
+in the observations and makes that benchmark's ratios unavailable.
 
 Outputs, under ``bench/results/``:
 
@@ -29,6 +32,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import json
 import os
 import platform
 import statistics
@@ -57,24 +61,12 @@ LEG_LABEL = {
 
 
 def compile_asan_ref(spec: btw.BenchSpec) -> Path:
-    """Compile the C reference with AddressSanitizer; stop on failure."""
+    """Build the project's CMake target with AddressSanitizer; stop on failure."""
     binary = ASAN_DIR / f"{spec.source}_{spec.name}"
-    binary.parent.mkdir(parents=True, exist_ok=True)
-    cmd = [
-        btw.C_COMPILER,
-        "-O2",
-        "-ffp-contract=off",
-        "-fsanitize=address",
-        "-fno-omit-frame-pointer",
-        str(spec.c_src),
-        "-o",
-        str(binary),
-        "-lm",
-    ]
-    res = subprocess.run(cmd, capture_output=True, text=True, cwd=ROOT)
-    if res.returncode != 0:
-        raise SystemExit(f"[compile] {spec.key} (c_asan) failed:\n{res.stdout}\n{res.stderr}")
-    return binary
+    try:
+        return btw.projects.build_c(spec.project, asan=True, output=binary)
+    except (ValueError, RuntimeError) as error:
+        raise SystemExit(f"[compile] {spec.key} (c_asan) failed: {error}") from error
 
 
 def run_once(
@@ -111,21 +103,50 @@ def measure(
     profile: str,
     runs: int,
     pin: int | None,
-) -> tuple[dict[str, dict[str, list[float]]], dict[str, int], bool]:
-    """Warm up every leg, then rotate the legs for `runs` rounds."""
+) -> tuple[dict[str, dict[str, list[float]]], dict[str, int], dict[str, btw.execution.RunResult], bool]:
+    """Warm each leg, then rotate file-backed results without decoding BG stdout."""
     argv = list(spec.run_argv(profile))
     samples = {leg: {"ms": [], "kb": []} for leg in legs}
     codes: dict[str, int] = {}
-    outputs: dict[str, str] = {}
+    warm_outputs: dict[str, btw.execution.RunResult] = {}
+    outputs: dict[str, btw.execution.RunResult] = {}
+    stdin_path = btw.execution.prepare_input(spec, profile, btw.OUT_DIR / "asan-inputs")
+    output_root = btw.OUT_DIR / "file-runs" / "asan" / spec.source / spec.name / profile
+    output_root.mkdir(parents=True, exist_ok=True)
+
+    def run_file(leg: str, binary: Path, env: dict[str, str] | None, phase: str) -> btw.execution.RunResult:
+        return btw.execution.run_file(
+            binary,
+            tuple(argv),
+            stdin_path,
+            output_root / f"{phase}-{leg}.stdout",
+            pin,
+            env,
+        )
+
     for leg, (binary, env) in legs.items():
-        _, _, outputs[leg], codes[leg] = run_once(binary, argv, pin, env)
+        result = run_file(leg, binary, env, "warm")
+        warm_outputs[leg] = result
+        codes[leg] = result.rc
+    reference = warm_outputs["c_plain"]
+    sample_valid = btw._check_file_result(spec, reference)
+    for leg, result in warm_outputs.items():
+        sample_valid = sample_valid and btw._check_file_result(spec, result)
+        sample_valid = sample_valid and btw.execution.output_equal(result, reference)
+        outputs[leg] = result
     for _ in range(runs):
         for leg, (binary, env) in legs.items():
-            wall_ms, rss_kb, out, codes[leg] = run_once(binary, argv, pin, env)
-            samples[leg]["ms"].append(wall_ms)
-            samples[leg]["kb"].append(rss_kb)
-            outputs[leg] = out
-    return samples, codes, outputs
+            result = run_file(leg, binary, env, "sample")
+            samples[leg]["ms"].append(result.wall_ms)
+            samples[leg]["kb"].append(result.rss_kb)
+            codes[leg] = result.rc
+            outputs[leg] = result
+            sample_valid = sample_valid and btw._check_file_result(spec, result)
+            sample_valid = sample_valid and btw.execution.output_equal(result, reference)
+    # Retain C plain's same-scale warmup as the stable reference; all other
+    # entries retain the final measured output for report checks.
+    outputs["c_plain"] = reference
+    return samples, codes, outputs, sample_valid
 
 
 def geomean(values: list[float]) -> float | None:
@@ -143,12 +164,22 @@ def render_md(results: list[dict], fingerprint: dict[str, str], runs: int,
         f"- protocol: one warmup plus {runs} measured runs per leg, adjacent within one session",
         f"- pin: {'none' if pin is None else f'taskset -c {pin}'}",
         f"- `ASAN_OPTIONS` main: `{ASAN_MAIN}`; sensitivity (`{SENS_BENCH}`): `{ASAN_SENS}`",
+        "- BG input/output: input generation and hashing are outside consumer timing; each leg opens the same input file freshly and writes binary stdout to a file.",
         "",
         "## Machine",
         "",
     ]
     for key, value in fingerprint.items():
-        lines.append(f"- {key}: `{value}`")
+        if key != "project_metadata":
+            lines.append(f"- {key}: `{value}`")
+    if results:
+        lines += ["", "## Project, input, and oracle identity", ""]
+        for row in results:
+            metadata = row.get("project_metadata")
+            if metadata is not None:
+                lines.append(
+                    f"- `{row['key']}`: `{json.dumps(metadata, sort_keys=True, separators=(',', ':'))}`"
+                )
     lines += [
         "",
         "## Per-leg medians",
@@ -181,6 +212,9 @@ def render_md(results: list[dict], fingerprint: dict[str, str], runs: int,
         legs = row["legs"]
         if not all(leg in legs for leg in ("c_plain", "c_asan", "an_check")):
             continue
+        if not row.get("sample_valid", True):
+            lines.append(f"| {row['key']} | n/a | n/a | n/a |")
+            continue
         plain = statistics.median(legs["c_plain"]["ms"])
         asan = statistics.median(legs["c_asan"]["ms"])
         an = statistics.median(legs["an_check"]["ms"])
@@ -202,6 +236,8 @@ def render_md(results: list[dict], fingerprint: dict[str, str], runs: int,
     ]
     problems = []
     for row in results:
+        if not row.get("sample_valid", True):
+            problems.append(f"{row['key']}: one or more warmup/sample checks failed; ratios are unavailable")
         if not row["c_check_ok"]:
             problems.append(f"{row['key']}: C baseline fails the authoritative check")
         if not row["asan_match"]:
@@ -231,7 +267,18 @@ def write_csv(results: list[dict], path: Path) -> None:
                 f"{s.med:.1f},{s.iqr:.1f},{s.min:.1f},{s.max:.1f},"
                 f"{statistics.median(stats['kb']) / 1024.0:.1f},{row['codes'].get(leg, 0)}"
             )
-    path.write_text(header + "\n".join(rows) + "\n", encoding="utf-8")
+    invalid = [row["key"] for row in results if not row.get("sample_valid", True)]
+    metadata = f"# sample_valid=false: {', '.join(invalid)}\n" if invalid else ""
+    identity_lines = [
+        "# project_metadata: " + json.dumps(row["project_metadata"], sort_keys=True, separators=(",", ":"))
+        for row in results if "project_metadata" in row
+    ]
+    if results and "project_metadata" in results[0]:
+        case_meta = results[0]["project_metadata"]
+        if isinstance(case_meta, dict) and isinstance(case_meta.get("native_manifest_sha256"), str):
+            identity_lines.insert(0, f"# native_manifest_sha256: {case_meta['native_manifest_sha256']}")
+    path.write_text(metadata + "\n".join(identity_lines) + ("\n" if identity_lines else "")
+                    + header + "\n".join(rows) + "\n", encoding="utf-8")
 
 
 def emit_samples(results: list[dict], path: Path) -> None:
@@ -240,7 +287,14 @@ def emit_samples(results: list[dict], path: Path) -> None:
         f"C plain / C ASan / YIAN check raw samples, measured {datetime.now():%Y-%m-%d}.",
         "Each pair is wall_ms (peak_rss_kb); one line per benchmark and leg.",
     ]
+    invalid = [row["key"] for row in results if not row.get("sample_valid", True)]
+    if invalid:
+        lines.append(f"# sample_valid=false: {', '.join(invalid)}; failed observations are retained")
+    name_counts: dict[str, int] = {}
+    for row in results:
+        name_counts[row["name"]] = name_counts.get(row["name"], 0) + 1
     for row in sorted(results, key=lambda item: item["name"]):
+        label = row["key"] if name_counts[row["name"]] > 1 else row["name"]
         for leg in ("an_check", "c_asan", "c_asan_sens", "c_plain"):
             stats = row["legs"].get(leg)
             if stats is None:
@@ -248,17 +302,27 @@ def emit_samples(results: list[dict], path: Path) -> None:
             pairs = ", ".join(
                 f"{ms:.1f} ({kb})" for ms, kb in zip(stats["ms"], stats["kb"])
             )
-            lines.append(f"- {row['name']} / {leg} ({len(stats['ms'])} runs): {pairs}")
+            lines.append(f"- {label} / {leg} ({len(stats['ms'])} runs): {pairs}")
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
-def fingerprint(compiler: Path, set_name: str, profile: str, fast: tuple[str, ...] = ()) -> dict[str, str]:
+def fingerprint(
+    compiler: Path,
+    set_name: str,
+    profile: str,
+    fast: tuple[str, ...] = (),
+    *,
+    anx: Path | None = None,
+    anx_source: str = "n/a",
+) -> dict[str, str]:
     def capture(cmd: list[str]) -> str:
         try:
             return subprocess.run(cmd, capture_output=True, text=True, check=False).stdout.splitlines()[0]
         except (OSError, IndexError):
             return "unknown"
 
+    if anx is None:
+        anx, anx_source = btw._resolve_anx_selection(None)
     digest = hashlib.sha256(compiler.read_bytes()).hexdigest()[:16]
     return {
         "date": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
@@ -267,6 +331,12 @@ def fingerprint(compiler: Path, set_name: str, profile: str, fast: tuple[str, ..
         "cpu": capture(["bash", "-c", "lscpu | awk -F: '/Model name/ {print $2; exit}'"]).strip(),
         "clang": capture([btw.C_COMPILER, "--version"]),
         "yianc": f"{compiler} (sha256:{digest})",
+        "anx": str(anx),
+        "anx_sha256": btw.file_sha256(anx),
+        "anx_source": anx_source,
+        "cmake": btw._tool_version("cmake"),
+        "project_layout": "2",
+        "project_digests": "n/a",
         "python": platform.python_version(),
         "set": f"{set_name}/{profile}",
         "fast_scale": ", ".join(sorted(fast)) if fast else "none",
@@ -283,6 +353,7 @@ def main() -> int:
     parser.add_argument("--runs", type=int, help="measured runs per leg (default: the set's runs)")
     parser.add_argument("--pin", type=int, default=4, help="CPU for taskset pinning (default: 4; 0 disables pinning)")
     parser.add_argument("--yianc", metavar="PATH", help="Native compiler (default: YIANC, then PATH)")
+    parser.add_argument("--anx", metavar="PATH", help="Native project builder (default: ANX, then PATH)")
     parser.add_argument("--no-sens", action="store_true", help="skip the binarytree ASan sensitivity leg")
     parser.add_argument("--no-compile", action="store_true", help="reuse existing binaries")
     parser.add_argument("--samples", metavar="PATH",
@@ -309,12 +380,13 @@ def main() -> int:
         compiler, source = btw.resolve_native_selection(
             explicit=args.yianc, configured=os.environ.get("YIANC"), default="yianc"
         )
+        anx, anx_source = btw._resolve_anx_selection(args.anx)
     except ValueError as error:
         parser.error(str(error))
 
     print(
         f"[asan] set {set_def.name} scale {profile} benchmarks {len(chosen)} "
-        f"runs {runs} pin {pin} compiler {compiler} ({source})",
+        f"runs {runs} pin {pin} yianc {compiler} ({source}) anx {anx} ({anx_source})",
         file=sys.stderr,
     )
 
@@ -327,7 +399,7 @@ def main() -> int:
         for spec in chosen:
             btw.compile_c(spec)
             compile_asan_ref(spec)
-            btw.compile_an(spec, profile_for(spec), raw=False, compiler=compiler)
+            btw.compile_an(spec, profile_for(spec), raw=False, compiler=compiler, anx=anx)
             print(f"[compile] {spec.key} ok", file=sys.stderr)
 
     md_path = RESULTS / "asan.md"
@@ -337,13 +409,22 @@ def main() -> int:
     def dump() -> None:
         """Persist current results so an interrupted session keeps its measurements."""
         RESULTS.mkdir(parents=True, exist_ok=True)
+        cases = [row["project_metadata"] for row in results if "project_metadata" in row]
+        fp.update(btw._summarize_case_identity(cases))
+        native_manifest = btw.BENCH_DIR / "native" / "manifest.json"
+        fp["native_manifest_sha256"] = btw.file_sha256(native_manifest) if native_manifest.is_file() else "n/a"
         md_path.write_text(
             render_md(results, fp, runs, pin, set_def.name, profile), encoding="utf-8"
         )
         write_csv(results, csv_path)
         emit_samples(results, samples_path)
 
-    fp = fingerprint(compiler, set_def.name, profile, tuple(sorted(fast_set)))
+    fp = fingerprint(
+        compiler, set_def.name, profile, tuple(sorted(fast_set)), anx=anx, anx_source=anx_source
+    )
+    fp["project_digests"] = ";".join(
+        f"{spec.key}={btw.projects.project_digest(spec.project)}" for spec in chosen
+    )
     results = []
     for spec in chosen:
         legs: dict[str, tuple[Path, dict[str, str] | None]] = {
@@ -356,16 +437,21 @@ def main() -> int:
                 ASAN_DIR / f"{spec.source}_{spec.name}",
                 {"ASAN_OPTIONS": ASAN_SENS},
             )
-        samples, codes, outputs = measure(spec, legs, profile_for(spec), runs, pin)
-        c_check_ok = spec.check.ok(codes.get("c_plain", -1), outputs.get("c_plain", ""))
+        samples, codes, outputs, sample_valid = measure(spec, legs, profile_for(spec), runs, pin)
+        c_check_ok = btw._check_file_result(spec, outputs["c_plain"]) and codes.get("c_plain", -1) == spec.check.rc
         asan_match = all(
-            outputs.get(leg) == outputs.get("c_plain")
-            and codes.get(leg) == codes.get("c_plain")
+            leg in outputs
+            and btw.execution.output_equal(outputs[leg], outputs["c_plain"])
             for leg in ("c_asan", "c_asan_sens")
             if leg in outputs
         )
         # All languages use the same result/exit contract, including fann's 51.
-        yian_ok = spec.check.ok(codes.get("an_check", -1), outputs.get("an_check", ""))
+        yian_ok = "an_check" in outputs and btw._check_file_result(spec, outputs["an_check"])
+        identity = btw._selected_report_identity(
+            [(spec, profile_for(spec))], btw.OUT_DIR / "asan-inputs"
+        )
+        case_metadata = json.loads(identity["project_metadata"])[0]
+        case_metadata["native_manifest_sha256"] = identity["native_manifest_sha256"]
         results.append(
             {
                 "key": spec.key,
@@ -376,6 +462,8 @@ def main() -> int:
                 "c_check_ok": c_check_ok,
                 "asan_match": asan_match,
                 "yian_ok": yian_ok,
+                "sample_valid": sample_valid,
+                "project_metadata": case_metadata,
             }
         )
         med = {leg: statistics.median(s["ms"]) for leg, s in samples.items()}
@@ -387,6 +475,8 @@ def main() -> int:
             flags.append("ASan stdout differs from C plain")
         if not yian_ok:
             flags.append("YIAN output/exit fails the authoritative check")
+        if not sample_valid:
+            flags.append("one or more warmup/sample checks failed; ratios are unavailable")
         extra = " (" + "; ".join(flags) + ")" if flags else ""
         print(f"[measure] {spec.key}: {text}{extra}", file=sys.stderr)
         dump()

@@ -3,8 +3,8 @@
 
 Directories and artifacts:
 
-  bench/ALLOC/an/<name>.an        Allocator source; optional raw override <name>.raw.an alongside it
-  bench/ALLOC/specs/<name>.json   Focus tags and scales, using source // bench-scale markers
+  bench/ALLOC/<name>/spec.json   Focus tags and scales
+  bench/ALLOC/<name>/yian/       Allocator package; optional raw/ overlay
   bench/results/alloc.{md,csv}    Generated results with environment fingerprint and commit
 
 Modes and protocol: allocator benchmarks have no C reference. Raw mode (--raw-pointers) uses libc malloc/free.
@@ -12,8 +12,7 @@ Modes and protocol: allocator benchmarks have no C reference. Raw mode (--raw-po
   verify identical stdout.
 
 Scales:
-  fast substitutes specs/<name>.json scale.fast into // bench-scale marker lines,
-  generating copies under build/bench/src/fast/ALLOC/ before compilation; full uses repository sources.
+  fast substitutes spec.json scale.fast into the staged YIAN package; full uses the declared default.
   Assertions are functions of scale, so reducing scale preserves assertion semantics.
 
 Usage:
@@ -40,33 +39,59 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 
 from _toolchain.native import file_sha256, resolve_native_selection
 
+try:
+    from . import projects
+except ImportError:  # Direct script execution puts bench/ on sys.path.
+    import projects
+
 ROOT = Path(__file__).resolve().parent.parent
-BENCH_DIR = ROOT / "bench" / "ALLOC"
-AN_DIR = BENCH_DIR / "an"
-SPEC_DIR = BENCH_DIR / "specs"
+BENCH_ROOT = ROOT / "bench"
+BENCH_DIR = BENCH_ROOT / "ALLOC"
 BUILD_DIR = ROOT / "build" / "bench" / "alloc"
-SRC_BUILD_DIR = ROOT / "build" / "bench" / "src"
 RESULTS_DIR = ROOT / "bench" / "results"
 TIME_BIN = "/usr/bin/time"
 OPT_LEVEL = "-O2"
-RAW_SUFFIX = ".raw.an"
-SCALE_MARKER = "// bench-scale"
 PROFILES = ("fast", "full")
 DEFAULT_RUNS = {"fast": 3, "full": 7}
 
 _RSS_RE = re.compile(r"Maximum resident set size \(kbytes\): (\d+)")
-_SCALE_LINE_RE = re.compile(
-    r"^(?P<head>\s*let\s+[A-Za-z_]\w*\s*:\s*[A-Za-z_]\w*\s*=\s*)(?P<value>\d+)(?P<tail>;\s*"
-    + re.escape(SCALE_MARKER)
-    + r".*)$",
-    re.MULTILINE,
-)
+
+
+def _tool_version(tool: str) -> str:
+    try:
+        result = subprocess.run([tool, "--version"], capture_output=True, text=True, timeout=10)
+    except (OSError, subprocess.SubprocessError):
+        return "n/a"
+    if result.returncode != 0 or not result.stdout:
+        return "n/a"
+    return result.stdout.splitlines()[0].strip()
+
+
+def _resolve_anx_selection(
+    explicit: str | None, *, search_path: str | None = None
+) -> tuple[Path, str]:
+    selected, source = resolve_native_selection(
+        explicit=explicit, configured=os.environ.get("ANX"), default="anx", search_path=search_path
+    )
+    return selected, "ANX" if source == "YIANC" else source
+
+
+def _allocator_projects() -> dict[str, projects.BenchmarkProject]:
+    try:
+        found = projects.discover_projects(BENCH_ROOT)
+    except ValueError as error:
+        raise SystemExit(f"[discover] {error}") from error
+    return {
+        item.name: item
+        for item in found
+        if item.source == "ALLOC" and item.c is None
+    }
 
 
 def discover(names: str | None) -> list[str]:
-    found = sorted(path.stem for path in AN_DIR.glob("*.an") if not path.name.endswith(RAW_SUFFIX))
+    found = sorted(_allocator_projects())
     if not found:
-        raise SystemExit(f"[discover] no benchmarks under {AN_DIR}")
+        raise SystemExit(f"[discover] no benchmarks under {BENCH_DIR}")
     if names:
         wanted = [name.strip() for name in names.split(",") if name.strip()]
         missing = [name for name in wanted if name not in found]
@@ -77,7 +102,10 @@ def discover(names: str | None) -> list[str]:
 
 
 def load_spec(name: str) -> dict[str, object]:
-    path = SPEC_DIR / f"{name}.json"
+    project = _allocator_projects().get(name)
+    if project is None:
+        raise SystemExit(f"[spec] unknown allocator project ALLOC/{name}")
+    path = project.spec_path
     if not path.exists():
         raise SystemExit(f"[spec] missing {path}")
     data = json.loads(path.read_text(encoding="utf-8"))
@@ -94,33 +122,6 @@ def scale_value(spec: dict[str, object], profile: str) -> int | None:
     return int(fast) if fast is not None else None
 
 
-def source_path(name: str, raw: bool, spec: dict[str, object], profile: str) -> Path:
-    """Prefer <name>.raw.an overrides for raw mode; fast scale generates resized build copies."""
-    value = scale_value(spec, profile)
-    if value is None:
-        path = AN_DIR / f"{name}.raw.an" if raw and (AN_DIR / f"{name}.raw.an").exists() else AN_DIR / f"{name}.an"
-        return path
-    out_dir = SRC_BUILD_DIR / profile / "ALLOC"
-    out_dir.mkdir(parents=True, exist_ok=True)
-    for candidate in (AN_DIR / f"{name}.an", AN_DIR / f"{name}.raw.an"):
-        if not candidate.exists():
-            continue
-        if candidate.name.endswith(RAW_SUFFIX) and not raw:
-            continue
-        if not candidate.name.endswith(RAW_SUFFIX) and raw and (AN_DIR / f"{name}.raw.an").exists():
-            continue
-        text = candidate.read_text(encoding="utf-8")
-        patched, count = _SCALE_LINE_RE.subn(
-            lambda match: f"{match.group('head')}{value}{match.group('tail')}", text
-        )
-        if count != 1:
-            raise SystemExit(f"[scale] {candidate}: expected exactly 1 `{SCALE_MARKER}` marker line, got {count}")
-        dst = out_dir / candidate.name
-        dst.write_text(patched, encoding="utf-8")
-        return dst
-    raise SystemExit(f"[src] {name}: no suitable source found")
-
-
 def compile_one(
     name: str,
     raw: bool,
@@ -128,19 +129,29 @@ def compile_one(
     spec: dict[str, object],
     profile: str,
     compiler: Path,
+    *,
+    anx: Path | None = None,
 ) -> Path:
+    project = _allocator_projects().get(name)
+    if project is None:
+        raise SystemExit(f"[compile] unknown allocator project ALLOC/{name}")
     binary = BUILD_DIR / f"{name}.{'raw' if raw else 'fat'}"
-    binary.parent.mkdir(parents=True, exist_ok=True)
-    src = source_path(name, raw, spec, profile)
-    cmd = [str(compiler), OPT_LEVEL]
-    if raw:
-        cmd.append("--raw-pointers")
-    cmd += [str(compiler_root / "lib" / "src"), str(src), "-o", str(binary)]
-    environment = os.environ.copy()
-    proc = subprocess.run(cmd, capture_output=True, text=True, cwd=compiler_root, env=environment)
-    if proc.returncode != 0:
-        raise SystemExit(f"[compile] {name} ({'raw' if raw else 'fat'}) failed:\n{proc.stdout}\n{proc.stderr}")
-    return binary
+    try:
+        anx_path = anx
+        if anx_path is None:
+            anx_path, _ = _resolve_anx_selection(None)
+        return projects.build_yian(
+            project,
+            profile,
+            raw,
+            scale_value(spec, profile),
+            compiler,
+            anx_path,
+            compiler_root,
+            binary,
+        )
+    except (ValueError, RuntimeError) as error:
+        raise SystemExit(f"[compile] {name} ({'raw' if raw else 'fat'}) failed: {error}") from error
 
 
 def run_one(binary: Path, pin: int | None) -> tuple[float, float, str]:
@@ -171,6 +182,7 @@ def main() -> int:
     parser.add_argument("--pin", type=int, default=None, help="CPU number for taskset pinning")
     parser.add_argument("--compiler-root", type=Path, default=ROOT, help="source tree containing the standard library and inputs (default: this repository)")
     parser.add_argument("--yianc", metavar="PATH", help="Native compiler (default: nonempty YIANC, then PATH)")
+    parser.add_argument("--anx", metavar="PATH", help="Native project builder (default: nonempty ANX, then PATH)")
     args = parser.parse_args()
 
     root = args.compiler_root.resolve()
@@ -180,13 +192,21 @@ def main() -> int:
             configured=os.environ.get("YIANC"),
             default="yianc",
         )
+        anx, anx_source = _resolve_anx_selection(args.anx)
     except ValueError as error:
         parser.error(str(error))
     compiler_hash = file_sha256(compiler)
     runs = args.runs if args.runs is not None else DEFAULT_RUNS[args.scale]
     names = discover(args.names)
+    allocator_projects = _allocator_projects()
     print(f"Standard library/input source tree: {root}")
     print(f"Native yianc: {compiler}  SHA-256: {compiler_hash}  source: {compiler_source}")
+    anx_hash = file_sha256(anx)
+    print(f"Native anx: {anx}  SHA-256: {anx_hash}  source: {anx_source}")
+    print(f"Project layout: 2; CMake: {_tool_version('cmake')}")
+    print("Project digests: " + ";".join(
+        f"ALLOC/{name}={projects.project_digest(allocator_projects[name])}" for name in names
+    ))
     print(f"Set: ALLOC  scale: {args.scale}  sampling: {runs} runs per state, minimum wall time / maximum peak RSS; pinning: {args.pin if args.pin is not None else 'none'}")
     print("")
     header = "| benchmark | fat min (ms) | raw min (ms) | fat/raw | fat peak RSS (MB) | raw peak RSS (MB) | stdout match | scale |"
@@ -198,7 +218,7 @@ def main() -> int:
         value = scale_value(spec, args.scale)
         results: dict[str, tuple[float, float, str]] = {}
         for raw in (False, True):
-            binary = compile_one(name, raw, root, spec, args.scale, compiler)
+            binary = compile_one(name, raw, root, spec, args.scale, compiler, anx=anx)
             samples = [run_one(binary, args.pin) for _ in range(runs)]
             results["raw" if raw else "fat"] = (
                 min(sample[0] for sample in samples),
@@ -219,6 +239,8 @@ def main() -> int:
         )
 
     RESULTS_DIR.mkdir(parents=True, exist_ok=True)
+    native_manifest = BENCH_ROOT / "native" / "manifest.json"
+    native_manifest_sha = file_sha256(native_manifest) if native_manifest.is_file() else "n/a"
     md = [
         f"# Allocator benchmarks (fat vs raw) - scale `{args.scale}`",
         "",
@@ -226,6 +248,13 @@ def main() -> int:
         f"Sampling: {runs} runs per state, minimum wall time / maximum peak RSS; pinning: {args.pin if args.pin is not None else 'none'}; "
         f"commit: `{_git_head()}`; date: {datetime.date.today().isoformat()}",
         f"Native yianc: `{compiler}` (SHA-256 `{compiler_hash}`, source `{compiler_source}`).",
+        f"Native anx: `{anx}` (SHA-256 `{anx_hash}`, source `{anx_source}`).",
+        "Project layout: `2`; CMake: `" + _tool_version("cmake") + "`.",
+        f"Native dependency manifest SHA-256: `{native_manifest_sha}`; these ALLOC projects select no packaged static archive.",
+        "External-library instrumentation: not applicable; the allocator comparison uses libc malloc/free.",
+        "Project digests: " + ";".join(
+            f"ALLOC/{name}={projects.project_digest(allocator_projects[name])}" for name in names
+        ) + ".",
         "",
         header,
         "| --- | ---: | ---: | ---: | ---: | ---: | --- | ---: |",
@@ -238,6 +267,13 @@ def main() -> int:
         f"# scale: {args.scale}  runs: {runs}  pin: {args.pin if args.pin is not None else 'none'}"
         f"  commit: {_git_head()}  date: {datetime.date.today().isoformat()}\n"
         f"# yianc: {compiler}  sha256: {compiler_hash}  source: {compiler_source}\n"
+        f"# anx: {anx}  sha256: {anx_hash}  source: {anx_source}\n"
+        f"# project_layout: 2  cmake: {_tool_version('cmake')}\n"
+        f"# native_manifest_sha256: {native_manifest_sha}\n"
+        "# external_instrumentation: not applicable; ALLOC links no packaged static archive\n"
+        "# project_digests: "
+        + ";".join(f"ALLOC/{name}={projects.project_digest(allocator_projects[name])}" for name in names)
+        + "\n"
         "name,fat_min_ms,raw_min_ms,ratio_fat_raw,fat_rss_mb,raw_rss_mb,stdout_match,scale\n"
         + "\n".join(csv_rows)
         + "\n",

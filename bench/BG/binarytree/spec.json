@@ -1,0 +1,19 @@
+{
+  "name": "binarytree",
+  "source": "BG",
+  "tags": [
+    "alloc",
+    "ptr"
+  ],
+  "argv": [],
+  "check": {
+    "rc": 0
+  },
+  "note": "Complete binary-trees output; C receives depth as argv and YIAN selects it through the build-time scale marker.",
+  "scale": {
+    "default": 16,
+    "fast": 12,
+    "c": "argv"
+  },
+  "io": {}
+}

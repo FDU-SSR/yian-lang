@@ -1,0 +1,18 @@
+extern "C" {
+    fn native_answer() -> c_int;
+    fn testkit_value() -> c_int;
+}
+
+ffi fn native_answer_value() -> i32 {
+    i32(native_answer())
+}
+
+ffi fn testkit_value_yian() -> i32 {
+    i32(testkit_value())
+}
+
+fn main() {
+    assert native_answer_value() == 42;
+    assert testkit_value_yian() == 7;
+    @print("42 and test-only 7\n");
+}

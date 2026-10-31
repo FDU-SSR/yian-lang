@@ -205,7 +205,7 @@ pub fn parse_args() -> CompilerConfig {
 
     parser.add_argument("packages")
     .long("packages").metavar("PATH")
-    .help("v2 package map");
+    .help("v2 or v3 package map");
 
     parser.add_argument("raw-pointers")
     .long("raw-pointers").action(Action.StoreTrue)

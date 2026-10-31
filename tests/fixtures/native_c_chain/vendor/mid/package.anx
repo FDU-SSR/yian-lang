@@ -1,0 +1,10 @@
+[package]
+name = "mid"
+kind = "lib"
+ffi = true
+
+[dependencies]
+leaf = { path = "../leaf" }
+
+[native.c]
+archives = ["lib/libmid.a"]

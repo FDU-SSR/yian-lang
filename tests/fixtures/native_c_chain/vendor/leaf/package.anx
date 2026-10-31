@@ -1,0 +1,7 @@
+[package]
+name = "leaf"
+kind = "lib"
+ffi = true
+
+[native.c]
+archives = ["lib/libleaf.a"]

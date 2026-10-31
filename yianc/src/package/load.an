@@ -1,9 +1,10 @@
 from yianc.common.location import SourceSpan;
 from yianc.diagnostics.model import DiagnosticCode, AnalysisError;
-from yianc.package.model import PackageMap, PackageSpec, NativeLLVM;
+from yianc.package.model import PackageMap, PackageSpec, NativeC, NativeLLVM;
 from yianc.package.provenance import normalize_path, within;
 from std.core.convert import From;
 from std.core.fs import read_to_string, metadata;
+from std.core.io import File, OpenMode, Read;
 from std.core.iter import Iterator, IntoIterator;
 from std.core.ops import Index;
 from std.core.path import PathBuf, Path;
@@ -74,17 +75,20 @@ impl PackageMap {
     static pub fn from_document(document: Value&) -> Result<Self, AnalysisError> {
         let top = object(document)?;
         let format = field(top, "format")?;
-        let valid_version = match format {
+        let format_version = match format {
             Number(value) => match value {
-                Signed(value) => *value == 2,
-                Unsigned(value) => *value == 2,
-                _ => false
+                Signed(value) => if *value == 2 { 2u64 } elif *value == 3 { 3u64 } else { 0u64 },
+                Unsigned(value) => if *value == 2u64 { 2u64 } elif *value == 3u64 { 3u64 } else { 0u64 },
+                _ => 0u64
             },
-            _ => false
+            _ => 0u64
         };
 
-        if !valid_version {
-            return Result<Self, AnalysisError>.Err(invalid("package map requires format 2"));
+        if format_version != 2u64 && format_version != 3u64 {
+            return Result<Self, AnalysisError>.Err(invalid("package map requires format 2 or 3"));
+        }
+        if format_version == 2u64 && top.get("nativeRoots").is_some() {
+            return Result<Self, AnalysisError>.Err(invalid("format 2 cannot declare nativeRoots"));
         }
 
         let table = object(field(top, "packages")?)?;
@@ -104,7 +108,7 @@ impl PackageMap {
                 None => break
             };
 
-            let package = parse_spec(member[0], member[1])?;
+            let package = parse_spec(member[0], member[1], format_version == 3u64)?;
 
             if result.find(package.name.as_str()).is_some() {
                 package.drop();
@@ -134,6 +138,30 @@ impl PackageMap {
             },
         }
 
+        if format_version == 3u64 {
+            match top.get("nativeRoots") {
+                None => {},
+                Some(value) => {
+                    let names = string_array(value)?;
+                    let transferred_names = false;
+                    defer { if !transferred_names { drop_strings(&names); } };
+                    for name in names {
+                        if result.find(name.as_str()).is_none() {
+                            return Result<Self, AnalysisError>.Err(invalid("unknown native root package"));
+                        }
+                        for existing in result.native_roots {
+                            if existing.as_str() == name.as_str() {
+                                return Result<Self, AnalysisError>.Err(invalid("duplicate native root package"));
+                            }
+                        }
+                        result.native_roots.push(String.from(&name.as_str()));
+                    }
+                    drop_strings(&names);
+                    transferred_names = true;
+                },
+            }
+        }
+
         for package in result.packages {
             for dependency in package.dependencies {
                 if result.find(dependency.as_str()).is_none() {
@@ -148,7 +176,7 @@ impl PackageMap {
 }
 
 // This aggregate is the sole owner of every successfully parsed field.
-fn parse_spec(name: str, value: Value&) -> Result<PackageSpec, AnalysisError> {
+fn parse_spec(name: str, value: Value&, format3: bool) -> Result<PackageSpec, AnalysisError> {
     if name.as_slice().len() == 0 {
         return Result<PackageSpec, AnalysisError>.Err(invalid("empty package name"));
     }
@@ -160,8 +188,12 @@ fn parse_spec(name: str, value: Value&) -> Result<PackageSpec, AnalysisError> {
     }
 
     let source_root = normalize_path(root)?;
+    if !format3 && data.get("nativeC").is_some() {
+        source_root.drop();
+        return Result<PackageSpec, AnalysisError>.Err(invalid("format 2 cannot declare nativeC"));
+    }
     let package = PackageSpec(String.from(&name), source_root, String.new(), Option<PathBuf>.None,
-        Vec<String>.new(), false, Option<NativeLLVM>.None);
+        Vec<String>.new(), false, Option<NativeLLVM>.None, Option<NativeC>.None);
     let transferred = false;
     defer { if !transferred { package.drop(); } };
 
@@ -171,6 +203,7 @@ fn parse_spec(name: str, value: Value&) -> Result<PackageSpec, AnalysisError> {
     package.dependencies = parse_dependencies(data)?;
     package.allows_ffi = parse_ffi(data)?;
     package.native_llvm = parse_native(data, &package)?;
+    if format3 { package.native_c = parse_native_c(data, &package)?; }
 
     transferred = true;
     Result<PackageSpec, AnalysisError>.Ok(package)
@@ -242,6 +275,110 @@ fn string_array(value: Value&) -> Result<Vec<String>, AnalysisError> {
 fn drop_strings(strings: Vec<String>&) {
     for value in *strings { value.drop(); }
     strings.drop();
+}
+
+fn has_string(values: Vec<String>&, value: str) -> bool {
+    for existing in *values {
+        if existing.as_str() == value { return true; }
+    }
+    false
+}
+
+fn normal_archive(path: str) -> bool {
+    let file = match File.open(path, OpenMode.Read) {
+        Ok(value) => value,
+        Err(problem) => { problem.drop(); return false; },
+    };
+    defer file.drop();
+    let header: u8[8] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8];
+    match file.read_exact(header.as_slice()) {
+        Ok(_) => header[0] == b'!' && header[1] == b'<' && header[2] == b'a' &&
+            header[3] == b'r' && header[4] == b'c' && header[5] == b'h' &&
+            header[6] == b'>' && header[7] == b'\n',
+        Err(problem) => { problem.drop(); false },
+    }
+}
+
+fn parse_native_c_paths(data: Object&, field_name: str, package_root: Path,
+    suffix: str, directory: bool, archive: bool) -> Result<Vec<String>, AnalysisError> {
+    let value = match data.get(field_name) {
+        None => return Result<Vec<String>, AnalysisError>.Ok(Vec<String>.new()),
+        Some(value) => value,
+    };
+    let raw = string_array(value)?;
+    defer drop_strings(&raw);
+    let output = Vec<String>.new();
+    let transferred = false;
+    defer { if !transferred { drop_strings(&output); } };
+    for input in raw {
+        let path = input.as_str();
+        if path == "" || Path.new(path).is_absolute() || (suffix != "" && !path.ends_with(suffix)) {
+            return Result<Vec<String>, AnalysisError>.Err(invalid("invalid nativeC path"));
+        }
+        let parts = path.split("/");
+        loop {
+            let part = match parts.next() { Some(value) => value, None => break };
+            if part == ".." {
+                return Result<Vec<String>, AnalysisError>.Err(invalid("nativeC path escapes package"));
+            }
+        }
+        let joined = package_root.join(path);
+        defer joined.drop();
+        let canonical = normalize_path(joined.as_str())?;
+        defer canonical.drop();
+        if !within(canonical.as_str(), package_root.as_str()) {
+            return Result<Vec<String>, AnalysisError>.Err(invalid("nativeC path escapes package"));
+        }
+        require_path_kind(canonical.as_str(), directory)?;
+        if archive && !normal_archive(canonical.as_str()) {
+            return Result<Vec<String>, AnalysisError>.Err(invalid("nativeC archive is not a regular ar archive"));
+        }
+        let relative = if canonical.as_str() == package_root.as_str() { "." }
+            else {
+                let start = package_root.as_str().as_slice().len() + 1u64;
+                str.from_slice_unchecked(canonical.as_str().as_slice()[start..canonical.as_str().as_slice().len()])
+            };
+        if has_string(&output, relative) {
+            return Result<Vec<String>, AnalysisError>.Err(invalid("duplicate nativeC path"));
+        }
+        output.push(String.from(&relative));
+    }
+    transferred = true;
+    Result<Vec<String>, AnalysisError>.Ok(output)
+}
+
+fn parse_native_c(data: Object&, package: PackageSpec&) -> Result<Option<NativeC>, AnalysisError> {
+    let value = match data.get("nativeC") {
+        None => return Result<Option<NativeC>, AnalysisError>.Ok(Option<NativeC>.None),
+        Some(value) => value,
+    };
+    if !package.allows_ffi {
+        return Result<Option<NativeC>, AnalysisError>.Err(invalid("nativeC requires ffi permission"));
+    }
+    let native_data = object(value)?;
+    let entries = native_data.iter();
+    loop {
+        let entry = match entries.next() { Some(value) => value, None => break };
+        if entry[0] != "sources" && entry[0] != "includeDirs" && entry[0] != "archives" {
+            return Result<Option<NativeC>, AnalysisError>.Err(invalid("unknown nativeC field"));
+        }
+    }
+    let root = match package.source_root.as_path().parent() {
+        Some(root) => normalize_path(root.as_str())?,
+        None => return Result<Option<NativeC>, AnalysisError>.Err(invalid("package root is unavailable")),
+    };
+    defer root.drop();
+    let native = NativeC(Vec<String>.new(), Vec<String>.new(), Vec<String>.new());
+    let transferred = false;
+    defer { if !transferred { native.drop(); } };
+    native.sources = parse_native_c_paths(native_data, "sources", root.as_path(), ".c", false, false)?;
+    native.include_dirs = parse_native_c_paths(native_data, "includeDirs", root.as_path(), "", true, false)?;
+    native.archives = parse_native_c_paths(native_data, "archives", root.as_path(), ".a", false, true)?;
+    if native.sources.is_empty() && native.archives.is_empty() {
+        return Result<Option<NativeC>, AnalysisError>.Err(invalid("nativeC requires a source or archive"));
+    }
+    transferred = true;
+    Result<Option<NativeC>, AnalysisError>.Ok(Option<NativeC>.Some(native))
 }
 
 fn parse_native(data: Object&, package: PackageSpec&) -> Result<Option<NativeLLVM>, AnalysisError> {
