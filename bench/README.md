@@ -40,10 +40,9 @@ and `fast` remains eight IDs. Set membership and task scales
 are in `sets/*.json` and each project's `spec.json`.
 
 The paired projects are reviewed against the
-[C → YIAN translation specification](../docs/c-to-yian.md); the
-[review checklist](../docs/c-to-yian-review.md) records uncovered translation
-cases and limits. AWFY retains its documented state and output-parameter
-rewrites. Each BG project records the mapping of every upstream C function,
+[C → YIAN translation specification](../docs/c-to-yian.md). AWFY retains its
+documented state and output-parameter rewrites. Each BG project records the
+mapping of every upstream C function,
 source/license hashes, representation differences, and any small C portability
 patch. `call_abi` still has an -O2 inlining issue, so it is not evidence of the
 three-state cost of the call boundary.

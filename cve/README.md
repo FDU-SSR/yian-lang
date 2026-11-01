@@ -5,10 +5,8 @@ The dataset contains 38 identifiers, each of which is a pair of programs under
 corresponding YIAN rewrite. Translation, representation differences and semantic
 correspondence are reviewed uniformly against the
 [C → YIAN specification](../docs/c-to-yian.md); this document records only the
-current dataset and runner behavior. The specification is a v0.5 draft. The
-[review checklist](../docs/c-to-yian-review.md) records only situations the rules
-do not cover, and each case README records its concrete representation and local
-verification scope.
+current dataset and runner behavior. The specification is a v0.5 draft. Each
+case README records its concrete representation and local verification scope.
 
 All 38 cases have a `README.md` recording the C-to-YIAN function correspondence,
 representation differences and first illegal operation. Fifteen were rewritten

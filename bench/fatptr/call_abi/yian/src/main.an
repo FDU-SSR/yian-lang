@@ -6,7 +6,7 @@ from std.core.env import args;
 //       mix_in takes one 24 B checked slice and one scalar;
 //       mix_wide takes two checked slices and one scalar, and additionally reads p[n].
 //       Each body performs eight iterations with four accesses. Current native -O2
-//       inlines both YIAN functions; see docs/c-to-yian-review.md before using this as call-cost evidence.
+//       inlines both YIAN functions, so it is not call-cost evidence.
 //       Call counts and arguments derive from argc, unknown to the compiler, preventing constant folding.
 // Scale: CALLS per round at the // bench-scale marker; ROUNDS is fixed.
 // C reference: bench/fatptr/c/call_abi.c, same algorithm/scale with 8 B raw pointer fields.
