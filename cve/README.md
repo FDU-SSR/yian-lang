@@ -5,8 +5,8 @@ The dataset contains 38 identifiers, each of which is a pair of programs under
 corresponding YIAN rewrite. Translation, representation differences and semantic
 correspondence are reviewed uniformly against the
 [C → YIAN specification](../docs/c-to-yian.md); this document records only the
-current dataset and runner behavior. The specification is a v0.5 draft. Each
-case README records its concrete representation and local verification scope.
+current dataset and runner behavior. Each case README records its concrete
+representation and local verification scope.
 
 All 38 cases have a `README.md` recording the C-to-YIAN function correspondence,
 representation differences and first illegal operation. Fifteen were rewritten
@@ -19,7 +19,7 @@ entry point. The read-only static arrays of ScreenPressor, FreeType, HyperKit,
 LibreDWG, RemoteFX and stb_image use array constants and caller-held local
 copies; the FreeType PNG signature also uses an array constant. Every array
 element matches C item by item, and the storage representation is checked against
-the read-only static array clause.
+the read-only static variable clause.
 
 Status return values and output parameters are represented separately: parsing,
 decoding and allocation functions preserve C's status/count and write-back order;
