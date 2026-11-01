@@ -13,8 +13,8 @@ sources. Sets, scale profiles, run protocol, and result files are documented in
 | Paired C/YIAN projects | `bench/AWFY/<name>/c/`, `bench/BG/<name>/c/`, `bench/fatptr/<name>/c/` | 27 | The AWFY/fatptr references are repository C projects; BG references retain the selected official sources and disclose any small C portability patch. Workload criteria are in the [C → YIAN specification](../docs/c-to-yian.md); current translation gaps and evidence limits are in the [review report](../docs/c-to-yian-review.md). |
 
 The `full` three-state set contains 27 pairs (14 AWFY, 10 BG, 3 fatptr), and
-`sets/bg.json` selects the ten BG projects. The `paper` set remains 14 IDs (9
-AWFY and the five original BG IDs). The four `ALLOC` projects are selected only
+`sets/bg.json` selects the ten BG projects. The `paper` set selects all 24 AWFY
+and BG projects (14 AWFY and 10 BG). The four `ALLOC` projects are selected only
 by the fat/raw allocator runner. GMP 6.3.0 and PCRE2 10.47 are fixed project-local
 dependencies for pidigits and regexredux; they are not benchmark projects. Both
 libraries use the same static archives in C/raw/fat and are not ASan-instrumented

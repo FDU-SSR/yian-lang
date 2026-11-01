@@ -11,19 +11,16 @@ binarytree additionally gets ``c_asan_sens``: the same ASan binary with
 ``quarantine_size_mb=0``, which isolates the runtime cost of ASan's quarantine.
 All legs run adjacent within one session, one warmup plus N measured runs, so
 drift between legs stays small.
-BG stdin files are generated and hash-identified before timing; each run reopens
-the same input and writes stdout to a binary file. A failed warmup/sample stays
-in the observations and makes that benchmark's ratios unavailable.
+BG stdin files are generated before timing; each run reopens
+the same input and writes stdout to a binary file. A failed warmup/sample stops export of that measurement.
 
 Outputs, under ``bench/results/``:
 
-  asan.csv            one row per benchmark and leg, with samples
-  asan.md             report: per-leg medians, derived ratios, geometric means
-  asan-samples.txt    raw samples (same format as the paper's data/)
+  asan.csv            one row per benchmark and leg, with performance samples, statistics and ratios
 
 Usage:
 
-  python bench/bench_asan.py                       # the paper's 14 benchmarks
+  python bench/bench_asan.py                       # the paper's 24 AWFY/BG benchmarks
   python bench/bench_asan.py --bench BG/fasta --runs 1
   python bench/bench_asan.py --set full --runs 5 --pin 4
 """
@@ -31,15 +28,12 @@ Usage:
 from __future__ import annotations
 
 import argparse
-import hashlib
-import json
 import os
-import platform
 import statistics
 import subprocess
+import shutil
 import sys
 import time
-from datetime import datetime
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -149,201 +143,15 @@ def measure(
     return samples, codes, outputs, sample_valid
 
 
-def geomean(values: list[float]) -> float | None:
-    if not values or any(v <= 0 for v in values):
-        return None
-    return statistics.geometric_mean(values)
-
-
-def render_md(results: list[dict], fingerprint: dict[str, str], runs: int,
-              pin: int | None, set_name: str, profile: str) -> str:
-    lines = [
-        "# ASan cross-comparison",
-        "",
-        f"- set: `{set_name}` (scale `{profile}`), benchmarks: {len(results)}",
-        f"- protocol: one warmup plus {runs} measured runs per leg, adjacent within one session",
-        f"- pin: {'none' if pin is None else f'taskset -c {pin}'}",
-        f"- `ASAN_OPTIONS` main: `{ASAN_MAIN}`; sensitivity (`{SENS_BENCH}`): `{ASAN_SENS}`",
-        "- BG input/output: input generation and hashing are outside consumer timing; each leg opens the same input file freshly and writes binary stdout to a file.",
-        "",
-        "## Machine",
-        "",
-    ]
-    for key, value in fingerprint.items():
-        if key != "project_metadata":
-            lines.append(f"- {key}: `{value}`")
-    if results:
-        lines += ["", "## Project, input, and oracle identity", ""]
-        for row in results:
-            metadata = row.get("project_metadata")
-            if metadata is not None:
-                lines.append(
-                    f"- `{row['key']}`: `{json.dumps(metadata, sort_keys=True, separators=(',', ':'))}`"
-                )
-    lines += [
-        "",
-        "## Per-leg medians",
-        "",
-        "| benchmark | leg | median ms | IQR ms | min–max ms | median RSS MB | runs |",
-        "| --- | --- | ---: | ---: | ---: | ---: | ---: |",
-    ]
-    for row in results:
-        for leg in LEG_ORDER:
-            stats = row["legs"].get(leg)
-            if stats is None:
-                continue
-            med = statistics.median(stats["ms"])
-            rss = statistics.median(stats["kb"]) / 1024.0
-            iqr = btw._stats(stats["ms"]).iqr
-            lo, hi = min(stats["ms"]), max(stats["ms"])
-            lines.append(
-                f"| {row['key']} | {LEG_LABEL[leg]} | {med:.1f} | {iqr:.1f} "
-                f"| {lo:.1f}–{hi:.1f} | {rss:.1f} | {len(stats['ms'])} |"
-            )
-    lines += [
-        "",
-        "## Derived ratios",
-        "",
-        "| benchmark | (i) C ASan / C plain | (ii) C ASan / YIAN check | (iii) YIAN check / C plain |",
-        "| --- | ---: | ---: | ---: |",
-    ]
-    pool = {"i": [], "ii": [], "iii": []}
-    for row in results:
-        legs = row["legs"]
-        if not all(leg in legs for leg in ("c_plain", "c_asan", "an_check")):
-            continue
-        if not row.get("sample_valid", True):
-            lines.append(f"| {row['key']} | n/a | n/a | n/a |")
-            continue
-        plain = statistics.median(legs["c_plain"]["ms"])
-        asan = statistics.median(legs["c_asan"]["ms"])
-        an = statistics.median(legs["an_check"]["ms"])
-        ratios = {"i": asan / plain, "ii": asan / an, "iii": an / plain}
-        for key, value in ratios.items():
-            pool[key].append(value)
-        lines.append(
-            f"| {row['key']} | {ratios['i']:.2f} | {ratios['ii']:.2f} | {ratios['iii']:.2f} |"
-        )
-    lines += [
-        "",
-        "Geometric means: "
-        + ", ".join(
-            f"({key}) {geomean(pool[key]):.2f}"
-            for key in ("i", "ii", "iii")
-            if pool[key]
-        ),
-        "",
-    ]
-    problems = []
-    for row in results:
-        if not row.get("sample_valid", True):
-            problems.append(f"{row['key']}: one or more warmup/sample checks failed; ratios are unavailable")
-        if not row["c_check_ok"]:
-            problems.append(f"{row['key']}: C baseline fails the authoritative check")
-        if not row["asan_match"]:
-            problems.append(f"{row['key']}: ASan stdout differs from C plain")
-        if not row["yian_ok"]:
-            problems.append(f"{row['key']}: YIAN output/exit fails the authoritative check")
-    lines += ["## Checks", ""]
-    if problems:
-        lines += [f"- {item}" for item in problems]
-    else:
-        lines.append("- C baselines pass, ASan stdout/exit match C plain, YIAN output/exit satisfy the same benchmark spec.")
-    lines.append("")
-    return "\n".join(lines)
-
-
 def write_csv(results: list[dict], path: Path) -> None:
-    header = "benchmark,source,leg,runs,median_ms,iqr_ms,min_ms,max_ms,median_rss_mb,exit_code\n"
-    rows = []
-    for row in results:
-        for leg in LEG_ORDER:
-            stats = row["legs"].get(leg)
-            if stats is None:
-                continue
-            s = btw._stats(stats["ms"])
-            rows.append(
-                f"{row['name']},{row['source']},{leg},{len(stats['ms'])},"
-                f"{s.med:.1f},{s.iqr:.1f},{s.min:.1f},{s.max:.1f},"
-                f"{statistics.median(stats['kb']) / 1024.0:.1f},{row['codes'].get(leg, 0)}"
-            )
-    invalid = [row["key"] for row in results if not row.get("sample_valid", True)]
-    metadata = f"# sample_valid=false: {', '.join(invalid)}\n" if invalid else ""
-    identity_lines = [
-        "# project_metadata: " + json.dumps(row["project_metadata"], sort_keys=True, separators=(",", ":"))
-        for row in results if "project_metadata" in row
-    ]
-    if results and "project_metadata" in results[0]:
-        case_meta = results[0]["project_metadata"]
-        if isinstance(case_meta, dict) and isinstance(case_meta.get("native_manifest_sha256"), str):
-            identity_lines.insert(0, f"# native_manifest_sha256: {case_meta['native_manifest_sha256']}")
-    path.write_text(metadata + "\n".join(identity_lines) + ("\n" if identity_lines else "")
-                    + header + "\n".join(rows) + "\n", encoding="utf-8")
+    if any(not row.get("sample_valid", True) or not row["c_check_ok"] or not row["asan_match"] or not row["yian_ok"] for row in results):
+        raise ValueError("benchmark execution failed its checks; performance CSV was not replaced")
+    records = [btw.results_io.make_record(row["key"], leg, row["legs"][leg]["ms"], row["legs"][leg]["kb"])
+               for row in results for leg in LEG_ORDER if leg in row["legs"]]
+    btw.results_io.write_csv(path, records)
 
 
-def emit_samples(results: list[dict], path: Path) -> None:
-    """Write samples in the format the paper's data/ files use: ``wall_ms (peak_rss_kb)``."""
-    lines = [
-        f"C plain / C ASan / YIAN check raw samples, measured {datetime.now():%Y-%m-%d}.",
-        "Each pair is wall_ms (peak_rss_kb); one line per benchmark and leg.",
-    ]
-    invalid = [row["key"] for row in results if not row.get("sample_valid", True)]
-    if invalid:
-        lines.append(f"# sample_valid=false: {', '.join(invalid)}; failed observations are retained")
-    name_counts: dict[str, int] = {}
-    for row in results:
-        name_counts[row["name"]] = name_counts.get(row["name"], 0) + 1
-    for row in sorted(results, key=lambda item: item["name"]):
-        label = row["key"] if name_counts[row["name"]] > 1 else row["name"]
-        for leg in ("an_check", "c_asan", "c_asan_sens", "c_plain"):
-            stats = row["legs"].get(leg)
-            if stats is None:
-                continue
-            pairs = ", ".join(
-                f"{ms:.1f} ({kb})" for ms, kb in zip(stats["ms"], stats["kb"])
-            )
-            lines.append(f"- {label} / {leg} ({len(stats['ms'])} runs): {pairs}")
-    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
-
-
-def fingerprint(
-    compiler: Path,
-    set_name: str,
-    profile: str,
-    fast: tuple[str, ...] = (),
-    *,
-    anx: Path | None = None,
-    anx_source: str = "n/a",
-) -> dict[str, str]:
-    def capture(cmd: list[str]) -> str:
-        try:
-            return subprocess.run(cmd, capture_output=True, text=True, check=False).stdout.splitlines()[0]
-        except (OSError, IndexError):
-            return "unknown"
-
-    if anx is None:
-        anx, anx_source = btw._resolve_anx_selection(None)
-    digest = hashlib.sha256(compiler.read_bytes()).hexdigest()[:16]
-    return {
-        "date": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-        "git": capture(["git", "-C", str(ROOT), "rev-parse", "--short", "HEAD"]),
-        "kernel": platform.release(),
-        "cpu": capture(["bash", "-c", "lscpu | awk -F: '/Model name/ {print $2; exit}'"]).strip(),
-        "clang": capture([btw.C_COMPILER, "--version"]),
-        "yianc": f"{compiler} (sha256:{digest})",
-        "anx": str(anx),
-        "anx_sha256": btw.file_sha256(anx),
-        "anx_source": anx_source,
-        "cmake": btw._tool_version("cmake"),
-        "project_layout": "2",
-        "project_digests": "n/a",
-        "python": platform.python_version(),
-        "set": f"{set_name}/{profile}",
-        "fast_scale": ", ".join(sorted(fast)) if fast else "none",
-    }
-
-
-def main() -> int:
+def __run() -> int:
     parser = argparse.ArgumentParser(description="C plain / C ASan / YIAN fat performance comparison")
     parser.add_argument("--set", dest="bench_set", default="paper", help="set name (default: paper)")
     parser.add_argument("--scale", choices=btw.SCALE_PROFILES, help="scale profile (default: the set's scale)")
@@ -356,8 +164,6 @@ def main() -> int:
     parser.add_argument("--anx", metavar="PATH", help="Native project builder (default: ANX, then PATH)")
     parser.add_argument("--no-sens", action="store_true", help="skip the binarytree ASan sensitivity leg")
     parser.add_argument("--no-compile", action="store_true", help="reuse existing binaries")
-    parser.add_argument("--samples", metavar="PATH",
-                        help="raw sample output (default: bench/results/asan-samples.txt)")
     args = parser.parse_args()
 
     specs = btw.discover()
@@ -386,7 +192,7 @@ def main() -> int:
 
     print(
         f"[asan] set {set_def.name} scale {profile} benchmarks {len(chosen)} "
-        f"runs {runs} pin {pin} yianc {compiler} ({source}) anx {anx} ({anx_source})",
+        f"states C plain / C ASan / YIAN",
         file=sys.stderr,
     )
 
@@ -402,29 +208,13 @@ def main() -> int:
             btw.compile_an(spec, profile_for(spec), raw=False, compiler=compiler, anx=anx)
             print(f"[compile] {spec.key} ok", file=sys.stderr)
 
-    md_path = RESULTS / "asan.md"
     csv_path = RESULTS / "asan.csv"
-    samples_path = Path(args.samples) if args.samples else RESULTS / "asan-samples.txt"
 
     def dump() -> None:
         """Persist current results so an interrupted session keeps its measurements."""
         RESULTS.mkdir(parents=True, exist_ok=True)
-        cases = [row["project_metadata"] for row in results if "project_metadata" in row]
-        fp.update(btw._summarize_case_identity(cases))
-        native_manifest = btw.BENCH_DIR / "native" / "manifest.json"
-        fp["native_manifest_sha256"] = btw.file_sha256(native_manifest) if native_manifest.is_file() else "n/a"
-        md_path.write_text(
-            render_md(results, fp, runs, pin, set_def.name, profile), encoding="utf-8"
-        )
         write_csv(results, csv_path)
-        emit_samples(results, samples_path)
 
-    fp = fingerprint(
-        compiler, set_def.name, profile, tuple(sorted(fast_set)), anx=anx, anx_source=anx_source
-    )
-    fp["project_digests"] = ";".join(
-        f"{spec.key}={btw.projects.project_digest(spec.project)}" for spec in chosen
-    )
     results = []
     for spec in chosen:
         legs: dict[str, tuple[Path, dict[str, str] | None]] = {
@@ -445,13 +235,8 @@ def main() -> int:
             for leg in ("c_asan", "c_asan_sens")
             if leg in outputs
         )
-        # All languages use the same result/exit contract, including fann's 51.
+        # All states use the same benchmark output/exit contract.
         yian_ok = "an_check" in outputs and btw._check_file_result(spec, outputs["an_check"])
-        identity = btw._selected_report_identity(
-            [(spec, profile_for(spec))], btw.OUT_DIR / "asan-inputs"
-        )
-        case_metadata = json.loads(identity["project_metadata"])[0]
-        case_metadata["native_manifest_sha256"] = identity["native_manifest_sha256"]
         results.append(
             {
                 "key": spec.key,
@@ -463,7 +248,6 @@ def main() -> int:
                 "asan_match": asan_match,
                 "yian_ok": yian_ok,
                 "sample_valid": sample_valid,
-                "project_metadata": case_metadata,
             }
         )
         med = {leg: statistics.median(s["ms"]) for leg, s in samples.items()}
@@ -482,10 +266,16 @@ def main() -> int:
         dump()
 
     dump()
-    print(f"[write] {md_path.relative_to(ROOT)}", file=sys.stderr)
     print(f"[write] {csv_path.relative_to(ROOT)}", file=sys.stderr)
-    print(f"[write] {samples_path}", file=sys.stderr)
     return 0
+
+
+def main() -> int:
+    try:
+        return __run()
+    finally:
+        shutil.rmtree(btw.OUT_DIR / "file-runs" / "asan", ignore_errors=True)
+        shutil.rmtree(btw.OUT_DIR / "asan-inputs", ignore_errors=True)
 
 
 if __name__ == "__main__":

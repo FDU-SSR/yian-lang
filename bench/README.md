@@ -15,8 +15,8 @@ bench/
 ├── fatptr/<name>/      3 representation/call/copy projects written here
 ├── ALLOC/<name>/       4 allocator projects, fat/raw only
 ├── native/             fixed GMP and PCRE2 packages, source, licenses, and rebuild material
-├── sets/*.json         full (27), bg (10), paper (14), fast (8), and focus selections
-├── results/            versioned historical reports and runner output locations
+├── sets/*.json         full (27), bg (10), paper (24), fast (8), and focus selections
+├── results/            plain numeric performance CSV files
 ├── projects.py         project discovery, dependency staging, build, and digest
 ├── execution.py        controlled file-based stdin/stdout and output identity
 ├── bench_three_way.py  C / raw / fat runner
@@ -35,8 +35,8 @@ or covered by YIAN guards. See [`native/README.md`](native/README.md).
 
 The suite contains 31 projects: 27 C/YIAN pairs (14 AWFY, 10 BG, and 3 fatptr)
 plus 4 two-state allocator projects. `full` selects all 27 pairs. `bg` selects
-the ten official BG tasks; `paper` remains the same 14 IDs (9 AWFY and the five
-original BG IDs), and `fast` remains eight IDs. Set membership and task scales
+the ten official BG tasks; `paper` selects all 14 AWFY and all ten BG projects,
+and `fast` remains eight IDs. Set membership and task scales
 are in `sets/*.json` and each project's `spec.json`.
 
 The paired projects are reviewed against the
@@ -48,11 +48,8 @@ source/license hashes, representation differences, and any small C portability
 patch. `call_abi` still has an -O2 inlining issue, so it is not evidence of the
 three-state cost of the call boundary.
 
-The stored `full` result report and frozen paper samples predate this project
-layout and the current BG implementations. Their embedded commit, date, and
-environment describe those historical runs; their measurements must not be
-attributed to the current 27-pair suite. No benchmark or paper data is refreshed
-by this documentation or by local task probes.
+The frozen paper data records the measurements used by the manuscript.
+Updating benchmark sources does not refresh those measurements.
 
 These commands compile, run, and measure selected benchmarks and are not part of
 default local acceptance. Before running repository validation, check the set,
@@ -144,7 +141,6 @@ comparisons should verify workload, cache behavior, and sampling conditions.
 The runners select native `anx` through `--anx PATH`, nonempty `ANX`, then `PATH`;
 anx selects native `yianc` through `--yianc PATH`, nonempty `YIANC`, then `PATH`.
 Both reject scripts, directories, non-executable files, and non-ELF files.
-Reports record canonical tool paths, SHA-256 values, and selection sources.
 `bench_allocator.py --compiler-root PATH` only sets the
 standard-library and input source root; it does not select the compiler.
 
@@ -158,9 +154,8 @@ standard-library and input source root; it does not select the compiler.
   frequency/thermal drift across time.
 - Semantic guard: C warmup must pass the spec's `check` (`rc` / `stdout_eq` /
   `stdout_contains` / `stdout_int_mod`); raw and fat warmup stdout and exit codes
-  must match byte for byte, and each must pass the same spec's output/exit checks
-  (for example fann is 51). A `no` in the report makes that benchmark's ratios
-  unusable.
+  must match byte for byte, and each must pass the same spec's output/exit checks.
+  A failed check stops export of that measurement.
 - **No regression thresholds**: performance experiments are reference only; no
   threshold scripts are written. Noise magnitude depends on the sampling
   environment; judging changes requires repeated measurements and the sample
@@ -198,10 +193,9 @@ python3 bench/bench_asan.py --set paper --runs 5 --pin 4
 python3 bench/bench_asan.py --bench BG/fasta --runs 1 --pin 0
 ```
 
-Results are written to `results/asan.md`, `results/asan.csv`, and
-`results/asan-samples.txt` (raw `wall_ms (peak_rss_kb)` samples, comparable with
-the frozen samples under the paper's data/). `--set paper` selects the paper's
-14 benchmarks; `--set full` selects all 27 paired projects. The semantic guard
+Results are written to `results/asan.csv`, including every wall-time/RSS pair,
+per-leg statistics, derived ratios and geometric means. `--set paper` selects the paper's
+24 benchmarks; `--set full` selects all 27 paired projects. The semantic guard
 requires C warmup to pass the spec's `check`, ASan stdout/exit codes to match C
 plain, and the YIAN leg to pass the same spec's output/exit checks.
 
@@ -221,27 +215,43 @@ python3 bench/bench_allocator.py --scale fast --yianc "$HOME/.local/bin/yianc"
 The four `bench/ALLOC` benchmarks have no C reference; the comparison state is
 libc `malloc`/`free` (raw), so this is a two-state comparison: same-size churn,
 mixed-size churn, grow-free, and varied-size grow-free. Results are written to
-`bench/results/alloc.{md,csv}`.
+`bench/results/alloc.csv`.
 
-## Result archive
+## CSV data format
 
-The versioned `full.{md,csv}` and `alloc.{md,csv}` files are historical
-snapshots. In particular, `full` records 22 paired projects from its recorded
-commit; the current `full` selector has 27. The checked-in `paper.json` still
-selects 14 IDs, but the historical paper samples predate the current BG source
-replacement. Dates, commits, and machine fingerprints scope those records; they
-do not establish performance for current project digests. Generated reports
-include project IDs/digests, input and native-library identity, compiler
-identity, checks, and measurement settings. A change to a set does not rewrite
-old results, and no sample refresh is implicit.
+CSV files contain performance data only. Each workload/state row has the
+benchmark name, state, number of samples, minimum/median/IQR/maximum time,
+coefficient of variation, peak/median RSS, and performance ratios. Individual
+observations are ordinary numbered columns: `time_ms_1`, `rss_kb_1`, and so on.
+Times use milliseconds and RSS uses KiB. Raw values retain their precision;
+derived statistics are displayed with up to six decimal places.
+
+`min_over_c` and `min_over_raw` compare minimum times for the three-state or
+allocator run. `median_over_c` and `median_over_yian` compare median times for
+the ASan run. Rows named `geomean` contain aggregate ratios; their sample and
+absolute-time/RSS cells are empty. Inapplicable ratios are empty cells.
+
+Output files have no JSON cells, comments, source/tool/environment information,
+parameters, hashes, validation records or report archives. Runtime output checks
+remain in memory and failed measurements stop export. Temporary program output
+and generated stdin files are cleaned when each benchmark runner exits.
+The aggregate script writes no logs or backups.
+
+`projects.py` builds projects, `execution.py` performs timed file I/O, and
+`results_io.py` writes these tables. The current paper comparison is in
+`results/paper.csv` and `results/asan.csv`; other selections write their own
+latest performance CSV when explicitly run.
+
+The entire `bench/results/` directory is Git-ignored. Results remain local to
+the machine that produced them. The paper checkout's `data/` copies are also
+Git-ignored; populate them from local measurements with `refresh_data.py`.
 
 ## Paper reproduction
 
 `scripts/rerun_paper_experiments.sh` runs `scripts/run_cve.py --all` (38 YIAN
 vulnerability projects), three-state performance (`--set paper`), and the ASan
 comparison (`--set paper`) in order, with output matching the individual
-runners; command output is also written to
-`build/paper-rerun/<timestamp>/run.log`.
+runners.
 
 CVE projects live in [`cve/`](../cve/README.md) and are independent of the
 compiler safety regressions in `tests/safety/`. C witnesses use separate CMake

@@ -3,21 +3,9 @@
   "scale": "full",
   "runs": 5,
   "include": [
-    "AWFY/bounce",
-    "AWFY/list",
-    "AWFY/mand",
-    "AWFY/nbody",
-    "AWFY/permute",
-    "AWFY/queen",
-    "AWFY/sieve",
-    "AWFY/storage",
-    "AWFY/towers",
-    "BG/binarytree",
-    "BG/fann",
-    "BG/fasta",
-    "BG/revcomp",
-    "BG/spectralnorm"
+    "AWFY/*",
+    "BG/*"
   ],
   "exclude": [],
-  "note": "The paper's 14 benchmarks (9 AWFY + 5 BG); both three-state and ASan comparisons use this profile"
+  "note": "The paper's 24 benchmarks (all 14 AWFY + all 10 BG); both three-state and ASan comparisons use this profile"
 }

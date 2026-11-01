@@ -63,7 +63,7 @@ fn advance(nbodies: i32, bodies: Planet[], dt: f64) {
     }
 
     let k: u64 = 0;
-    while k < nbodies {
+    while nbodies > 0 && k < u64(nbodies) {
         let b3: Planet = bodies[u64(k)];
         b3.x += b3.vx * dt;
         b3.y += b3.vy * dt;

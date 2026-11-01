@@ -15,8 +15,7 @@
 #   --refresh-data   copy the new samples into ../data via ../refresh_data.py
 #   -h, --help       show this help
 #
-# Results go to bench/results/; command output is also kept under
-# build/paper-rerun/<timestamp>/run.log.
+# Results are performance-only CSV files under bench/results/.
 set -Eeuo pipefail
 
 ROOT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
@@ -54,7 +53,7 @@ if ((SKIP_CVE && SKIP_PERF && SKIP_ASAN)); then
     exit 2
 fi
 
-for command_name in "$PYTHON_BIN" clang taskset git file sha256sum; do
+for command_name in "$PYTHON_BIN" clang taskset file; do
     command -v "$command_name" >/dev/null || {
         echo "required command not found: $command_name" >&2
         exit 2
@@ -76,29 +75,13 @@ export YIANC="$YIANC_BIN"
 
 if [[ "$PIN" == "0" ]]; then
     PIN_ARG=()
-    PIN_LABEL="none"
 else
     PIN_ARG=(--pin "$PIN")
-    PIN_LABEL="$PIN"
 fi
 BENCH_ARG=()
 if [[ -n "$BENCH" ]]; then
     BENCH_ARG=(--bench "$BENCH")
 fi
-
-STAMP=$(date +%Y%m%d-%H%M%S)
-RUN_DIR="$ROOT_DIR/build/paper-rerun/$STAMP"
-mkdir -p "$RUN_DIR"
-LOG_FILE="$RUN_DIR/run.log"
-exec > >(tee "$LOG_FILE") 2>&1
-
-echo "SecL paper experiment rerun"
-echo "implementation_commit=$(git rev-parse HEAD)"
-echo "yianc=$YIANC ($(sha256sum "$YIANC" | cut -d' ' -f1))"
-echo "python=$("$PYTHON_BIN" --version 2>&1)"
-echo "clang=$(clang --version | sed -n '1p')"
-echo "runs=$RUNS pin=$PIN_LABEL bench=${BENCH:-paper set}"
-echo
 
 if ((SKIP_CVE == 0)); then
     echo "== CVE project suite =="
@@ -120,15 +103,11 @@ if ((SKIP_ASAN == 0)); then
 fi
 
 echo "== summary =="
-for artifact in bench/results/full.md bench/results/full.csv bench/results/asan.md \
-                bench/results/asan.csv bench/results/asan-samples.txt; do
+for artifact in bench/results/paper.csv bench/results/partial.csv bench/results/asan.csv; do
     if [[ -f "$artifact" ]]; then
         echo "wrote $artifact"
     fi
 done
-if [[ -f bench/results/asan.md ]]; then
-    grep -m1 'Geometric means' bench/results/asan.md || true
-fi
 
 if ((REFRESH_DATA)); then
     if [[ -x "$ROOT_DIR/../refresh_data.py" ]]; then
@@ -141,5 +120,4 @@ if ((REFRESH_DATA)); then
 fi
 
 echo
-echo "log: ${LOG_FILE#"$ROOT_DIR/"}"
-echo "next: review bench/results/*.md and update the numbers quoted in the paper"
+echo "next: inspect bench/results/*.csv and update the numbers quoted in the paper"

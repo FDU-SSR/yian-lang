@@ -7,7 +7,7 @@ Benchmarks are organized by source, focus set, and fast/full scale:
   bench/<SOURCE>/<name>/yian/       YIAN package; raw/ is an optional source overlay
   bench/<SOURCE>/<name>/c/          Authoritative CMake project
   bench/sets/<set>.json             Set members, default scale, and sample count
-  bench/results/<set>.{md,csv}      Generated results with environment fingerprint and commit
+  bench/results/<set>.csv      Performance samples and statistics
 
 Protocol:
   - CMake builds the C target with C11, clang -O2, and -ffp-contract=off; anx builds staged
@@ -19,7 +19,7 @@ Protocol:
   - Warm up each mode once, then rotate C/raw/fat for N measured rounds. Report minimum time,
     median, interquartile range, CV, and peak RSS per mode.
   - Semantic guards: C warmup must pass its rc check. BG warmups and every measured sample must also match the
-    C warmup's complete stdout bytes and expected rc. A failed sample remains in the row and disables its ratios.
+    C warmup's complete stdout bytes and expected rc. A failed sample stops export of that measurement.
 
 Usage:
   python3 bench/bench_three_way.py --list-sets          # List sets, scales, and member counts
@@ -33,8 +33,8 @@ Usage:
   python3 bench/bench_three_way.py --compile-only | --no-compile | --runs N | --pin 4
 
 Output:
-  bench/results/<set>.{md,csv}   Named-set results with fingerprint/protocol/commit
-  bench/results/partial.{md,csv} Temporary --bench/--source subsets, leaving set results intact
+  bench/results/<set>.csv   Named-set performance data
+  bench/results/partial.csv Temporary --bench/--source subsets, leaving set results intact
 
 Standalone script: does not alter scripts/run_tests.py or sources; fast copies stay under build/.
 """
@@ -42,13 +42,11 @@ Standalone script: does not alter scripts/run_tests.py or sources; fast copies s
 from __future__ import annotations
 
 import argparse
-import datetime
 import json
-import math
 import os
-import platform
 import re
 import subprocess
+import shutil
 import statistics
 import sys
 import time
@@ -57,20 +55,20 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 
-from _toolchain.native import file_sha256, resolve_native_selection
+from _toolchain.native import resolve_native_selection
 
 try:
-    from . import execution, projects
+    from . import execution, projects, results_io
 except ImportError:  # Direct script execution puts bench/ on sys.path.
     import execution
     import projects
+    import results_io
 
 ROOT = Path(__file__).resolve().parent.parent
 BENCH_DIR = ROOT / "bench"
 SETS_DIR = BENCH_DIR / "sets"
 RESULTS_DIR = BENCH_DIR / "results"
 OUT_DIR = ROOT / "build" / "bench"
-PARTIAL_MD = RESULTS_DIR / "partial.md"
 PARTIAL_CSV = RESULTS_DIR / "partial.csv"
 
 DEFAULT_SET = "full"
@@ -451,178 +449,6 @@ def _resolve_anx_selection(
     return selected, "ANX" if source == "YIANC" else source
 
 
-def _selected_report_identity(
-    selections: list[tuple[BenchSpec, str]], input_root: Path
-) -> dict[str, str]:
-    """Serialize project, input, oracle, and fixed native dependency identities for reports."""
-    native_root = BENCH_DIR / "native"
-    manifest_path = native_root / "manifest.json"
-    manifest: dict[str, object] = {}
-    if manifest_path.is_file():
-        manifest = _load_json(manifest_path, "native manifest")
-    native_libraries = manifest.get("libraries", [])
-    archive_index: dict[Path, dict[str, object]] = {}
-    if isinstance(native_libraries, list):
-        for library in native_libraries:
-            if not isinstance(library, dict):
-                continue
-            archives = library.get("archives", [])
-            if not isinstance(archives, list):
-                continue
-            for archive in archives:
-                if isinstance(archive, dict) and isinstance(archive.get("path"), str):
-                    archive_path = native_root / archive["path"]
-                    archive_index[archive_path.resolve()] = {
-                        "name": library.get("name"),
-                        "version": library.get("version"),
-                        "path": archive["path"],
-                        "manifest_sha256": archive.get("sha256"),
-                        "actual_sha256": file_sha256(archive_path) if archive_path.is_file() else "missing",
-                        "instrumentation": library.get("instrumentation", {}),
-                    }
-
-    cases: list[dict[str, object]] = []
-    selected_archives: dict[str, dict[str, object]] = {}
-    fasta_generator: projects.BenchmarkProject | None = None
-    for spec, profile in selections:
-        project = spec.project
-        case: dict[str, object] = {
-            "project": spec.key,
-            "profile": profile,
-            "project_digest": "n/a",
-            "dimension": None,
-            "input": None,
-            "oracles": [],
-            "dependencies": [],
-        }
-        project_root = getattr(project, "root", None)
-        if isinstance(project_root, Path) and project_root.is_dir():
-            case["project_digest"] = projects.project_digest(project)
-            if spec.source == "BG" and spec.scale is not None and spec.scale.c == "argv":
-                argv = spec.run_argv(profile)
-                case["dimension"] = int(argv[-1]) if argv else None
-            elif spec.source == "BG" and spec.io is not None and spec.io.stdin is not None:
-                n = spec.io.stdin.for_profile(profile)
-                case["dimension"] = n
-                input_path = input_root / f"fasta-n{n}.fasta"
-                input_identity: dict[str, object] = {
-                    "path": input_path.relative_to(ROOT).as_posix()
-                    if input_path.is_relative_to(ROOT) else str(input_path),
-                    "fasta_n": n,
-                }
-                if input_path.is_file():
-                    input_identity["size_bytes"] = input_path.stat().st_size
-                    input_identity["sha256"] = file_sha256(input_path)
-                if spec.io is not None and spec.io.stdin is not None:
-                    if fasta_generator is None:
-                        generators = [
-                            item for item in projects.discover_projects(BENCH_DIR)
-                            if item.key == "BG/fasta"
-                        ]
-                        if len(generators) != 1:
-                            raise ValueError(
-                                f"{spec.key}: expected one registered BG/fasta input generator, found {len(generators)}"
-                            )
-                        fasta_generator = generators[0]
-                    input_identity["generator_project"] = fasta_generator.key
-                    input_identity["generator_project_digest"] = projects.project_digest(fasta_generator)
-                    metadata_path = input_path.with_suffix(".json")
-                    if metadata_path.is_file():
-                        metadata = _load_json(metadata_path, "generated input metadata")
-                        input_identity["generation_metadata_sha256"] = file_sha256(metadata_path)
-                        input_identity["generator_project_digest_used"] = metadata.get(
-                            "generator_project_digest", "unknown"
-                        )
-                        input_identity["generator_binary_sha256"] = metadata.get(
-                            "generator_binary_sha256", "unknown"
-                        )
-                        input_identity["oracle_sha256"] = metadata.get("oracle_sha256", "unknown")
-                case["input"] = input_identity
-
-            provenance_path = project_root / "provenance.json"
-            if provenance_path.is_file():
-                provenance = _load_json(provenance_path, "project provenance")
-                oracles: list[dict[str, object]] = []
-                fixtures = provenance.get("fixtures", [])
-                if isinstance(fixtures, list):
-                    for fixture in fixtures:
-                        if not isinstance(fixture, dict):
-                            continue
-                        selected = fixture.get("derived_output")
-                        if isinstance(selected, dict):
-                            selected_path = selected.get("path")
-                            selected_sha = selected.get("sha256")
-                        else:
-                            selected_path = fixture.get("output_path")
-                            selected_sha = fixture.get("output_sha256")
-                        record: dict[str, object] = {
-                            "path": selected_path,
-                            "sha256": selected_sha,
-                            "official_path": fixture.get("output_path"),
-                            "official_sha256": fixture.get("output_sha256"),
-                        }
-                        if isinstance(selected_path, str) and isinstance(selected_sha, str):
-                            oracle_path = project_root / selected_path
-                            if oracle_path.is_file():
-                                record["size_bytes"] = oracle_path.stat().st_size
-                                record["actual_sha256"] = file_sha256(oracle_path)
-                        oracles.append(record)
-                case["oracles"] = oracles
-
-                dependencies: list[dict[str, object]] = []
-                declared = provenance.get("dependencies", [])
-                if isinstance(declared, list):
-                    for dependency in declared:
-                        if not isinstance(dependency, dict):
-                            continue
-                        item = {
-                            "name": dependency.get("name"),
-                            "path": dependency.get("path"),
-                            "sha256": dependency.get("sha256"),
-                            "license_id": dependency.get("license_id"),
-                        }
-                        dependencies.append(item)
-                        relative = dependency.get("path")
-                        if isinstance(relative, str):
-                            resolved = (project_root / relative).resolve()
-                            native = archive_index.get(resolved)
-                            if native is not None:
-                                dependencies[-1]["native_archive"] = native
-                                selected_archives[str(native["name"])] = native
-                case["dependencies"] = dependencies
-        cases.append(case)
-
-    result = _summarize_case_identity(cases)
-    result["native_manifest_sha256"] = file_sha256(manifest_path) if manifest_path.is_file() else "n/a"
-    return result
-
-
-def _summarize_case_identity(cases: list[dict[str, object]]) -> dict[str, str]:
-    selected_archives: dict[str, dict[str, object]] = {}
-    for case in cases:
-        dependencies = case.get("dependencies", [])
-        if not isinstance(dependencies, list):
-            continue
-        for dependency in dependencies:
-            if not isinstance(dependency, dict):
-                continue
-            archive = dependency.get("native_archive")
-            if isinstance(archive, dict) and isinstance(archive.get("name"), str):
-                selected_archives[archive["name"]] = archive
-    instrumentation = []
-    for name, archive in sorted(selected_archives.items()):
-        flags = archive.get("instrumentation", {})
-        if isinstance(flags, dict):
-            instrumentation.append(
-                f"{name}: ASan={flags.get('asan', 'unknown')}, YIAN guards={flags.get('yian_guards', 'unknown')}"
-            )
-    return {
-        "native_archives": json.dumps(list(selected_archives.values()), sort_keys=True, separators=(",", ":")),
-        "external_instrumentation": "; ".join(instrumentation) if instrumentation else "no selected static library archive",
-        "project_metadata": json.dumps(cases, sort_keys=True, separators=(",", ":")),
-    }
-
-
 def _env_plain() -> dict[str, str]:
     env = os.environ.copy()
     env["LANG"] = "C"
@@ -805,319 +631,25 @@ def measure_triple(
     )
 
 
-def write_samples(rows: list[Row], path: Path) -> None:
-    """Write per-run samples in the format the paper's data/ files use."""
-    lines = [
-        f"C / raw / fat raw samples, measured {datetime.date.today():%Y-%m-%d}.",
-        "Each pair is wall_ms (peak_rss_kb); one line per benchmark and state.",
-    ]
-    name_counts: dict[str, int] = {}
-    for row in rows:
-        name_counts[row.spec.name] = name_counts.get(row.spec.name, 0) + 1
-    for row in sorted(rows, key=lambda item: item.spec.name):
-        label = row.spec.key if name_counts[row.spec.name] > 1 else row.spec.name
-        for state in STATES:
-            stats = row.times[state]
-            pairs = ", ".join(
-                f"{wall:.1f} ({peak})"
-                for wall, peak in zip(stats.samples, row.rss_samples[state])
-            )
-            lines.append(
-                f"- {label} / {state} ({len(stats.samples)} runs): {pairs}"
-            )
-    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
-
-
-def _tool_version(tool: str) -> str:
-    try:
-        res = subprocess.run(
-            [tool, "--version"], capture_output=True, text=True, timeout=10
-        )
-    except (OSError, subprocess.SubprocessError):
-        return "n/a"
-    if res.returncode != 0 or not res.stdout:
-        return "n/a"
-    return res.stdout.splitlines()[0].strip()
-
-
-def _git_head() -> str:
-    try:
-        res = subprocess.run(
-            ["git", "rev-parse", "--short", "HEAD"],
-            capture_output=True,
-            text=True,
-            timeout=10,
-            cwd=ROOT,
-        )
-    except (OSError, subprocess.SubprocessError):
-        return "n/a"
-    return res.stdout.strip() if res.returncode == 0 else "n/a"
-
-
-def machine_fingerprint(
-    pin: int | None,
-    runs: int,
-    bench_set: str,
-    profile: str,
-    compiler: Path,
-    compiler_source: str,
-    compiler_used: bool,
-    *,
-    anx: Path | None = None,
-    anx_source: str = "n/a",
-) -> dict[str, str]:
-    if anx is None:
-        anx, anx_source = _resolve_anx_selection(None)
-    return {
-        "set": bench_set,
-        "scale": profile,
-        "hostname": platform.node() or "unknown",
-        "machine": platform.machine(),
-        "cpu_count": str(os.cpu_count() or 0),
-        "clang": _tool_version(C_COMPILER),
-        "cflags": " ".join(C_FLAGS),
-        "python": platform.python_version(),
-        "yianc": str(compiler),
-        "yianc_sha256": file_sha256(compiler),
-        "yianc_source": compiler_source,
-        "yianc_used": "yes" if compiler_used else "no (--no-compile; existing artifacts reused)",
-        "anx": str(anx),
-        "anx_sha256": file_sha256(anx),
-        "anx_source": anx_source,
-        "cmake": _tool_version("cmake"),
-        "project_layout": "2",
-        "project_digests": "n/a",
-        "opt": OPT_LEVEL,
-        "pin": str(pin) if pin is not None else "none",
-        "runs": str(runs),
-        "commit": _git_head(),
-        "date": datetime.date.today().isoformat(),
-    }
-
-
-def _fmt_ms(value: float) -> str:
-    return f"{value:.1f}"
-
-
-def _fmt_mb(kb_mb: float) -> str:
-    return f"{kb_mb:.1f}"
-
-
-def _geomean(values: list[float]) -> float | None:
-    if not values:
-        return None
-    return math.exp(sum(math.log(v) for v in values) / len(values))
-
-
 def _ratio(row: Row, num: str, den: str) -> float:
     denom = row.times[den].min
     return row.times[num].min / denom if denom else float("nan")
 
 
 def _ratio_usable(row: Row) -> bool:
-    """Ratios require every recorded C/YIAN sample to satisfy the semantic guard."""
+    """Ratios require the recorded C/YIAN semantic checks to pass."""
     return row.c_check_ok and row.yian_stdout_match
 
 
-def render_md(rows: list[Row], fingerprint: dict[str, str]) -> str:
-    lines: list[str] = []
-    lines.append(
-        f"# C / raw / fat three-state measurements - set `{fingerprint['set']}` (scale `{fingerprint['scale']}`)\n"
-    )
-    lines.append(
-        "Generated by `bench/bench_three_way.py`; all three states use the same algorithm and scale, "
-        "differing only in implementation and pointer representation (C is the clang `-O2` reference). "
-        "Set members and scale profiles are in `bench/sets/<set>.json` and each benchmark's "
-        "`spec.json`.\n"
-    )
-    lines.append("## Environment fingerprint\n")
-    lines.append("| item | value |")
-    lines.append("| --- | --- |")
-    lines.append(f"| host | {fingerprint['hostname']} |")
-    lines.append(f"| architecture / logical cores | {fingerprint['machine']} / {fingerprint['cpu_count']} |")
-    lines.append(f"| C compiler | `{fingerprint['clang']}` (`{fingerprint['cflags']}`) |")
-    lines.append(f"| Python | {fingerprint['python']} |")
-    lines.append(
-        f"| YIAN compiler | `{fingerprint['yianc']}` (SHA-256 `{fingerprint['yianc_sha256']}`, "
-        f"source `{fingerprint['yianc_source']}`, used this run: {fingerprint['yianc_used']}) |"
-    )
-    lines.append(f"| YIAN opt level | `{fingerprint['opt']}` (same for both modes) |")
-    lines.append(f"| pinning | `taskset -c {fingerprint['pin']}` |")
-    lines.append(f"| runs per mode | {fingerprint['runs']} (plus 1 warmup) |")
-    lines.append(f"| set / scale | `{fingerprint['set']}` / `{fingerprint['scale']}` |")
-    lines.append(f"| commit | `{fingerprint['commit']}` |")
-    lines.append(f"| date | {fingerprint['date']} |")
-    for key in (
-        "anx", "anx_sha256", "anx_source", "cmake", "project_layout",
-        "project_digests", "native_manifest_sha256", "native_archives", "external_instrumentation",
-    ):
-        if key in fingerprint:
-            lines.append(f"| {key} | `{fingerprint[key]}` |")
-    lines.append("")
-    if "project_metadata" in fingerprint:
-        lines.append("## Project, input, and oracle identity\n")
-        for case in json.loads(fingerprint["project_metadata"]):
-            lines.append(
-                f"- `{case['project']}`: `{json.dumps(case, sort_keys=True, separators=(',', ':'))}`"
-            )
-        lines.append("")
-
-    lines.append("## Results\n")
-    lines.append(
-        "| benchmark | C min (ms) | raw min (ms) | fat min (ms) | raw/C | fat/C | fat/raw "
-        "| C peak RSS (MB) | raw peak RSS (MB) | fat peak RSS (MB) | raw source | raw/fat stdout match | C check |"
-    )
-    lines.append("| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- | --- | --- |")
-    for row in rows:
-        ratio_rc = _ratio(row, "raw", "c")
-        ratio_fc = _ratio(row, "fat", "c")
-        ratio_fr = _ratio(row, "fat", "raw")
-        raw_src = "`raw/src/main.an`" if row.spec.raw_override else "`yian/src/main.an`"
-        c_flag = "yes" if row.c_check_ok else "**no**"
-        if not _ratio_usable(row):
-            ratio_rc = ratio_fc = ratio_fr = float("nan")
-        lines.append(
-            f"| {row.spec.key} | {_fmt_ms(row.times['c'].min)} | {_fmt_ms(row.times['raw'].min)} "
-            f"| {_fmt_ms(row.times['fat'].min)} | {ratio_rc:.2f}× | {ratio_fc:.2f}× | {ratio_fr:.2f}× "
-            f"| {_fmt_mb(row.rss_mb['c'])} | {_fmt_mb(row.rss_mb['raw'])} | {_fmt_mb(row.rss_mb['fat'])} "
-            f"| {raw_src} | {'yes' if row.yian_stdout_match else '**no**'} | {c_flag} |"
-        )
-    usable = [row for row in rows if _ratio_usable(row)]
-    geo_raw = _geomean([_ratio(row, "raw", "c") for row in usable])
-    geo_fat = _geomean([_ratio(row, "fat", "c") for row in usable])
-    if geo_raw is not None and geo_fat is not None:
-        lines.append("")
-        lines.append(
-            f"Geometric mean ratio (C baseline, n={len(usable)}): raw/C **{geo_raw:.2f}×** / "
-            f"fat/C **{geo_fat:.2f}×** (every warmup and measured sample passed its rc/output checks)."
-        )
-        totals = {state: sum(row.times[state].min for row in rows) / 1000.0 for state in STATES}
-        lines.append(
-            f"Single full pass (sum of per-benchmark minima): C **{totals['c']:.1f} s** / "
-            f"raw **{totals['raw']:.1f} s** / fat **{totals['fat']:.1f} s**."
-        )
-    lines.append("")
-    lines.append(
-        "All ratios are ratios of minima; benchmarks are not additive. `--raw-pointers` disables all pointer "
-        "safety checks and lock-slot/frame-lock emission, so raw/C is the raw implementation's overhead relative "
-        "to C, and fat/raw is the total overhead of full fat pointers over raw pointers.\n"
-    )
-
-    lines.append("## Repeatability\n")
-    lines.append(
-        "| benchmark | C median | C min | C max | C CV% | raw median | raw min | raw max | raw CV% "
-        "| fat median | fat min | fat max | fat CV% | runs |"
-    )
-    lines.append(
-        "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |"
-    )
-    for row in rows:
-        cells = " | ".join(
-            f"{_fmt_ms(row.times[state].med)} | {_fmt_ms(row.times[state].min)} "
-            f"| {_fmt_ms(row.times[state].max)} | {row.times[state].cv:.1f}"
-            for state in STATES
-        )
-        lines.append(f"| {row.spec.key} | {cells} | {row.runs} |")
-    lines.append("")
-    lines.append(
-        "Formal metrics use the **minimum**: when the machine is under load or hot, repeated runs of the same "
-        "binary fall into two performance states about 20% apart (a process-level memory-layout/frequency artifact "
-        "unrelated to the code). The minimum estimates interference-free performance, and the median and CV judge "
-        "repeatability.\n"
-    )
-
-    lines.append("## Protocol\n")
-    lines.append(
-        f"- Compilation: CMake builds each project's `bench_app` target with `{C_COMPILER} {' '.join(C_FLAGS)}`; "
-        f"anx builds each staged YIAN package with `yianc {OPT_LEVEL}`, adding `--raw-pointers` in raw mode."
-    )
-    lines.append(
-        "- Scale and input: numeric BG tasks pass the selected full/fast dimension once to C and compile the "
-        "same YIAN dimension into an isolated package copy. BG stdin tasks generate FASTA input from the selected, "
-        "source-matched C fasta project before consumer timing; all legs reopen that same file for every run."
-    )
-    lines.append(
-        "- Measurement: after one warmup per state per benchmark (excluded from samples), measure in "
-        "**round-robin** order C->raw->fat; formal metrics use each state's minimum and record median/IQR/CV/peak RSS."
-    )
-    lines.append(
-        f"- Noise reduction: `taskset -c {fingerprint['pin']}`; round-robin measurement reduces drift across time; "
-        "all three artifacts use the same directory and equal-length paths (argv[0] length affects process layout "
-        "for allocation-heavy benchmarks)."
-    )
-    lines.append(
-        "- Output and semantic guard: BG stdout is written to binary files; size/hash and complete-byte checks "
-        "run after timing. Every BG warmup and sample must pass the expected rc and match the same-scale C "
-        "warmup. A failed run remains recorded and makes all ratios for that benchmark unavailable."
-    )
-    return "\n".join(lines).rstrip("\n") + "\n"
+def write_csv(rows: list[Row], path: Path) -> None:
+    if any(not _ratio_usable(row) for row in rows):
+        raise ValueError("benchmark execution failed its checks; performance CSV was not replaced")
+    records = [results_io.make_record(row.spec.key, state, row.times[state].samples, row.rss_samples[state])
+               for row in rows for state in STATES]
+    results_io.write_csv(path, records)
 
 
-def write_csv(rows: list[Row], fingerprint: dict[str, str], path: Path) -> None:
-    header = (
-        f"# bench/results/{path.name} - C / raw / fat three-state performance results "
-        "(generated by bench/bench_three_way.py)"
-    )
-    comments = [
-        header,
-        "# columns: bench is <SOURCE>/<name>; <state>_min_ms/<state>_med_ms/<state>_cv_pct are each state's "
-        "minimum (formal metric)/median/coefficient of variation, state ∈ {c,raw,fat}; ratio_raw_c = raw_min/c_min, "
-        "ratio_fat_c = fat_min/c_min, ratio_fat_raw = fat_min/raw_min; <state>_rss_mb is peak resident memory; "
-        "runs, stdout_match (raw/fat), c_check (C authoritative value), c_argv, raw_source",
-        f"# fingerprint: hostname={fingerprint['hostname']} machine={fingerprint['machine']} "
-        f"cpu_count={fingerprint['cpu_count']} clang={fingerprint['clang']} cflags={fingerprint['cflags']}",
-        f"# env: python={fingerprint['python']} yianc={fingerprint['yianc']} "
-        f"yianc_sha256={fingerprint['yianc_sha256']} yianc_source={fingerprint['yianc_source']} "
-        f"yianc_used={fingerprint['yianc_used']} opt={fingerprint['opt']} pin={fingerprint['pin']} "
-        f"runs={fingerprint['runs']}",
-        f"# anx: {fingerprint.get('anx', 'n/a')} sha256={fingerprint.get('anx_sha256', 'n/a')} "
-        f"source={fingerprint.get('anx_source', 'n/a')} cmake={fingerprint.get('cmake', 'n/a')} "
-        f"project_layout={fingerprint.get('project_layout', 'n/a')}",
-        f"# set: {fingerprint['set']}  scale: {fingerprint['scale']}",
-        f"# commit: {fingerprint['commit']}",
-        f"# date: {fingerprint['date']}",
-        f"# project_digests: {fingerprint.get('project_digests', 'n/a')}",
-        f"# native_manifest_sha256: {fingerprint.get('native_manifest_sha256', 'n/a')}",
-        f"# native_archives: {fingerprint.get('native_archives', '[]')}",
-        f"# external_instrumentation: {fingerprint.get('external_instrumentation', 'n/a')}",
-        f"# project_metadata: {fingerprint.get('project_metadata', '[]')}",
-    ]
-    lines = list(comments)
-    lines.append(
-        "bench,"
-        + ",".join(f"{state}_min_ms,{state}_med_ms,{state}_cv_pct" for state in STATES)
-        + ",ratio_raw_c,ratio_fat_c,ratio_fat_raw,"
-        + ",".join(f"{state}_rss_mb" for state in STATES)
-        + ",runs,stdout_match,c_check,c_argv,raw_source"
-    )
-    for row in rows:
-        raw_src = "raw/src/main.an" if row.spec.raw_override else "yian/src/main.an"
-        argv = " ".join(row.spec.run_argv(fingerprint["scale"]))
-        ratios = (
-            (f"{_ratio(row, 'raw', 'c'):.3f}", f"{_ratio(row, 'fat', 'c'):.3f}", f"{_ratio(row, 'fat', 'raw'):.3f}")
-            if _ratio_usable(row)
-            else ("nan", "nan", "nan")
-        )
-        fields = [row.spec.key]
-        for state in STATES:
-            stats = row.times[state]
-            fields += [f"{stats.min:.1f}", f"{stats.med:.1f}", f"{stats.cv:.2f}"]
-        fields += [
-            *ratios,
-        ]
-        fields += [f"{row.rss_mb[state]:.1f}" for state in STATES]
-        fields += [
-            str(row.runs),
-            "yes" if row.yian_stdout_match else "no",
-            "pass" if row.c_check_ok else "fail",
-            argv,
-            raw_src,
-        ]
-        lines.append(",".join(fields))
-    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
-
-
-def main() -> int:
+def __run() -> int:
     parser = argparse.ArgumentParser(description="C / raw / fat three-state performance measurement (C as baseline)")
     parser.add_argument("--set", dest="bench_set", default=DEFAULT_SET,
                         help=f"set name (default {DEFAULT_SET}; see --list-sets)")
@@ -1188,13 +720,6 @@ def main() -> int:
     if args.compile_only:
         return 0
 
-    fingerprint = machine_fingerprint(
-        args.pin, runs, set_def.name, profile, compiler, compiler_source, not args.no_compile,
-        anx=anx, anx_source=anx_source,
-    )
-    fingerprint["project_digests"] = ";".join(
-        f"{spec.key}={projects.project_digest(spec.project)}" for spec in chosen
-    )
     max_state_sec = float("inf") if profile == "fast" else args.max_state_sec
     rows: list[Row] = []
     for spec in chosen:
@@ -1215,26 +740,18 @@ def main() -> int:
             file=sys.stderr,
         )
 
-    fingerprint.update(_selected_report_identity(
-        [(spec, profile) for spec in chosen], OUT_DIR / "inputs"
-    ))
-
-    # Temporary --bench/--source subsets leave set results intact; named sets write results/<set>.{md,csv}.
-    partial = bool(bench_filter or source_filter)
-    if partial:
-        md_path, csv_path = PARTIAL_MD, PARTIAL_CSV
-    else:
-        md_path = RESULTS_DIR / f"{set_def.name}.md"
-        csv_path = RESULTS_DIR / f"{set_def.name}.csv"
-    RESULTS_DIR.mkdir(parents=True, exist_ok=True)
-    md_path.write_text(render_md(rows, fingerprint), encoding="utf-8")
-    write_csv(rows, fingerprint, csv_path)
-    samples_path = RESULTS_DIR / "three-way-samples.txt"
-    write_samples(rows, samples_path)
-    print(f"[write] {md_path.relative_to(ROOT)}", file=sys.stderr)
+    csv_path = PARTIAL_CSV if bench_filter or source_filter else RESULTS_DIR / f"{set_def.name}.csv"
+    write_csv(rows, csv_path)
     print(f"[write] {csv_path.relative_to(ROOT)}", file=sys.stderr)
-    print(f"[write] {samples_path.relative_to(ROOT)}", file=sys.stderr)
     return 0
+
+
+def main() -> int:
+    try:
+        return __run()
+    finally:
+        shutil.rmtree(OUT_DIR / "file-runs" / "three-way", ignore_errors=True)
+        shutil.rmtree(OUT_DIR / "inputs", ignore_errors=True)
 
 
 if __name__ == "__main__":

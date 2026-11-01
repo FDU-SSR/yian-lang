@@ -364,15 +364,8 @@ ide-support/vscode/node_modules/
 # The VS Code extension ships its own launch/task config for F5.
 !ide-support/vscode/.vscode/
 
-# Benchmark results: track only full-scale and allocator records (full.*, alloc.*).
-# Other sets and temporary subsets are development artifacts. The general results/ rule above
-# ignores the directory; restore it here, then allow only these two result sets.
-!bench/results/
-bench/results/*
-!bench/results/full.md
-!bench/results/full.csv
-!bench/results/alloc.md
-!bench/results/alloc.csv
+# Benchmark measurements belong to the machine that produced them.
+/bench/results/
 
 # These fixed source, license, header, and archive inputs must be present after clone.
 !bench/native/

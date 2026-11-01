@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import hashlib
-import json
 import os
 import re
 import subprocess
@@ -94,7 +93,7 @@ def _build_root(path: Path) -> Path:
 
 
 def prepare_input(spec: BenchSpec, profile: str, build_root: Path) -> Path | None:
-    """Generate and identify a BG FASTA input before timing any consumer."""
+    """Generate a BG FASTA input before timing any consumer."""
     if spec.io is None or spec.io.stdin is None:
         return None
     if spec.source != "BG":
@@ -115,13 +114,11 @@ def prepare_input(spec: BenchSpec, profile: str, build_root: Path) -> Path | Non
     if len(matches) != 1:
         raise RuntimeError(f"{spec.key}: expected one registered BG/fasta generator project, found {len(matches)}")
     generator_project = matches[0]
-    generator_digest = projects.project_digest(generator_project)
     generator_binary = root / "generators" / "BG_fasta"
     try:
         projects.build_c(generator_project, asan=False, output=generator_binary)
     except (OSError, ValueError, RuntimeError) as error:
         raise RuntimeError(f"{spec.key}: cannot build source-matched BG/fasta input generator: {error}") from error
-    binary_digest = _sha256_file(generator_binary)
 
     oracle = btw.BENCH_DIR / "BG" / "fasta" / "fixtures" / "official-output.fasta"
     if not oracle.is_file():
@@ -129,8 +126,6 @@ def prepare_input(spec: BenchSpec, profile: str, build_root: Path) -> Path | Non
     input_dir = root / "inputs"
     input_dir.mkdir(parents=True, exist_ok=True)
     output_path = input_dir / f"fasta-n{n}.fasta"
-    metadata_path = input_dir / f"fasta-n{n}.json"
-    oracle_digest = _sha256_file(oracle)
     validation_path = input_dir / f".fasta-n1000-validation-{os.getpid()}.tmp"
 
     def generate(target: Path, size: int) -> None:
@@ -154,56 +149,18 @@ def prepare_input(spec: BenchSpec, profile: str, build_root: Path) -> Path | Non
     try:
         generate(validation_path, 1000)
         validation_size = validation_path.stat().st_size
-        validation_digest = _sha256_file(validation_path)
-        if validation_size != oracle.stat().st_size or validation_digest != oracle_digest or not _files_equal(validation_path, oracle):
+        if validation_size != oracle.stat().st_size or not _files_equal(validation_path, oracle):
             raise RuntimeError(
-                f"{spec.key}: selected BG/fasta generator does not match the official N=1000 fixture "
-                f"(generated {validation_size} bytes, sha256 {validation_digest}; oracle {oracle_digest})"
+                f"{spec.key}: selected BG/fasta generator does not match the official N=1000 fixture"
             )
-
-        expected_identity = {
-            "format": 1,
-            "generator_project": "BG/fasta",
-            "generator_project_digest": generator_digest,
-            "generator_binary_sha256": binary_digest,
-            "n": n,
-            "oracle_n": 1000,
-            "oracle_sha256": oracle_digest,
-        }
-        if output_path.is_file() and metadata_path.is_file():
-            try:
-                metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
-                cached_size = output_path.stat().st_size
-                cached_digest = _sha256_file(output_path)
-                if (
-                    all(metadata.get(key) == value for key, value in expected_identity.items())
-                    and metadata.get("input_size_bytes") == cached_size
-                    and metadata.get("input_sha256") == cached_digest
-                ):
-                    return output_path
-            except (OSError, UnicodeError, json.JSONDecodeError):
-                pass
 
         with tempfile.NamedTemporaryFile(prefix=f".fasta-n{n}-", suffix=".tmp", dir=input_dir, delete=False) as temporary:
             temporary_path = Path(temporary.name)
         try:
             generate(temporary_path, n)
-            input_size = temporary_path.stat().st_size
-            input_digest = _sha256_file(temporary_path)
             os.replace(temporary_path, output_path)
         finally:
             temporary_path.unlink(missing_ok=True)
-        metadata = {
-            **expected_identity,
-            "input_size_bytes": input_size,
-            "input_sha256": input_digest,
-        }
-        metadata_tmp = metadata_path.with_name(f".{metadata_path.name}.{os.getpid()}.tmp")
-        try:
-            metadata_tmp.write_text(json.dumps(metadata, indent=2) + "\n", encoding="utf-8")
-            os.replace(metadata_tmp, metadata_path)
-        finally:
-            metadata_tmp.unlink(missing_ok=True)
         return output_path
     finally:
         validation_path.unlink(missing_ok=True)
