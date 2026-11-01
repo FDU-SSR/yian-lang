@@ -367,7 +367,8 @@ ide-support/vscode/node_modules/
 # Benchmark measurements belong to the machine that produced them.
 /bench/results/
 
-# These fixed source, license, header, and archive inputs must be present after clone.
+# Fixed source and license inputs stay in the tree after clone; native archives
+# and configured headers are rebuilt locally and are not tracked.
 !bench/native/
 !bench/native/README.md
 !bench/native/manifest.json
@@ -375,17 +376,8 @@ ide-support/vscode/node_modules/
 !bench/native/record_manifest.py
 !bench/native/gmp/
 !bench/native/gmp/package.anx
-!bench/native/gmp/include/
-!bench/native/gmp/include/gmp.h
-!bench/native/gmp/lib/
-!bench/native/gmp/lib/libgmp.a
 !bench/native/pcre2/
 !bench/native/pcre2/package.anx
-!bench/native/pcre2/include/
-!bench/native/pcre2/include/pcre2.h
-!bench/native/pcre2/include/pcre2posix.h
-!bench/native/pcre2/lib/
-!bench/native/pcre2/lib/libpcre2-8.a
 !bench/native/licenses/
 !bench/native/licenses/gmp/
 !bench/native/licenses/gmp/COPYING
@@ -399,3 +391,8 @@ ide-support/vscode/node_modules/
 !bench/native/sources/gmp-6.3.0.tar.xz.sig
 !bench/native/sources/pcre2-10.47.tar.gz
 !bench/native/sources/pcre2-10.47.tar.gz.sig
+
+# Native build outputs and fixture archives are local artifacts.
+bench/native/*/include/
+bench/native/*/lib/
+tests/fixtures/native_c_chain/vendor/*/lib/

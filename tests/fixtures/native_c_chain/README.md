@@ -7,7 +7,8 @@ archives once in consumer-to-dependency order fails without a linker group.
 Together, the app shim and archives return 42. The `testkit` archive is a
 dev-only dependency and returns 7 from the single test source.
 
-The checked-in archives are small test inputs. Regenerate them with:
+The archives are local test inputs and are not tracked. Generate them before
+running the fixture:
 
 ```sh
 python tests/fixtures/native_c_chain/build_archives.py

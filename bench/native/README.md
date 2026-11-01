@@ -13,12 +13,18 @@ these archives are outside YIAN checking.
 | GMP 6.3.0 | [GNU release archive](https://ftp.gnu.org/gnu/gmp/gmp-6.3.0.tar.xz) | Linux x86-64 LP64, ABI=64, PIC, static, `--enable-fat` runtime dispatch, C++ disabled | `gmp/include/gmp.h`, `gmp/lib/libgmp.a` |
 | PCRE2 10.47 | [10.47 release archive](https://github.com/PCRE2Project/pcre2/releases/download/pcre2-10.47/pcre2-10.47.tar.gz), tag commit `f454e231fe5006dd7ff8f4693fd2b8eb94333429` | Linux x86-64, 8-bit only, PIC, static, JIT enabled | `pcre2/include/pcre2.h`, `pcre2/include/pcre2posix.h`, `pcre2/lib/libpcre2-8.a` |
 
+The archives and configured headers are local build outputs and are not
+tracked. A fresh clone has only the source archives, licenses, manifests and
+scripts, so run the rebuild below before building the GMP or PCRE2 benchmarks.
+
 `manifest.json` records the SHA-256 of each archive, configured header, license,
 and source tarball, along with compiler, linker, archiver, libc, host, flags,
 ISA, JIT, and unresolved external symbol requirements. The archives were built
 with Clang 22.1.8 on Ubuntu 22.04 with glibc 2.35 and GNU ld 2.38. This records
 the verified build host; it does not claim compatibility with every glibc or
-CPU. The declared target is Linux x86-64 LP64.
+CPU. The declared target is Linux x86-64 LP64. A rebuild on another host can
+produce different archive bytes; the manifest describes the build recorded
+here, not every local rebuild.
 
 Original source tarballs and detached signatures are under `sources/`.
 GMP's archive SHA-256 is
@@ -68,5 +74,5 @@ only with JIT enabled, and only `libpcre2-8.la` is requested. Both use PIC,
 
 The `package.anx` manifests in `gmp/` and `pcre2/` expose explicit local header
 and archive paths for native C consumers. Normal benchmark builds consume
-these checked-in files and do not invoke this rebuild script or a system
-package manager.
+the archives and headers in this directory and do not invoke this rebuild
+script or a system package manager.
