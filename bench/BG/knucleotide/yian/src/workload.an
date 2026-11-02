@@ -1,11 +1,10 @@
 // bench/BG/knucleotide/yian/src/workload.an — Benchmarks Game k-nucleotide.
 // Source: bench/BG/knucleotide/c/upstream/main.c (knucleotide-gcc-1; revised BSD).
-// The C reference uses its fixed klib/khash dependency. YIAN uses the standard
-// HashMap with a positive capacity; key, bucket layout, hash, and growth differ.
+// Both ports use the same klib/khash u64 -> u32 table: flags layout, custom
+// hash, quadratic probing, 0.77 load factor, and power-of-two growth.
 
-from std.collections.hash_map import HashMap;
+from knucleotide.khash import KhashU64U32, KhashPut;
 from std.core.io import BufWriter, Read, Stdin, Stdout, Write;
-from std.core.iter import Iterator;
 from std.core.vec import Vec;
 
 struct KmerCount {
@@ -68,30 +67,18 @@ fn read_three(input: u8[]) -> Vec<u8> {
     sequence
 }
 
-fn increment_count(counts: HashMap<u64, u32>&, key: u64) {
-    match counts.get(&key) {
-        Some(value) => { *value += 1u32; },
-        None => { counts.insert(key, 1u32); },
+fn increment_count(counts: KhashU64U32&, key: u64) {
+    let put: KhashPut = counts.put(key);
+    if put.state != 0u32 {
+        counts.set_value(put.index, 1u32);
+    } else {
+        counts.set_value(put.index, counts.value_at(put.index) + 1u32);
     }
 }
 
-fn count_oligonucleotides(sequence: u8[], k: u64) -> HashMap<u64, u32> {
-    let window_count: u64 = 0u64;
-    if sequence.len() >= k {
-        window_count = sequence.len() - k + 1u64;
-    }
-
-    let key_space: u64 = 1u64 << (2u64 * k);
-    let capacity: u64 = window_count * 2u64;
-    if capacity > key_space {
-        capacity = key_space;
-    }
-    if capacity == 0u64 {
-        capacity = 1u64;
-    }
-
-    let counts: HashMap<u64, u32> = HashMap<u64, u32>.with_capacity(capacity);
-    let mask: u64 = key_space - 1u64;
+fn count_oligonucleotides(sequence: u8[], k: u64) -> KhashU64U32 {
+    let counts: KhashU64U32 = KhashU64U32.new();
+    let mask: u64 = (1u64 << (2u64 * k)) - 1u64;
     let key: u64 = 0u64;
     let index: u64 = 0u64;
     while index < sequence.len() {
@@ -124,16 +111,14 @@ fn sort_counts(values: KmerCount[]) {
     }
 }
 
-fn sorted_counts(counts: HashMap<u64, u32>&) -> Vec<KmerCount> {
-    let values: Vec<KmerCount> = Vec<KmerCount>.with_capacity(counts.len());
-    let entries = counts.entries();
-    loop {
-        match entries.next() {
-            Some(entry) => {
-                values.push(KmerCount(*entry[0u64], *entry[1u64]));
-            },
-            None => { break; },
+fn sorted_counts(counts: KhashU64U32&) -> Vec<KmerCount> {
+    let values: Vec<KmerCount> = Vec<KmerCount>.with_capacity(u64(counts.len()));
+    let index: u32 = 0u32;
+    while index < counts.end() {
+        if counts.exists(index) {
+            values.push(KmerCount(counts.key_at(index), counts.value_at(index)));
         }
+        index += 1u32;
     }
     sort_counts(values.as_slice());
     values
@@ -191,7 +176,7 @@ fn append_percentage(output: Vec<u8>&, count: u32, window_count: u64) {
 }
 
 fn append_frequencies(output: Vec<u8>&, sequence: u8[], k: u64) {
-    let counts: HashMap<u64, u32> = count_oligonucleotides(sequence, k);
+    let counts: KhashU64U32 = count_oligonucleotides(sequence, k);
     let sorted: Vec<KmerCount> = sorted_counts(&counts);
     let window_count: u64 = sequence.len() - k + 1u64;
     let index: u64 = 0u64;
@@ -210,17 +195,17 @@ fn append_frequencies(output: Vec<u8>&, sequence: u8[], k: u64) {
 fn append_query(output: Vec<u8>&, sequence: u8[], query: str) {
     let query_bytes: u8[] = query.as_slice();
     let k: u64 = query_bytes.len();
-    let counts: HashMap<u64, u32> = count_oligonucleotides(sequence, k);
+    let counts: KhashU64U32 = count_oligonucleotides(sequence, k);
     let key: u64 = 0u64;
     let index: u64 = 0u64;
     while index < k {
         key = (key << 2u64) | nucleotide_code(query_bytes[index]);
         index += 1u64;
     }
+    let lookup: u32 = counts.get(key);
     let count: u32 = 0u32;
-    match counts.get(&key) {
-        Some(value) => { count = *value; },
-        None => {},
+    if lookup != counts.end() {
+        count = counts.value_at(lookup);
     }
     append_unsigned(output, u64(count));
     output.push(b'\t');

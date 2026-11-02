@@ -1,0 +1,300 @@
+// bench/BG/knucleotide/yian/src/khash.an — concrete port of klib khash's
+// uint64_t -> uint32_t map used by the C reference.
+//
+// The C project pins khash.h at klib commit
+// 97a0fcb790b43b9e5da8994f4671021fec036f19 (MIT, Attractive Chaos).  This port
+// keeps the same bucket flags layout, custom hash, quadratic probing, 0.77 load
+// factor, and power-of-two growth.  knucleotide only inserts and looks up, so
+// the deletion paths are omitted; no tombstone is ever created.
+//
+// Keys and values live in Vec buffers so the port uses the standard library's
+// allocation API.  Growth allocates the next pair of buffers, rehashes into
+// them, and releases the old ones.  Bucket assignment after a resize can differ
+// from khash's in-place kick-out; capacity sequence, probing, load factor, and
+// output semantics match.
+//
+// The ported table is derived from khash.h, Copyright (c) 2008, 2009, 2011
+// by Attractive Chaos <attractor@live.co.uk>, distributed under the MIT
+// License:
+//
+// Permission is hereby granted, free of charge, to any person obtaining a copy
+// of this software and associated documentation files (the "Software"), to
+// deal in the Software without restriction, including without limitation the
+// rights to use, copy, modify, merge, publish, distribute, sublicense, and/or
+// sell copies of the Software, and to permit persons to whom the Software is
+// furnished to do so, subject to the following conditions:
+//
+// The above copyright notice and this permission notice shall be included in
+// all copies or substantial portions of the Software.
+//
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+// FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS
+// IN THE SOFTWARE.
+
+from std.core.drop import Drop;
+from std.core.vec import Vec;
+
+pub struct KhashPut {
+    pub index: u32,
+    pub state: u32,
+}
+
+pub struct KhashU64U32 {
+    n_buckets: u32,
+    size: u32,
+    n_occupied: u32,
+    upper_bound: u32,
+    flags: Vec<u32>,
+    keys: Vec<u64>,
+    vals: Vec<u32>,
+}
+
+impl KhashU64U32 {
+    static pub fn new() -> Self {
+        Self(
+            n_buckets=0u32,
+            size=0u32,
+            n_occupied=0u32,
+            upper_bound=0u32,
+            flags=Vec<u32>.new(),
+            keys=Vec<u64>.new(),
+            vals=Vec<u32>.new(),
+        )
+    }
+
+    static fn fsize(buckets: u32) -> u32 {
+        if buckets < 16u32 { 1u32 } else { buckets >> 4u32 }
+    }
+
+    static fn hash(key: u64) -> u32 {
+        u32(key ^ (key >> 7u64))
+    }
+
+    static fn roundup32(value: u32) -> u32 {
+        let rounded: u32 = value - 1u32;
+        rounded = rounded | (rounded >> 1u32);
+        rounded = rounded | (rounded >> 2u32);
+        rounded = rounded | (rounded >> 4u32);
+        rounded = rounded | (rounded >> 8u32);
+        rounded = rounded | (rounded >> 16u32);
+        rounded + 1u32
+    }
+
+    static fn upper_bound_for(buckets: u32) -> u32 {
+        u32((u64(buckets) * 77u64 + 50u64) / 100u64)
+    }
+
+    static fn is_empty_in(flags: u32[], index: u32) -> bool {
+        let shift: u32 = (index & 0xFu32) << 1u32;
+        ((flags[u64(index >> 4u32)] >> shift) & 2u32) != 0u32
+    }
+
+    static fn is_deleted_in(flags: u32[], index: u32) -> bool {
+        let shift: u32 = (index & 0xFu32) << 1u32;
+        ((flags[u64(index >> 4u32)] >> shift) & 1u32) != 0u32
+    }
+
+    static fn is_either_in(flags: u32[], index: u32) -> bool {
+        let shift: u32 = (index & 0xFu32) << 1u32;
+        ((flags[u64(index >> 4u32)] >> shift) & 3u32) != 0u32
+    }
+
+    static fn set_both_false_in(flags: u32[], index: u32) {
+        let shift: u32 = (index & 0xFu32) << 1u32;
+        flags[u64(index >> 4u32)] = flags[u64(index >> 4u32)] & ~(3u32 << shift);
+    }
+
+    static fn set_empty_false_in(flags: u32[], index: u32) {
+        let shift: u32 = (index & 0xFu32) << 1u32;
+        flags[u64(index >> 4u32)] = flags[u64(index >> 4u32)] & ~(2u32 << shift);
+    }
+
+    fn resize(requested: u32) {
+        let buckets: u32 = Self.roundup32(requested);
+        if buckets < 4u32 {
+            buckets = 4u32;
+        }
+        if self.size >= Self.upper_bound_for(buckets) {
+            return;
+        }
+
+        let flag_words: u32 = Self.fsize(buckets);
+        let new_flags: Vec<u32> = Vec<u32>.with_capacity(u64(flag_words));
+        let word: u32 = 0u32;
+        while word < flag_words {
+            new_flags.push(0xAAAAAAAAu32);
+            word += 1u32;
+        }
+
+        let new_keys: Vec<u64> = Vec<u64>.with_capacity(u64(buckets));
+        let new_vals: Vec<u32> = Vec<u32>.with_capacity(u64(buckets));
+        let init: u32 = 0u32;
+        while init < buckets {
+            new_keys.push(0u64);
+            new_vals.push(0u32);
+            init += 1u32;
+        }
+
+        let old_flags: u32[] = self.flags.as_slice();
+        let old_keys: u64[] = self.keys.as_slice();
+        let old_vals: u32[] = self.vals.as_slice();
+        let new_flag_words: u32[] = new_flags.as_slice();
+        let new_key_words: u64[] = new_keys.as_slice();
+        let new_val_words: u32[] = new_vals.as_slice();
+        let new_mask: u32 = buckets - 1u32;
+        let old_buckets: u32 = self.n_buckets;
+        let old_index: u32 = 0u32;
+        while old_index < old_buckets {
+            if !Self.is_either_in(old_flags, old_index) {
+                let key: u64 = old_keys[u64(old_index)];
+                let value: u32 = old_vals[u64(old_index)];
+                let destination: u32 = Self.hash(key) & new_mask;
+                let current: u32 = destination;
+                let step: u32 = 0u32;
+                while !Self.is_empty_in(new_flag_words, current) {
+                    step += 1u32;
+                    current = (current + step) & new_mask;
+                }
+                Self.set_empty_false_in(new_flag_words, current);
+                new_key_words[u64(current)] = key;
+                new_val_words[u64(current)] = value;
+            }
+            old_index += 1u32;
+        }
+
+        self.flags.drop();
+        self.keys.drop();
+        self.vals.drop();
+        self.flags = new_flags;
+        self.keys = new_keys;
+        self.vals = new_vals;
+        self.n_buckets = buckets;
+        self.n_occupied = self.size;
+        self.upper_bound = Self.upper_bound_for(buckets);
+    }
+
+    pub fn put(key: u64) -> KhashPut {
+        if self.n_occupied >= self.upper_bound {
+            if self.n_buckets > (self.size << 1u32) {
+                self.resize(self.n_buckets - 1u32);
+            } else {
+                self.resize(self.n_buckets + 1u32);
+            }
+        }
+
+        let flags: u32[] = self.flags.as_slice();
+        let keys: u64[] = self.keys.as_slice();
+        let mask: u32 = self.n_buckets - 1u32;
+        let target: u32 = self.n_buckets;
+        let site: u32 = self.n_buckets;
+        let primary: u32 = Self.hash(key) & mask;
+        let index: u32 = primary;
+
+        if Self.is_empty_in(flags, index) {
+            target = index;
+        } else {
+            let last: u32 = index;
+            let step: u32 = 0u32;
+            while !Self.is_empty_in(flags, index)
+            && (Self.is_deleted_in(flags, index) || keys[u64(index)] != key) {
+                if Self.is_deleted_in(flags, index) {
+                    site = index;
+                }
+                step += 1u32;
+                index = (index + step) & mask;
+                if index == last {
+                    target = site;
+                    break;
+                }
+            }
+            if target == self.n_buckets {
+                if Self.is_empty_in(flags, index) && site != self.n_buckets {
+                    target = site;
+                } else {
+                    target = index;
+                }
+            }
+        }
+
+        if Self.is_empty_in(flags, target) {
+            keys[u64(target)] = key;
+            Self.set_both_false_in(flags, target);
+            self.size += 1u32;
+            self.n_occupied += 1u32;
+            return KhashPut(index=target, state=1u32);
+        } elif Self.is_deleted_in(flags, target) {
+            keys[u64(target)] = key;
+            Self.set_both_false_in(flags, target);
+            self.size += 1u32;
+            return KhashPut(index=target, state=2u32);
+        }
+        return KhashPut(index=target, state=0u32);
+    }
+
+    pub fn get(key: u64) -> u32 {
+        if self.n_buckets == 0u32 {
+            return self.n_buckets;
+        }
+
+        let flags: u32[] = self.flags.as_slice();
+        let keys: u64[] = self.keys.as_slice();
+        let mask: u32 = self.n_buckets - 1u32;
+        let primary: u32 = Self.hash(key) & mask;
+        let index: u32 = primary;
+        let last: u32 = index;
+        let step: u32 = 0u32;
+
+        while !Self.is_empty_in(flags, index)
+        && (Self.is_deleted_in(flags, index) || keys[u64(index)] != key) {
+            step += 1u32;
+            index = (index + step) & mask;
+            if index == last {
+                return self.n_buckets;
+            }
+        }
+        if Self.is_either_in(flags, index) {
+            return self.n_buckets;
+        }
+        return index;
+    }
+
+    pub fn end() -> u32 {
+        self.n_buckets
+    }
+
+    pub fn len() -> u32 {
+        self.size
+    }
+
+    pub fn exists(index: u32) -> bool {
+        !Self.is_either_in(self.flags.as_slice(), index)
+    }
+
+    pub fn key_at(index: u32) -> u64 {
+        self.keys.as_slice()[u64(index)]
+    }
+
+    pub fn value_at(index: u32) -> u32 {
+        self.vals.as_slice()[u64(index)]
+    }
+
+    pub fn set_value(index: u32, value: u32) {
+        self.vals.as_slice()[u64(index)] = value;
+    }
+}
+
+impl Drop for KhashU64U32 {
+    pub fn drop() {
+        self.flags.drop();
+        self.keys.drop();
+        self.vals.drop();
+        self.n_buckets = 0u32;
+        self.size = 0u32;
+        self.n_occupied = 0u32;
+        self.upper_bound = 0u32;
+    }
+}

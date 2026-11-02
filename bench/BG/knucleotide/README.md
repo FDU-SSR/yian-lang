@@ -24,9 +24,14 @@ library.
 | `main` | `read_three`, `workload.run()` | C reads lines from stdin and grows a byte buffer; the YIAN workload reads stdin in 8192-byte chunks, scans FASTA line boundaries, and stores encoded `THREE` bases in a `Vec<u8>`. Both stop at the next record and run lengths 1, 2, 3, 4, 6, 12, and 18. |
 
 The C reference uses klib's open-addressed `khash` table and custom XOR/shift
-hash. YIAN uses the standard library's open-addressed `HashMap<u64, u32>` with a
-positive initial capacity and its own hash, bucket layout, growth policy, and
-allocator. Table iteration order is discarded before output sorting. The
-official C pragmas remain in the exact source; the benchmark CMake build does
-not enable OpenMP, so this reference runs its sections serially. YIAN keeps
-reading, counting, sorting, formatting, and query control flow in YIAN.
+hash. YIAN ports the same `uint64_t -> uint32_t` table into `yian/src/khash.an`:
+the two-bit bucket flags, `key ^ (key >> 7)` hash, quadratic probing, 0.77 load
+factor, and power-of-two growth match khash. The port omits deletion because
+knucleotide never deletes; keys and values are stored in `Vec` buffers and a
+resize allocates the next pair, rehashes, and releases the old pair. Bucket
+assignment after a resize can differ from khash's in-place kick-out; capacity,
+probing, load factor, and output match. Table iteration order is discarded
+before output sorting. The official C pragmas
+remain in the exact source; the benchmark CMake build does not enable OpenMP,
+so this reference runs its sections serially. YIAN keeps reading, counting,
+sorting, formatting, and query control flow in YIAN.
