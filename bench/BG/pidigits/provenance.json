@@ -56,7 +56,7 @@
         "Both parse argv[1] as the requested digit count. YIAN uses the standard argument vector and explicitly drops its owned strings and vector.",
         "C keeps six global mpz_t values; YIAN keeps six local Option<BigInt> handles and explicitly closes every initialized handle on allocation failure, invalid digit, and success.",
         "Both compute two truncating quotient estimates each loop, emit only when the quotients compare equal, and preserve the gcc2 production and extraction operation order. The project shim exposes individual GMP arithmetic primitives only; the LFT loop and digit decisions remain in YIAN.",
-        "C emits through stdio; YIAN buffers bytes and implements ten-digit row labels and partial-row space padding in YIAN. The external archive is shared and is not instrumented by YIAN guards or ASan."
+        "C emits through stdio; YIAN buffers bytes, implements ten-digit row labels in YIAN, and derives partial-row space padding from a right-aligned empty interpolation at the remaining dynamic width. The external archive is shared and is not instrumented by YIAN guards or ASan."
       ]
     }
   ],

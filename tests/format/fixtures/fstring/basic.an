@@ -7,5 +7,14 @@ fn main() {
     @print(f"{spaced.as_str()}");
 }
 
+// Specifications and nested templates stay opaque; the formatter preserves their exact spelling.
+fn specs(width: u64, precision: u64) {
+    let value = 1.25;
+    let dynamic = f"[{value:{width}.{precision}f}]";
+    let nested = f"[{value:{width}f} {f"{value}"}]";
+    @print(f"{dynamic.as_str()}");
+    @print(f"{nested.as_str()}");
+}
+
 const MESSAGE: str = f"footer {1}"; // Inline comment after a formatted-string declaration.
 // Final comment after a formatted string.

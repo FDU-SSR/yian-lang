@@ -17,7 +17,7 @@ fixture and source hashes are recorded in `provenance.json`.
 | `offset_momentum` | `offset_momentum` | Both sum each body's momentum in array order and set the Sun's three velocity fields using the solar mass. |
 | file-scope `bodies` initializer | `init_bodies` | C initializes a global five-element array; YIAN builds the same five bodies in a local fixed array, then passes its full slice to the task functions. The numeric constants and expression order are preserved. |
 | `main` | `workload.run(n)` | C reads the step count from argv. The YIAN wrapper passes it to the workload; the `// bench-scale` marker supplies standalone default 5,000,000 and fast default 100,000. Both offset momentum once, print initial energy, perform exactly N advances at `0.01`, and print final energy. |
-| `printf("%.9f\\n", ...)` | `print_fixed_9` | YIAN's local formatter emits fixed nine-digit fractional output, matching the C format for this task's positive and negative energies. |
+| `printf("%.9f\\n", ...)` | `@println(f"{energy:.9f}")` | The standard library emits the exact binary value rounded to nine fractional digits, so the C format's precision, rounding, sign and newline are preserved without a local helper. |
 
 This is the Benchmarksgame five-body task with two energy outputs. The separate
 AWFY/nbody benchmark has a different input contract and workload; its evidence

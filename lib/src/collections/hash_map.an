@@ -5,7 +5,7 @@ from std.core.iter import Iterator, IntoIterator;
 from std.core.range import Range;
 from std.core.drop import Drop;
 from std.core.clone import Clone;
-from std.core.fmt import Format, Formatter;
+from std.core.fmt import Format, Formatter, FormatSpec;
 from std.core.result import Result;
 from std.core.io import IoError;
 
@@ -399,7 +399,9 @@ impl<K, V> IntoIterator<HashMapKeyIter<K, V>> for HashMap<K, V> {
 }
 
 impl<K, V> Format for HashMap<K, V> if K: Format, V: Format {
-    fn fmt(out: Formatter&) -> Result<(), IoError> {
+    fn fmt(out: Formatter&, spec: FormatSpec&) -> Result<(), IoError> {
+        spec.require_default()?;
+        let inner = FormatSpec.new();
         out.write_str("{")?;
         let entries = self.entries();
         let first = true;
@@ -408,9 +410,9 @@ impl<K, V> Format for HashMap<K, V> if K: Format, V: Format {
                 Some(entry) => {
                     if !first { out.write_str(", ")?; }
                     first = false;
-                    out.write_value(entry[0])?;
+                    out.write_value(entry[0], &inner)?;
                     out.write_str(": ")?;
-                    out.write_value(entry[1])?;
+                    out.write_value(entry[1], &inner)?;
                 },
                 None => { break; },
             }

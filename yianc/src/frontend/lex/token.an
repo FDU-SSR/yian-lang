@@ -504,6 +504,8 @@ pub enum TokenPayload {
     FStrExprBegin,
     FStrExprEnd,
     FStrEnd,
+    // Interpolation-context spelling that has no ordinary numeric decoding; the parser decides its meaning.
+    FStrFormatText { value: String },
     EndOfFile,
 }
 
@@ -511,7 +513,7 @@ impl Drop for TokenPayload {
     pub fn drop() {
         match self {
             Identifier(value) | Character(value) | StringLiteral(value) |
-            FStrLiteral(value) => value.drop(),
+            FStrLiteral(value) | FStrFormatText(value) => value.drop(),
             _ => {},
         }
     }
@@ -543,7 +545,7 @@ impl Token {
             Keyword(value) => value.spelling(),
             Punctuator(value) => value.spelling(),
             Identifier(value) | Character(value) | StringLiteral(value) |
-            FStrLiteral(value) => value.as_str(),
+            FStrLiteral(value) | FStrFormatText(value) => value.as_str(),
             Integer(_, _) => "<integer>",
             Float(_, _) => "<float>",
             FStrStart => "f\"",

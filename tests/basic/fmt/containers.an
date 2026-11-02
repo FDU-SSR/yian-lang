@@ -1,6 +1,6 @@
 // Test recursive standard-library formatting for containers and tuples.
 
-from std.core.fmt import Format, Formatter;
+from std.core.fmt import Format, Formatter, FormatSpec;
 from std.core.io import Write, IoError, IoErrorKind;
 from std.collections.hash_map import HashMap;
 from std.collections.hash_set import HashSet;
@@ -8,11 +8,13 @@ from std.collections.hash_set import HashSet;
 struct Point { x: i32, y: i32 }
 
 impl Format for Point {
-    fn fmt(out: Formatter&) -> Result<(), IoError> {
+    fn fmt(out: Formatter&, spec: FormatSpec&) -> Result<(), IoError> {
+        spec.require_default()?;
+        let inner = FormatSpec.new();
         out.write_str("P(")?;
-        out.write_value(&self.x)?;
+        out.write_value(&self.x, &inner)?;
         out.write_str(", ")?;
-        out.write_value(&self.y)?;
+        out.write_value(&self.y, &inner)?;
         out.write_str(")")
     }
 }
@@ -21,9 +23,11 @@ impl Format for Point {
 struct Counted { value: i32, count: u64& }
 
 impl Format for Counted {
-    fn fmt(out: Formatter&) -> Result<(), IoError> {
+    fn fmt(out: Formatter&, spec: FormatSpec&) -> Result<(), IoError> {
+        spec.require_default()?;
         *self.count += 1u64;
-        out.write_value(&self.value)
+        let inner = FormatSpec.new();
+        out.write_value(&self.value, &inner)
     }
 }
 
@@ -31,7 +35,8 @@ impl Format for Counted {
 struct Failing { attempts: u64& }
 
 impl Format for Failing {
-    fn fmt(out: Formatter&) -> Result<(), IoError> {
+    fn fmt(out: Formatter&, spec: FormatSpec&) -> Result<(), IoError> {
+        spec.require_default()?;
         *self.attempts += 1u64;
         Result<(), IoError>.Err(msg=IoError.new(IoErrorKind.Other, "member failed"))
     }

@@ -439,7 +439,15 @@ class _Layout:
     def __fstring(self, index: int) -> int:
         """Emit a whole f-string verbatim; return the index after it."""
         stop = index
-        while stop < len(self.__tokens) and not isinstance(self.__tokens[stop], Tok.FStrEnd):
+        open_templates = 0
+        while stop < len(self.__tokens):
+            token = self.__tokens[stop]
+            if isinstance(token, Tok.FStrStart):
+                open_templates += 1
+            elif isinstance(token, Tok.FStrEnd):
+                open_templates -= 1
+                if open_templates == 0:
+                    break
             stop += 1
         after = stop + 1 if stop < len(self.__tokens) else stop
         start = self.__tokens[index].span.start

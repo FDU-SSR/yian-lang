@@ -155,6 +155,7 @@ class AstVisitor:
                 for part in expr.parts:
                     if isinstance(part, AST.FormatValuePart):
                         self.visit_expr(part.expr)
+                        self.__visit_spec(part.spec)
             case AST.Recovery():
                 for child in expr.children:
                     self.visit_expr(child)
@@ -172,6 +173,14 @@ class AstVisitor:
             self.visit_expr(condition.value)
         else:
             self.visit_expr(condition)
+
+    def __visit_spec(self, spec: AST.FormatSpec | None) -> None:
+        """Visit dynamic counts in source order: value, width, precision."""
+        if spec is None:
+            return
+        for count in (spec.width, spec.precision):
+            if isinstance(count, AST.FormatCountDynamic):
+                self.visit_expr(count.expr)
 
     def visit_pattern(self, pattern: AST.Pattern) -> None:
         if not self.enter_pattern(pattern):
@@ -397,7 +406,8 @@ class AstRewriter:
                 expr.count = self.rewrite_expr(expr.count)
             case AST.FormatTemplate():
                 expr.parts = [
-                    AST.FormatValuePart(span=part.span, expr=self.rewrite_expr(part.expr))
+                    AST.FormatValuePart(span=part.span, expr=self.rewrite_expr(part.expr),
+                                        spec=self.__rewrite_spec(part.spec))
                     if isinstance(part, AST.FormatValuePart) else part
                     for part in expr.parts
                 ]
@@ -409,6 +419,20 @@ class AstRewriter:
                 pass
             case _:
                 assert_never(expr)
+
+    def __rewrite_spec(self, spec: AST.FormatSpec | None) -> AST.FormatSpec | None:
+        """Rebuild a specification; static counts keep their source position."""
+        if spec is None:
+            return None
+        width = self.__rewrite_count(spec.width)
+        precision = self.__rewrite_count(spec.precision)
+        return AST.FormatSpec(alignment=spec.alignment, zero_pad=spec.zero_pad, width=width,
+                              precision=precision, fixed=spec.fixed, span=spec.span)
+
+    def __rewrite_count(self, count: AST.FormatCount | None) -> AST.FormatCount | None:
+        if isinstance(count, AST.FormatCountDynamic):
+            return AST.FormatCountDynamic(expr=self.rewrite_expr(count.expr), span=count.span)
+        return count
 
     def rewrite_pattern(self, pattern: AST.Pattern) -> AST.Pattern:
         self.rewrite_pattern_children(pattern)

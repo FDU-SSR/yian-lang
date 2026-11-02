@@ -175,8 +175,15 @@ impl Layout {
             } elif self.line_open && self.space(index) { self.output.push(' '); }
 
             if formatted {
+                // Nested templates inside dynamic counts keep the whole region opaque.
                 let stop = index;
-                while stop < self.count && !(match self.tokens[stop].kind() { FStrEnd => true, _ => false, }) { stop += 1; }
+                let open: i32 = 0i32;
+                while stop < self.count {
+                    let change = match self.tokens[stop].kind() { FStrStart => 1i32, FStrEnd => -1i32, _ => 0i32, };
+                    open += change;
+                    if open == 0i32 { break; }
+                    stop += 1u64;
+                }
                 let after = if stop < self.count { stop + 1 } else { stop };
                 let end = if after < self.count { self.tokens[after].span.start } else { self.tokens[stop].span.end };
                 self.write(trim_end(self.source.slice(Span(token.span.start, end))));

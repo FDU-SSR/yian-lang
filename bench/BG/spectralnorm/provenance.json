@@ -88,7 +88,7 @@
       "differences": [
         "C parses n from argv; YIAN compiles n through the bench-scale marker, with full/fast values 8000/1000.",
         "C leaves its three malloc arrays allocated until process exit; YIAN owns and drops the three n-element slices after printing.",
-        "C uses printf with nine fractional digits; YIAN emits the same fixed nine digits through a dedicated formatter."
+        "C uses printf with nine fractional digits; YIAN emits the same fixed nine digits through the standard library's `:.9f` specification."
       ]
     }
   ]

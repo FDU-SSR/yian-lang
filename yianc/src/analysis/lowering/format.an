@@ -8,7 +8,7 @@ from yianc.analysis.ty.model import EnumVariant;
 from yianc.analysis.ty.callable import instance_substitutions;
 from yianc.analysis.hir.node import HirKind, Block as HirBlock, Let as HirLet, Match as HirMatch, MatchArm as HirMatchArm, Unary as HirUnary, VariantConstruct, Builtin as HirBuiltin, Tuple as HirTuple, Binary as HirBinary;
 from yianc.analysis.symbol.model import SymbolKind;
-from yianc.frontend.ast.node import Expr, FormatPart, IdentifierData, PatternData, PatternArguments, Pattern, TypeSyntax;
+from yianc.frontend.ast.node import Expr, FormatPart, FormatSpec, FormatAlignment, FormatCount, IdentifierData, PatternData, PatternArguments, Pattern, TypeSyntax;
 from yianc.frontend.ast.atoms import BuiltinKind, MatchArmOrigin;
 from yianc.frontend.ast.operator import BinaryOperator, UnaryOperator;
 from yianc.frontend.source import Span;
@@ -18,7 +18,8 @@ from yianc.diagnostics.model import AnalysisError, DiagnosticCode, AnalysisError
 from std.core.iter import Iterator, IntoIterator;
 from std.core.convert import From;
 from std.core.ops import Index;
-from yianc.analysis.ty.store import NEVER_TYPE_ID, STR_TYPE_ID, VOID_TYPE_ID;
+from yianc.analysis.ty.store import NEVER_TYPE_ID, STR_TYPE_ID, VOID_TYPE_ID, BOOL_TYPE_ID, I64_TYPE_ID, U64_TYPE_ID;
+from yianc.analysis.constant.value import IntegerValue, IntegerWidth;
 
 // The lowering target selects the outer owner and where a write failure goes.
 pub enum FormatDestination {
@@ -39,6 +40,12 @@ enum FormatFailure {
 struct FormatLibrary {
     formatter_type: TypeId,
     format_trait: TypeId,
+    format_spec_type: TypeId,
+    create_spec: SymbolId,
+    set_width_signed: SymbolId,
+    set_width_unsigned: SymbolId,
+    set_precision_signed: SymbolId,
+    set_precision_unsigned: SymbolId,
     string_type: TypeId,
     io_error_type: TypeId,
     unit_type: TypeId,
@@ -111,6 +118,12 @@ fn load_library(checker: ExprChecker&) -> Result<FormatLibrary, AnalysisError> {
     let result_unit = standard_unit(checker, "core/result.an")?;
     let formatter_symbol = unit_symbol(checker, fmt_unit, "Formatter")?;
     let format_symbol = unit_symbol(checker, fmt_unit, "Format")?;
+    let format_spec_symbol = unit_symbol(checker, fmt_unit, "FormatSpec")?;
+    let create_spec = unit_symbol(checker, fmt_unit, "create_spec")?;
+    let set_width_signed = unit_symbol(checker, fmt_unit, "set_width_signed")?;
+    let set_width_unsigned = unit_symbol(checker, fmt_unit, "set_width_unsigned")?;
+    let set_precision_signed = unit_symbol(checker, fmt_unit, "set_precision_signed")?;
+    let set_precision_unsigned = unit_symbol(checker, fmt_unit, "set_precision_unsigned")?;
     let string_symbol = unit_symbol(checker, string_unit, "String")?;
     let io_error_symbol = unit_symbol(checker, io_unit, "IoError")?;
     let result_symbol = unit_symbol(checker, result_unit, "Result")?;
@@ -126,6 +139,7 @@ fn load_library(checker: ExprChecker&) -> Result<FormatLibrary, AnalysisError> {
     let set_symbol = unit_symbol(checker, set_unit, "HashSet")?;
     let formatter_type = symbol_type(checker, formatter_symbol);
     let format_trait = symbol_type(checker, format_symbol);
+    let format_spec_type = symbol_type(checker, format_spec_symbol);
     let string_type = symbol_type(checker, string_symbol);
     let io_error_type = symbol_type(checker, io_error_symbol);
     let result_type = symbol_type(checker, result_symbol);
@@ -145,9 +159,10 @@ fn load_library(checker: ExprChecker&) -> Result<FormatLibrary, AnalysisError> {
     arguments.push(unit_type);
     arguments.push(io_error_type);
     let result_instance = checker.ctx.session.types.instance(result_definition, &arguments)?;
-    Result<FormatLibrary, AnalysisError>.Ok(FormatLibrary(formatter_type, format_trait, string_type,
-        io_error_type, unit_type, result_instance, formatter_for, string_writer, stdout_printer, stderr_printer,
-        vec_definition, option_definition, result_definition, map_definition, set_definition))
+    Result<FormatLibrary, AnalysisError>.Ok(FormatLibrary(formatter_type, format_trait, format_spec_type,
+        create_spec, set_width_signed, set_width_unsigned, set_precision_signed, set_precision_unsigned,
+        string_type, io_error_type, unit_type, result_instance, formatter_for, string_writer, stdout_printer,
+        stderr_printer, vec_definition, option_definition, result_definition, map_definition, set_definition))
 }
 
 fn hidden_name(span: Span, role: str) -> String {
@@ -329,6 +344,18 @@ fn missing_format_member(checker: ExprChecker&, library: FormatLibrary&, type_id
     Result<Option<TypeId>, AnalysisError>.Ok(Option<TypeId>.Some(type_id))
 }
 
+// The default specification is a temporary constructor call; it owns no storage and is borrowed once.
+fn default_spec_call(checker: ExprChecker&, span: Span, library: FormatLibrary&) -> Result<HirId, AnalysisError> {
+    let arguments = Vec<TypeId>.new();
+    defer arguments.drop();
+    let name = checker.ctx.session.names.intern("new");
+    let method = lookup_method_args(checker.ctx, library.format_spec_type, name, Option<TypeId>.None,
+        Option<Vec<TypeId>&>.Some(&arguments), checker.ctx.span(checker.unit, span))?;
+    let empty = Vec<HirId>.new();
+    defer empty.drop();
+    checker.call_values(span, method, &empty, Option<HirId>.None, Option<Span>.None)
+}
+
 fn write_value_call(checker: ExprChecker&, span: Span, receiver: HirId, library: FormatLibrary&,
     value: HirId) -> Result<HirId, AnalysisError> {
     let formatter_type = library.formatter_type;
@@ -342,6 +369,7 @@ fn write_value_call(checker: ExprChecker&, span: Span, receiver: HirId, library:
     let format_arguments = Vec<TypeId>.new();
     defer format_arguments.drop();
     format_arguments.push(checker.ctx.session.types.reference(formatter_type));
+    format_arguments.push(checker.ctx.session.types.reference(library.format_spec_type));
     let format_name = checker.ctx.session.names.intern("fmt");
     match lookup_method_args(checker.ctx, actual, format_name, Option<TypeId>.Some(format_trait),
         Option<Vec<TypeId>&>.Some(&format_arguments), checker.ctx.span(checker.unit, span)) {
@@ -372,16 +400,209 @@ fn write_value_call(checker: ExprChecker&, span: Span, receiver: HirId, library:
         },
     }
 
+    let spec = default_spec_call(checker, span, library)?;
+    let spec_reference = reference_of(checker, span, spec);
     let arguments = Vec<TypeId>.new();
     defer arguments.drop();
     arguments.push(checker.type_of(argument));
+    arguments.push(checker.ctx.session.types.reference(library.format_spec_type));
     let name = checker.ctx.session.names.intern("write_value");
     let method = lookup_method_args(checker.ctx, formatter_type, name, Option<TypeId>.None,
         Option<Vec<TypeId>&>.Some(&arguments), checker.ctx.span(checker.unit, span))?;
     let values = Vec<HirId>.new();
     defer values.drop();
     values.push(argument);
+    values.push(spec_reference);
     checker.call_values(span, method, &values, Option<HirId>.Some(receiver), Option<Span>.None)
+}
+
+// A specification target must have a builtin textual or numeric representation; only floats take a
+// fixed precision, and no other type accepts a nonempty specification.
+fn check_spec_target(checker: ExprChecker&, span: Span, library: FormatLibrary&, actual: TypeId,
+    spec: FormatSpec&) -> Result<(), AnalysisError> {
+    let unsupported = String.from(&"format specification is not supported for this type");
+    defer unsupported.drop();
+
+    if actual == library.string_type {
+        if spec.fixed {
+            return Result<(), AnalysisError>.Err(checker.ctx.error(checker.unit, span, DiagnosticCode.Type, unsupported.as_str()));
+        }
+        return Result<(), AnalysisError>.Ok(val=());
+    }
+
+    let accepted = false;
+    match checker.ctx.session.types.require(actual)? {
+        Integer(_, _) => {
+            if !spec.fixed { accepted = true; }
+        },
+        Float(_) => accepted = true,
+        Char => {
+            if !spec.fixed { accepted = true; }
+        },
+        Str => {
+            if !spec.fixed { accepted = true; }
+        },
+        _ => {},
+    }
+
+    if !accepted {
+        return Result<(), AnalysisError>.Err(checker.ctx.error(checker.unit, span, DiagnosticCode.Type, unsupported.as_str()));
+    }
+    Result<(), AnalysisError>.Ok(val=())
+}
+
+// Dynamic counts accept only builtin integers and keep their signedness through the check call.
+fn checked_parameter(checker: ExprChecker&, span: Span, value: HirId) -> Result<(bool, HirId), AnalysisError> {
+    let defaulted = default_type(checker.ctx, checker.type_of(value));
+    let actual = checker.coerce(value, defaulted)?;
+    match checker.ctx.session.types.require(checker.type_of(actual))? {
+        Integer(bits, signed) => {
+            let target = if *signed { TypeId(I64_TYPE_ID) } else { TypeId(U64_TYPE_ID) };
+            return Result<(bool, HirId), AnalysisError>.Ok((*signed, checker.coerce(actual, target)?));
+        },
+        _ => {},
+    }
+    Result<(bool, HirId), AnalysisError>.Err(checker.ctx.error(checker.unit, span, DiagnosticCode.Type,
+        "format parameter must be an integer"))
+}
+
+fn bool_literal(checker: ExprChecker&, span: Span, value: bool) -> HirId {
+    checker.node(span, TypeId(BOOL_TYPE_ID), false, HirKind.BoolLiteral(value))
+}
+
+fn u64_literal(checker: ExprChecker&, span: Span, value: u64) -> HirId {
+    checker.node(span, TypeId(U64_TYPE_ID), false, HirKind.IntLiteral(IntegerValue.fixed(value, IntegerWidth.W64, false)))
+}
+
+fn alignment_code(alignment: FormatAlignment) -> u64 {
+    return match alignment {
+        Left => 1u64,
+        Right => 2u64,
+        _ => 0u64,
+    };
+}
+
+// A literal count is already bounded by the parser; a missing fixed precision defaults to six digits.
+fn static_precision(spec: FormatSpec&) -> u64 {
+    match &(*spec).precision {
+        Some(count) => {
+            match count {
+                Literal(value, span) => return *value,
+                Dynamic(expr, span) => {},
+            }
+        },
+        None => {},
+    }
+    return 6u64;
+}
+
+// A literal width is part of the static shape; a dynamic one starts at zero and is set before use.
+fn static_width(spec: FormatSpec&) -> u64 {
+    match &(*spec).width {
+        Some(count) => {
+            match count {
+                Literal(value, count_span) => return *value,
+                Dynamic(expr, count_span) => {},
+            }
+        },
+        None => {},
+    }
+    return 0u64;
+}
+
+fn create_spec_call(checker: ExprChecker&, span: Span, library: FormatLibrary&, spec: FormatSpec&) -> Result<HirId, AnalysisError> {
+    let values = Vec<HirId>.new();
+    defer values.drop();
+    values.push(u64_literal(checker, span, alignment_code((*spec).alignment)));
+    values.push(bool_literal(checker, span, (*spec).zero_pad));
+    values.push(u64_literal(checker, span, static_width(spec)));
+    values.push(u64_literal(checker, span, static_precision(spec)));
+    values.push(bool_literal(checker, span, (*spec).fixed));
+    call_function(checker, span, library.create_spec, &values)
+}
+
+fn set_spec_parameter(checker: ExprChecker&, span: Span, symbol: SymbolId, spec_symbol: SymbolId,
+    signed: bool, value: HirId) -> Result<HirId, AnalysisError> {
+    let reference = reference_of(checker, span, variable(checker, span, spec_symbol, true));
+    let values = Vec<HirId>.new();
+    defer values.drop();
+    values.push(reference);
+    values.push(value);
+    call_function(checker, span, symbol, &values)
+}
+
+fn write_spec_value(checker: ExprChecker&, span: Span, receiver: HirId, library: FormatLibrary&,
+    value_symbol: SymbolId, spec_symbol: SymbolId) -> Result<HirId, AnalysisError> {
+    let address = reference_of(checker, span, variable(checker, span, value_symbol, true));
+    let spec_reference = reference_of(checker, span, variable(checker, span, spec_symbol, true));
+    let arguments = Vec<TypeId>.new();
+    defer arguments.drop();
+    arguments.push(checker.type_of(address));
+    arguments.push(checker.ctx.session.types.reference(library.format_spec_type));
+    let name = checker.ctx.session.names.intern("write_value");
+    let method = lookup_method_args(checker.ctx, library.formatter_type, name, Option<TypeId>.None,
+        Option<Vec<TypeId>&>.Some(&arguments), checker.ctx.span(checker.unit, span))?;
+    let values = Vec<HirId>.new();
+    defer values.drop();
+    values.push(address);
+    values.push(spec_reference);
+    checker.call_values(span, method, &values, Option<HirId>.Some(receiver), Option<Span>.None)
+}
+
+// One specified field: evaluate the value once, then each dynamic count with an immediate range check,
+// so a failed width or precision prevents every later expression and leaves no field bytes.
+fn field_write(checker: ExprChecker&, span: Span, library: FormatLibrary&, receiver: HirId, value: HirId,
+    spec: FormatSpec&, next: HirId, tail_type: TypeId, failure: FormatFailure) -> Result<HirId, AnalysisError> {
+    let defaulted = default_type(checker.ctx, checker.type_of(value));
+    let value = checker.coerce(value, defaulted)?;
+    check_spec_target(checker, span, library, checker.type_of(value), spec)?;
+
+    // The block takes ownership of the statement list; a deferred drop here would free shared storage.
+    let statements = Vec<HirId>.new();
+    let (value_declaration, value_symbol) = declare(checker, span, "spec_value", value)?;
+    statements.push(value_declaration);
+    let created = create_spec_call(checker, span, library, spec)?;
+    let (spec_declaration, spec_symbol) = declare(checker, span, "spec_shape", created)?;
+    statements.push(spec_declaration);
+
+    let write = write_spec_value(checker, span, receiver, library, value_symbol, spec_symbol)?;
+    let body = match_write(checker, span, library, write, next, tail_type, failure)?;
+    let chain = body;
+
+    match &(*spec).precision {
+        Some(count) => {
+            match count {
+                Dynamic(expr, count_span) => {
+                    let expression = checker.expression(*expr)?;
+                    let (signed, checked) = checked_parameter(checker, *count_span, expression)?;
+                    let symbol = if signed { library.set_precision_signed } else { library.set_precision_unsigned };
+                    let check = set_spec_parameter(checker, *count_span, symbol, spec_symbol, signed, checked)?;
+                    chain = match_write(checker, *count_span, library, check, chain, tail_type, failure)?;
+                },
+                Literal(value, count_span) => {},
+            }
+        },
+        None => {},
+    }
+
+    match &(*spec).width {
+        Some(count) => {
+            match count {
+                Dynamic(expr, count_span) => {
+                    let expression = checker.expression(*expr)?;
+                    let (signed, checked) = checked_parameter(checker, *count_span, expression)?;
+                    let symbol = if signed { library.set_width_signed } else { library.set_width_unsigned };
+                    let check = set_spec_parameter(checker, *count_span, symbol, spec_symbol, signed, checked)?;
+                    chain = match_write(checker, *count_span, library, check, chain, tail_type, failure)?;
+                },
+                Literal(value, count_span) => {},
+            }
+        },
+        None => {},
+    }
+
+    statements.push(chain);
+    Result<HirId, AnalysisError>.Ok(block(checker, span, statements, tail_type))
 }
 
 // The synthetic pattern nodes live in the current unit's arena for the duration of the analysis.
@@ -494,13 +715,13 @@ fn chain(checker: ExprChecker&, library: FormatLibrary&, receiver: HirId, parts:
         return Result<HirId, AnalysisError>.Ok(tail);
     }
 
-    let write_span = match &(*parts)[index] {
-        Literal(text, span) => *span,
-        Value(expr, span) => *span,
-    };
-    let write = match &(*parts)[index] {
-        Literal(text, span) => write_str_call(checker, *span, *span, receiver, library.formatter_type, text.as_str())?,
-        Value(expr, span) => {
+    match &(*parts)[index] {
+        Literal(text, span) => {
+            let write = write_str_call(checker, *span, *span, receiver, library.formatter_type, text.as_str())?;
+            let next = chain(checker, library, receiver, parts, index + 1u64, tail, tail_type, failure)?;
+            match_write(checker, *span, library, write, next, tail_type, failure)
+        },
+        Value(expr, span, spec) => {
             let value = checker.expression(*expr)?;
 
             if checker.type_of(value) == TypeId(NEVER_TYPE_ID) {
@@ -510,11 +731,16 @@ fn chain(checker: ExprChecker&, library: FormatLibrary&, receiver: HirId, parts:
                 return Result<HirId, AnalysisError>.Ok(checker.node(*span, TypeId(NEVER_TYPE_ID), false, HirKind.Block(HirBlock(statements))));
             }
 
-            write_value_call(checker, *span, receiver, library, value)?
+            let next = chain(checker, library, receiver, parts, index + 1u64, tail, tail_type, failure)?;
+            match spec {
+                Some(value_spec) => field_write(checker, *span, library, receiver, value, value_spec, next, tail_type, failure),
+                None => {
+                    let write = write_value_call(checker, *span, receiver, library, value)?;
+                    match_write(checker, *span, library, write, next, tail_type, failure)
+                },
+            }
         },
-    };
-    let next = chain(checker, library, receiver, parts, index + 1u64, tail, tail_type, failure)?;
-    match_write(checker, write_span, library, write, next, tail_type, failure)
+    }
 }
 
 fn block(checker: ExprChecker&, span: Span, statements: Vec<HirId>, type_id: TypeId) -> HirId {

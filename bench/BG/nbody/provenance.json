@@ -67,7 +67,7 @@
       "yian_symbol": "main",
       "differences": [
         "C reads steps from argv and has file-scope bodies; YIAN uses its bench-scale step marker and initializes the five bodies in a local fixed array.",
-        "Both apply offset_momentum once, print initial energy, advance by 0.01 exactly n times, and print final energy. YIAN's print_fixed_9 helper emits the C printf precision."
+        "Both apply offset_momentum once, print initial energy, advance by 0.01 exactly n times, and print final energy. YIAN prints both energies through the standard library's nine-digit fixed specification, which reproduces the C printf precision."
       ]
     }
   ]

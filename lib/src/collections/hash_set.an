@@ -4,7 +4,7 @@ from std.core.iter import Iterator, IntoIterator;
 from std.core.hash import Murmur3BuildHasher, Murmur3Hasher;
 from std.core.drop import Drop;
 from std.core.clone import Clone;
-from std.core.fmt import Format, Formatter;
+from std.core.fmt import Format, Formatter, FormatSpec;
 from std.core.result import Result;
 from std.core.io import IoError;
 
@@ -104,7 +104,9 @@ impl<T> IntoIterator<HashSetIter<T>> for HashSet<T> {
 }
 
 impl<T> Format for HashSet<T> if T: Format {
-    fn fmt(out: Formatter&) -> Result<(), IoError> {
+    fn fmt(out: Formatter&, spec: FormatSpec&) -> Result<(), IoError> {
+        spec.require_default()?;
+        let inner = FormatSpec.new();
         out.write_str("{")?;
         let entries = self.map.entries();
         let first = true;
@@ -113,7 +115,7 @@ impl<T> Format for HashSet<T> if T: Format {
                 Some(entry) => {
                     if !first { out.write_str(", ")?; }
                     first = false;
-                    out.write_value(entry[0])?;
+                    out.write_value(entry[0], &inner)?;
                 },
                 None => { break; },
             }

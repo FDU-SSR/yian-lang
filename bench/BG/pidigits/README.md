@@ -20,7 +20,7 @@ derivation, output hash, and N=27 argv are recorded in `provenance.json`.
 | `mpz_t` globals `n1`, `n2`, `d`, `u`, `v`, `w` | `workload.run` local `Option<BigInt>` values | Both keep six independent arbitrary-precision integers initialized to 4, 3, 1, 0, 0, 0. C stores `mpz_t` directly; YIAN owns six opaque handles allocated by the package shim and closes each initialized handle on every return path. |
 | quotient estimates and `mpz_cmp` decision in `main` | `workload.run` | Each iteration computes both truncating quotients and emits a digit only when they compare equal. Otherwise it performs the same `k`/`k2` production updates in source order. |
 | `// extract` and `// produce` GMP operations | `workload.run` calls to `tdiv_q`, `cmp`, `get_si`, `mul_si`, `mul`, and `add` | The project-local GMP 6.3.0 archive supplies the same arithmetic primitives to the C reference and the YIAN shim. The C shim wraps only individual GMP operations; all LFT state transitions and digit decisions remain in YIAN. |
-| `putchar`, `printf`, final partial-row padding | `append_unsigned`, `workload.run` | YIAN appends bytes in ten-digit rows, pads a partial row with spaces, and writes through `BufWriter`. C uses stdio. The N=27 probe checks the incomplete-row bytes. |
+| `putchar`, `printf`, final partial-row padding | `append_unsigned`, `workload.run` | YIAN appends bytes in ten-digit rows, pads a partial row with a right-aligned empty interpolation at the remaining dynamic width, and writes through `BufWriter`. C uses stdio. The N=27 probe checks the incomplete-row bytes. |
 
 The YIAN binding's public surface is the inventoried `gmp.api` package. Its
 opaque handles have explicit cleanup; there is no implicit `Drop` ownership or

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from yianc.frontend.lex import token as Tok
+from yianc.frontend.lex.position import SrcPosition, SrcSpan
 from yianc.frontend.parse import ast as AST
 from yianc.frontend.parse import ast_type as ASTTy
 from yianc.frontend.parse.error import ParseError
@@ -9,6 +10,49 @@ from yianc.frontend.parse.parser_type import TypeParser
 from yianc.frontend.parse.stream import (SEP_COMMA, TERM_RANGLE,
                                             TERM_RBRACE, TERM_RBRACKET,
                                             TERM_RPAREN, TokenStream)
+
+
+# Specification bounds are inclusive; literals outside them never reach analysis.
+_MAX_FORMAT_WIDTH = 65535
+_MAX_FORMAT_PRECISION = 1024
+
+
+class _SpecScan:
+    """Scanner state for one format specification inside an interpolation."""
+
+    def __init__(self, expected: SrcPosition) -> None:
+        # Position where the next unconsumed spelling character must start.
+        self.expected = expected
+        self.offset = 0
+
+
+def _spec_spelling(token: Tok.Token) -> str:
+    """The original spelling of one token inside a specification."""
+    match token:
+        case Tok.FStrFormatText():
+            return token.value
+        case Tok.IntLiteral() | Tok.FloatLiteral():
+            return token.raw
+        case Tok.Identifier():
+            return token.name
+        case Tok.Keyword():
+            return token.kind.value
+        case Tok.Punctuator():
+            if token.kind is Tok.PunctuatorKind.LAngle:
+                return "<"
+            if token.kind is Tok.PunctuatorKind.RAngle:
+                return ">"
+            return token.kind.value
+        case _:
+            return ""
+
+
+def _same_position(left: SrcPosition, right: SrcPosition) -> bool:
+    return left.row == right.row and left.col == right.col
+
+
+def _decimal_digit(value: str) -> bool:
+    return "0" <= value <= "9"
 
 
 class ExprParser:
@@ -286,8 +330,16 @@ class ExprParser:
             if isinstance(token, Tok.FStrExprBegin):
                 self.__stream.advance()
                 expr = self.parse_expr()
-                self.__stream.advance()  # FStrExprEnd
-                parts.append(AST.FormatValuePart(span=expr.span, expr=expr))
+                spec: AST.FormatSpec | None = None
+                following = self.__stream.peek()
+                if isinstance(following, Tok.Punctuator) and following.kind is Tok.PunctuatorKind.Colon:
+                    self.__stream.advance()
+                    spec = self.__parse_format_spec(following.span)
+                closing = self.__stream.peek()
+                if not isinstance(closing, Tok.FStrExprEnd):
+                    raise ParseError("Expected '}' after a formatted expression", closing.span)
+                self.__stream.advance()
+                parts.append(AST.FormatValuePart(span=expr.span, expr=expr, spec=spec))
                 continue
 
             if isinstance(token, Tok.FStrEnd):
@@ -297,6 +349,127 @@ class ExprParser:
             raise ParseError(f"Unexpected token '{token}' in f-string", token.span)
 
         return AST.FormatTemplate(span=span, parts=parts)
+
+    # ------------------------------------------------------------------
+    # format specification
+    # ------------------------------------------------------------------
+
+    def __parse_format_spec(self, colon: SrcSpan) -> AST.FormatSpec | None:
+        """Parse ``[alignment] ["0"] [count] ["." count] ["f"]`` after the colon.
+
+        An absent specification keeps the default representation; ``None`` therefore covers both the
+        empty specification and the default shape.
+        """
+        scan = _SpecScan(colon.end)
+        if self.__spec_at_end(scan):
+            if not _same_position(self.__stream.peek().span.start, colon.end):
+                raise ParseError("invalid format specification", self.__stream.peek().span)
+            return None
+
+        first = self.__stream.peek().span
+        if not _same_position(first.start, colon.end):
+            raise ParseError("invalid format specification", first)
+
+        alignment = AST.FormatAlignment.DEFAULT
+        initial = self.__spec_peek(scan)
+        if initial == "<":
+            self.__spec_take(scan)
+            alignment = AST.FormatAlignment.LEFT
+        elif initial == ">":
+            self.__spec_take(scan)
+            alignment = AST.FormatAlignment.RIGHT
+
+        zero_pad = self.__spec_marker(scan, "0")
+        width = self.__spec_count(scan, _MAX_FORMAT_WIDTH, "width")
+        precision: AST.FormatCount | None = None
+        if self.__spec_marker(scan, "."):
+            precision = self.__spec_count(scan, _MAX_FORMAT_PRECISION, "precision")
+            if precision is None:
+                raise ParseError("invalid format specification", self.__stream.peek().span)
+        fixed = self.__spec_marker(scan, "f")
+
+        if not self.__spec_at_end(scan):
+            raise ParseError("invalid format specification", self.__stream.peek().span)
+        if not _same_position(self.__stream.peek().span.start, scan.expected):
+            raise ParseError("invalid format specification", self.__stream.peek().span)
+        if precision is not None and not fixed:
+            raise ParseError("invalid format specification", first)
+
+        return AST.FormatSpec(alignment=alignment, zero_pad=zero_pad, width=width, precision=precision,
+                              fixed=fixed, span=SrcSpan(first.start, scan.expected))
+
+    def __spec_at_end(self, scan: _SpecScan) -> bool:
+        token = self.__stream.peek()
+        if isinstance(token, Tok.FStrExprEnd):
+            return True
+        return scan.offset >= len(_spec_spelling(token))
+
+    def __spec_peek(self, scan: _SpecScan) -> str | None:
+        if self.__spec_at_end(scan):
+            return None
+        return _spec_spelling(self.__stream.peek())[scan.offset]
+
+    def __spec_char_start(self, scan: _SpecScan) -> SrcPosition:
+        start = self.__stream.peek().span.start
+        return SrcPosition(start.row, start.col + scan.offset, start.path)
+
+    def __spec_take(self, scan: _SpecScan) -> str:
+        token = self.__stream.peek()
+        spelling = _spec_spelling(token)
+        current = spelling[scan.offset]
+        scan.expected = SrcPosition(token.span.start.row, token.span.start.col + scan.offset + 1,
+                                    token.span.start.path)
+        scan.offset += 1
+        if scan.offset >= len(spelling):
+            self.__stream.advance()
+            scan.offset = 0
+        return current
+
+    def __spec_marker(self, scan: _SpecScan, marker: str) -> bool:
+        if self.__spec_at_end(scan):
+            return False
+        if self.__spec_peek(scan) != marker:
+            return False
+        self.__spec_take(scan)
+        return True
+
+    def __spec_count(self, scan: _SpecScan, limit: int, name: str) -> AST.FormatCount | None:
+        if self.__spec_at_end(scan):
+            return None
+
+        token = self.__stream.peek()
+        if (scan.offset == 0 and isinstance(token, Tok.Punctuator)
+                and token.kind is Tok.PunctuatorKind.LBrace):
+            if not _same_position(token.span.start, scan.expected):
+                raise ParseError("invalid format specification", token.span)
+            self.__stream.advance()
+            expr = self.parse_expr()
+            closing = self.__stream.peek()
+            if not (isinstance(closing, Tok.Punctuator) and closing.kind is Tok.PunctuatorKind.RBrace):
+                raise ParseError("Expected '}' after a format parameter", closing.span)
+            scan.expected = closing.span.end
+            self.__stream.advance()
+            return AST.FormatCountDynamic(expr=expr, span=token.span + closing.span)
+
+        current = self.__spec_peek(scan)
+        if current is None or not _decimal_digit(current):
+            return None
+
+        start = self.__spec_char_start(scan)
+        value = 0
+        while True:
+            if self.__spec_at_end(scan):
+                break
+            digit = self.__spec_peek(scan)
+            if digit is None or not _decimal_digit(digit):
+                break
+            amount = ord(digit) - ord("0")
+            if value > (limit - amount) // 10:
+                raise ParseError(f"format {name} out of range",
+                                 SrcSpan(start, self.__spec_char_start(scan)))
+            value = value * 10 + amount
+            self.__spec_take(scan)
+        return AST.FormatCountLiteral(value=value, span=SrcSpan(start, scan.expected))
 
     def __parse_closure(self) -> AST.ClosureExpr:
         """Parse a closure expression ``|captures| (params) -> R { body }``."""

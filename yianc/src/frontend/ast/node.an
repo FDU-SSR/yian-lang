@@ -266,10 +266,32 @@ pub enum TypeSource {
     CallableReturnType,
 }
 
+// A format specification is present only for an explicit colon; counts are literal or dynamic expressions.
+pub enum FormatAlignment {
+    Default,
+    Left,
+    Right,
+}
+
+pub enum FormatCount {
+    Literal { value: u64, span: Span },
+    // Dynamic counts borrow the enclosing arena expression and include the braces in their span.
+    Dynamic { expr: Expr&, span: Span },
+}
+
+pub struct FormatSpec {
+    pub alignment: FormatAlignment,
+    pub zero_pad: bool,
+    pub width: Option<FormatCount>,
+    pub precision: Option<FormatCount>,
+    pub fixed: bool,
+    pub span: Span,
+}
+
 // Formatted template parts keep decoded literal text and borrow interpolation expressions from the arena.
 pub enum FormatPart {
     Literal { text: String, span: Span },
-    Value { expr: Expr&, span: Span },
+    Value { expr: Expr&, span: Span, spec: Option<FormatSpec> },
 }
 
 impl Drop for FormatPart {
@@ -278,7 +300,7 @@ impl Drop for FormatPart {
             Literal(text, span) => {
                 text.drop();
             },
-            Value(expr, span) => {},
+            Value(expr, span, spec) => {},
         }
     }
 }

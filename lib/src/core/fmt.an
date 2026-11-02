@@ -4,12 +4,121 @@ from std.core.range import Range;
 from std.core.result import Result;
 from std.core.option import Option;
 
-// Types provide one textual representation through the shared target writer.
-pub trait Format {
-    fn fmt(out: Formatter&) -> Result<(), IoError>;
+// Formatting parameters are bounded so a specification cannot request unbounded output.
+const MAX_FORMAT_WIDTH: u64 = 65535;
+const MAX_FORMAT_PRECISION: u64 = 1024;
+
+// Compiler-built specifications select an alignment by number instead of an enum value.
+const ALIGNMENT_DEFAULT: u64 = 0;
+const ALIGNMENT_LEFT: u64 = 1;
+const ALIGNMENT_RIGHT: u64 = 2;
+
+// Default alignment keeps each representation's own direction: text left, numbers right.
+pub enum Alignment {
+    Default,
+    Left,
+    Right,
 }
 
-// A formatter borrows its target; it never owns, flushes or closes that target.
+// Both parameter kinds share range validation; the kind names the diagnostic.
+pub enum ParameterKind {
+    Width,
+    Precision,
+}
+
+// Padding separate text width from numeric sign handling and non-finite values.
+pub enum PaddingKind {
+    Text,
+    Number,
+    SpecialNumber,
+}
+
+// A specification is borrowed for one formatted value; it owns no storage and is never retained.
+pub struct FormatSpec {
+    pub alignment: Alignment,
+    pub zero_pad: bool,
+    pub width: u64,
+    pub precision: Option<u64>,
+}
+
+impl FormatSpec {
+    static pub fn new() -> Self {
+        Self(alignment=Alignment.Default, zero_pad=false, width=0u64, precision=Option<u64>.None)
+    }
+
+    // Validate bounds and the alignment/zero-padding combination before any field byte is written.
+    pub fn validate() -> Result<(), IoError> {
+        if self.width > MAX_FORMAT_WIDTH {
+            return Result<(), IoError>.Err(msg=IoError.new(IoErrorKind.InvalidInput, "format width out of range"));
+        }
+
+        match self.precision {
+            Some(value) => {
+                if value > MAX_FORMAT_PRECISION {
+                    return Result<(), IoError>.Err(msg=IoError.new(IoErrorKind.InvalidInput, "format precision out of range"));
+                }
+            },
+            None => {},
+        }
+
+        if self.alignment == Alignment.Left && self.zero_pad {
+            return Result<(), IoError>.Err(msg=IoError.new(IoErrorKind.InvalidInput,
+                "zero padding cannot be combined with left alignment"));
+        }
+
+        Result<(), IoError>.Ok(val=())
+    }
+
+    // Types without parameterized representations accept only the default specification.
+    pub fn require_default() -> Result<(), IoError> {
+        self.validate()?;
+
+        if self.alignment != Alignment.Default || self.zero_pad || self.width != 0u64 || self.precision.is_some() {
+            return Result<(), IoError>.Err(msg=IoError.new(IoErrorKind.InvalidInput,
+                "format specification is not supported for this type"));
+        }
+
+        Result<(), IoError>.Ok(val=())
+    }
+}
+
+fn parameter_limit(kind: ParameterKind) -> u64 {
+    return match kind {
+        Width => MAX_FORMAT_WIDTH,
+        Precision => MAX_FORMAT_PRECISION,
+    };
+}
+
+fn parameter_error(kind: ParameterKind) -> IoError {
+    return match kind {
+        Width => IoError.new(IoErrorKind.InvalidInput, "format width out of range"),
+        Precision => IoError.new(IoErrorKind.InvalidInput, "format precision out of range"),
+    };
+}
+
+// Checked parameters keep their original range: a negative signed count never becomes a huge u64.
+pub fn check_unsigned(value: u64, kind: ParameterKind) -> Result<u64, IoError> {
+    if value > parameter_limit(kind) {
+        return Result<u64, IoError>.Err(msg=parameter_error(kind));
+    }
+
+    Result<u64, IoError>.Ok(val=value)
+}
+
+pub fn check_signed(value: i64, kind: ParameterKind) -> Result<u64, IoError> {
+    if value < 0i64 {
+        return Result<u64, IoError>.Err(msg=parameter_error(kind));
+    }
+
+    check_unsigned(u64(value), kind)
+}
+
+// Types provide one textual representation through the shared target writer.
+pub trait Format {
+    fn fmt(out: Formatter&, spec: FormatSpec&) -> Result<(), IoError>;
+}
+
+// A formatter borrows its target; it never owns, flushes or closes that target and stores no specification.
 pub struct Formatter {
     writer: Write&,
 }
@@ -20,10 +129,129 @@ impl Formatter {
     }
 
     // Dispatch through the Format trait object so an inherent method named fmt cannot intercept members.
-    pub fn write_value<T>(value: T&) -> Result<(), IoError> {
+    pub fn write_value<T>(value: T&, spec: FormatSpec&) -> Result<(), IoError> {
         let object: Format& = value;
-        object.fmt(self)
+        object.fmt(self, spec)
     }
+
+    // Write one complete field. Text counts Unicode scalars and defaults left; numbers default right
+    // and may be zero filled, with any sign ahead of the fill.
+    pub fn write_padded(text: str, spec: FormatSpec&, kind: PaddingKind) -> Result<(), IoError> {
+        spec.validate()?;
+        let padding = b' ';
+        let before = false;
+
+        match kind {
+            Text => {
+                if spec.zero_pad {
+                    return Result<(), IoError>.Err(msg=IoError.new(IoErrorKind.InvalidInput,
+                        "zero padding is not supported for text"));
+                }
+                if spec.precision.is_some() {
+                    return Result<(), IoError>.Err(msg=IoError.new(IoErrorKind.InvalidInput,
+                        "precision is not supported for text"));
+                }
+                match spec.alignment {
+                    Right => { before = true; },
+                    _ => { before = false; },
+                }
+            },
+            Number => {
+                match spec.alignment {
+                    Left => { before = false; },
+                    _ => { before = true; },
+                }
+                if spec.zero_pad { padding = b'0'; }
+            },
+            SpecialNumber => {
+                match spec.alignment {
+                    Left => { before = false; },
+                    _ => { before = true; },
+                }
+            },
+        }
+
+        // Width is a minimum: combining characters count separately and long fields are never truncated.
+        let visible: u64 = 0u64;
+        for character in text.chars() { visible += 1u64; }
+        if visible >= spec.width {
+            return self.write_str(text);
+        }
+
+        let fill = spec.width - visible;
+        if !before {
+            self.write_str(text)?;
+            return self.write_fill(fill, padding);
+        }
+
+        let bytes = text.as_slice();
+        if padding == b'0' && bytes.len() > 0u64 && bytes[0] == b'-' {
+            self.write_str(str.from_slice_unchecked(bytes[0u64..1u64]))?;
+            self.write_fill(fill, padding)?;
+            return self.write_str(str.from_slice_unchecked(bytes[1u64..bytes.len()]));
+        }
+
+        self.write_fill(fill, padding)?;
+        self.write_str(text)
+    }
+
+    // Fill in fixed-size blocks so no buffer grows with the requested width.
+    fn write_fill(count: u64, byte: u8) -> Result<(), IoError> {
+        let spaces = "        ";
+        let zeros = "00000000";
+        let block = if byte == b'0' { zeros } else { spaces };
+        let remaining: u64 = count;
+
+        while remaining >= 8u64 {
+            self.writer.write_str(block)?;
+            remaining -= 8u64;
+        }
+
+        if remaining > 0u64 {
+            self.writer.write_str(str.from_slice_unchecked(block.as_slice()[0u64..remaining]))?;
+        }
+
+        Result<(), IoError>.Ok(val=())
+    }
+}
+
+// Private compiler surface: a specification shape is built once, then each dynamic count is
+// validated immediately in source order. The compiler never constructs library enums itself.
+fn create_spec(alignment: u64, zero_pad: bool, width: u64, precision: u64, has_precision: bool) -> FormatSpec {
+    let selected = Alignment.Default;
+    if alignment == ALIGNMENT_LEFT {
+        selected = Alignment.Left;
+    } elif alignment == ALIGNMENT_RIGHT {
+        selected = Alignment.Right;
+    }
+    let checked = Option<u64>.None;
+    if has_precision { checked = Option<u64>.Some(val=precision); }
+
+    FormatSpec(alignment=selected, zero_pad=zero_pad, width=width, precision=checked)
+}
+
+fn set_width_signed(spec: FormatSpec&, value: i64) -> Result<(), IoError> {
+    let checked = check_signed(value, ParameterKind.Width)?;
+    spec.width = checked;
+    Result<(), IoError>.Ok(val=())
+}
+
+fn set_width_unsigned(spec: FormatSpec&, value: u64) -> Result<(), IoError> {
+    let checked = check_unsigned(value, ParameterKind.Width)?;
+    spec.width = checked;
+    Result<(), IoError>.Ok(val=())
+}
+
+fn set_precision_signed(spec: FormatSpec&, value: i64) -> Result<(), IoError> {
+    let checked = check_signed(value, ParameterKind.Precision)?;
+    spec.precision = Option<u64>.Some(val=checked);
+    Result<(), IoError>.Ok(val=())
+}
+
+fn set_precision_unsigned(spec: FormatSpec&, value: u64) -> Result<(), IoError> {
+    let checked = check_unsigned(value, ParameterKind.Precision)?;
+    spec.precision = Option<u64>.Some(val=checked);
+    Result<(), IoError>.Ok(val=())
 }
 
 // The builtins and the standard library construct formatted output through this private factory.
@@ -72,7 +300,8 @@ impl<T> ToString for T if T: Format {
         let writer = string_writer(&out);
         let formatter = formatter_for(&writer);
         let object: Format& = self;
-        match object.fmt(&formatter) {
+        let spec = FormatSpec.new();
+        match object.fmt(&formatter, &spec) {
             Ok(_) => {},
             Err(error) => {
                 error.drop();
@@ -84,39 +313,58 @@ impl<T> ToString for T if T: Format {
     }
 }
 
-fn write_unsigned(out: Formatter&, value: u64) -> Result<(), IoError> {
-    // The widest decimal u64 needs 20 digits, so the buffer holds the complete value.
-    let buf: u8[20] = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
-    let pos: u64 = 20;
+// Decimal digits are produced right-aligned in a fixed buffer; the widest u64 needs twenty bytes.
+fn decimal_digits(buffer: u8[], value: u64) -> u64 {
+    let pos: u64 = 21u64;
     let v: u64 = value;
-    if v == 0 {
-        pos = 19;
-        buf[19] = b'0';
+
+    if v == 0u64 {
+        pos = 20u64;
+        buffer[20] = b'0';
     } else {
-        while v > 0 {
-            pos -= 1;
-            buf[pos] = b'0' + u8(v % 10u64);
+        while v > 0u64 {
+            pos -= 1u64;
+            buffer[pos] = b'0' + u8(v % 10u64);
             v /= 10u64;
         }
     }
-    out.write_str(str.from_slice_unchecked(buf[pos..20]))
+
+    return pos;
 }
 
-fn write_signed(out: Formatter&, value: i64) -> Result<(), IoError> {
-    if value >= 0 {
-        return write_unsigned(out, u64(value));
+// Integers convert straight into one numeric field; precision belongs to floating-point output.
+fn write_integer(out: Formatter&, spec: FormatSpec&, negative: bool, magnitude: u64) -> Result<(), IoError> {
+    spec.validate()?;
+
+    if spec.precision.is_some() {
+        return Result<(), IoError>.Err(msg=IoError.new(IoErrorKind.InvalidInput,
+            "integer formatting does not support precision"));
     }
 
-    out.write_str("-")?;
-    let magnitude: u64 = u64(value);
-    write_unsigned(out, 0u64 - magnitude)
+    let buffer: u8[21] = [0u8; 21];
+    let start = decimal_digits(buffer.as_slice(), magnitude);
+    if negative {
+        start -= 1u64;
+        buffer[start] = b'-';
+    }
+
+    out.write_padded(str.from_slice_unchecked(buffer[start..21u64]), spec, PaddingKind.Number)
 }
 
-fn write_character(out: Formatter&, value: char) -> Result<(), IoError> {
-    // A Unicode scalar value occupies at most four UTF-8 bytes.
-    let buffer: u8[4] = [0, 0, 0, 0];
+fn write_signed_integer(out: Formatter&, spec: FormatSpec&, value: i64) -> Result<(), IoError> {
+    // The minimum i64 stays unsigned; a signed negation would overflow.
+    if value < 0i64 {
+        return write_integer(out, spec, true, 0u64 - u64(value));
+    }
+
+    write_integer(out, spec, false, u64(value))
+}
+
+// A Unicode scalar value occupies at most four UTF-8 bytes.
+fn encode_character(buffer: u8[], value: char) -> u64 {
     let code: u32 = u32(value);
     let count: u64 = 4;
+
     if code <= 0x7F {
         count = 1;
     } elif code <= 0x7FF {
@@ -141,145 +389,160 @@ fn write_character(out: Formatter&, value: char) -> Result<(), IoError> {
         buffer[3] = u8(0x80 | (code & 0x3F));
     }
 
-    out.write_str(str.from_slice_unchecked(buffer[0u64..count]))
+    return count;
 }
 
 impl Format for u8 {
-    fn fmt(out: Formatter&) -> Result<(), IoError> {
-        write_unsigned(out, u64(*self))
+    fn fmt(out: Formatter&, spec: FormatSpec&) -> Result<(), IoError> {
+        write_integer(out, spec, false, u64(*self))
     }
 }
 
 impl Format for u16 {
-    fn fmt(out: Formatter&) -> Result<(), IoError> {
-        write_unsigned(out, u64(*self))
+    fn fmt(out: Formatter&, spec: FormatSpec&) -> Result<(), IoError> {
+        write_integer(out, spec, false, u64(*self))
     }
 }
 
 impl Format for u32 {
-    fn fmt(out: Formatter&) -> Result<(), IoError> {
-        write_unsigned(out, u64(*self))
+    fn fmt(out: Formatter&, spec: FormatSpec&) -> Result<(), IoError> {
+        write_integer(out, spec, false, u64(*self))
     }
 }
 
 impl Format for u64 {
-    fn fmt(out: Formatter&) -> Result<(), IoError> {
-        write_unsigned(out, *self)
+    fn fmt(out: Formatter&, spec: FormatSpec&) -> Result<(), IoError> {
+        write_integer(out, spec, false, *self)
     }
 }
 
 impl Format for i8 {
-    fn fmt(out: Formatter&) -> Result<(), IoError> {
-        write_signed(out, i64(*self))
+    fn fmt(out: Formatter&, spec: FormatSpec&) -> Result<(), IoError> {
+        write_signed_integer(out, spec, i64(*self))
     }
 }
 
 impl Format for i16 {
-    fn fmt(out: Formatter&) -> Result<(), IoError> {
-        write_signed(out, i64(*self))
+    fn fmt(out: Formatter&, spec: FormatSpec&) -> Result<(), IoError> {
+        write_signed_integer(out, spec, i64(*self))
     }
 }
 
 impl Format for i32 {
-    fn fmt(out: Formatter&) -> Result<(), IoError> {
-        write_signed(out, i64(*self))
+    fn fmt(out: Formatter&, spec: FormatSpec&) -> Result<(), IoError> {
+        write_signed_integer(out, spec, i64(*self))
     }
 }
 
 impl Format for i64 {
-    fn fmt(out: Formatter&) -> Result<(), IoError> {
-        write_signed(out, *self)
+    fn fmt(out: Formatter&, spec: FormatSpec&) -> Result<(), IoError> {
+        write_signed_integer(out, spec, *self)
     }
 }
 
 impl Format for bool {
-    fn fmt(out: Formatter&) -> Result<(), IoError> {
+    fn fmt(out: Formatter&, spec: FormatSpec&) -> Result<(), IoError> {
+        spec.require_default()?;
         out.write_str(if *self { "true" } else { "false" })
     }
 }
 
 impl Format for char {
-    fn fmt(out: Formatter&) -> Result<(), IoError> {
-        write_character(out, *self)
+    fn fmt(out: Formatter&, spec: FormatSpec&) -> Result<(), IoError> {
+        let buffer: u8[4] = [0u8; 4];
+        let count = encode_character(buffer.as_slice(), *self);
+        out.write_padded(str.from_slice_unchecked(buffer[0u64..count]), spec, PaddingKind.Text)
     }
 }
 
 impl Format for str {
-    fn fmt(out: Formatter&) -> Result<(), IoError> {
-        out.write_str(*self)
+    fn fmt(out: Formatter&, spec: FormatSpec&) -> Result<(), IoError> {
+        out.write_padded(*self, spec, PaddingKind.Text)
     }
 }
 
 impl Format for String {
-    fn fmt(out: Formatter&) -> Result<(), IoError> {
-        out.write_str(self.as_str())
+    fn fmt(out: Formatter&, spec: FormatSpec&) -> Result<(), IoError> {
+        out.write_padded(self.as_str(), spec, PaddingKind.Text)
     }
 }
 
 impl Format for void {
-    fn fmt(out: Formatter&) -> Result<(), IoError> {
+    fn fmt(out: Formatter&, spec: FormatSpec&) -> Result<(), IoError> {
+        spec.require_default()?;
         out.write_str("void")
     }
 }
 
 // The zero-item tuple and the void type have distinct textual and type identities.
 impl Format for () {
-    fn fmt(out: Formatter&) -> Result<(), IoError> {
+    fn fmt(out: Formatter&, spec: FormatSpec&) -> Result<(), IoError> {
+        spec.require_default()?;
         out.write_str("()")
     }
 }
 
 impl<T1> Format for (T1,) if T1: Format {
-    fn fmt(out: Formatter&) -> Result<(), IoError> {
+    fn fmt(out: Formatter&, spec: FormatSpec&) -> Result<(), IoError> {
+        spec.require_default()?;
+        let inner = FormatSpec.new();
         out.write_str("(")?;
-        out.write_value(&(*self)[0])?;
+        out.write_value(&(*self)[0], &inner)?;
         out.write_str(",)")
     }
 }
 
 impl<T1, T2> Format for (T1, T2) if T1: Format, T2: Format {
-    fn fmt(out: Formatter&) -> Result<(), IoError> {
+    fn fmt(out: Formatter&, spec: FormatSpec&) -> Result<(), IoError> {
+        spec.require_default()?;
+        let inner = FormatSpec.new();
         out.write_str("(")?;
-        out.write_value(&(*self)[0])?;
+        out.write_value(&(*self)[0], &inner)?;
         out.write_str(", ")?;
-        out.write_value(&(*self)[1])?;
+        out.write_value(&(*self)[1], &inner)?;
         out.write_str(")")
     }
 }
 
 impl<T1, T2, T3> Format for (T1, T2, T3) if T1: Format, T2: Format, T3: Format {
-    fn fmt(out: Formatter&) -> Result<(), IoError> {
+    fn fmt(out: Formatter&, spec: FormatSpec&) -> Result<(), IoError> {
+        spec.require_default()?;
+        let inner = FormatSpec.new();
         out.write_str("(")?;
-        out.write_value(&(*self)[0])?;
+        out.write_value(&(*self)[0], &inner)?;
         out.write_str(", ")?;
-        out.write_value(&(*self)[1])?;
+        out.write_value(&(*self)[1], &inner)?;
         out.write_str(", ")?;
-        out.write_value(&(*self)[2])?;
+        out.write_value(&(*self)[2], &inner)?;
         out.write_str(")")
     }
 }
 
 impl<T1, T2, T3, T4> Format for (T1, T2, T3, T4) if T1: Format, T2: Format, T3: Format, T4: Format {
-    fn fmt(out: Formatter&) -> Result<(), IoError> {
+    fn fmt(out: Formatter&, spec: FormatSpec&) -> Result<(), IoError> {
+        spec.require_default()?;
+        let inner = FormatSpec.new();
         out.write_str("(")?;
-        out.write_value(&(*self)[0])?;
+        out.write_value(&(*self)[0], &inner)?;
         out.write_str(", ")?;
-        out.write_value(&(*self)[1])?;
+        out.write_value(&(*self)[1], &inner)?;
         out.write_str(", ")?;
-        out.write_value(&(*self)[2])?;
+        out.write_value(&(*self)[2], &inner)?;
         out.write_str(", ")?;
-        out.write_value(&(*self)[3])?;
+        out.write_value(&(*self)[3], &inner)?;
         out.write_str(")")
     }
 }
 
 impl<T, const N: u64> Format for T[N] if T: Format {
-    fn fmt(out: Formatter&) -> Result<(), IoError> {
+    fn fmt(out: Formatter&, spec: FormatSpec&) -> Result<(), IoError> {
+        spec.require_default()?;
+        let inner = FormatSpec.new();
         out.write_str("[")?;
         let index: u64 = 0;
         while index < N {
             if index != 0u64 { out.write_str(", ")?; }
-            out.write_value(&(*self)[index])?;
+            out.write_value(&(*self)[index], &inner)?;
             index += 1u64;
         }
         out.write_str("]")
@@ -287,12 +550,14 @@ impl<T, const N: u64> Format for T[N] if T: Format {
 }
 
 impl<T> Format for T[] if T: Format {
-    fn fmt(out: Formatter&) -> Result<(), IoError> {
+    fn fmt(out: Formatter&, spec: FormatSpec&) -> Result<(), IoError> {
+        spec.require_default()?;
+        let inner = FormatSpec.new();
         out.write_str("[")?;
         let index: u64 = 0;
         while index < self.len() {
             if index != 0u64 { out.write_str(", ")?; }
-            out.write_value(&(*self)[index])?;
+            out.write_value(&(*self)[index], &inner)?;
             index += 1u64;
         }
         out.write_str("]")

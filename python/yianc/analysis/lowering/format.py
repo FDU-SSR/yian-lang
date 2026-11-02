@@ -54,6 +54,12 @@ class FormatFailure(Enum):
 class _FormatLibrary:
     formatter_type: int
     format_trait: int
+    format_spec_type: int
+    create_spec: int
+    set_width_signed: int
+    set_width_unsigned: int
+    set_precision_signed: int
+    set_precision_unsigned: int
     string_type: int
     io_error_type: int
     unit_type: int
@@ -104,6 +110,12 @@ class FormatLowering:
         ctx = self.__ctx.type_ctx
         formatter = self.__unit_symbol("core/fmt.an", "Formatter")
         format_trait = self.__unit_symbol("core/fmt.an", "Format")
+        format_spec = self.__unit_symbol("core/fmt.an", "FormatSpec")
+        create_spec = self.__unit_symbol("core/fmt.an", "create_spec")
+        set_width_signed = self.__unit_symbol("core/fmt.an", "set_width_signed")
+        set_width_unsigned = self.__unit_symbol("core/fmt.an", "set_width_unsigned")
+        set_precision_signed = self.__unit_symbol("core/fmt.an", "set_precision_signed")
+        set_precision_unsigned = self.__unit_symbol("core/fmt.an", "set_precision_unsigned")
         string = self.__unit_symbol("core/string.an", "String")
         io_error = self.__unit_symbol("core/io.an", "IoError")
         result = self.__unit_symbol("core/result.an", "Result")
@@ -116,6 +128,12 @@ class FormatLowering:
         return _FormatLibrary(
             formatter_type=formatter.type_id,
             format_trait=format_trait.type_id,
+            format_spec_type=format_spec.type_id,
+            create_spec=create_spec.type_id,
+            set_width_signed=set_width_signed.type_id,
+            set_width_unsigned=set_width_unsigned.type_id,
+            set_precision_signed=set_precision_signed.type_id,
+            set_precision_unsigned=set_precision_unsigned.type_id,
             string_type=string.type_id,
             io_error_type=io_error.type_id,
             unit_type=unit_type,
@@ -181,8 +199,14 @@ class FormatLowering:
     def __write_str(self, span: SrcSpan, receiver: HIR.Expr, text: str) -> HIR.Expr:
         return self.__expr.call_method(receiver, "write_str", None, [self.__str_literal(span, text)])
 
-    def __write_value(self, span: SrcSpan, receiver: HIR.Expr, value: HIR.Expr) -> HIR.Expr:
-        return self.__expr.call_method(receiver, "write_value", None, [self.__address(span, value)])
+    def __default_spec(self, span: SrcSpan) -> HIR.Expr:
+        receiver = HIR.Ty(span=span, type_id=self.__library.format_spec_type, is_place=False)
+        return self.__expr.call_method(receiver, "new", None, [])
+
+    def __write_value(self, span: SrcSpan, receiver: HIR.Expr, value: HIR.Expr, spec: HIR.Expr) -> HIR.Expr:
+        # Both operands are borrowed for this call; the default specification is a temporary value.
+        return self.__expr.call_method(receiver, "write_value", None,
+                                       [self.__address(span, value), self.__address(span, spec)])
 
     def __panicking(self, span: SrcSpan, error: HIR.Expr) -> HIR.Expr:
         message = self.__expr.call_method(error, "msg", None, [])
@@ -271,18 +295,107 @@ class FormatLowering:
         part = parts[index]
         if isinstance(part, AST.FormatLiteralPart):
             write = self.__write_str(part.span, receiver, part.text)
-            span = part.span
-        else:
-            value = self.__expr.value(part.expr)
-            defaulted = self.__ctx.type_ctx.default_literals(value.type_id)
-            value = self.__expr.coerce(value, defaulted)
-            if value.type_id == TypeCtx.never_id:
-                # A non-returning interpolation neither formats a value nor reaches later positions.
-                return self.__block(span=part.span, statements=[value], type_id=TypeCtx.never_id)
-            write = self.__write_value(part.span, receiver, value)
-            span = part.span
+            next_expr = self.__chain(receiver, parts, index + 1, tail, tail_type, failure)
+            return self.__match(part.span, write, next_expr, tail_type, failure)
+
+        value = self.__expr.value(part.expr)
+        defaulted = self.__ctx.type_ctx.default_literals(value.type_id)
+        value = self.__expr.coerce(value, defaulted)
+        if value.type_id == TypeCtx.never_id:
+            # A non-returning interpolation neither formats a value nor reaches later positions.
+            return self.__block(span=part.span, statements=[value], type_id=TypeCtx.never_id)
+
         next_expr = self.__chain(receiver, parts, index + 1, tail, tail_type, failure)
-        return self.__match(span, write, next_expr, tail_type, failure)
+        if part.spec is not None:
+            return self.__field(receiver, value, part, next_expr, tail_type, failure)
+        write = self.__write_value(part.span, receiver, value, self.__default_spec(part.span))
+        return self.__match(part.span, write, next_expr, tail_type, failure)
+
+    # ------------------------------------------------------------------
+    # specifications
+    # ------------------------------------------------------------------
+
+    def __check_spec_target(self, span: SrcSpan, type_id: int, spec: AST.FormatSpec) -> None:
+        """A nonempty specification is limited to builtin text and numeric representations."""
+        if type_id == self.__library.string_type:
+            if spec.fixed:
+                raise AnalysisError("format specification is not supported for this type", span)
+            return
+        ty = self.__ctx.type_ctx[type_id]
+        if isinstance(ty, Type.CScalarType):
+            raise AnalysisError("format specification is not supported for this type", span)
+        if isinstance(ty, Type.FloatType):
+            return
+        if isinstance(ty, (Type.IntType, Type.CharType, Type.StrType)) and not spec.fixed:
+            return
+        raise AnalysisError("format specification is not supported for this type", span)
+
+    def __checked_parameter(self, span: SrcSpan, value: HIR.Expr) -> tuple[bool, HIR.Expr]:
+        """Dynamic counts accept only builtin integers and keep their signedness."""
+        defaulted = self.__ctx.type_ctx.default_literals(value.type_id)
+        value = self.__expr.coerce(value, defaulted)
+        ty = self.__ctx.type_ctx[value.type_id]
+        if isinstance(ty, Type.IntType) and not isinstance(ty, Type.CScalarType):
+            target = IntrinsicIds.i64_id if ty.signed else IntrinsicIds.u64_id
+            return ty.signed, self.__expr.coerce(value, target)
+        raise AnalysisError("format parameter must be an integer", span)
+
+    def __create_spec(self, span: SrcSpan, spec: AST.FormatSpec) -> HIR.Expr:
+        if spec.alignment is AST.FormatAlignment.LEFT:
+            alignment = 1
+        elif spec.alignment is AST.FormatAlignment.RIGHT:
+            alignment = 2
+        else:
+            alignment = 0
+        width = spec.width.value if isinstance(spec.width, AST.FormatCountLiteral) else 0
+        # A literal precision is static; a dynamic one is applied by the setter before the write.
+        precision = spec.precision.value if isinstance(spec.precision, AST.FormatCountLiteral) else 6
+        arguments = [
+            HIR.IntLiteral(span=span, value=alignment, type_id=IntrinsicIds.u64_id, is_place=False),
+            HIR.BoolLiteral(span=span, value=spec.zero_pad, type_id=IntrinsicIds.bool_id, is_place=False),
+            HIR.IntLiteral(span=span, value=width, type_id=IntrinsicIds.u64_id, is_place=False),
+            HIR.IntLiteral(span=span, value=precision, type_id=IntrinsicIds.u64_id, is_place=False),
+            HIR.BoolLiteral(span=span, value=spec.fixed, type_id=IntrinsicIds.bool_id, is_place=False),
+        ]
+        return self.__call(span, self.__library.create_spec, arguments)
+
+    def __field(self, receiver: HIR.Expr, value: HIR.Expr, part: AST.FormatValuePart,
+                tail: HIR.Expr, tail_type: int, failure: FormatFailure) -> HIR.Expr:
+        """Evaluate one value once, then each dynamic count with an immediate range check."""
+        spec = part.spec
+        if spec is None:
+            raise CompilerError("format field lost its specification")
+        span = part.span
+        self.__check_spec_target(span, value.type_id, spec)
+
+        statements: list[HIR.Expr] = []
+        declared = self.__declare(span, "spec_value", value)
+        statements.append(declared[0])
+        created = self.__create_spec(span, spec)
+        shape = self.__declare(span, "spec_shape", created)
+        statements.append(shape[0])
+
+        written = self.__write_value(span, receiver, self.__var(span, declared[1], value.type_id),
+                                     self.__var(span, shape[1], created.type_id))
+        body = self.__match(span, written, tail, tail_type, failure)
+
+        if isinstance(spec.precision, AST.FormatCountDynamic):
+            reference = self.__address(spec.precision.span, self.__var(spec.precision.span, shape[1], created.type_id))
+            checked = self.__checked_parameter(spec.precision.span, self.__expr.value(spec.precision.expr))
+            function = (self.__library.set_precision_signed if checked[0]
+                        else self.__library.set_precision_unsigned)
+            check = self.__call(spec.precision.span, function, [reference, checked[1]])
+            body = self.__match(spec.precision.span, check, body, tail_type, failure)
+
+        if isinstance(spec.width, AST.FormatCountDynamic):
+            reference = self.__address(spec.width.span, self.__var(spec.width.span, shape[1], created.type_id))
+            checked = self.__checked_parameter(spec.width.span, self.__expr.value(spec.width.expr))
+            function = self.__library.set_width_signed if checked[0] else self.__library.set_width_unsigned
+            check = self.__call(spec.width.span, function, [reference, checked[1]])
+            body = self.__match(spec.width.span, check, body, tail_type, failure)
+
+        statements.append(body)
+        return self.__block(span, statements, tail_type)
 
     # ------------------------------------------------------------------
     # destinations

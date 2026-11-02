@@ -1,8 +1,38 @@
-// Test ToString on primitive, integer, and floating-point types.
+// Test ToString on primitive, integer, and floating-point types, and the shared
+// value/specification protocol through a forwarding wrapper.
 //
-// Expected output: 0
+// Expected output: none.
 
-from std.core.fmt import ToString;
+from std.core.fmt import Alignment, Format, FormatSpec, Formatter, ToString;
+from std.core.string import String;
+from std.core.io import IoError;
+from std.core.option import Option;
+from std.core.result import Result;
+from std.num.f64 import from_bits;
+
+// The wrapper receives the formatter and forwards its own specification, so the protocol is exercised
+// without relying on template specification syntax.
+struct Spec<T> { value: T, shape: FormatSpec }
+
+impl<T> Format for Spec<T> if T: Format {
+    fn fmt(out: Formatter&, spec: FormatSpec&) -> Result<(), IoError> {
+        spec.require_default()?;
+        out.write_value(&self.value, &self.shape)
+    }
+}
+
+fn fixed_spec(width: u64, precision: u64, zero_pad: bool) -> FormatSpec {
+    let spec = FormatSpec.new();
+    spec.width = width;
+    spec.zero_pad = zero_pad;
+    spec.precision = Option<u64>.Some(val=precision);
+    return spec;
+}
+
+fn check_fixed(name: str, value: f64, precision: u64, expected: str) {
+    let wrapped = Spec(value=value, shape=fixed_spec(0u64, precision, false));
+    assert f"{wrapped}" == expected: name;
+}
 
 fn case_primitive_formatting() {
     // bool
@@ -108,9 +138,60 @@ fn case_float_templates() {
     assert f"{0.0000001}" == "1e-7": "f64 scientific threshold";
 }
 
+// Fixed-point output follows the exact binary value with ties to even.
+fn case_fixed_formatting() {
+    check_fixed("fixed 2.5 ties even", 2.5, 0u64, "2");
+    check_fixed("fixed 3.5 ties even", 3.5, 0u64, "4");
+    check_fixed("fixed -2.5 ties even", -2.5, 0u64, "-2");
+    check_fixed("fixed carry", 9.99609375, 2u64, "10.00");
+    check_fixed("fixed negative zero", -0.0, 2u64, "-0.00");
+    check_fixed("fixed default digits", 2.0, 6u64, "2.000000");
+    check_fixed("fixed f32 widening", f64(0.3_f32), 9u64, "0.300000012");
+    check_fixed("fixed f16 widening", f64(0.1_f16), 4u64, "0.1000");
+
+    // The minimum subnormal expands to 5^1074 / 10^1074; the equally distant neighbours select the
+    // even retained digit. The complete expectation comes from that integer identity, not from a printf.
+    check_fixed("fixed minimum subnormal", from_bits(1u64), 1024u64,
+        "0.0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000049406564584124654417656879286822137236505980261432476442558568250067550727020875186529983636163599237979656469544571773092665671035593979639877479601078187812630071319031140452784581716784898210368871863605699873072305000638740915356498438731247339727316961514003171538539807412623856559117102665855668676818703956031062493194527159149245532930545654440112748012970999954193198940908041656332452475714786901472678015935523861155013480352649347201937902681071074917033322268447533357208324319360923828934583680601060115061698097530783422773183292479049825247307763759272478746560847782037344696995336470179726777175851256605511991315048911014510378627381672509558373897335989936648099411642057026370903");
+
+    let maximum = from_bits(0x7FEFFFFFFFFFFFFFu64);
+    check_fixed("fixed maximum integer", maximum, 0u64,
+        "179769313486231570814527423731704356798070567525844996598917476803157260780028538760589558632766878171540458953514382464234321326889464182768467546703537516986049910576551282076245490090389328944075868508455133942304583236903222948165808559332123348274797826204144723168738177180919299881250404026184124858368");
+
+    // The same integer with 1024 fractional digits: the exact value is an integer, so every digit is zero.
+    let zeros = String.with_capacity(1024u64);
+    let index: u64 = 0u64;
+    while index < 1024u64 {
+        zeros.push('0');
+        index += 1u64;
+    }
+    let expected = String.with_capacity(1334u64);
+    expected.push_str("179769313486231570814527423731704356798070567525844996598917476803157260780028538760589558632766878171540458953514382464234321326889464182768467546703537516986049910576551282076245490090389328944075868508455133942304583236903222948165808559332123348274797826204144723168738177180919299881250404026184124858368");
+    expected.push('.');
+    expected.push_str(zeros.as_str());
+    check_fixed("fixed maximum precision", maximum, 1024u64, expected.as_str());
+    expected.drop();
+    zeros.drop();
+}
+
+fn case_special_values() {
+    let nan = from_bits(0x7FF8000000000000u64);
+    let infinity = from_bits(0x7FF0000000000000u64);
+    let negative_infinity = from_bits(0xFFF0000000000000u64);
+    let nan_spec = fixed_spec(8u64, 2u64, true);
+    let wrapped_nan = Spec(value=nan, shape=nan_spec);
+    assert f"{wrapped_nan}" == "     NaN": "NaN keeps space padding";
+    let wrapped_infinity = Spec(value=infinity, shape=nan_spec);
+    assert f"{wrapped_infinity}" == "     inf": "infinity keeps space padding";
+    let wrapped_negative = Spec(value=negative_infinity, shape=nan_spec);
+    assert f"{wrapped_negative}" == "    -inf": "negative infinity spelling";
+}
+
 fn main() {
     case_primitive_formatting();
     case_integer_formatting();
     case_float_formatting();
     case_float_templates();
+    case_fixed_formatting();
+    case_special_values();
 }

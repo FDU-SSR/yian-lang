@@ -2,7 +2,7 @@
 // It is used to represent an optional value that may || may ! be present.
 
 from std.core.clone import Clone;
-from std.core.fmt import Format, Formatter;
+from std.core.fmt import Format, Formatter, FormatSpec;
 from std.core.result import Result;
 from std.core.io import IoError;
 
@@ -78,11 +78,13 @@ impl<T> Clone for Option<T> {
 }
 
 impl<T> Format for Option<T> if T: Format {
-    fn fmt(out: Formatter&) -> Result<(), IoError> {
+    fn fmt(out: Formatter&, spec: FormatSpec&) -> Result<(), IoError> {
+        spec.require_default()?;
+        let inner = FormatSpec.new();
         match self {
             Some(val) => {
                 out.write_str("Some(")?;
-                out.write_value(val)?;
+                out.write_value(val, &inner)?;
                 out.write_str(")")
             },
             None => out.write_str("None"),

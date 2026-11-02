@@ -55,7 +55,7 @@
       "c_symbol": "generate_Frequencies_For_Desired_Length_Oligonucleotides",
       "yian_symbol": "count_oligonucleotides / sorted_counts / append_frequencies",
       "differences": [
-        "Both roll two-bit keys for every complete window and update an actual hash table, materialize entries, sort, and emit the same nucleotide labels and three-decimal percentage. YIAN uses HashMap<u64,u32>; C uses khash with a custom XOR/shift hash."
+        "Both roll two-bit keys for every complete window and update an actual hash table, materialize entries, sort, and emit the same nucleotide labels and three-decimal percentage through the standard library's `:.3f` specification. YIAN uses HashMap<u64,u32>; C uses khash with a custom XOR/shift hash."
       ]
     },
     {

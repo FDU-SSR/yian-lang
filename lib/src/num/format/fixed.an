@@ -1,0 +1,238 @@
+from std.core.fmt import Formatter, FormatSpec, PaddingKind;
+from std.core.io import IoError, IoErrorKind;
+from std.core.result import Result;
+from std.core.option import Option;
+from std.core.ops import Index;
+from std.core.range import Range;
+from std.num.f64 import to_bits;
+
+// Fixed-point output converts the exact binary value into decimal digits. It never multiplies by a
+// floating-point power of ten, so the result is the correctly rounded exact expansion.
+
+// Little-endian decimal digits; the least significant digit is at index zero.
+fn initial_digits(buffer: u8[], value: u64) -> u64 {
+    let v: u64 = value;
+    if v == 0u64 {
+        buffer[0] = 0u8;
+        return 1u64;
+    }
+
+    let count: u64 = 0u64;
+    while v > 0u64 {
+        buffer[count] = u8(v % 10u64);
+        v /= 10u64;
+        count += 1u64;
+    }
+    return count;
+}
+
+// Multiply the coefficient by a small factor; carries append at most one digit.
+fn multiply_digits(buffer: u8[], count: u64, factor: u64) -> u64 {
+    let carry: u64 = 0u64;
+    let index: u64 = 0u64;
+
+    while index < count {
+        let product = u64(buffer[index]) * factor + carry;
+        buffer[index] = u8(product % 10u64);
+        carry = product / 10u64;
+        index += 1u64;
+    }
+
+    while carry > 0u64 {
+        buffer[index] = u8(carry % 10u64);
+        carry /= 10u64;
+        index += 1u64;
+    }
+    return index;
+}
+
+// Drop low-order digits down to the requested precision, rounding the exact value to nearest with a
+// tie broken toward the even retained digit. Returns the retained digit count.
+fn rounded_count(buffer: u8[], count: u64, scale: u64, precision: u64) -> u64 {
+    if precision >= scale {
+        return count;
+    }
+
+    let drop = scale - precision;
+    if drop > count {
+        return 0u64;
+    }
+
+    let round_up = false;
+
+    if drop == count {
+        // Every coefficient digit is dropped; only the leading digit can exceed the half unit.
+        let leading = buffer[count - 1u64];
+        if leading > 5u8 {
+            round_up = true;
+        } elif leading == 5u8 {
+            let index: u64 = 0u64;
+            while index < count - 1u64 {
+                if buffer[index] != 0u8 {
+                    round_up = true;
+                    break;
+                }
+                index += 1u64;
+            }
+        }
+
+        if round_up {
+            buffer[0] = 1u8;
+            return 1u64;
+        }
+        return 0u64;
+    }
+
+    let half = buffer[drop - 1u64];
+    if half > 5u8 {
+        round_up = true;
+    } elif half == 5u8 {
+        let index: u64 = 0u64;
+        let greater = false;
+        while index < drop - 1u64 {
+            if buffer[index] != 0u8 {
+                greater = true;
+                break;
+            }
+            index += 1u64;
+        }
+
+        if greater {
+            round_up = true;
+        } elif buffer[drop] % 2u8 != 0u8 {
+            // Exactly half and no lower digits: an odd retained digit rounds up.
+            round_up = true;
+        }
+    }
+
+    let kept = count - drop;
+    if !round_up {
+        return kept;
+    }
+
+    // Increment the retained integer part, carrying across the retained digits.
+    let index = drop;
+    loop {
+        if index >= count {
+            buffer[index] = 1u8;
+            return kept + 1u64;
+        }
+        if buffer[index] != 9u8 {
+            buffer[index] += 1u8;
+            break;
+        }
+        buffer[index] = 0u8;
+        index += 1u64;
+    }
+    return kept;
+}
+
+pub fn write_fixed(out: Formatter&, value: f64, spec: FormatSpec&) -> Result<(), IoError> {
+    spec.validate()?;
+    let precision = match spec.precision {
+        Some(digits) => digits,
+        None => return Result<(), IoError>.Err(msg=IoError.new(IoErrorKind.InvalidInput,
+            "fixed formatting requires a precision")),
+    };
+
+    let bits = to_bits(value);
+    let negative = bits >> 63u64 != 0u64;
+    let exponent_field = (bits >> 52u64) & 0x7FFu64;
+    let mantissa = bits & 0xFFFFFFFFFFFFFu64;
+
+    if exponent_field == 0x7FFu64 {
+        // Non-finite spellings keep their conventional fill even when zero padding was requested.
+        let text = if mantissa != 0u64 { "NaN" } elif negative { "-inf" } else { "inf" };
+        return out.write_padded(text, spec, PaddingKind.SpecialNumber);
+    }
+
+    let coefficient: u64 = 0u64;
+    let exponent: i32 = 0i32;
+    if exponent_field == 0u64 {
+        coefficient = mantissa;
+        exponent = -1074i32;
+    } else {
+        coefficient = (1u64 << 52u64) | mantissa;
+        exponent = i32(exponent_field) - 1075i32;
+    }
+
+    // The exact value is coefficient * 2^exponent; a negative exponent becomes 5^scale / 10^scale.
+    let digits: u8[1100] = [0u8; 1100];
+    let count = initial_digits(digits.as_slice(), coefficient);
+    let scale: u64 = 0u64;
+    let written = count;
+    let step: u64 = 0u64;
+
+    if exponent >= 0i32 {
+        let steps = u64(exponent);
+        while step < steps {
+            written = multiply_digits(digits.as_slice(), written, 2u64);
+            step += 1u64;
+        }
+    } else {
+        let steps = u64(0i32 - exponent);
+        scale = steps;
+        while step < steps {
+            written = multiply_digits(digits.as_slice(), written, 5u64);
+            step += 1u64;
+        }
+    }
+
+    let kept = rounded_count(digits.as_slice(), written, scale, precision);
+    // Rounding retains the digits above the dropped low-order digits; move them to the array base.
+    if precision < scale {
+        let drop = scale - precision;
+        let index: u64 = 0u64;
+        while index < kept {
+            digits[index] = digits[drop + index];
+            index += 1u64;
+        }
+        // Digits above the retained part no longer describe the rounded value.
+        while index < written {
+            digits[index] = 0u8;
+            index += 1u64;
+        }
+    }
+    // Fraction digits taken from the coefficient; any remainder of the precision is trailing zeros.
+    let taken = if precision < scale { precision } else { scale };
+    let integer_count = if kept > taken { kept - taken } else { 0u64 };
+
+    let field: u8[1336] = [0u8; 1336];
+    let length: u64 = 0u64;
+    if negative {
+        field[length] = b'-';
+        length += 1u64;
+    }
+
+    if integer_count == 0u64 {
+        field[length] = b'0';
+        length += 1u64;
+    } else {
+        let index = kept;
+        while index > taken {
+            index -= 1u64;
+            field[length] = b'0' + digits[index];
+            length += 1u64;
+        }
+    }
+
+    if precision > 0u64 {
+        field[length] = b'.';
+        length += 1u64;
+        let index = taken;
+        while index > 0u64 {
+            index -= 1u64;
+            field[length] = b'0' + digits[index];
+            length += 1u64;
+        }
+        let zeros = precision - taken;
+        let written_zeros: u64 = 0u64;
+        while written_zeros < zeros {
+            field[length] = b'0';
+            length += 1u64;
+            written_zeros += 1u64;
+        }
+    }
+
+    out.write_padded(str.from_slice_unchecked(field[0u64..length]), spec, PaddingKind.Number)
+}

@@ -114,12 +114,12 @@ pub fn run(n: i32) -> i32 {
     }
 
     if produced % 10 != 0 {
-        let padding: i32 = 10 - (n % 10);
-        let spaces: i32 = 0;
-        while spaces < padding {
-            output.push(b' ');
-            spaces += 1;
-        }
+        // The right-aligned empty text supplies exactly the missing digits.
+        let empty = "";
+        let padding: u64 = u64(10 - (n % 10));
+        let spaces = f"{empty:>{padding}}";
+        output.extend_from_slice(spaces.as_str().as_slice());
+        spaces.drop();
         output.push(b'\t');
         output.push(b':');
         append_unsigned(&output, u64(n));

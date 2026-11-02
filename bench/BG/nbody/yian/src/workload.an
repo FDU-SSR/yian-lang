@@ -140,27 +140,6 @@ fn init_bodies(bodies: Planet[]) {
     );
 }
 
-fn print_fixed_9(value: f64) {
-    let negative: bool = value < 0.0;
-    let magnitude: f64 = if negative { -value } else { value };
-    let scaled: u64 = u64(magnitude * 1000000000.0 + 0.5);
-    let whole: u64 = scaled / 1000000000u64;
-    let fraction: u64 = scaled % 1000000000u64;
-    let d0: u64 = fraction / 100000000u64;
-    let d1: u64 = (fraction / 10000000u64) % 10u64;
-    let d2: u64 = (fraction / 1000000u64) % 10u64;
-    let d3: u64 = (fraction / 100000u64) % 10u64;
-    let d4: u64 = (fraction / 10000u64) % 10u64;
-    let d5: u64 = (fraction / 1000u64) % 10u64;
-    let d6: u64 = (fraction / 100u64) % 10u64;
-    let d7: u64 = (fraction / 10u64) % 10u64;
-    let d8: u64 = fraction % 10u64;
-    if negative {
-        @print("-");
-    }
-    @print(f"{whole}.{d0}{d1}{d2}{d3}{d4}{d5}{d6}{d7}{d8}\n");
-}
-
 pub fn run(n: i32) -> i32 {
     if n <= 0 || n > 5000000 { return 2; }
 
@@ -169,14 +148,14 @@ pub fn run(n: i32) -> i32 {
     let body_slice: Planet[] = bodies[0u64..5u64];
     init_bodies(body_slice);
     offset_momentum(5, body_slice);
-    print_fixed_9(energy(5, body_slice));
+    @println(f"{energy(5, body_slice):.9f}");
 
     let i: i32 = 1;
     while i <= steps {
         advance(5, body_slice, 0.01);
         i += 1;
     }
-    print_fixed_9(energy(5, body_slice));
+    @println(f"{energy(5, body_slice):.9f}");
 
     return 0;
 }

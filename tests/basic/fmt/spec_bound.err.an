@@ -1,0 +1,5 @@
+fn main() {
+    let count = 7;
+    let text = f"{count:65536}";
+    text.drop();
+}

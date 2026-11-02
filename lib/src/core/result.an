@@ -1,6 +1,6 @@
 from std.core.option import Option;
 from std.core.clone import Clone;
-from std.core.fmt import Format, Formatter;
+from std.core.fmt import Format, Formatter, FormatSpec;
 from std.core.io import IoError;
 
 pub enum Result<T, E> {
@@ -78,16 +78,18 @@ impl<T, E> Clone for Result<T, E> {
 }
 
 impl<T, E> Format for Result<T, E> if T: Format, E: Format {
-    fn fmt(out: Formatter&) -> Result<(), IoError> {
+    fn fmt(out: Formatter&, spec: FormatSpec&) -> Result<(), IoError> {
+        spec.require_default()?;
+        let inner = FormatSpec.new();
         match self {
             Ok(val) => {
                 out.write_str("Ok(")?;
-                out.write_value(val)?;
+                out.write_value(val, &inner)?;
                 out.write_str(")")
             },
             Err(err) => {
                 out.write_str("Err(")?;
-                out.write_value(err)?;
+                out.write_value(err, &inner)?;
                 out.write_str(")")
             },
         }

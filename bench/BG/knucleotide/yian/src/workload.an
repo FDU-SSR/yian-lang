@@ -157,22 +157,13 @@ fn append_key(output: Vec<u8>&, key: u64, k: u64) {
 }
 
 // C evaluates 100.0f * count / window_count as binary32 and printf then
-// rounds that exact binary32 value to three decimal places.
+// rounds that exact binary32 value to three decimal places. The library widens
+// the binary32 value exactly before selecting three fractional digits.
 fn append_percentage(output: Vec<u8>&, count: u32, window_count: u64) {
     let percentage: f32 = 100.0f32 * f32(count) / f32(window_count);
-    let scaled: f64 = f64(percentage) * 1000.0;
-    let rounded: u64 = u64(scaled);
-    let remainder: f64 = scaled - f64(rounded);
-    if remainder > 0.5 || (remainder == 0.5 && rounded % 2u64 == 1u64) {
-        rounded += 1u64;
-    }
-
-    append_unsigned(output, rounded / 1000u64);
-    output.push(b'.');
-    let fraction: u64 = rounded % 1000u64;
-    output.push(b'0' + u8(fraction / 100u64));
-    output.push(b'0' + u8((fraction / 10u64) % 10u64));
-    output.push(b'0' + u8(fraction % 10u64));
+    let text = f"{percentage:.3f}";
+    output.extend_from_slice(text.as_str().as_slice());
+    text.drop();
 }
 
 fn append_frequencies(output: Vec<u8>&, sequence: u8[], k: u64) {

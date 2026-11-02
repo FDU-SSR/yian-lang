@@ -32,9 +32,9 @@ AtAv is run before the final dot products. The C compiler uses the plan's
 `-ffp-contract=off` flag; the scalar loops preserve the source's f64
 accumulation order and do not enable OpenMP.
 
-The YIAN-only `print_fixed_9` helper converts the positive result to the
-nearest integer at a 1e-9 scale and emits exactly nine fractional digits. It
-implements the output precision of `printf("%.9f")`; it does not change the
-spectral-norm calculation. The N=100 acceptance result is checked byte-for-byte
+The YIAN result is printed through the standard library's `:.9f`
+specification, which emits the exact binary value rounded to nine fractional
+digits. It implements the output precision of `printf("%.9f")` and does not
+change the spectral-norm calculation. The N=100 acceptance result is checked byte-for-byte
 against the independently archived oracle, which is not produced by either
 candidate program.

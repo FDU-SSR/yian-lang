@@ -1,16 +1,18 @@
 // Test formatted-string templates and the shared formatting targets.
 
-from std.core.fmt import Format, Formatter;
+from std.core.fmt import Format, Formatter, FormatSpec;
 from std.core.io import Write, IoError;
 
 struct Point { x: i32, y: i32 }
 
 impl Format for Point {
-    fn fmt(out: Formatter&) -> Result<(), IoError> {
+    fn fmt(out: Formatter&, spec: FormatSpec&) -> Result<(), IoError> {
+        spec.require_default()?;
+        let inner = FormatSpec.new();
         out.write_str("Point(")?;
-        out.write_value(&self.x)?;
+        out.write_value(&self.x, &inner)?;
         out.write_str(", ")?;
-        out.write_value(&self.y)?;
+        out.write_value(&self.y, &inner)?;
         out.write_str(")")
     }
 }
@@ -21,7 +23,8 @@ impl Sneaky {
     fn fmt() -> str { "inherent" }
 }
 impl Format for Sneaky {
-    fn fmt(out: Formatter&) -> Result<(), IoError> {
+    fn fmt(out: Formatter&, spec: FormatSpec&) -> Result<(), IoError> {
+        spec.require_default()?;
         out.write_str("trait")
     }
 }
@@ -37,7 +40,8 @@ struct Counter {
 struct Mark { counter: Counter&, first: bool }
 
 impl Format for Mark {
-    fn fmt(out: Formatter&) -> Result<(), IoError> {
+    fn fmt(out: Formatter&, spec: FormatSpec&) -> Result<(), IoError> {
+        spec.require_default()?;
         if self.first { self.counter.first_formats += 1; } else { self.counter.second_formats += 1; }
         out.write_str("M")
     }
@@ -156,6 +160,96 @@ fn case_three_targets() {
     @println("three targets ok");
 }
 
+// A specification selects fixed width/precision while unspecialized fields keep their representation.
+fn case_format_specs() {
+    let negative = -12;
+    assert f"{negative:05}" == "-0012": "integer sign before zero fill";
+
+    let value = 1.25;
+    assert f"{value:08.2f}" == "00001.25": "float zero fill and precision";
+    assert f"{value:.2f}" == "1.25": "precision without width";
+    assert f"{value:8.2f}" == "    1.25": "width with precision";
+    let wide: u64 = 8u64;
+    let digits: u64 = 2u64;
+    assert f"{value:{wide}.{digits}f}" == f"{value:8.2f}": "dynamic parameters equal literals";
+
+    let middle: char = '中';
+    assert f"{middle:>3}" == "  中": "character width counts scalars";
+    let text = "ab";
+    assert f"[{text:5}]" == "[ab   ]": "text defaults to left alignment";
+    let empty = "";
+    let padding: u64 = 3u64;
+    assert f"[{empty:{padding}}]" == "[   ]": "empty text with dynamic width";
+    let whole: f64 = 2.0;
+    assert f"{whole:f}" == "2.000000": "bare fixed marker uses six digits";
+    assert f"{whole}" == "2": "no specification keeps the shortest form";
+}
+
+// Plain integers record evaluation order without a custom Format implementation.
+struct Sequence { first_calls: u64, second_calls: u64, order_ok: bool }
+
+impl Sequence {
+    static fn new() -> Self { Self(first_calls=0u64, second_calls=0u64, order_ok=false) }
+    fn first() -> i32 { self.first_calls += 1; 11 }
+    fn second() -> i32 {
+        self.second_calls += 1;
+        if self.first_calls == 1u64 { self.order_ok = true; }
+        22
+    }
+}
+
+struct Steps { log: String }
+
+impl Steps {
+    static fn new() -> Self { Self(log=String.new()) }
+    fn value() -> f64 { self.log.push('v'); 1.5 }
+    fn width() -> u64 { self.log.push('w'); 6u64 }
+    fn precision() -> u64 { self.log.push('p'); 2u64 }
+}
+
+// Each parameter is evaluated exactly once, in value, width, precision order.
+fn case_parameter_order() {
+    let steps = Steps.new();
+    let text = f"[{steps.value():{steps.width()}.{steps.precision()}f}]";
+    assert text.as_str() == "[  1.50]": "evaluated field";
+    assert steps.log.as_str() == "vwp": "parameter order";
+    steps.log.drop();
+    text.drop();
+
+    let sequence = Sequence.new();
+    let counted = f"A{sequence.first():5}B{sequence.second()}";
+    assert counted.as_str() == "A   11B22": "specified and default fields";
+    assert sequence.first_calls == 1u64: "first evaluated once";
+    assert sequence.second_calls == 1u64: "second evaluated once";
+    assert sequence.order_ok: "fields evaluated in order";
+    counted.drop();
+}
+
+// Every entry point accepts a specification and shares one target writer.
+fn case_targets_with_specs() {
+    let value = 1.25;
+
+    let owned = f"[{value:6.2f}]";
+    assert owned.as_str() == "[  1.25]": "owned string";
+    owned.drop();
+
+    let buffer = String.with_capacity(32u64);
+    @append(&buffer, f"a={value:.1f}");
+    assert buffer.as_str() == "a=1.2": "append target";
+    buffer.drop();
+
+    let recorder = Recorder.new();
+    let result = @write(&recorder, f"v={value:6.2f}");
+    assert result.is_ok(): "write target";
+    assert recorder.text.as_str() == "v=  1.25": "write bytes";
+    recorder.text.drop();
+
+    @print(f"print[{value:6.2f}]\n");
+    @println(f"println[{"ab":>4}]");
+    @eprint(f"eprint[{value:.1f}]\n");
+    @eprintln(f"eprintln[{value:05.1f}]");
+}
+
 fn main() {
     // Keep this order aligned with the combined output oracle.
     case_fstring_basic();
@@ -164,4 +258,7 @@ fn main() {
     case_fstring_expressions();
     case_fstring_nested_expression();
     case_three_targets();
+    case_format_specs();
+    case_parameter_order();
+    case_targets_with_specs();
 }

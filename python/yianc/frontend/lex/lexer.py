@@ -233,11 +233,13 @@ class Lexer:
         if ch == "b" and self.__stream.peek() == "'":
             return self.__lex_byte(start_pos)
         if ch == "f" and self.__stream.peek() == '"':
-            return self.__lex_fstring(start_pos)
+            tokens = self.__lex_fstring(start_pos)
+            self.__fstring_buffer = tokens[1:]
+            return tokens[0]
         if ch in START_IDENTIFIER:
             return self.__lex_identifier_or_keyword(ch, start_pos)
         if ch in START_NUMBER:
-            return self.__lex_number(ch, start_pos)
+            return self.__lex_number(ch, start_pos, self.__in_fstring_expr)
 
         # in f-string expression mode, } closes the expression
         if self.__in_fstring_expr:
@@ -274,11 +276,12 @@ class Lexer:
         else:
             return Tok.Identifier(tok_str, span)
 
-    def __lex_number(self, tok_str: str, start_pos: SrcPosition) -> Token:
+    def __lex_number(self, tok_str: str, start_pos: SrcPosition, interpolation: bool = False) -> Token:
         """
         Lexes a number literal from the source code.
 
         Assumes that the caller has already consumed the first character of the number literal.
+        Inside an f-string interpolation an undecodable spelling is kept for the parser.
         """
         c = self.__stream.peek()
         while c is not None and c in IN_NUMBER:
@@ -303,6 +306,8 @@ class Lexer:
             value, suffix = Tok.parse_integer_value(tok_str)
             return Tok.IntLiteral(tok_str, span, value, suffix)
         except (ValueError, OverflowError) as exc:
+            if interpolation:
+                return Tok.FStrFormatText(span, tok_str)
             raise LexError(str(exc), span) from exc
 
     def __lex_string(self, start_pos: SrcPosition) -> Token:
@@ -397,16 +402,16 @@ class Lexer:
         except ValueError as exc:
             raise LexError(str(exc), span) from exc
 
-    def __lex_fstring(self, start_pos: SrcPosition) -> Token:
-        """Lex an entire f-string, appending all tokens to __fstring_buffer.
+    def __lex_fstring(self, start_pos: SrcPosition) -> list[Token]:
+        """Lex one formatted string and return its complete token sequence.
 
-        Returns the first token (FStrStart). Subsequent tokens are drained
-        from __fstring_buffer by __next_token.
+        Nested templates inside an interpolation are lexed recursively, so the
+        brace depth of the enclosing expression survives them.
         """
         buf: list[Token] = []
         self.__stream.consume("\"")
         span = SrcSpan(start_pos, self.__stream.pos.clone())
-        first = Tok.FStrStart(span, "f\"")
+        buf.append(Tok.FStrStart(span, "f\""))
 
         while not self.__stream.at_end():
             ch = self.__stream.peek()
@@ -416,8 +421,7 @@ class Lexer:
             if ch == '"':
                 self.__stream.advance()
                 buf.append(Tok.FStrEnd(SrcSpan(self.__stream.pos.clone(), self.__stream.pos.clone())))
-                self.__fstring_buffer = buf
-                return first
+                return buf
 
             if ch == "{":
                 self.__stream.advance()
@@ -426,6 +430,14 @@ class Lexer:
                 self.__fstring_brace_depth = 1
                 while True:
                     self.__skip_ignored()
+                    if self.__stream.peek_n(2) == 'f"':
+                        nested_start = self.__stream.pos.clone()
+                        self.__stream.advance()
+                        depth = self.__fstring_brace_depth
+                        buf.extend(self.__lex_fstring(nested_start))
+                        self.__in_fstring_expr = True
+                        self.__fstring_brace_depth = depth
+                        continue
                     tok = self.__next_token(True)
                     buf.append(tok)
                     if isinstance(tok, Tok.FStrExprEnd):
@@ -440,8 +452,7 @@ class Lexer:
 
             self.__lex_fstring_literal(buf, span)
 
-        self.__fstring_buffer = buf
-        return first
+        return buf
 
     def __lex_fstring_literal(self, buf: list[Token], fstr_span: SrcSpan) -> None:
         """Lex a literal segment of an f-string and append FStrLiteral to *buf*."""

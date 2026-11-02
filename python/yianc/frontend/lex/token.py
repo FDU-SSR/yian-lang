@@ -279,6 +279,17 @@ class FStrExprEnd:
 
 
 @dataclass
+class FStrFormatText:
+    """Interpolation-context spelling with no ordinary numeric decoding; the parser decides its meaning."""
+
+    span: SrcSpan
+    value: str
+
+    def __repr__(self) -> str:
+        return self.value
+
+
+@dataclass
 class FStrEnd:
     span: SrcSpan
 
@@ -473,4 +484,4 @@ def parse_float_value(raw: str) -> tuple[float, str | None]:
 
 Literal: TypeAlias = IntLiteral | FloatLiteral | CharLiteral | StrLiteral | BoolLiteral
 
-Token: TypeAlias = Keyword | Identifier | Punctuator | Literal | FStrStart | FStrLiteral | FStrExprBegin | FStrExprEnd | FStrEnd
+Token: TypeAlias = Keyword | Identifier | Punctuator | Literal | FStrStart | FStrLiteral | FStrExprBegin | FStrExprEnd | FStrFormatText | FStrEnd

@@ -6,7 +6,7 @@ from std.core.option import Option;
 from std.core.convert import From, Into;
 from std.core.drop import Drop;
 from std.core.range import Range;
-from std.core.fmt import Format, Formatter;
+from std.core.fmt import Format, Formatter, FormatSpec;
 from std.core.result import Result;
 from std.core.io import IoError;
 
@@ -290,12 +290,14 @@ impl<T> Hash<Murmur3Hasher> for Vec<T> {
 }
 
 impl<T> Format for Vec<T> if T: Format {
-    fn fmt(out: Formatter&) -> Result<(), IoError> {
+    fn fmt(out: Formatter&, spec: FormatSpec&) -> Result<(), IoError> {
+        spec.require_default()?;
+        let inner = FormatSpec.new();
         out.write_str("[")?;
         let index: u64 = 0;
         while index < self.len() {
             if index != 0u64 { out.write_str(", ")?; }
-            out.write_value(&self.as_slice()[index])?;
+            out.write_value(&self.as_slice()[index], &inner)?;
             index += 1u64;
         }
         out.write_str("]")

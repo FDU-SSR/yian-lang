@@ -19,7 +19,7 @@ library.
 | C source | YIAN source | Representation and behavior |
 | --- | --- | --- |
 | `element_Compare` | `comes_before`, `sort_counts` | Both order counts descending, then encoded keys ascending. The YIAN insertion sort handles the small one/two-nucleotide frequency tables; query counts use direct map lookup. |
-| `generate_Frequencies_For_Desired_Length_Oligonucleotides` | `count_oligonucleotides`, `sorted_counts`, `append_frequencies` | Both use rolling two-bit keys, count every complete window in a real hash map, materialize unique key/count entries, and emit each oligonucleotide with the source's binary32 percentage rounded to three decimals. |
+| `generate_Frequencies_For_Desired_Length_Oligonucleotides` | `count_oligonucleotides`, `sorted_counts`, `append_frequencies` | Both use rolling two-bit keys, count every complete window in a real hash map, materialize unique key/count entries, and emit each oligonucleotide with the source's binary32 percentage rounded to three decimals through the standard library's `:.3f` specification. |
 | `generate_Count_For_Oligonucleotide` | `count_oligonucleotides`, `append_query` | Both build a count map for each requested k, encode the query using A/C/G/T = 0/1/2/3, look up its key, and print the count, tab, and original query in the same order. |
 | `main` | `read_three`, `workload.run()` | C reads lines from stdin and grows a byte buffer; the YIAN workload reads stdin in 8192-byte chunks, scans FASTA line boundaries, and stores encoded `THREE` bases in a `Vec<u8>`. Both stop at the next record and run lengths 1, 2, 3, 4, 6, 12, and 18. |
 

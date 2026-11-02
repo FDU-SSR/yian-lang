@@ -1,5 +1,5 @@
 from yianc.frontend.ast.arena import AstArena, AstTree;
-from yianc.frontend.ast.node import Expr, ExprData, FormatPart, Literal;
+from yianc.frontend.ast.node import Expr, ExprData, FormatPart, FormatSpec, Literal;
 from yianc.frontend.ast.traversal import AstRewriter, rewrite_expr_children;
 
 struct PrintArgumentLowerer { arena: AstArena& }
@@ -21,7 +21,7 @@ impl AstRewriter for PrintArgumentLowerer {
 
                     if !template {
                         let parts = Vec<FormatPart>.new();
-                        parts.push(FormatPart.Value(expr=value, span=value.span));
+                        parts.push(FormatPart.Value(expr=value, span=value.span, spec=Option<FormatSpec>.None));
                         argument.data.value = self.arena.alloc_expr(ExprData.FormatTemplate(parts=parts), value.span);
                     }
                 }

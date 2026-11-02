@@ -367,8 +367,27 @@ class AstTreeFormatter(TreeFormatter):
                     last = index == len(expr.parts) - 1
                     if isinstance(part, AST.FormatLiteralPart):
                         res += self.render_line(guides, last, f"Literal: {part.text}")
-                    else:
+                        continue
+                    value_guides = guides + [not last]
+                    if part.spec is None:
                         res += self.__export_expr_child("Value", part.expr, guides, last, True)
+                        continue
+                    res += self.render_line(guides, last, "Value")
+                    res += self.__export_expr_child("Expr", part.expr, guides, last, False)
+                    res += self.render_line(value_guides, True, f"Spec: {part.spec}")
+                    counts: list[str] = []
+                    if isinstance(part.spec.width, AST.FormatCountLiteral):
+                        counts.append(f"Width: {part.spec.width.value}")
+                    elif part.spec.width is not None:
+                        counts.append(f"Width: {part.spec.width}")
+                    elif part.spec.fixed:
+                        counts.append("Width: default")
+                    if isinstance(part.spec.precision, AST.FormatCountLiteral):
+                        counts.append(f"Precision: {part.spec.precision.value}")
+                    elif part.spec.precision is not None:
+                        counts.append(f"Precision: {part.spec.precision}")
+                    for count_index, count in enumerate(counts):
+                        res += self.render_line(value_guides + [False], count_index == len(counts) - 1, count)
                 return res
             case AST.Recovery():
                 res = self.render_line(guides, is_last, "Recovery")

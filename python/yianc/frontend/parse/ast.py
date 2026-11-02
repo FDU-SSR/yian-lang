@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from enum import Enum
+from enum import Enum, auto
 from typing import TYPE_CHECKING, TypeAlias
 
 from yianc.builtins import BuiltinKind
@@ -854,6 +854,68 @@ class ClosureExpr(ExpressionSyntax):
         return f"|{captures_str}| ({params_str}){ret_str} {{ ... }}"
 
 
+class FormatAlignment(Enum):
+    """Requested alignment of one formatted field; DEFAULT keeps the representation's own direction."""
+
+    DEFAULT = auto()
+    LEFT = auto()
+    RIGHT = auto()
+
+
+@dataclass
+class FormatCountLiteral:
+    """A decimal specification count written in the source."""
+
+    value: int
+    span: SrcSpan
+
+    def __repr__(self) -> str:
+        return str(self.value)
+
+
+@dataclass
+class FormatCountDynamic:
+    """A count expression inside braces; the span includes both braces."""
+
+    expr: Expr
+    span: SrcSpan
+
+    def __repr__(self) -> str:
+        return f"{{{self.expr}}}"
+
+
+FormatCount: TypeAlias = FormatCountLiteral | FormatCountDynamic
+
+
+@dataclass
+class FormatSpec:
+    """Optional specification of one interpolation."""
+
+    alignment: FormatAlignment
+    zero_pad: bool
+    width: FormatCount | None
+    precision: FormatCount | None
+    fixed: bool
+    span: SrcSpan
+
+    def __repr__(self) -> str:
+        parts: list[str] = []
+        if self.alignment is FormatAlignment.LEFT:
+            parts.append("<")
+        elif self.alignment is FormatAlignment.RIGHT:
+            parts.append(">")
+        if self.zero_pad:
+            parts.append("0")
+        if self.width is not None:
+            parts.append(repr(self.width))
+        if self.precision is not None:
+            parts.append(".")
+            parts.append(repr(self.precision))
+        if self.fixed:
+            parts.append("f")
+        return "".join(parts)
+
+
 @dataclass
 class FormatLiteralPart:
     """Decoded literal text inside a formatted template."""
@@ -871,8 +933,11 @@ class FormatValuePart:
 
     span: SrcSpan
     expr: Expr
+    spec: FormatSpec | None = None
 
     def __repr__(self) -> str:
+        if self.spec is not None:
+            return f"{{{self.expr}:{self.spec}}}"
         return f"{{{self.expr}}}"
 
 

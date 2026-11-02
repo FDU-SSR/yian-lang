@@ -444,7 +444,7 @@ impl Lexer {
             }
 
             let current = self.peek();
-            let next = self.one(skipped)?;
+            let next = self.one(skipped, true)?;
             if current == u32('{') {
                 depth += 1u64;
             }
@@ -550,17 +550,20 @@ impl Lexer {
         }
     }
 
-    fn parse_number<T>(body: str, start: Position) -> Result<T, LexError> {
-        return match T.parse(body) {
-            Ok(value) => Result<T, LexError>.Ok(value),
-            Err(error) => Result<T, LexError>.Err(self.fail(number_error_message(error), start)),
-        };
+    fn format_text_token(start: Position, raw: String) -> Token {
+        return self.token(TokenPayload.FStrFormatText(value=raw), start);
     }
 
-    fn number(start: Position, code: u32) -> Result<Token, LexError> {
+    // Interpolation context keeps an undecodable number spelling for the parser instead of rejecting the source.
+    fn number(start: Position, code: u32, interpolation: bool) -> Result<Token, LexError> {
         // Collect the full spelling before handling its numeric body and type suffix separately.
         let raw = String.new();
-        defer raw.drop();
+        let transferred = false;
+        defer {
+            if !transferred {
+                raw.drop();
+            }
+        };
         raw.push(char(code));
 
         while !self.at_end() && number_part(self.peek()) {
@@ -579,25 +582,50 @@ impl Lexer {
         if is_float_literal(raw.as_str()) {
             let suffix = float_suffix(raw.as_str());
             let body = numeric_body(raw.as_str(), suffix.spelling());
-            let value = self.parse_number<f64>(body, start)?;
-            return Result<Token, LexError>.Ok(self.float_token(start, value, suffix));
+            match f64.parse(body) {
+                Ok(value) => {
+                    transferred = true;
+                    return Result<Token, LexError>.Ok(self.float_token(start, value, suffix));
+                },
+                Err(error) => {
+                    if interpolation {
+                        transferred = true;
+                        return Result<Token, LexError>.Ok(self.format_text_token(start, raw));
+                    }
+                    return Result<Token, LexError>.Err(self.fail(number_error_message(error), start));
+                },
+            }
         }
 
         let suffix = integer_suffix(raw.as_str());
         let body = numeric_body(raw.as_str(), suffix.spelling());
-        let value = self.parse_number<u64>(body, start)?;
-        if value > suffix_max(suffix) {
-            let message = String.from(&"Integer literal ");
-            defer message.drop();
-            let digits = value.to_string_radix(10);
-            defer digits.drop();
-            message.push_str(digits.as_str());
-            message.push_str(" exceeds maximum value for type ");
-            message.push_str(suffix.spelling());
-            return Result<Token, LexError>.Err(self.fail(message.as_str(), start));
+        match u64.parse(body) {
+            Ok(value) => {
+                if value > suffix_max(suffix) {
+                    if interpolation {
+                        transferred = true;
+                        return Result<Token, LexError>.Ok(self.format_text_token(start, raw));
+                    }
+                    let message = String.from(&"Integer literal ");
+                    defer message.drop();
+                    let digits = value.to_string_radix(10);
+                    defer digits.drop();
+                    message.push_str(digits.as_str());
+                    message.push_str(" exceeds maximum value for type ");
+                    message.push_str(suffix.spelling());
+                    return Result<Token, LexError>.Err(self.fail(message.as_str(), start));
+                }
+                transferred = true;
+                return Result<Token, LexError>.Ok(self.integer_token(start, value, suffix));
+            },
+            Err(error) => {
+                if interpolation {
+                    transferred = true;
+                    return Result<Token, LexError>.Ok(self.format_text_token(start, raw));
+                }
+                return Result<Token, LexError>.Err(self.fail(number_error_message(error), start));
+            },
         }
-
-        return Result<Token, LexError>.Ok(self.integer_token(start, value, suffix));
     }
 
     fn punctuator(start: Position, code: u32, previous_whitespace: bool) -> Result<Token, LexError> {
@@ -628,7 +656,7 @@ impl Lexer {
         return Result<Token, LexError>.Ok(val=self.token(TokenPayload.Punctuator(value=kind), start));
     }
 
-    fn one(previous_whitespace: bool) -> Result<Token, LexError> {
+    fn one(previous_whitespace: bool, interpolation: bool) -> Result<Token, LexError> {
         let start = self.position();
         if self.at_end() {
             return Result<Token, LexError>.Ok(self.token(TokenPayload.EndOfFile, start));
@@ -649,7 +677,7 @@ impl Lexer {
         }
 
         if decimal_digit(code) {
-            return self.number(start, code);
+            return self.number(start, code, interpolation);
         }
 
         return self.punctuator(start, code, previous_whitespace);
@@ -670,7 +698,7 @@ impl Lexer {
                 continue;
             }
 
-            let next = self.one(skipped)?;
+            let next = self.one(skipped, false)?;
             let done = next.is_eof();
             self.tokens.push(next);
             if done {

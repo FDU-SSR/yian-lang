@@ -19,6 +19,7 @@ fn token_kind(token: Token&) -> str {
         FStrExprBegin => "FStrExprBegin",
         FStrExprEnd => "FStrExprEnd",
         FStrEnd => "FStrEnd",
+        FStrFormatText(_) => "FStrFormatText",
         EndOfFile => "EndOfFile",
     }
 }
