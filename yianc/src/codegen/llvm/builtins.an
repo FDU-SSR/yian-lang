@@ -101,6 +101,30 @@ impl FunctionLowering {
                 }
                 self.make_pointer(type_id, self.pointer_data(source_type, source)?, self.pointer_word(source_type, source)?, self.integer(0u64), length)?
             },
+            // A sub-slice keeps the parent view's lock word.  Only the parent
+            // range is checked here; allocation extent and liveness are checked
+            // when the derived view is actually accessed.
+            SliceRange => {
+                let source_type = self.cfg.value(args[0])?.type_id;
+                let source = self.get(args[0])?;
+                let range = self.get(args[1])?;
+                let start = self.builder.extract_value(range, 0u32, "");
+                let end = self.builder.extract_value(range, 1u32, "");
+                let length = self.view_length(source);
+                let ordered = self.builder.icmp(IntCompare.Ule, start, end, "");
+                let bounded = self.builder.icmp(IntCompare.Ule, end, length, "");
+                self.checked(self.builder.binary(BinaryOp.And, ordered, bounded, ""), "S001")?;
+                let element = match self.owner.session.types.require(source_type)? {
+                    Slice(element) => *element,
+                    _ => return Result<IrValue, CodegenError>.Err(CodegenError.invalid("slice_range requires a slice")),
+                };
+                let data = self.pointer_data(source_type, source)?;
+                let word = self.pointer_word(source_type, source)?;
+                let indices = [start];
+                let new_data = self.builder.gep(self.owner.types.value_type(element)?, data, indices.as_slice(), false, "");
+                let new_length = self.builder.binary(BinaryOp.Sub, end, start, "");
+                self.make_pointer(type_id, new_data, word, self.integer(0u64), new_length)?
+            },
             SliceGetPtr | StrGetPtr => {
                 if self.owner.types.is_zst(type_id)? { module.const_null(native) } else {
                     let source = self.get(args[0])?;

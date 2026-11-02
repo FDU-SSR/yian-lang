@@ -3,6 +3,7 @@ from yianc.analysis.resolution.types import resolve_type;
 from yianc.analysis.hir.node import HirKind, Builtin;
 from yianc.analysis.ty.model import TypeData;
 from yianc.analysis.ty.validation import validate_value;
+from yianc.analysis.ty.relations import is_u64_range;
 from yianc.common.ids import TypeId, HirId;
 from yianc.frontend.ast.node import TypeSyntax, Argument, ExprData, Literal, FormatPart;
 from yianc.analysis.lowering.format import FormatDestination, lower_format;
@@ -19,7 +20,7 @@ fn arity(kind: BuiltinKind) -> (u64, u64) {
         SizeOf => (1u64, 0u64), Undef => (1u64, 0u64), Dangling => (1u64, 0u64),
         BitCast => (1u64, 1u64), Alloc => (1u64, 1u64), Realloc => (1u64, 2u64),
         Panic => (0u64, 1u64), RuntimeFail => (0u64, 1u64), AssumeInit => (0u64, 1u64),
-        MemCopy => (0u64, 3u64), SliceFromParts => (0u64, 2u64),
+        MemCopy => (0u64, 3u64), SliceFromParts => (0u64, 2u64), SliceRange => (0u64, 2u64),
         SliceGetPtr => (0u64, 1u64), SliceGetLen => (0u64, 1u64),
         StrFromParts => (0u64, 2u64), StrGetPtr => (0u64, 1u64), StrGetLen => (0u64, 1u64),
         ArgBytes => (0u64, 1u64),
@@ -188,6 +189,16 @@ impl ExprChecker {
                     _ => return Result<HirId, AnalysisError>.Err(self.error(span, "slice_from_parts requires a pointer")),
                 };
                 values[1] = self.coerce(values[1], unsigned)?;
+                self.ctx.session.types.slice(element)
+            },
+            SliceRange => {
+                let element = match self.ctx.session.types.require(self.type_of(values[0]))? {
+                    Slice(value) => *value,
+                    _ => return Result<HirId, AnalysisError>.Err(self.error(span, "slice_range requires a slice")),
+                };
+                if !is_u64_range(self.ctx, self.type_of(values[1])) {
+                    return Result<HirId, AnalysisError>.Err(self.error(span, "slice_range requires a Range<u64>"));
+                }
                 self.ctx.session.types.slice(element)
             },
             SliceGetPtr => match self.ctx.session.types.require(self.type_of(values[0]))? {

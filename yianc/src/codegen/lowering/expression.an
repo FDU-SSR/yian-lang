@@ -443,7 +443,7 @@ impl Lowering {
                 self.emit(node.span, node.type_id, Operation.Cast(operand))
             },
             Panic | RuntimeFail |
-            MemCopy | SliceFromParts | SliceGetPtr | SliceGetLen | StrFromParts | StrGetPtr | StrGetLen |
+            MemCopy | SliceFromParts | SliceRange | SliceGetPtr | SliceGetLen | StrFromParts | StrGetPtr | StrGetLen |
             FfiAddr | FfiParts | FfiPtrCast | Alloc | Realloc | Dangling |
             ArgBytes => {
                 let args = Vec<ValueId>.new();

@@ -1,11 +1,12 @@
 from yianc.analysis.lowering.checker import ExprChecker;
-from yianc.analysis.ty.relations import is_integer;
+from yianc.analysis.ty.relations import is_integer, is_u64_range;
 from yianc.analysis.ty.validation import c_abi_type;
 from yianc.analysis.ty.model import TypeData;
-from yianc.analysis.hir.node import HirKind, Binary, Unary, TupleAccess, ArrayAccess, SliceAccess;
+from yianc.analysis.hir.node import HirKind, Binary, Unary, TupleAccess, ArrayAccess, SliceAccess, Builtin;
 from yianc.analysis.constant.integer import magnitude;
 from yianc.common.ids import HirId;
 from yianc.frontend.ast.operator import BinaryOperator, UnaryOperator;
+from yianc.frontend.ast.atoms import BuiltinKind;
 from yianc.frontend.source import Span;
 from yianc.diagnostics.model import AnalysisError;
 from yianc.analysis.ty.store import BOOL_TYPE_ID, U64_TYPE_ID, VOID_TYPE_ID;
@@ -131,6 +132,17 @@ impl ExprChecker {
                 if is_integer(self.ctx, self.type_of(index)) {
                     let offset = self.coerce(index, TypeId(U64_TYPE_ID))?;
                     return Result<HirId, AnalysisError>.Ok(self.node(span, *element, true, HirKind.SliceAccess(SliceAccess(object, offset, *element))));
+                }
+                // Built-in slice range: construct the view directly instead of
+                // calling Index<Range>, which would add a Range& temporary and a
+                // full view check.
+                if is_u64_range(self.ctx, self.type_of(index)) {
+                    let types = Vec<TypeId>.new();
+                    let arguments = Vec<HirId>.new();
+                    arguments.push(object);
+                    arguments.push(index);
+                    return Result<HirId, AnalysisError>.Ok(self.node(span, self.ctx.session.types.slice(*element), false,
+                        HirKind.Builtin(Builtin(BuiltinKind.SliceRange, types, arguments))));
                 }
             },
             _ => {},
