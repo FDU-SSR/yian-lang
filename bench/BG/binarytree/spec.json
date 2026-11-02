@@ -1,5 +1,6 @@
 {
   "name": "binarytree",
+  "measurement": {"warmups": 2, "runs": 7},
   "source": "BG",
   "tags": [
     "alloc",

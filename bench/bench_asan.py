@@ -9,8 +9,8 @@ Each benchmark is built three ways over the same source:
 
 binarytree additionally gets ``c_asan_sens``: the same ASan binary with
 ``quarantine_size_mb=0``, which isolates the runtime cost of ASan's quarantine.
-All legs run adjacent within one session, one warmup plus N measured runs, so
-drift between legs stays small.
+All legs run adjacent within one session, using the spec's fixed warmups and
+measured runs, so drift between legs stays small.
 BG stdin files are generated before timing; each run reopens
 the same input and writes stdout to a binary file. A failed warmup/sample stops export of that measurement.
 
@@ -21,8 +21,8 @@ Outputs, under ``bench/results/``:
 Usage:
 
   python bench/bench_asan.py                       # the paper's 24 AWFY/BG benchmarks
-  python bench/bench_asan.py --bench BG/fasta --runs 1
-  python bench/bench_asan.py --set full --runs 5 --pin 4
+  python bench/bench_asan.py --bench BG/fasta
+  python bench/bench_asan.py --set full --pin 4
 """
 
 from __future__ import annotations
@@ -95,11 +95,12 @@ def measure(
     spec: btw.BenchSpec,
     legs: dict[str, tuple[Path, dict[str, str] | None]],
     profile: str,
-    runs: int,
     pin: int | None,
 ) -> tuple[dict[str, dict[str, list[float]]], dict[str, int], dict[str, btw.execution.RunResult], bool]:
-    """Warm each leg, then rotate file-backed results without decoding BG stdout."""
+    """Run the spec's fixed warmups, then rotate file-backed results without decoding BG stdout."""
     argv = list(spec.run_argv(profile))
+    warmups = spec.measurement.warmups
+    runs = spec.measurement.runs
     samples = {leg: {"ms": [], "kb": []} for leg in legs}
     codes: dict[str, int] = {}
     warm_outputs: dict[str, btw.execution.RunResult] = {}
@@ -118,16 +119,18 @@ def measure(
             env,
         )
 
-    for leg, (binary, env) in legs.items():
-        result = run_file(leg, binary, env, "warm")
-        warm_outputs[leg] = result
-        codes[leg] = result.rc
-    reference = warm_outputs["c_plain"]
-    sample_valid = btw._check_file_result(spec, reference)
-    for leg, result in warm_outputs.items():
-        sample_valid = sample_valid and btw._check_file_result(spec, result)
-        sample_valid = sample_valid and btw.execution.output_equal(result, reference)
-        outputs[leg] = result
+    sample_valid = True
+    for _ in range(warmups):
+        for leg, (binary, env) in legs.items():
+            result = run_file(leg, binary, env, "warm")
+            warm_outputs[leg] = result
+            codes[leg] = result.rc
+        reference = warm_outputs["c_plain"]
+        sample_valid = sample_valid and btw._check_file_result(spec, reference)
+        for leg, result in warm_outputs.items():
+            sample_valid = sample_valid and btw._check_file_result(spec, result)
+            sample_valid = sample_valid and btw.execution.output_equal(result, reference)
+            outputs[leg] = result
     for _ in range(runs):
         for leg, (binary, env) in legs.items():
             result = run_file(leg, binary, env, "sample")
@@ -158,7 +161,6 @@ def __run() -> int:
     parser.add_argument("--bench", dest="bench_keys", help="only measure the named benchmarks, comma-separated")
     parser.add_argument("--exclude", help="benchmarks to exclude, comma-separated")
     parser.add_argument("--fast", help="use the fast scale profile for the named benchmarks, comma-separated")
-    parser.add_argument("--runs", type=int, help="measured runs per leg (default: the set's runs)")
     parser.add_argument("--pin", type=int, default=4, help="CPU for taskset pinning (default: 4; 0 disables pinning)")
     parser.add_argument("--yianc", metavar="PATH", help="Native compiler (default: YIANC, then PATH)")
     parser.add_argument("--anx", metavar="PATH", help="Native project builder (default: ANX, then PATH)")
@@ -172,7 +174,6 @@ def __run() -> int:
         raise SystemExit(f"[args] unknown set {args.bench_set!r}; have: {', '.join(sorted(sets))}")
     set_def = sets[args.bench_set]
     profile = args.scale or set_def.scale
-    runs = args.runs if args.runs is not None else set_def.runs
     bench_filter = tuple(item.strip() for item in (args.bench_keys or "").split(",") if item.strip())
     chosen = btw.resolve_set(specs, set_def, bench_filter)
     excluded = {item.strip() for item in (args.exclude or "").split(",") if item.strip()}
@@ -227,7 +228,7 @@ def __run() -> int:
                 ASAN_DIR / f"{spec.source}_{spec.name}",
                 {"ASAN_OPTIONS": ASAN_SENS},
             )
-        samples, codes, outputs, sample_valid = measure(spec, legs, profile_for(spec), runs, pin)
+        samples, codes, outputs, sample_valid = measure(spec, legs, profile_for(spec), pin)
         c_check_ok = btw._check_file_result(spec, outputs["c_plain"]) and codes.get("c_plain", -1) == spec.check.rc
         asan_match = all(
             leg in outputs

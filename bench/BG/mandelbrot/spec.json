@@ -1,5 +1,6 @@
 {
   "name": "mandelbrot",
+  "measurement": {"warmups": 2, "runs": 9},
   "source": "BG",
   "tags": [
     "numeric"

@@ -8,8 +8,8 @@ Directories and artifacts:
   bench/results/alloc.csv    Performance samples and statistics
 
 Modes and protocol: allocator benchmarks have no C reference. Raw mode (--raw-pointers) uses libc malloc/free.
-  Compare fat/raw, taking minimum wall time and maximum peak RSS across --runs samples per mode;
-  verify identical stdout.
+  Compare fat/raw, taking minimum wall time and maximum peak RSS across each spec's
+  fixed warmup and sample counts; verify identical stdout.
 
 Scales:
   fast substitutes spec.json scale.fast into the staged YIAN package; full uses the declared default.
@@ -18,7 +18,7 @@ Scales:
 Usage:
   python3 bench/bench_allocator.py                       # All benchmarks, full scale
   python3 bench/bench_allocator.py --scale fast          # Fast scale
-  python3 bench/bench_allocator.py --names churn_single --runs 5 --pin 4
+  python3 bench/bench_allocator.py --names churn_single --pin 4
   python3 bench/bench_allocator.py --compiler-root /tmp/yian-copy  # Compile a selected source tree
   python3 bench/bench_allocator.py --yianc /path/to/yianc # Select the native compiler explicitly
 """
@@ -26,7 +26,6 @@ Usage:
 from __future__ import annotations
 
 import argparse
-import json
 import os
 import re
 import subprocess
@@ -39,10 +38,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 from _toolchain.native import resolve_native_selection
 
 try:
-    from . import projects, results_io
+    from . import projects, results_io, spec
 except ImportError:  # Direct script execution puts bench/ on sys.path.
     import projects
     import results_io
+    import spec
 
 ROOT = Path(__file__).resolve().parent.parent
 BENCH_ROOT = ROOT / "bench"
@@ -52,7 +52,6 @@ RESULTS_DIR = ROOT / "bench" / "results"
 TIME_BIN = "/usr/bin/time"
 OPT_LEVEL = "-O2"
 PROFILES = ("fast", "full")
-DEFAULT_RUNS = {"fast": 3, "full": 7}
 
 _RSS_RE = re.compile(r"Maximum resident set size \(kbytes\): (\d+)")
 
@@ -91,32 +90,11 @@ def discover(names: str | None) -> list[str]:
     return found
 
 
-def load_spec(name: str) -> dict[str, object]:
-    project = _allocator_projects().get(name)
-    if project is None:
-        raise SystemExit(f"[spec] unknown allocator project ALLOC/{name}")
-    path = project.spec_path
-    if not path.exists():
-        raise SystemExit(f"[spec] missing {path}")
-    data = json.loads(path.read_text(encoding="utf-8"))
-    if not isinstance(data, dict) or data.get("name") != name:
-        raise SystemExit(f"[spec] {path}: name field should be {name!r}")
-    return data
-
-
-def scale_value(spec: dict[str, object], profile: str) -> int | None:
-    scale = spec.get("scale")
-    if not isinstance(scale, dict) or profile != "fast":
-        return None
-    fast = scale.get("fast")
-    return int(fast) if fast is not None else None
-
-
 def compile_one(
     name: str,
     raw: bool,
     compiler_root: Path,
-    spec: dict[str, object],
+    parsed: spec.BenchSpec,
     profile: str,
     compiler: Path,
     *,
@@ -134,7 +112,7 @@ def compile_one(
             project,
             profile,
             raw,
-            scale_value(spec, profile),
+            parsed.scale_value(profile),
             compiler,
             anx_path,
             compiler_root,
@@ -163,7 +141,6 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Heap allocator benchmarks (fat vs raw)")
     parser.add_argument("--names", help="only run the named benchmarks (comma-separated)")
     parser.add_argument("--scale", choices=PROFILES, default="full", help="scale profile (default: full)")
-    parser.add_argument("--runs", type=int, default=None, help="measured runs per binary (default: fast=3 / full=7)")
     parser.add_argument("--pin", type=int, default=None, help="CPU number for taskset pinning")
     parser.add_argument("--compiler-root", type=Path, default=ROOT, help="source tree containing the standard library and inputs (default: this repository)")
     parser.add_argument("--yianc", metavar="PATH", help="Native compiler (default: nonempty YIANC, then PATH)")
@@ -180,15 +157,21 @@ def main() -> int:
         anx, anx_source = _resolve_anx_selection(args.anx)
     except ValueError as error:
         parser.error(str(error))
-    runs = args.runs if args.runs is not None else DEFAULT_RUNS[args.scale]
     names = discover(args.names)
+    projects_by_name = _allocator_projects()
     records = []
     for name in names:
-        spec = load_spec(name)
+        project = projects_by_name[name]
+        parsed = spec.load_spec(project.spec_path, project)
+        policy = parsed.measurement
         samples_by_state = {}
         for raw in (False, True):
-            binary = compile_one(name, raw, root, spec, args.scale, compiler, anx=anx)
-            samples_by_state["raw" if raw else "fat"] = [run_one(binary, args.pin) for _ in range(runs)]
+            binary = compile_one(name, raw, root, parsed, args.scale, compiler, anx=anx)
+            for _ in range(policy.warmups):
+                run_one(binary, args.pin)
+            samples_by_state["raw" if raw else "fat"] = [
+                run_one(binary, args.pin) for _ in range(policy.runs)
+            ]
         reference = samples_by_state["fat"][0][2]
         valid = all(sample[2] == reference for samples in samples_by_state.values() for sample in samples)
         raw_min = min(sample[0] for sample in samples_by_state["raw"])

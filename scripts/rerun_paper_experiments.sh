@@ -6,7 +6,6 @@
 #   scripts/rerun_paper_experiments.sh [options]
 #
 # Options:
-#   --runs N         measured runs per state/leg (default 5, or $SECL_RUNS)
 #   --pin CPU        taskset CPU (default 4, or $SECL_PIN; 0 disables pinning)
 #   --bench LIST     restrict both benchmark runners (comma separated keys)
 #   --skip-cve       skip the CVE correctness suite
@@ -22,7 +21,6 @@ ROOT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 cd "$ROOT_DIR"
 
 PYTHON_BIN=${YIAN_PYTHON:-python3}
-RUNS=${SECL_RUNS:-5}
 PIN=${SECL_PIN:-4}
 BENCH=""
 SKIP_CVE=0
@@ -31,12 +29,11 @@ SKIP_ASAN=0
 REFRESH_DATA=0
 
 usage() {
-    sed -n '2,20p' "$0"
+    sed -n '2,17p' "$0"
 }
 
 while (($#)); do
     case "$1" in
-        --runs) RUNS=$2; shift 2 ;;
         --pin) PIN=$2; shift 2 ;;
         --bench) BENCH=$2; shift 2 ;;
         --skip-cve) SKIP_CVE=1; shift ;;
@@ -91,13 +88,13 @@ fi
 
 if ((SKIP_PERF == 0)); then
     echo "== three-state performance (C / raw / fat) =="
-    "$PYTHON_BIN" bench/bench_three_way.py --set paper --runs "$RUNS" "${PIN_ARG[@]}" "${BENCH_ARG[@]}"
+    "$PYTHON_BIN" bench/bench_three_way.py --set paper "${PIN_ARG[@]}" "${BENCH_ARG[@]}"
     echo
 fi
 
 if ((SKIP_ASAN == 0)); then
     echo "== ASan cross-comparison (C plain / C ASan / YIAN) =="
-    "$PYTHON_BIN" bench/bench_asan.py --set paper --runs "$RUNS" \
+    "$PYTHON_BIN" bench/bench_asan.py --set paper \
         "${PIN_ARG[@]}" "${BENCH_ARG[@]}"
     echo
 fi

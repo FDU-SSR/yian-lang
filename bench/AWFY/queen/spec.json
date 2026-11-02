@@ -1,5 +1,6 @@
 {
   "name": "queen",
+  "measurement": {"warmups": 1, "runs": 5},
   "source": "AWFY",
   "tags": [
     "ptr",

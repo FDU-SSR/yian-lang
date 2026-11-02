@@ -18,6 +18,7 @@ bench/
 ├── sets/*.json         full (27), bg (10), paper (24), fast (8), and focus selections
 ├── results/            plain numeric performance CSV files
 ├── projects.py         project discovery, dependency staging, build, and digest
+├── spec.py             typed parser for every spec.json (check, scale, io, measurement)
 ├── execution.py        controlled file-based stdin/stdout and output identity
 ├── bench_three_way.py  C / raw / fat runner
 ├── bench_asan.py       C plain / C ASan / YIAN fat runner
@@ -95,15 +96,15 @@ focuses.
 
 ## Scales
 
-- **full** (default, formal records): the sources' default scale, one warmup plus
-  five measured runs per state, taking the minimum.
+- **full** (default, formal records): the sources' default scale and each
+  benchmark's spec-owned warmup/run counts, taking the minimum.
 - **fast** (frequent development runs): for projects that declare `scale.fast`
   in `bench/<SOURCE>/<name>/spec.json`, stage an isolated copy under
   `build/bench/projects/fast/<SOURCE>/<name>/<state>/` and replace the root
   YIAN `// bench-scale` marker. Numeric BG projects receive the same selected
   dimension once as C argv. Other projects use their declared full dimension.
-  The fast profile does not trigger run
-  reduction: one warmup plus three measured runs per state, taking the minimum.
+  The fast profile changes only the scale; the same per-spec
+  warmup/run counts apply.
 
 | Benchmark | Marked scale value | full | fast |
 | --- | --- | ---: | ---: |
@@ -121,13 +122,40 @@ Unlisted benchmarks use the same scale in both profiles; the fast profile
 controls duration through the representative subset and these scale overrides.
 To calibrate a benchmark, add a `// bench-scale` marker line to the source and set
 `scale.fast` in its spec; the fast target is 0.2–0.5 s per fat-mode benchmark, and
-items over 1 s run at full scale. Reducing scale must not change the semantics of
-internal assertions: scaling iteration counts as sieve does is safest; when the
-problem size must be scaled, assertions and authoritative values must also become
-functions of the scale.
+items over 1 s run at full scale. Sampling counts are independent of the scale
+profile: they come from the same spec measurement block. Reducing scale must not
+change the semantics of internal assertions: scaling iteration counts as sieve
+does is safest; when the problem size must be scaled, assertions and
+authoritative values must also become functions of the scale.
 
 Conclusions at different scales must be interpreted separately; cross-scale
 comparisons should verify workload, cache behavior, and sampling conditions.
+
+### Sampling policy
+
+Every `spec.json` declares its own fixed policy:
+
+```json
+"measurement": {"warmups": 1, "runs": 5}
+```
+
+`warmups` is per state/leg and excluded from samples; `runs` is the number of
+measured rotations. The default for benchmarks without an explicit block is
+also 1/5, but every project lists the block so the intended count is visible.
+The command-line runners reject `--runs`; set files select members and scale,
+not sampling. High-variance workloads use longer policies:
+
+| Benchmark | Warmups | Runs | Reason |
+| --- | ---: | ---: | --- |
+| `BG/revcomp` | 3 | 11 | ~250 MB stdin/stdout; page-cache and writeback sensitivity |
+| `BG/mandelbrot` | 2 | 9 | short runtime with observed fat-mode CV near 13% |
+| `AWFY/nbody` | 2 | 9 | ASan leg has occasional long outliers |
+| `BG/pidigits` | 2 | 9 | ASan C leg has occasional long outliers |
+| `AWFY/permute` | 2 | 7 | short run with marginal C-leg CV |
+| `BG/binarytree` | 2 | 7 | ASan YIAN leg has marginal CV |
+
+A longer policy reduces, but does not eliminate, I/O and host noise; it is not a
+substitute for controlling the execution environment.
 
 ## Three-state protocol
 
@@ -146,14 +174,18 @@ standard-library and input source root; it does not select the compiler.
 - Artifacts: `build/bench/{cbin,yraw,yfat}/<SOURCE>_<name>` (all three states use
   equal-length paths; absolute values for allocation-heavy benchmarks are
   sensitive to argv[0] length and process layout).
-- Sampling: one warmup per state (excluded from samples), then N measured rounds
-  rotating C->raw->fat; formal metrics use each state's minimum, while recording
-  median/IQR/CV/peak RSS (`/usr/bin/time -v`).
+- Sampling: each spec owns `measurement.warmups` and `measurement.runs`; warmups
+  are excluded from samples, then the runner rotates C->raw->fat for the fixed
+  number of measured rounds. Formal metrics use each state's minimum, while
+  recording median/IQR/CV/peak RSS (`/usr/bin/time -v`). The runners do not
+  accept `--runs`; changing a benchmark's sampling requires editing its
+  `spec.json`.
 - Noise reduction: `taskset -c <cpu>` pinning; round-robin measurement reduces
   frequency/thermal drift across time.
-- Semantic guard: C warmup must pass the spec's `check` (`rc` / `stdout_eq` /
-  `stdout_contains` / `stdout_int_mod`); raw and fat warmup stdout and exit codes
-  must match byte for byte, and each must pass the same spec's output/exit checks.
+- Semantic guard: every C warmup must pass the spec's `check` (`rc` /
+  `stdout_eq` / `stdout_contains` / `stdout_int_mod`); raw and fat warmup stdout
+  and exit codes must match byte for byte, and each must pass the same spec's
+  output/exit checks.
   A failed check stops export of that measurement.
 - **No regression thresholds**: performance experiments are reference only; no
   threshold scripts are written. Noise magnitude depends on the sampling
@@ -175,8 +207,9 @@ standard-library and input source root; it does not select the compiler.
 
 `bench_asan.py` measures the C plain, C ASan
 (`ASAN_OPTIONS=detect_leaks=0`) and YIAN fat legs adjacently in one session;
-`binarytree` also has a `quarantine_size_mb=0` sensitivity leg. Each leg has one
-warmup plus N measured runs; output includes medians, IQR, min–max, peak RSS,
+`binarytree` also has a `quarantine_size_mb=0` sensitivity leg. Each leg uses the
+same spec-owned warmup/run counts as the three-state runner; output includes
+medians, IQR, min–max, peak RSS,
 per-benchmark ratios for the three comparisons, and geometric means:
 
 - (i) C ASan / C plain (ASan's own overhead)
@@ -188,8 +221,8 @@ They are not ASan-instrumented; allocations intercepted by ASan do not make
 library code instrumented, and library operations are outside YIAN guard coverage.
 
 ```bash
-python3 bench/bench_asan.py --set paper --runs 5 --pin 4
-python3 bench/bench_asan.py --bench BG/fasta --runs 1 --pin 0
+python3 bench/bench_asan.py --set paper --pin 4
+python3 bench/bench_asan.py --bench BG/fasta --pin 0
 ```
 
 Results are written to `results/asan.csv`, including every wall-time/RSS pair,
@@ -206,8 +239,8 @@ BG projects as a batch.
 ## Allocator suite
 
 ```bash
-python3 bench/bench_allocator.py --scale full --pin 4    # Full scale: seven samples per mode.
-python3 bench/bench_allocator.py --scale fast --pin 4    # Fast scale: three samples per mode at reduced scale.
+python3 bench/bench_allocator.py --scale full --pin 4    # Full scale, per-spec sampling.
+python3 bench/bench_allocator.py --scale fast --pin 4    # Reduced scale, same per-spec sampling.
 python3 bench/bench_allocator.py --scale fast --yianc "$HOME/.local/bin/yianc"
 ```
 
@@ -258,15 +291,15 @@ projects; the C ASan comparison must explicitly select `--language c` or `both`
 and is not counted among the paper's 38 YIAN vulnerability runs.
 
 ```bash
-scripts/rerun_paper_experiments.sh                       # runs=5, pin=4
-scripts/rerun_paper_experiments.sh --runs 3 --pin 0      # no pinning, 3 runs per leg
-scripts/rerun_paper_experiments.sh --skip-cve --bench BG/fasta --runs 1
+scripts/rerun_paper_experiments.sh                       # per-spec sampling, pin=4
+scripts/rerun_paper_experiments.sh --pin 0               # no pinning
+scripts/rerun_paper_experiments.sh --skip-cve --bench BG/fasta
 scripts/rerun_paper_experiments.sh --refresh-data        # call the parent repository's refresh_data.py at the end
 ```
 
 `--bench` restricts both runners; `--skip-cve`/`--skip-perf`/`--skip-asan` skip
-the corresponding phase. The `SECL_RUNS`, `SECL_PIN`, and `YIAN_PYTHON`
-environment variables can override the defaults.
+the corresponding phase. `SECL_PIN` and `YIAN_PYTHON` can override the pin and
+interpreter defaults; sampling has no environment or CLI override.
 
 ## Adding a benchmark
 

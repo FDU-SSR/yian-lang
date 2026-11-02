@@ -1,7 +1,6 @@
 {
   "name": "paper",
   "scale": "full",
-  "runs": 5,
   "include": [
     "AWFY/*",
     "BG/*"

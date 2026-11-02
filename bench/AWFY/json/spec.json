@@ -1,5 +1,6 @@
 {
   "name": "json",
+  "measurement": {"warmups": 1, "runs": 5},
   "source": "AWFY",
   "tags": [
     "string"

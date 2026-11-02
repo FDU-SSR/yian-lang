@@ -1,7 +1,6 @@
 {
   "name": "numeric",
   "scale": "full",
-  "runs": 5,
   "include": [
     "tag:numeric"
   ],

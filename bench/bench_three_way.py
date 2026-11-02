@@ -6,7 +6,7 @@ Benchmarks are organized by source, focus set, and fast/full scale:
   bench/<SOURCE>/<name>/spec.json   Arguments, checks, tags, and scales
   bench/<SOURCE>/<name>/yian/       YIAN package; raw/ is an optional source overlay
   bench/<SOURCE>/<name>/c/          Authoritative CMake project
-  bench/sets/<set>.json             Set members, default scale, and sample count
+  bench/sets/<set>.json             Set members and default scale
   bench/results/<set>.csv      Performance samples and statistics
 
 Protocol:
@@ -16,10 +16,12 @@ Protocol:
     selected full/fast dimension to C as one argv value; BG stdin tasks use the selected FASTA input file.
   - Artifacts use equal-length paths under build/bench/{cbin,yraw,yfat}/<SOURCE>_<name>.
   - CPU affinity via taskset -c <cpu> is optional, but required for formal records.
-  - Warm up each mode once, then rotate C/raw/fat for N measured rounds. Report minimum time,
-    median, interquartile range, CV, and peak RSS per mode.
-  - Semantic guards: C warmup must pass its rc check. BG warmups and every measured sample must also match the
-    C warmup's complete stdout bytes and expected rc. A failed sample stops export of that measurement.
+  - Warm up each mode the spec's fixed number of times, then rotate C/raw/fat
+    for its fixed measured rounds. Report minimum time, median, interquartile
+    range, CV, and peak RSS per mode.
+  - Semantic guards: every C warmup must pass its rc check. BG warmups and every
+    measured sample must also match the C warmup's complete stdout bytes and
+    expected rc. A failed sample stops export of that measurement.
 
 Usage:
   python3 bench/bench_three_way.py --list-sets          # List sets, scales, and member counts
@@ -30,7 +32,7 @@ Usage:
   python3 bench/bench_three_way.py --source AWFY --set fast
   python3 bench/bench_three_way.py --set fast --yianc /path/to/yianc
   python3 bench/bench_three_way.py --set fast --anx /path/to/anx
-  python3 bench/bench_three_way.py --compile-only | --no-compile | --runs N | --pin 4
+  python3 bench/bench_three_way.py --compile-only | --no-compile | --pin 4
 
 Output:
   bench/results/<set>.csv   Named-set performance data
@@ -59,10 +61,12 @@ from _toolchain.native import resolve_native_selection
 
 try:
     from . import execution, projects, results_io
+    from .spec import BenchSpec, SCALE_PROFILES, load_spec
 except ImportError:  # Direct script execution puts bench/ on sys.path.
     import execution
     import projects
     import results_io
+    from spec import BenchSpec, SCALE_PROFILES, load_spec
 
 ROOT = Path(__file__).resolve().parent.parent
 BENCH_DIR = ROOT / "bench"
@@ -72,109 +76,13 @@ OUT_DIR = ROOT / "build" / "bench"
 PARTIAL_CSV = RESULTS_DIR / "partial.csv"
 
 DEFAULT_SET = "full"
-SCALE_PROFILES = ("fast", "full")
-FastaInput = execution.FastaInput
-IOSpec = execution.IOSpec
-
-
-@dataclass(frozen=True)
-class Check:
-    """Authoritative C result declared in each project's spec.json."""
-
-    rc: int = 0
-    stdout_eq: str | None = None
-    stdout_contains: tuple[str, ...] = ()
-    stdout_int_mod: tuple[int, int] | None = None
-
-    def ok(self, rc: int, out: str) -> bool:
-        if rc != self.rc:
-            return False
-        text = out.strip()
-        if self.stdout_eq is not None and text != self.stdout_eq:
-            return False
-        for needle in self.stdout_contains:
-            if needle not in out:
-                return False
-        if self.stdout_int_mod is not None:
-            modulus, expected = self.stdout_int_mod
-            try:
-                value = int(text)
-            except ValueError:
-                return False
-            if value % modulus != expected:
-                return False
-        return True
-
-    def describe(self) -> str:
-        parts = [f"rc=={self.rc}"]
-        if self.stdout_eq is not None:
-            parts.append(f"stdout=={self.stdout_eq!r}")
-        for needle in self.stdout_contains:
-            parts.append(f"stdout contains {needle!r}")
-        if self.stdout_int_mod is not None:
-            parts.append(f"stdout%{self.stdout_int_mod[0]}=={self.stdout_int_mod[1]}")
-        return ", ".join(parts)
-
-
-@dataclass(frozen=True)
-class Scale:
-    """Scale profile: default/fast source // bench-scale values and how C receives them."""
-
-    default: int
-    fast: int | None = None
-    c: str = "none"  # 'argv' passes scale to the C reference; 'none' means C does not support scaling.
-
-
-@dataclass(frozen=True)
-class BenchSpec:
-    """One three-mode benchmark: YIAN source, C reference, and argv/check/tag/scale specification."""
-
-    name: str
-    source: str
-    project: projects.BenchmarkProject
-    argv: tuple[str, ...]
-    check: Check
-    tags: tuple[str, ...]
-    note: str
-    scale: Scale | None = None
-    io: IOSpec | None = None
-
-    @property
-    def key(self) -> str:
-        return f"{self.source}/{self.name}"
-
-    @property
-    def raw_override(self) -> bool:
-        return self.project.raw_overlay is not None
-
-    def scale_value(self, profile: str) -> int | None:
-        """Scale substituted in this profile's source copy; None uses the default (always None for full)."""
-        if self.scale is None or profile not in SCALE_PROFILES or profile != "fast":
-            return None
-        return self.scale.fast
-
-    def run_argv(self, profile: str) -> tuple[str, ...]:
-        """Runtime arguments shared by all modes, including BG full/fast dimensions."""
-        if profile not in SCALE_PROFILES:
-            raise ValueError(f"profile must be one of {SCALE_PROFILES}, got {profile!r}")
-        if self.source == "BG" and self.scale is not None and self.scale.c == "argv":
-            value = self.scale.default
-            if profile == "fast" and self.scale.fast is not None:
-                value = self.scale.fast
-            return (*self.argv, str(value))
-        value = self.scale_value(profile)
-        if value is not None and self.scale is not None and self.scale.c == "argv":
-            return (*self.argv, str(value))
-        return self.argv
-
 
 @dataclass(frozen=True)
 class SetDef:
-    """Set: member patterns (exact key / SOURCE/* / tag:x / *) with default scale and sample count."""
+    """Set: member patterns (exact key / SOURCE/* / tag:x / *) with the default scale."""
 
     name: str
     scale: str
-    runs: int
     include: tuple[str, ...]
     exclude: tuple[str, ...]
     note: str
@@ -220,102 +128,6 @@ def _as_str_list(value: object, where: str) -> tuple[str, ...]:
     return tuple(value)
 
 
-def _load_io(value: object, where: str) -> IOSpec:
-    if not isinstance(value, dict):
-        raise SystemExit(f"[spec] {where}: io must be an object")
-    unknown = set(value) - {"stdin"}
-    if unknown:
-        raise SystemExit(f"[spec] {where}: unsupported io field(s): {', '.join(sorted(unknown))}")
-    if "stdin" not in value:
-        return IOSpec()
-    stdin = value["stdin"]
-    if not isinstance(stdin, dict) or set(stdin) != {"fasta_n"}:
-        raise SystemExit(f"[spec] {where}: io.stdin must contain only fasta_n")
-    fasta = stdin["fasta_n"]
-    if not isinstance(fasta, dict) or set(fasta) != {"full", "fast"}:
-        raise SystemExit(f"[spec] {where}: fasta_n must contain exactly full and fast")
-    dimensions: dict[str, int] = {}
-    for name in ("full", "fast"):
-        number = fasta[name]
-        if not isinstance(number, int) or isinstance(number, bool) or number <= 0:
-            raise SystemExit(f"[spec] {where}: fasta_n.{name} must be a positive integer")
-        dimensions[name] = number
-    return IOSpec(stdin=FastaInput(**dimensions))
-
-
-def load_spec(spec_path: Path, project: projects.BenchmarkProject) -> BenchSpec:
-    data = _load_json(spec_path, "spec")
-    if data.get("name") != project.name:
-        raise SystemExit(f"[spec] {spec_path}: name should be {project.name!r}, got {data.get('name')!r}")
-    if data.get("source") != project.source:
-        raise SystemExit(f"[spec] {spec_path}: source should be {project.source!r}, got {data.get('source')!r}")
-    check_raw = data.get("check")
-    if not isinstance(check_raw, dict):
-        raise SystemExit(f"[spec] {spec_path}: missing check object")
-    int_mod_raw = check_raw.get("stdout_int_mod")
-    int_mod: tuple[int, int] | None = None
-    if int_mod_raw is not None:
-        if not isinstance(int_mod_raw, list) or len(int_mod_raw) != 2 or any(
-            not isinstance(item, int) for item in int_mod_raw
-        ):
-            raise SystemExit(f"[spec] {spec_path}: stdout_int_mod expects [modulus, expected remainder]")
-        int_mod = (int(int_mod_raw[0]), int(int_mod_raw[1]))
-    eq_raw = check_raw.get("stdout_eq")
-    check = Check(
-        rc=int(check_raw.get("rc", 0)),
-        stdout_eq=str(eq_raw) if eq_raw is not None else None,
-        stdout_contains=_as_str_list(check_raw.get("stdout_contains"), f"{spec_path}: stdout_contains"),
-        stdout_int_mod=int_mod,
-    )
-    scale_raw = data.get("scale")
-    scale: Scale | None = None
-    if scale_raw is not None:
-        if not isinstance(scale_raw, dict) or "default" not in scale_raw:
-            raise SystemExit(f"[spec] {spec_path}: scale requires default (fast profile value optional)")
-        default_raw = scale_raw["default"]
-        fast_raw = scale_raw.get("fast")
-        if not isinstance(default_raw, int) or isinstance(default_raw, bool) or default_raw <= 0:
-            raise SystemExit(f"[spec] {spec_path}: scale.default must be a positive integer")
-        if fast_raw is not None and (
-            not isinstance(fast_raw, int) or isinstance(fast_raw, bool) or fast_raw <= 0
-        ):
-            raise SystemExit(f"[spec] {spec_path}: scale.fast must be a positive integer when present")
-        scale = Scale(
-            default=default_raw,
-            fast=fast_raw,
-            c=str(scale_raw.get("c", "none")),
-        )
-        if scale.c not in ("argv", "none"):
-            raise SystemExit(f"[spec] {spec_path}: scale.c must be \"argv\" or \"none\"")
-    io = _load_io(data["io"], f"{spec_path}: io") if "io" in data else None
-    if project.source == "BG":
-        if io is None:
-            raise SystemExit(f"[spec] {spec_path}: BG cases must declare io (use {{}} for file stdout without stdin)")
-        if check.rc != 0:
-            raise SystemExit(f"[spec] {spec_path}: every aligned BG task must exit successfully (check.rc=0)")
-        if check.stdout_eq is not None or check.stdout_contains or check.stdout_int_mod is not None:
-            raise SystemExit(f"[spec] {spec_path}: BG file output uses rc checks only; byte checks use fixtures/references")
-        if io.stdin is not None and (scale is not None or data.get("argv", [])):
-            raise SystemExit(f"[spec] {spec_path}: BG stdin dimensions belong in io.stdin.fasta_n, not argv/scale")
-        if io.stdin is None and scale is None:
-            raise SystemExit(f"[spec] {spec_path}: BG numeric tasks require a scale dimension")
-        if scale is not None and scale.c != "argv":
-            raise SystemExit(f"[spec] {spec_path}: BG numeric dimensions require scale.c=\"argv\"")
-        if scale is not None and data.get("argv", []) != []:
-            raise SystemExit(f"[spec] {spec_path}: BG numeric dimensions use scale, so argv must be empty")
-    return BenchSpec(
-        name=project.name,
-        source=project.source,
-        project=project,
-        argv=_as_str_list(data.get("argv"), f"{spec_path}: argv"),
-        check=check,
-        tags=_as_str_list(data.get("tags"), f"{spec_path}: tags"),
-        note=str(data.get("note", "")),
-        scale=scale,
-        io=io,
-    )
-
-
 def discover() -> list[BenchSpec]:
     """Discover paired projects under bench/<SOURCE>/<name>.
 
@@ -349,7 +161,6 @@ def load_sets() -> dict[str, SetDef]:
         sets[name] = SetDef(
             name=name,
             scale=scale,
-            runs=int(data.get("runs", DEFAULT_RUNS)),
             include=_as_str_list(data.get("include", ["*"]), f"{path}: include"),
             exclude=_as_str_list(data.get("exclude"), f"{path}: exclude"),
             note=str(data.get("note", "")),
@@ -432,8 +243,6 @@ OPT_LEVEL = "-O2"
 C_COMPILER = "clang"
 C_FLAGS = ["-O2", "-ffp-contract=off"]
 TIME_BIN = "/usr/bin/time"
-DEFAULT_RUNS = 5
-DEFAULT_MAX_STATE_SEC = 120.0
 STATES = ("c", "raw", "fat")
 STATE_DIR = {"c": "cbin", "raw": "yraw", "fat": "yfat"}
 
@@ -508,16 +317,16 @@ def _stats(samples: list[float]) -> Stats:
     )
 
 
-def measure_triple(
-    spec: BenchSpec, runs: int, pin: int | None, max_state_sec: float, profile: str
-) -> Row:
-    """Warm up each mode, then rotate C/raw/fat for used_runs rounds.
+def measure_triple(spec: BenchSpec, pin: int | None, profile: str) -> Row:
+    """Run the spec's fixed warmups, then rotate C/raw/fat for its measured runs.
 
-    All modes share argv, including the optional workload scale. Source markers
-    retain the default scale when the command line supplies no override.
+    All modes share argv, including the optional workload scale. Sampling counts
+    come from spec.json; no command-line or set-level override is accepted.
     """
     argv = list(spec.run_argv(profile))
     bins = {state: spec_bin(spec, state) for state in STATES}
+    warmups = spec.measurement.warmups
+    runs = spec.measurement.runs
 
     if spec.source == "BG" and spec.io is not None:
         # Prepare or validate the FASTA input before the consumer timing window.
@@ -529,29 +338,22 @@ def measure_triple(
             output = output_root / f"{kind}-{state}.stdout"
             return execution.run_file(bins[state], tuple(argv), stdin_path, output, pin)
 
-        warm_start = time.monotonic()
-        warm_files = {state: run_file(state, "warm") for state in STATES}
-        warm_sec = time.monotonic() - warm_start
-        c_reference = warm_files["c"]
-        c_check_ok = _check_file_result(spec, c_reference)
-        yian_stdout_match = all(
-            _check_file_result(spec, warm_files[state])
-            and execution.output_equal(warm_files[state], c_reference)
-            for state in ("raw", "fat")
-        )
-
-        used_runs = runs
-        if warm_sec > max_state_sec and runs > 3:
-            used_runs = 3
-            print(
-                f"[{spec.key}] warmup {warm_sec:.1f}s > {max_state_sec:.0f}s, "
-                f"measurement runs reduced to {used_runs}",
-                file=sys.stderr,
+        c_check_ok = True
+        yian_stdout_match = True
+        warm_files: dict[str, execution.RunResult] = {}
+        for _ in range(warmups):
+            warm_files = {state: run_file(state, "warm") for state in STATES}
+            c_reference = warm_files["c"]
+            c_check_ok = c_check_ok and _check_file_result(spec, c_reference)
+            yian_stdout_match = yian_stdout_match and all(
+                _check_file_result(spec, warm_files[state])
+                and execution.output_equal(warm_files[state], c_reference)
+                for state in ("raw", "fat")
             )
 
         samples: dict[str, list[float]] = {state: [] for state in STATES}
         rss: dict[str, list[int]] = {state: [] for state in STATES}
-        for _ in range(used_runs):
+        for _ in range(runs):
             for state in STATES:
                 result = run_file(state, "sample")
                 samples[state].append(result.wall_ms)
@@ -567,28 +369,30 @@ def measure_triple(
             times={state: _stats(samples[state]) for state in STATES},
             rss_mb={state: max(rss[state]) / 1024.0 for state in STATES},
             rss_samples=rss,
-            runs=used_runs,
+            runs=runs,
             yian_stdout_match=yian_stdout_match,
             c_check_ok=c_check_ok,
             exit_codes={state: warm_files[state].rc for state in STATES},
         )
 
-    t0 = time.monotonic()
-    warm = {state: _run(bins[state], argv, pin) for state in STATES}
-    warm_sec = time.monotonic() - t0
+    c_check_ok = True
+    yian_stdout_match = True
+    warm: dict[str, tuple[float, int, str, int]] = {}
+    for _ in range(warmups):
+        warm = {state: _run(bins[state], argv, pin) for state in STATES}
+        c_check_ok = c_check_ok and spec.check.ok(warm["c"][3], warm["c"][2])
+        yian_stdout_match = yian_stdout_match and (
+            warm["raw"][2] == warm["fat"][2]
+            and warm["raw"][3] == warm["fat"][3]
+            and all(spec.check.ok(warm[state][3], warm[state][2]) for state in ("raw", "fat"))
+        )
 
-    c_check_ok = spec.check.ok(warm["c"][3], warm["c"][2])
-    if not c_check_ok:
+    if not spec.check.ok(warm["c"][3], warm["c"][2]):
         print(
             f"[{spec.key}] warning: C baseline failed the authoritative check "
             f"(exit={warm['c'][3]}, stdout={warm['c'][2].strip()!r}); C ratios for this benchmark are unusable",
             file=sys.stderr,
         )
-    yian_stdout_match = (
-        warm["raw"][2] == warm["fat"][2]
-        and warm["raw"][3] == warm["fat"][3]
-        and all(spec.check.ok(warm[state][3], warm[state][2]) for state in ("raw", "fat"))
-    )
     if not yian_stdout_match:
         print(
             f"[{spec.key}] warning: the two YIAN states' warmup results disagree or failed spec.check "
@@ -602,18 +406,9 @@ def measure_triple(
                 file=sys.stderr,
             )
 
-    used_runs = runs
-    if warm_sec > max_state_sec and runs > 3:
-        used_runs = 3
-        print(
-            f"[{spec.key}] warmup {warm_sec:.1f}s > {max_state_sec:.0f}s, "
-            f"measurement runs reduced to {used_runs}",
-            file=sys.stderr,
-        )
-
     samples: dict[str, list[float]] = {state: [] for state in STATES}
     rss: dict[str, list[int]] = {state: [] for state in STATES}
-    for _ in range(used_runs):
+    for _ in range(runs):
         for state in STATES:
             wall, peak, _, _ = _run(bins[state], argv, pin)
             samples[state].append(wall)
@@ -624,12 +419,11 @@ def measure_triple(
         times={state: _stats(samples[state]) for state in STATES},
         rss_mb={state: max(rss[state]) / 1024.0 for state in STATES},
         rss_samples=rss,
-        runs=used_runs,
+        runs=runs,
         yian_stdout_match=yian_stdout_match,
         c_check_ok=c_check_ok,
         exit_codes={state: warm[state][3] for state in STATES},
     )
-
 
 def _ratio(row: Row, num: str, den: str) -> float:
     denom = row.times[den].min
@@ -660,13 +454,9 @@ def __run() -> int:
                         help="only measure the named benchmarks (SOURCE/name or name, comma-separated)")
     parser.add_argument("--names", dest="bench_keys", help=argparse.SUPPRESS)  # Compatibility option aliases.
     parser.add_argument("--list-sets", action="store_true", help="list sets and member counts, then exit")
-    parser.add_argument("--runs", type=int, default=None,
-                        help="measured runs per state (default: the set's runs)")
     parser.add_argument("--pin", type=int, help="CPU number for taskset pinning")
     parser.add_argument("--yianc", metavar="PATH", help="Native compiler (default: nonempty YIANC, then PATH)")
     parser.add_argument("--anx", metavar="PATH", help="Native project builder (default: nonempty ANX, then PATH)")
-    parser.add_argument("--max-state-sec", type=float, default=DEFAULT_MAX_STATE_SEC,
-                        help="reduce measured runs to 3 when the combined three-state warmup exceeds this many seconds (fast profile never reduces)")
     parser.add_argument("--no-compile", action="store_true", help="reuse existing binaries without recompiling")
     parser.add_argument("--compile-only", action="store_true", help="compile only, do not measure")
     args = parser.parse_args()
@@ -678,8 +468,7 @@ def __run() -> int:
         for set_def in sorted(sets.values(), key=lambda item: item.name):
             members = resolve_set(specs, set_def)
             print(
-                f"{set_def.name:12s} scale={set_def.scale:4s} runs={set_def.runs} "
-                f"members={len(members):2d}  {set_def.note}"
+                f"{set_def.name:12s} scale={set_def.scale:4s} members={len(members):2d}  {set_def.note}"
             )
         return 0
 
@@ -702,11 +491,9 @@ def __run() -> int:
     bench_filter = tuple(item.strip() for item in (args.bench_keys or "").split(",") if item.strip())
     source_filter = tuple(item.strip() for item in (args.source or "").split(",") if item.strip())
     chosen = resolve_set(specs, set_def, bench_filter, source_filter)
-    runs = args.runs if args.runs is not None else set_def.runs
-
     print(
         f"[bench] set {set_def.name} scale {profile} benchmarks {len(chosen)} "
-        f"measuring {runs} runs (fast profile never reduces)",
+        f"(per-spec warmups/runs)",
         file=sys.stderr,
     )
     if not args.no_compile:
@@ -720,10 +507,9 @@ def __run() -> int:
     if args.compile_only:
         return 0
 
-    max_state_sec = float("inf") if profile == "fast" else args.max_state_sec
     rows: list[Row] = []
     for spec in chosen:
-        row = measure_triple(spec, runs, args.pin, max_state_sec, profile)
+        row = measure_triple(spec, args.pin, profile)
         rows.append(row)
         scale_value = spec.scale_value(profile)
         scale_note = f" scale={scale_value}" if scale_value is not None else ""
@@ -736,7 +522,7 @@ def __run() -> int:
             f"[measure] {spec.key}{scale_note}: C {row.times['c'].min:.1f}ms "
             f"raw {row.times['raw'].min:.1f}ms fat {row.times['fat'].min:.1f}ms "
             f"{ratio_note} "
-            f"({row.runs} runs)",
+            f"({row.runs} runs, {spec.measurement.warmups} warmups)",
             file=sys.stderr,
         )
 

@@ -1,5 +1,6 @@
 {
   "name": "revcomp",
+  "measurement": {"warmups": 3, "runs": 11},
   "source": "BG",
   "tags": [
     "string"

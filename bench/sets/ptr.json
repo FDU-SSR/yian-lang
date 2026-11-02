@@ -1,7 +1,6 @@
 {
   "name": "ptr",
   "scale": "full",
-  "runs": 5,
   "include": [
     "tag:ptr"
   ],

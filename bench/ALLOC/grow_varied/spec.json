@@ -1,5 +1,6 @@
 {
   "name": "grow_varied",
+  "measurement": {"warmups": 1, "runs": 5},
   "source": "ALLOC",
   "tags": [
     "alloc"

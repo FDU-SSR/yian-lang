@@ -1,7 +1,6 @@
 {
   "name": "bg",
   "scale": "full",
-  "runs": 5,
   "include": ["BG/*"],
   "exclude": [],
   "note": "All ten official Benchmarksgame projects at their full task dimensions"

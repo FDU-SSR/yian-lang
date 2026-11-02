@@ -1,5 +1,6 @@
 {
   "name": "call_abi",
+  "measurement": {"warmups": 1, "runs": 5},
   "source": "fatptr",
   "tags": [
     "micro"

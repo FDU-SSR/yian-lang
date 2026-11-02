@@ -1,7 +1,6 @@
 {
   "name": "micro",
   "scale": "full",
-  "runs": 5,
   "include": [
     "tag:micro"
   ],

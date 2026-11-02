@@ -1,7 +1,6 @@
 {
   "name": "full",
   "scale": "full",
-  "runs": 5,
   "include": [
     "*"
   ],

@@ -1,5 +1,6 @@
 {
   "name": "spectralnorm",
+  "measurement": {"warmups": 1, "runs": 5},
   "source": "BG",
   "tags": [
     "numeric"

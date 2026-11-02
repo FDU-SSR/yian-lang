@@ -1,7 +1,6 @@
 {
   "name": "string",
   "scale": "full",
-  "runs": 5,
   "include": [
     "tag:string"
   ],
