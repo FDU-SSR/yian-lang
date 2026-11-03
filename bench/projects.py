@@ -479,6 +479,7 @@ def build_yian(
     anx: Path,
     compiler_root: Path,
     output: Path,
+    optimization: str = "-O2",
 ) -> Path:
     """Build one staged fat/raw package with the selected native toolchain."""
     key = project.key
@@ -501,7 +502,7 @@ def build_yian(
             build_dir.unlink()
         else:
             shutil.rmtree(build_dir)
-    command = [str(anx_path), "build", "-O2"]
+    command = [str(anx_path), "build", optimization]
     if raw:
         command.append("--raw-pointers")
     environment = _clean_build_env()
@@ -512,7 +513,7 @@ def build_yian(
     return _publish(build_dir / "app", Path(output), bench_root, key)
 
 
-def build_c(project: BenchmarkProject, asan: bool, output: Path) -> Path:
+def build_c(project: BenchmarkProject, asan: bool, output: Path, optimization: str = "-O2") -> Path:
     """Build only the CMake bench_app target with explicit clang and fixed flags."""
     key = project.key
     bench_root = _bench_root(project)
@@ -529,7 +530,7 @@ def build_c(project: BenchmarkProject, asan: bool, output: Path) -> Path:
     elif build_dir.exists():
         shutil.rmtree(build_dir)
     build_dir.mkdir(parents=True, exist_ok=True)
-    flags = "-O2 -ffp-contract=off"
+    flags = f"{optimization} -ffp-contract=off"
     environment = _clean_build_env()
     configure = [
         str(cmake), "-S", str(project.c), "-B", str(build_dir),

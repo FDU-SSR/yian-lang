@@ -161,9 +161,9 @@ substitute for controlling the execution environment.
 
 | State | Compile/run |
 | --- | --- |
-| C | Project CMake build, `clang -O2 -ffp-contract=off`, target `bench_app` |
-| raw | anx project build with native yianc `-O2 --raw-pointers` |
-| fat | anx project build with native yianc `-O2` (fat pointers are the default) |
+| C | Project CMake build, `clang -O3 -ffp-contract=off`, target `bench_app` |
+| raw | anx project build with native yianc `-O3 --raw-pointers` |
+| fat | anx project build with native yianc `-O3` (fat pointers are the default) |
 
 The runners select native `anx` through `--anx PATH`, nonempty `ANX`, then `PATH`;
 anx selects native `yianc` through `--yianc PATH`, nonempty `YIANC`, then `PATH`.

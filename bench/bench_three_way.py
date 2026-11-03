@@ -10,8 +10,8 @@ Benchmarks are organized by source, focus set, and fast/full scale:
   bench/results/<set>.csv      Performance samples and statistics
 
 Protocol:
-  - CMake builds the C target with C11, clang -O2, and -ffp-contract=off; anx builds staged
-    YIAN package roots with yianc -O2, adding --raw-pointers in raw mode.
+  - CMake builds the C target with C11, clang -O3, and -ffp-contract=off; anx builds staged
+    YIAN package roots with yianc -O3, adding --raw-pointers in raw mode.
   - fast substitutes declared scale.fast values in an isolated YIAN package copy. BG numeric tasks pass the
     selected full/fast dimension to C as one argv value; BG stdin tasks use the selected FASTA input file.
   - Artifacts use equal-length paths under build/bench/{cbin,yraw,yfat}/<SOURCE>_<name>.
@@ -217,7 +217,7 @@ def compile_c(spec: BenchSpec) -> Path:
     """Build the project's plain CMake target; stop on failure."""
     binary = spec_bin(spec, "c")
     try:
-        return projects.build_c(spec.project, asan=False, output=binary)
+        return projects.build_c(spec.project, asan=False, output=binary, optimization=OPT_LEVEL)
     except (ValueError, RuntimeError) as error:
         raise SystemExit(f"[compile] {spec.key} (c) failed: {error}") from error
 
@@ -233,15 +233,16 @@ def compile_an(
         if anx_path is None:
             anx_path, _ = _resolve_anx_selection(None)
         return projects.build_yian(
-            spec.project, profile, raw, spec.scale_value(profile), compiler, anx_path, ROOT, binary
+            spec.project, profile, raw, spec.scale_value(profile), compiler, anx_path, ROOT, binary,
+            optimization=OPT_LEVEL,
         )
     except (ValueError, RuntimeError) as error:
         raise SystemExit(f"[compile] {spec.key} ({state}) failed: {error}") from error
 
 
-OPT_LEVEL = "-O2"
+OPT_LEVEL = "-O3"
 C_COMPILER = "clang"
-C_FLAGS = ["-O2", "-ffp-contract=off"]
+C_FLAGS = ["-O3", "-ffp-contract=off"]
 TIME_BIN = "/usr/bin/time"
 STATES = ("c", "raw", "fat")
 STATE_DIR = {"c": "cbin", "raw": "yraw", "fat": "yfat"}

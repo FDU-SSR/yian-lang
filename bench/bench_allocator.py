@@ -50,7 +50,7 @@ BENCH_DIR = BENCH_ROOT / "ALLOC"
 BUILD_DIR = ROOT / "build" / "bench" / "alloc"
 RESULTS_DIR = ROOT / "bench" / "results"
 TIME_BIN = "/usr/bin/time"
-OPT_LEVEL = "-O2"
+OPT_LEVEL = "-O3"
 PROFILES = ("fast", "full")
 
 _RSS_RE = re.compile(r"Maximum resident set size \(kbytes\): (\d+)")
@@ -117,6 +117,7 @@ def compile_one(
             anx_path,
             compiler_root,
             binary,
+            optimization=OPT_LEVEL,
         )
     except (ValueError, RuntimeError) as error:
         raise SystemExit(f"[compile] {name} ({'raw' if raw else 'fat'}) failed: {error}") from error

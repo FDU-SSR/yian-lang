@@ -3,8 +3,8 @@
 
 Each benchmark is built three ways over the same source:
 
-  c_plain   CMake bench_app target, clang -O2
-  c_asan    CMake bench_app target, clang -O2 -fsanitize=address (ASAN_OPTIONS=detect_leaks=0)
+  c_plain   CMake bench_app target, clang -O3
+  c_asan    CMake bench_app target, clang -O3 -fsanitize=address (ASAN_OPTIONS=detect_leaks=0)
   an_check  anx builds the YIAN package in fat-pointer mode
 
 binarytree additionally gets ``c_asan_sens``: the same ASan binary with
@@ -58,7 +58,7 @@ def compile_asan_ref(spec: btw.BenchSpec) -> Path:
     """Build the project's CMake target with AddressSanitizer; stop on failure."""
     binary = ASAN_DIR / f"{spec.source}_{spec.name}"
     try:
-        return btw.projects.build_c(spec.project, asan=True, output=binary)
+        return btw.projects.build_c(spec.project, asan=True, output=binary, optimization=btw.OPT_LEVEL)
     except (ValueError, RuntimeError) as error:
         raise SystemExit(f"[compile] {spec.key} (c_asan) failed: {error}") from error
 
