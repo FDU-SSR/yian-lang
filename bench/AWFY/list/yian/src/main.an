@@ -22,25 +22,9 @@ struct Element {
     next: Option<Element&>,
 }
 
-// Copy Option<Element&>'s tag and reference into an independent Option value.
-fn opt_copy(src: Option<Element&>) -> Option<Element&> {
-    return match src {
-        Some(e) => Option<Element&>.Some(e),
-        None => Option<Element&>.None,
-    };
-}
-
 // Get opt's next node; empty/tail yields None.
 fn opt_next(src: Option<Element&>) -> Option<Element&> {
-    return match src {
-        None => Option<Element&>.None,
-        Some(n) => {
-            match n.next {
-                Some(nn) => Option<Element&>.Some(nn),
-                None => Option<Element&>.None,
-            }
-        }
-    };
+    return if let Some(n) = src { n.next } else { Option<Element&>.None };
 }
 
 fn Element_make_list(length: i32) -> Option<Element&> {
@@ -87,8 +71,8 @@ fn Element_length(e: Option<Element&>) -> i32 {
 }
 
 fn is_shorter_than(x: Option<Element&>, y: Option<Element&>) -> bool {
-    let x_tail: Option<Element&> = opt_copy(x);
-    let y_tail: Option<Element&> = opt_copy(y);
+    let x_tail: Option<Element&> = x;
+    let y_tail: Option<Element&> = y;
     loop {
         match y_tail {
             None => { break; },
@@ -118,9 +102,9 @@ fn tail(x: Option<Element&>, y: Option<Element&>, z: Option<Element&>) -> Option
         let next_y: Option<Element&> = opt_next(y);
         let next_z: Option<Element&> = opt_next(z);
         return tail(
-            tail(opt_copy(next_x), opt_copy(y), opt_copy(z)),
-            tail(opt_copy(next_y), opt_copy(z), opt_copy(x)),
-            tail(opt_copy(next_z), opt_copy(x), opt_copy(y))
+            tail(next_x, y, z),
+            tail(next_y, z, x),
+            tail(next_z, x, y)
         );
     }
     return z;
@@ -142,7 +126,7 @@ fn benchmark_list() -> i32 {
     let y: Option<Element&> = Element_make_list(10);
     let z: Option<Element&> = Element_make_list(6);
 
-    let result: Option<Element&> = tail(opt_copy(x), opt_copy(y), opt_copy(z));
+    let result: Option<Element&> = tail(x, y, z);
     let l: i32 = Element_length(result);
 
     free_list(x);
@@ -171,7 +155,7 @@ fn c_decimal(text: str) -> i64 {
 }
 
 fn main() {
-    let ITER: u64 = 94077;  // bench-scale
+    let ITER: u64 = 94077; // bench-scale
     let argv = args();
     if argv.len() > 1u64 {
         let requested = i32(c_decimal(argv[1u64].as_str()));
