@@ -13,9 +13,10 @@ bench/
 ├── AWFY/<name>/       14 Are We Fast Yet projects
 ├── BG/<name>/         10 official Benchmarks Game projects, source and oracle provenance
 ├── fatptr/<name>/      3 representation/call/copy projects written here
+├── LIBYAML/libyaml/   1 real-project libyaml parse benchmark
 ├── ALLOC/<name>/       4 allocator projects, fat/raw only
 ├── native/             fixed GMP and PCRE2 packages, source, licenses, and rebuild material
-├── sets/*.json         full (27), bg (10), paper (24), fast (8), and focus selections
+├── sets/*.json         full (27), bg (10), paper (24), real (1), fast (8), and focus selections
 ├── results/            plain numeric performance CSV files
 ├── projects.py         project discovery, dependency staging, build, and digest
 ├── spec.py             typed parser for every spec.json (check, scale, io, measurement)
@@ -34,11 +35,12 @@ the same project-local static archive for pidigits (GMP) and regexredux
 (PCRE2); those libraries are shared by all states but are not ASan-instrumented
 or covered by YIAN guards. See [`native/README.md`](native/README.md).
 
-The suite contains 31 projects: 27 C/YIAN pairs (14 AWFY, 10 BG, and 3 fatptr)
-plus 4 two-state allocator projects. `full` selects all 27 pairs. `bg` selects
-the ten official BG tasks; `paper` selects all 14 AWFY and all ten BG projects,
-and `fast` remains eight IDs. Set membership and task scales
-are in `sets/*.json` and each project's `spec.json`.
+The suite contains 32 projects: 28 C/YIAN pairs (14 AWFY, 10 BG, 3 fatptr, and
+LIBYAML) plus 4 two-state allocator projects. `full` selects 27 of the 28 pairs;
+LIBYAML is selected only by `real` and reported independently. `bg` selects the
+ten official BG tasks; `paper` selects all 14 AWFY and all ten BG projects, and
+`fast` remains eight IDs. Set membership and task scales are in `sets/*.json`
+and each project's `spec.json`.
 
 The paired projects are reviewed against the
 [C → YIAN translation specification](../docs/c-to-yian.md). AWFY retains its
@@ -60,9 +62,10 @@ explicit authorization.
 
 ```bash
 python3 bench/bench_three_way.py --list-sets           # List sets, scales, and member counts.
-python3 bench/bench_three_way.py --set full            # Full scale: all 27 paired projects.
+python3 bench/bench_three_way.py --set full            # Full scale: 27 paired projects (LIBYAML via real).
 python3 bench/bench_three_way.py --set bg              # All ten official BG tasks.
 python3 bench/bench_three_way.py --set fast --pin 4    # Fast: representative subset at reduced scale.
+python3 bench/bench_three_way.py --set real --pin 4    # Real-project libyaml parse workload.
 python3 bench/bench_three_way.py --set ptr             # Focus: object/pointer graphs.
 python3 bench/bench_three_way.py --set numeric         # Focus: numeric calculations/loops.
 python3 bench/bench_three_way.py --set string          # Focus: strings/I/O.
@@ -74,8 +77,9 @@ python3 bench/bench_three_way.py --set fast --yianc "$HOME/.local/bin/yianc"
 
 | Set | Contents | Default scale | Purpose |
 | --- | --- | --- | --- |
-| `full` | All 27 C/YIAN pairs | `full` | Complete paired-project selection |
+| `full` | 27 C/YIAN pairs (LIBYAML excluded) | `full` | Complete paired-project selection; LIBYAML is reported separately |
 | `bg` | All 10 BG tasks | `full` | Official Benchmarksgame project selection |
+| `real` | libyaml parse workload | `full` | Real-project parser evaluation |
 | `fast` | 8 representative benchmarks | `fast` | Representative subset at reduced scale; duration depends on the machine |
 | `ptr` | tag `ptr` | `full` | Pointers and object graphs |
 | `numeric` | tag `numeric` | `full` | Numeric and loop changes |
@@ -86,8 +90,9 @@ python3 bench/bench_three_way.py --set fast --yianc "$HOME/.local/bin/yianc"
 AWFY has 14 projects (bounce, cd, deltablue, havlak, json, list, mand, nbody,
 permute, queen, richards, sieve, storage, towers). BG has 10 (binarytree, fann,
 fasta, knucleotide, mandelbrot, nbody, pidigits, regexredux, revcomp,
-spectralnorm). `BG/nbody` and `AWFY/nbody` have distinct project IDs. The three
-fatptr projects are call_abi, copy_struct, and chase.
+spectralnorm). LIBYAML has one real-corpus parse project. `BG/nbody` and
+`AWFY/nbody` have distinct project IDs. The three fatptr projects are call_abi,
+copy_struct, and chase.
 
 Sets are defined only in `bench/sets/`. A new set must state which mechanism
 focus it covers (`ptr`/`numeric`/`string`/`alloc`/`control`; `control` is
@@ -225,9 +230,11 @@ python3 bench/bench_asan.py --set paper --pin 4
 python3 bench/bench_asan.py --bench BG/fasta --pin 0
 ```
 
-Results are written to `results/asan.csv`, including every wall-time/RSS pair,
+Results are written to `results/asan.csv` for the paper set and to
+`results/asan-<set>.csv` for other sets, including every wall-time/RSS pair,
 per-leg statistics, derived ratios and geometric means. `--set paper` selects the paper's
-24 benchmarks; `--set full` selects all 27 paired projects. The semantic guard
+24 benchmarks; `--set full` selects 27 of the 28 paired projects (LIBYAML is
+measured only by `real`). The semantic guard
 requires C warmup to pass the spec's `check`, ASan stdout/exit codes to match C
 plain, and the YIAN leg to pass the same spec's output/exit checks.
 

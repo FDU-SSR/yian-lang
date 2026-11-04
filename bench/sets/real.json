@@ -1,0 +1,7 @@
+{
+  "name": "real",
+  "scale": "full",
+  "include": ["LIBYAML/*"],
+  "exclude": [],
+  "note": "Real-project libyaml parse workload only; selected independently of full and reported separately"
+}

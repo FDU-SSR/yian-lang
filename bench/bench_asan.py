@@ -16,7 +16,8 @@ the same input and writes stdout to a binary file. A failed warmup/sample stops 
 
 Outputs, under ``bench/results/``:
 
-  asan.csv            one row per benchmark and leg, with performance samples, statistics and ratios
+  asan.csv            one row per benchmark and leg for the paper set
+  asan-<set>.csv      the same table for other sets
 
 Usage:
 
@@ -209,7 +210,7 @@ def __run() -> int:
             btw.compile_an(spec, profile_for(spec), raw=False, compiler=compiler, anx=anx)
             print(f"[compile] {spec.key} ok", file=sys.stderr)
 
-    csv_path = RESULTS / "asan.csv"
+    csv_path = RESULTS / ("asan.csv" if set_def.name == "paper" else f"asan-{set_def.name}.csv")
 
     def dump() -> None:
         """Persist current results so an interrupted session keeps its measurements."""

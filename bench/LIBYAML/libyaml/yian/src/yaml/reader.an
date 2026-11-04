@@ -1,0 +1,434 @@
+from libyaml.yaml.types import Encoding, ErrorKind, Mark, ParserError, mark_new;
+from std.core.io import IoError, IoErrorKind, Read;
+from std.core.vec import Vec;
+
+// Byte source and decoded character buffer for the libyaml port.
+//
+// The reader follows upstream reader.c: it keeps a raw byte buffer that is
+// refilled on demand, decodes UTF-8/UTF-16 into a character buffer, tracks the
+// number of cached characters, and maintains a zero-based character mark next
+// to the raw byte offset used by reader errors.  Bytes inputs borrow the
+// caller's slice; stream inputs borrow the Read object.  Only the two buffers
+// are owned and released by reader_delete.
+
+const RAW_BUFFER_CAPACITY: u64 = 16384u64;
+const BUFFER_CAPACITY: u64 = 49152u64;
+const MAX_FILE_SIZE: u64 = 0x7FFFFFFFFFFFFFFFu64;
+
+pub enum Input {
+    Bytes {
+        data: u8[],
+        position: u64,
+    },
+    Stream {
+        source: Read&,
+    },
+}
+
+pub struct Reader {
+    pub input: Input,
+    pub encoding: Encoding,
+    pub eof: bool,
+    pub raw_buffer: Vec<u8>,
+    pub raw_position: u64,
+    pub buffer: Vec<u8>,
+    pub position: u64,
+    pub unread: u64,
+    pub offset: u64,
+    pub mark: Mark,
+    pub error: Option<ParserError>,
+}
+
+fn fail(reader: Reader&, problem: str, offset: u64, value: i32) -> ParserError {
+    let error = ParserError(
+        kind=ErrorKind.Reader,
+        problem=mark_new(0u64, 0u64, 0u64),
+        context=mark_new(0u64, 0u64, 0u64),
+        problem_text=problem,
+        context_text="",
+        problem_offset=offset,
+        problem_value=value,
+    );
+    reader.error = Option<ParserError>.Some(error);
+    error
+}
+
+fn width_of(byte: u8) -> u64 {
+    let lead: u32 = u32(byte);
+    if (lead & 0x80u32) == 0u32 {
+        return 1u64;
+    }
+    if (lead & 0xE0u32) == 0xC0u32 {
+        return 2u64;
+    }
+    if (lead & 0xF0u32) == 0xE0u32 {
+        return 3u64;
+    }
+    if (lead & 0xF8u32) == 0xF0u32 {
+        return 4u64;
+    }
+    0u64
+}
+
+fn byte_at(reader: Reader&, offset: u64) -> u8 {
+    let index: u64 = reader.position + offset;
+    if index >= reader.buffer.len() {
+        return 0u8;
+    }
+    reader.buffer[index]
+}
+
+fn is_break(reader: Reader&) -> bool {
+    let first: u8 = byte_at(reader, 0u64);
+    if first == 13u8 || first == 10u8 {
+        return true;
+    }
+    if first == 0xC2u8 {
+        return byte_at(reader, 1u64) == 0x85u8;
+    }
+    if first == 0xE2u8 && byte_at(reader, 1u64) == 0x80u8 {
+        let third: u8 = byte_at(reader, 2u64);
+        return third == 0xA8u8 || third == 0xA9u8;
+    }
+    false
+}
+
+fn is_crlf(reader: Reader&) -> bool {
+    byte_at(reader, 0u64) == 13u8 && byte_at(reader, 1u64) == 10u8
+}
+
+// One decoded character, or evidence that the raw buffer needs a refill.
+enum Decoded {
+    Incomplete,
+    Value {
+        value: u32,
+        width: u64,
+    },
+}
+
+fn decode_utf8(reader: Reader&) -> Result<Decoded, ParserError> {
+    let start: u64 = reader.raw_position;
+    let available: u64 = reader.raw_buffer.len() - start;
+    let octet: u8 = reader.raw_buffer[start];
+    let lead: u32 = u32(octet);
+    let width: u64 = width_of(octet);
+    if width == 0u64 {
+        return Result<Decoded, ParserError>.Err(fail(reader, "invalid leading UTF-8 octet", reader.offset, i32(lead)));
+    }
+    if width > available {
+        if reader.eof {
+            return Result<Decoded, ParserError>.Err(fail(reader, "incomplete UTF-8 octet sequence", reader.offset, -1i32));
+        }
+        return Result<Decoded, ParserError>.Ok(val=Decoded.Incomplete);
+    }
+    let value: u32 = if width == 1u64 {
+        lead & 0x7Fu32
+    } elif width == 2u64 {
+        lead & 0x1Fu32
+    } elif width == 3u64 {
+        lead & 0x0Fu32
+    } else {
+        lead & 0x07u32
+    };
+    let index: u64 = 1u64;
+    let decoded: u32 = value;
+    while index < width {
+        let trailing: u8 = reader.raw_buffer[start + index];
+        if (u32(trailing) & 0xC0u32) != 0x80u32 {
+            return Result<Decoded, ParserError>.Err(fail(reader, "invalid trailing UTF-8 octet", reader.offset + index, i32(trailing)));
+        }
+        decoded = (decoded << 6u32) + (u32(trailing) & 0x3Fu32);
+        index += 1u64;
+    }
+    let long_enough: bool = width == 1u64
+        || (width == 2u64 && decoded >= 0x80u32)
+        || (width == 3u64 && decoded >= 0x800u32)
+        || (width == 4u64 && decoded >= 0x10000u32);
+    if !long_enough {
+        return Result<Decoded, ParserError>.Err(fail(reader, "invalid length of a UTF-8 sequence", reader.offset, -1i32));
+    }
+    if (decoded >= 0xD800u32 && decoded <= 0xDFFFu32) || decoded > 0x10FFFFu32 {
+        return Result<Decoded, ParserError>.Err(fail(reader, "invalid Unicode character", reader.offset, i32(decoded)));
+    }
+    Result<Decoded, ParserError>.Ok(val=Decoded.Value(value=decoded, width=width))
+}
+
+fn decode_utf16(reader: Reader&, big_endian: bool) -> Result<Decoded, ParserError> {
+    let start: u64 = reader.raw_position;
+    let available: u64 = reader.raw_buffer.len() - start;
+    let low: u64 = if big_endian { 1u64 } else { 0u64 };
+    let high: u64 = if big_endian { 0u64 } else { 1u64 };
+    if available < 2u64 {
+        if reader.eof {
+            return Result<Decoded, ParserError>.Err(fail(reader, "incomplete UTF-16 character", reader.offset, -1i32));
+        }
+        return Result<Decoded, ParserError>.Ok(val=Decoded.Incomplete);
+    }
+    let first: u32 = u32(reader.raw_buffer[start + low]) + (u32(reader.raw_buffer[start + high]) << 8u32);
+    if (first & 0xFC00u32) == 0xDC00u32 {
+        return Result<Decoded, ParserError>.Err(fail(reader, "unexpected low surrogate area", reader.offset, i32(first)));
+    }
+    if (first & 0xFC00u32) == 0xD800u32 {
+        if available < 4u64 {
+            if reader.eof {
+                return Result<Decoded, ParserError>.Err(fail(reader, "incomplete UTF-16 surrogate pair", reader.offset, -1i32));
+            }
+            return Result<Decoded, ParserError>.Ok(val=Decoded.Incomplete);
+        }
+        let second: u32 = u32(reader.raw_buffer[start + low + 2u64]) + (u32(reader.raw_buffer[start + high + 2u64]) << 8u32);
+        if (second & 0xFC00u32) != 0xDC00u32 {
+            return Result<Decoded, ParserError>.Err(fail(reader, "expected low surrogate area", reader.offset + 2u64, i32(second)));
+        }
+        let pair: u32 = 0x10000u32 + ((first & 0x3FFu32) << 10u32) + (second & 0x3FFu32);
+        return Result<Decoded, ParserError>.Ok(val=Decoded.Value(value=pair, width=4u64));
+    }
+    Result<Decoded, ParserError>.Ok(val=Decoded.Value(value=first, width=2u64))
+}
+
+fn decode_char(reader: Reader&) -> Result<Decoded, ParserError> {
+    if reader.encoding == Encoding.Utf16Le {
+        return decode_utf16(reader, false);
+    }
+    if reader.encoding == Encoding.Utf16Be {
+        return decode_utf16(reader, true);
+    }
+    decode_utf8(reader)
+}
+
+fn allowed(value: u32) -> bool {
+    value == 0x09u32 || value == 0x0Au32 || value == 0x0Du32
+        || (value >= 0x20u32 && value <= 0x7Eu32)
+        || value == 0x85u32
+        || (value >= 0xA0u32 && value <= 0xD7FFu32)
+        || (value >= 0xE000u32 && value <= 0xFFFDu32)
+        || (value >= 0x10000u32 && value <= 0x10FFFFu32)
+}
+
+fn append_decoded(reader: Reader&, value: u32, width: u64) -> Result<(), ParserError> {
+    if !allowed(value) {
+        return Result<(), ParserError>.Err(fail(reader, "control characters are not allowed", reader.offset, i32(value)));
+    }
+    reader.raw_position += width;
+    reader.offset += width;
+    if value <= 0x7Fu32 {
+        reader.buffer.push(u8(value));
+    } elif value <= 0x7FFu32 {
+        reader.buffer.push(u8(0xC0u32 | (value >> 6u32)));
+        reader.buffer.push(u8(0x80u32 | (value & 0x3Fu32)));
+    } elif value <= 0xFFFFu32 {
+        reader.buffer.push(u8(0xE0u32 | (value >> 12u32)));
+        reader.buffer.push(u8(0x80u32 | ((value >> 6u32) & 0x3Fu32)));
+        reader.buffer.push(u8(0x80u32 | (value & 0x3Fu32)));
+    } else {
+        reader.buffer.push(u8(0xF0u32 | (value >> 18u32)));
+        reader.buffer.push(u8(0x80u32 | ((value >> 12u32) & 0x3Fu32)));
+        reader.buffer.push(u8(0x80u32 | ((value >> 6u32) & 0x3Fu32)));
+        reader.buffer.push(u8(0x80u32 | (value & 0x3Fu32)));
+    }
+    reader.unread += 1u64;
+    Result<(), ParserError>.Ok(val=())
+}
+
+fn read_source(reader: Reader&, capacity: u64) -> Result<u64, IoError> {
+    if capacity == 0u64 {
+        return Result<u64, IoError>.Ok(val=0u64);
+    }
+    match &reader.input {
+        Input.Bytes(data, position) => {
+            let bytes: u8[] = *data;
+            let offset: u64 = *position;
+            let remaining: u64 = bytes.len() - offset;
+            let count: u64 = capacity;
+            if remaining < count {
+                count = remaining;
+            }
+            let index = 0u64;
+            while index < count {
+                reader.raw_buffer.push(bytes[offset + index]);
+                index += 1u64;
+            };
+            *position = offset + count;
+            return Result<u64, IoError>.Ok(val=count);
+        },
+        Input.Stream(source) => {
+            let spare: u64 = capacity;
+            let start: u8* = reader.raw_buffer.spare(spare);
+            let target: u8[] = start[0u64..spare];
+            let count = source.read(target)?;
+            if count > spare {
+                return Result<u64, IoError>.Err(msg=IoError.new(IoErrorKind.InvalidInput, "read callback returned more bytes than requested"));
+            }
+            reader.raw_buffer.advance_len(count);
+            return Result<u64, IoError>.Ok(val=count);
+        },
+    }
+}
+
+fn update_raw_buffer(reader: Reader&) -> Result<(), ParserError> {
+    if reader.raw_position == 0u64 && reader.raw_buffer.len() >= RAW_BUFFER_CAPACITY {
+        return Result<(), ParserError>.Ok(val=());
+    }
+    if reader.eof {
+        return Result<(), ParserError>.Ok(val=());
+    }
+    if reader.raw_position > 0u64 && reader.raw_position < reader.raw_buffer.len() {
+        let remaining: u64 = reader.raw_buffer.len() - reader.raw_position;
+        let index = 0u64;
+        while index < remaining {
+            reader.raw_buffer[index] = reader.raw_buffer[reader.raw_position + index];
+            index += 1u64;
+        };
+        reader.raw_buffer.truncate(remaining);
+    } elif reader.raw_position == reader.raw_buffer.len() {
+        reader.raw_buffer.truncate(0u64);
+    }
+    reader.raw_position = 0u64;
+    let available: u64 = RAW_BUFFER_CAPACITY - reader.raw_buffer.len();
+    let count = match read_source(reader, available) {
+        Ok(value) => value,
+        Err(error) => {
+            error.drop();
+            return Result<(), ParserError>.Err(fail(reader, "input error", reader.offset, -1i32));
+        },
+    };
+    if count == 0u64 {
+        reader.eof = true;
+    }
+    Result<(), ParserError>.Ok(val=())
+}
+
+fn determine_encoding(reader: Reader&) -> Result<(), ParserError> {
+    while !reader.eof && reader.raw_buffer.len() - reader.raw_position < 3u64 {
+        update_raw_buffer(reader)?;
+    }
+    let start: u64 = reader.raw_position;
+    let available: u64 = reader.raw_buffer.len() - start;
+    if available >= 2u64 && reader.raw_buffer[start] == 0xFFu8 && reader.raw_buffer[start + 1u64] == 0xFEu8 {
+        reader.encoding = Encoding.Utf16Le;
+        reader.raw_position = start + 2u64;
+        reader.offset += 2u64;
+    } elif available >= 2u64 && reader.raw_buffer[start] == 0xFEu8 && reader.raw_buffer[start + 1u64] == 0xFFu8 {
+        reader.encoding = Encoding.Utf16Be;
+        reader.raw_position = start + 2u64;
+        reader.offset += 2u64;
+    } elif available >= 3u64 && reader.raw_buffer[start] == 0xEFu8
+            && reader.raw_buffer[start + 1u64] == 0xBBu8 && reader.raw_buffer[start + 2u64] == 0xBFu8 {
+        reader.encoding = Encoding.Utf8;
+        reader.raw_position = start + 3u64;
+        reader.offset += 3u64;
+    } else {
+        reader.encoding = Encoding.Utf8;
+    }
+    Result<(), ParserError>.Ok(val=())
+}
+
+pub fn reader_new(input: Input, encoding: Encoding) -> Reader {
+    Reader(
+        input=input,
+        encoding=encoding,
+        eof=false,
+        raw_buffer=Vec<u8>.with_capacity(RAW_BUFFER_CAPACITY),
+        raw_position=0u64,
+        buffer=Vec<u8>.with_capacity(BUFFER_CAPACITY),
+        position=0u64,
+        unread=0u64,
+        offset=0u64,
+        mark=mark_new(0u64, 0u64, 0u64),
+        error=Option<ParserError>.None,
+    )
+}
+
+pub fn reader_update_buffer(reader: Reader&, length: u64) -> Result<(), ParserError> {
+    match &reader.error {
+        Some(error) => return Result<(), ParserError>.Err(*error),
+        None => {},
+    }
+    if reader.eof && reader.raw_position == reader.raw_buffer.len() {
+        return Result<(), ParserError>.Ok(val=());
+    }
+    if reader.unread >= length {
+        return Result<(), ParserError>.Ok(val=());
+    }
+    if reader.encoding == Encoding.Any {
+        determine_encoding(reader)?;
+    }
+
+    // Move unread characters to the start of the decoded buffer.
+    if reader.position > 0u64 && reader.position < reader.buffer.len() {
+        let remaining: u64 = reader.buffer.len() - reader.position;
+        let index = 0u64;
+        while index < remaining {
+            reader.buffer[index] = reader.buffer[reader.position + index];
+            index += 1u64;
+        };
+        reader.buffer.truncate(remaining);
+    } elif reader.position == reader.buffer.len() {
+        reader.buffer.truncate(0u64);
+    }
+    reader.position = 0u64;
+
+    let first = true;
+    while reader.unread < length {
+        if !first || reader.raw_position == reader.raw_buffer.len() {
+            update_raw_buffer(reader)?;
+        }
+        first = false;
+        while reader.raw_position != reader.raw_buffer.len() {
+            match decode_char(reader)? {
+                Decoded.Value(value, width) => append_decoded(reader, value, width)?,
+                Decoded.Incomplete => { break; },
+            }
+        }
+        if reader.eof {
+            reader.buffer.push(0u8);
+            reader.unread += 1u64;
+            return Result<(), ParserError>.Ok(val=());
+        }
+    }
+    if reader.offset >= MAX_FILE_SIZE {
+        return Result<(), ParserError>.Err(fail(reader, "input is too long", reader.offset, -1i32));
+    }
+    Result<(), ParserError>.Ok(val=())
+}
+
+pub fn reader_skip(reader: Reader&, count: u64) {
+    let index = 0u64;
+    while index < count {
+        let width: u64 = width_of(byte_at(reader, 0u64));
+        reader.mark.index += 1u64;
+        reader.mark.column += 1u64;
+        reader.unread -= 1u64;
+        reader.position += width;
+        index += 1u64;
+    };
+}
+
+pub fn reader_skip_line(reader: Reader&) {
+    if is_crlf(reader) {
+        reader.mark.index += 2u64;
+        reader.mark.column = 0u64;
+        reader.mark.line += 1u64;
+        reader.unread -= 2u64;
+        reader.position += 2u64;
+        return;
+    }
+    if is_break(reader) {
+        let width: u64 = width_of(byte_at(reader, 0u64));
+        reader.mark.index += 1u64;
+        reader.mark.column = 0u64;
+        reader.mark.line += 1u64;
+        reader.unread -= 1u64;
+        reader.position += width;
+    }
+}
+
+pub fn reader_delete(reader: Reader&) {
+    reader.raw_buffer.drop();
+    reader.buffer.drop();
+    reader.raw_buffer = Vec<u8>.new();
+    reader.buffer = Vec<u8>.new();
+    reader.unread = 0u64;
+    reader.position = 0u64;
+    reader.raw_position = 0u64;
+    reader.eof = true;
+}

@@ -329,6 +329,9 @@ def measure_triple(spec: BenchSpec, pin: int | None, profile: str) -> Row:
     warmups = spec.measurement.warmups
     runs = spec.measurement.runs
 
+    if spec.source == "LIBYAML":
+        return _measure_libyaml(spec, bins, argv, pin, warmups, runs)
+
     if spec.source == "BG" and spec.io is not None:
         # Prepare or validate the FASTA input before the consumer timing window.
         stdin_path = execution.prepare_input(spec, profile, OUT_DIR / "inputs")
@@ -425,6 +428,81 @@ def measure_triple(spec: BenchSpec, pin: int | None, profile: str) -> Row:
         c_check_ok=c_check_ok,
         exit_codes={state: warm[state][3] for state in STATES},
     )
+
+def _measure_libyaml(
+    spec: BenchSpec,
+    bins: dict[str, Path],
+    argv: list[str],
+    pin: int | None,
+    warmups: int,
+    runs: int,
+) -> Row:
+    """Measure LIBYAML with the C first valid warmup as the semantic oracle.
+
+    Every warmup and every measured sample must pass the spec check and match
+    the C reference stdout; both checks accumulate with AND so one bad sample
+    blocks the CSV.  Other benchmarks keep their existing checks.
+    """
+    c_check_ok = True
+    yian_stdout_match = True
+    c_reference: str | None = None
+    exit_codes = {state: 0 for state in STATES}
+
+    for _ in range(warmups):
+        warm = {state: _run(bins[state], argv, pin) for state in STATES}
+        exit_codes = {state: warm[state][3] for state in STATES}
+        c_ok = spec.check.ok(warm["c"][3], warm["c"][2])
+        c_check_ok = c_check_ok and c_ok
+        if c_reference is None:
+            if c_ok:
+                c_reference = warm["c"][2]
+        else:
+            c_check_ok = c_check_ok and warm["c"][2] == c_reference
+        for state in ("raw", "fat"):
+            state_ok = spec.check.ok(warm[state][3], warm[state][2])
+            match_ok = c_reference is not None and warm[state][2] == c_reference
+            yian_stdout_match = yian_stdout_match and state_ok and match_ok
+
+    samples: dict[str, list[float]] = {state: [] for state in STATES}
+    rss: dict[str, list[int]] = {state: [] for state in STATES}
+    for _ in range(runs):
+        for state in STATES:
+            wall, peak, stdout, rc = _run(bins[state], argv, pin)
+            samples[state].append(wall)
+            rss[state].append(peak)
+            exit_codes[state] = rc
+            check_ok = spec.check.ok(rc, stdout)
+            match_ok = c_reference is not None and stdout == c_reference
+            if state == "c":
+                c_check_ok = c_check_ok and check_ok and match_ok
+            else:
+                yian_stdout_match = yian_stdout_match and check_ok and match_ok
+
+    if c_reference is None:
+        yian_stdout_match = False
+    if not c_check_ok:
+        print(
+            f"[{spec.key}] warning: C baseline failed its check or changed output; "
+            "C ratios for this benchmark are unusable",
+            file=sys.stderr,
+        )
+    if not yian_stdout_match:
+        print(
+            f"[{spec.key}] warning: a raw/fat warmup or sample failed or did not match C stdout",
+            file=sys.stderr,
+        )
+
+    return Row(
+        spec=spec,
+        times={state: _stats(samples[state]) for state in STATES},
+        rss_mb={state: max(rss[state]) / 1024.0 for state in STATES},
+        rss_samples=rss,
+        runs=runs,
+        yian_stdout_match=yian_stdout_match,
+        c_check_ok=c_check_ok,
+        exit_codes=exit_codes,
+    )
+
 
 def _ratio(row: Row, num: str, den: str) -> float:
     denom = row.times[den].min

@@ -4,6 +4,8 @@
   "include": [
     "*"
   ],
-  "exclude": [],
-  "note": "All three-state benchmarks at source default scale; formal records and external references use only this profile"
+  "exclude": [
+    "LIBYAML/*"
+  ],
+  "note": "All three-state benchmarks at source default scale except LIBYAML, which is selected only by the real set and reported independently; formal records and external references use only this profile"
 }

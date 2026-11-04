@@ -1,0 +1,1075 @@
+from libyaml.yaml.reader import Input;
+from libyaml.yaml.scanner import Scanner, scanner_delete, scanner_new, scanner_peek, scanner_scan;
+from libyaml.yaml.types import CollectionStyle, Encoding, ErrorKind, Event, EventData,
+    EventKind, Limits, Mark, ParserError, ParserState, ScalarStyle, TagDirective, Token,
+    TokenData, TokenKind, VersionDirective, mark_new, tag_directive_delete, token_delete;
+from std.core.vec import Vec;
+
+// Incremental parser derived from libyaml 0.2.5 parser.c.
+//
+// The parser owns the scanner plus the state stack, collection start marks and
+// the active tag-directive scope.  parse() transfers one owned event per call;
+// after STREAM-END it returns None.  Tokens consumed for properties or scalar
+// payloads transfer their byte buffers into the event, other consumed tokens
+// carry no owned payload.  The first error is sticky.
+
+pub struct Parser {
+    pub scanner: Scanner,
+    pub state: ParserState,
+    pub states: Vec<ParserState>,
+    pub marks: Vec<Mark>,
+    pub tag_directives: Vec<TagDirective>,
+    pub stream_start_produced: bool,
+    pub stream_end_produced: bool,
+    pub error: Option<ParserError>,
+}
+
+fn zero_mark() -> Mark {
+    mark_new(0u64, 0u64, 0u64)
+}
+
+fn copy_bytes(source: Vec<u8>&) -> Vec<u8> {
+    let result: Vec<u8> = Vec<u8>.with_capacity(source.len());
+    let index = 0u64;
+    while index < source.len() {
+        result.push(source[index]);
+        index += 1u64;
+    };
+    result
+}
+
+fn bytes_equal(left: Vec<u8>, right: Vec<u8>) -> bool {
+    if left.len() != right.len() {
+        return false;
+    }
+    let index = 0u64;
+    while index < left.len() {
+        if left[index] != right[index] {
+            return false;
+        }
+        index += 1u64;
+    };
+    true
+}
+
+fn bytes_equal_slice(left: Vec<u8>, right: u8[]) -> bool {
+    if left.len() != right.len() {
+        return false;
+    }
+    let index = 0u64;
+    while index < left.len() {
+        if left[index] != right[index] {
+            return false;
+        }
+        index += 1u64;
+    };
+    true
+}
+
+fn drop_option_bytes(value: Option<Vec<u8>>&) {
+    match value.take() {
+        Some(bytes) => bytes.drop(),
+        None => {},
+    }
+}
+
+fn release_tags(tags: Vec<TagDirective>&) {
+    let index = 0u64;
+    while index < tags.len() {
+        tag_directive_delete(&tags[index]);
+        index += 1u64;
+    };
+    tags.drop();
+}
+
+fn release_properties(anchor: Option<Vec<u8>>&, tag_handle: Option<Vec<u8>>&,
+        tag_suffix: Option<Vec<u8>>&, tag: Option<Vec<u8>>&) {
+    drop_option_bytes(anchor);
+    drop_option_bytes(tag_handle);
+    drop_option_bytes(tag_suffix);
+    drop_option_bytes(tag);
+}
+
+fn set_parser_error(parser: Parser&, problem: str, problem_mark: Mark) -> ParserError {
+    let error = ParserError(
+        kind=ErrorKind.Parser,
+        problem=problem_mark,
+        context=zero_mark(),
+        problem_text=problem,
+        context_text="",
+        problem_offset=0u64,
+        problem_value=0i32,
+    );
+    parser.error = Option<ParserError>.Some(error);
+    error
+}
+
+fn set_parser_error_context(parser: Parser&, context: str, context_mark: Mark,
+        problem: str, problem_mark: Mark) -> ParserError {
+    let error = ParserError(
+        kind=ErrorKind.Parser,
+        problem=problem_mark,
+        context=context_mark,
+        problem_text=problem,
+        context_text=context,
+        problem_offset=0u64,
+        problem_value=0i32,
+    );
+    parser.error = Option<ParserError>.Some(error);
+    error
+}
+
+// ---------------------------------------------------------------------------
+// Token access.  Decisions use a borrowed peek; consumption transfers the
+// token out of the scanner queue so payload ownership can move into an event.
+// ---------------------------------------------------------------------------
+
+fn require_token(parser: Parser&) -> Result<Token&, ParserError> {
+    match scanner_peek(&parser.scanner) {
+        Ok(Some(token)) => Result<Token&, ParserError>.Ok(val=token),
+        Ok(None) => Result<Token&, ParserError>.Err(set_parser_error(
+            parser, "did not find expected node content", zero_mark())),
+        Err(error) => {
+            parser.error = Option<ParserError>.Some(error);
+            Result<Token&, ParserError>.Err(error)
+        },
+    }
+}
+
+fn take_token(parser: Parser&) -> Result<Token, ParserError> {
+    match scanner_scan(&parser.scanner) {
+        Ok(Some(token)) => Result<Token, ParserError>.Ok(val=token),
+        Ok(None) => Result<Token, ParserError>.Err(set_parser_error(
+            parser, "did not find expected node content", zero_mark())),
+        Err(error) => {
+            parser.error = Option<ParserError>.Some(error);
+            Result<Token, ParserError>.Err(error)
+        },
+    }
+}
+
+fn skip_token(parser: Parser&) -> Result<(), ParserError> {
+    let token = take_token(parser)?;
+    token.data = TokenData.Empty;
+    Result<(), ParserError>.Ok(val=())
+}
+
+fn push_state(parser: Parser&, state: ParserState) {
+    parser.states.push(state);
+}
+
+fn pop_state(parser: Parser&) -> ParserState {
+    let index: u64 = parser.states.len() - 1u64;
+    let state: ParserState = parser.states[index];
+    parser.states.truncate(index);
+    state
+}
+
+fn push_mark(parser: Parser&, mark: Mark) {
+    parser.marks.push(mark);
+}
+
+fn pop_mark(parser: Parser&) -> Mark {
+    let index: u64 = parser.marks.len() - 1u64;
+    let mark: Mark = parser.marks[index];
+    parser.marks.truncate(index);
+    mark
+}
+
+fn make_event(kind: EventKind, start: Mark, end: Mark, data: EventData) -> Event {
+    Event(kind=kind, start=start, end=end, data=data)
+}
+
+fn empty_event(kind: EventKind, start: Mark, end: Mark) -> Event {
+    Event(kind=kind, start=start, end=end, data=EventData.Empty)
+}
+
+fn empty_scalar_event(mark: Mark) -> Event {
+    let value: Vec<u8> = Vec<u8>.new();
+    Event(
+        kind=EventKind.Scalar,
+        start=mark,
+        end=mark,
+        data=EventData.Scalar(
+            anchor=Option<Vec<u8>>.None,
+            tag=Option<Vec<u8>>.None,
+            value=value,
+            plain_implicit=true,
+            quoted_implicit=false,
+            style=ScalarStyle.Plain,
+        ),
+    )
+}
+
+// ---------------------------------------------------------------------------
+// Directives.
+// ---------------------------------------------------------------------------
+
+fn append_tag_directive(parser: Parser&, handle: Vec<u8>, prefix: Vec<u8>,
+        allow_duplicates: bool, mark: Mark) -> Result<(), ParserError> {
+    let handle_moved = false;
+    let prefix_moved = false;
+    defer { if !handle_moved { handle.drop(); } };
+    defer { if !prefix_moved { prefix.drop(); } };
+    let index = 0u64;
+    while index < parser.tag_directives.len() {
+        if bytes_equal(parser.tag_directives[index].handle, handle) {
+            if allow_duplicates {
+                return Result<(), ParserError>.Ok(val=());
+            }
+            return Result<(), ParserError>.Err(set_parser_error(
+                parser, "found duplicate %TAG directive", mark));
+        }
+        index += 1u64;
+    };
+    parser.tag_directives.push(TagDirective(handle=handle, prefix=prefix));
+    handle_moved = true;
+    prefix_moved = true;
+    Result<(), ParserError>.Ok(val=())
+}
+
+fn process_directives(parser: Parser&) -> Result<(Option<VersionDirective>, Vec<TagDirective>), ParserError> {
+    let version: Option<VersionDirective> = Option<VersionDirective>.None;
+    let tags: Vec<TagDirective> = Vec<TagDirective>.new();
+    let tags_moved = false;
+    defer { if !tags_moved { release_tags(&tags); } };
+    loop {
+        let token = require_token(parser)?;
+        let kind: TokenKind = token.kind;
+        if kind != TokenKind.VersionDirective && kind != TokenKind.TagDirective {
+            break;
+        }
+        let start: Mark = token.start;
+        let taken = take_token(parser)?;
+        if kind == TokenKind.VersionDirective {
+            let major: i32 = 0i32;
+            let minor: i32 = 0i32;
+            match &taken.data {
+                TokenData.VersionDirective(value) => {
+                    major = value.major;
+                    minor = value.minor;
+                },
+                _ => {},
+            }
+            match &version {
+                Some(_) => {
+                    return Result<(Option<VersionDirective>, Vec<TagDirective>), ParserError>.Err(
+                        set_parser_error(parser, "found duplicate %YAML directive", start));
+                },
+                None => {},
+            }
+            if major != 1i32 || (minor != 1i32 && minor != 2i32) {
+                return Result<(Option<VersionDirective>, Vec<TagDirective>), ParserError>.Err(
+                    set_parser_error(parser, "found incompatible YAML document", start));
+            }
+            version = Option<VersionDirective>.Some(VersionDirective(major=major, minor=minor));
+        } else {
+            let handle: Vec<u8> = Vec<u8>.new();
+            let prefix: Vec<u8> = Vec<u8>.new();
+            let handle_moved = false;
+            let prefix_moved = false;
+            defer { if !handle_moved { handle.drop(); } };
+            defer { if !prefix_moved { prefix.drop(); } };
+            match &taken.data {
+                TokenData.TagDirective(value) => {
+                    handle = value.handle;
+                    prefix = value.prefix;
+                },
+                _ => {},
+            }
+            let handle_copy = copy_bytes(&handle);
+            let prefix_copy = copy_bytes(&prefix);
+            append_tag_directive(parser, handle_copy, prefix_copy, false, start)?;
+            tags.push(TagDirective(handle=handle, prefix=prefix));
+            handle_moved = true;
+            prefix_moved = true;
+        }
+    };
+    // The default directives are active for the document but are not part of
+    // the DOCUMENT-START event's explicit list.
+    let current = require_token(parser)?;
+    let default_mark: Mark = current.start;
+    let mut_handle: Vec<u8> = Vec<u8>.with_capacity(1u64);
+    mut_handle.push(33u8);
+    let mut_prefix: Vec<u8> = Vec<u8>.with_capacity(1u64);
+    mut_prefix.push(33u8);
+    append_tag_directive(parser, mut_handle, mut_prefix, true, default_mark)?;
+    let secondary_handle: Vec<u8> = Vec<u8>.with_capacity(2u64);
+    secondary_handle.push(33u8);
+    secondary_handle.push(33u8);
+    let secondary_prefix: Vec<u8> = Vec<u8>.with_capacity(19u64);
+    secondary_prefix.extend_from_slice("tag:yaml.org,2002:".as_slice());
+    append_tag_directive(parser, secondary_handle, secondary_prefix, true, default_mark)?;
+    let result: Vec<TagDirective> = tags;
+    tags_moved = true;
+    Result<(Option<VersionDirective>, Vec<TagDirective>), ParserError>.Ok(
+        val=(version, result))
+}
+
+// ---------------------------------------------------------------------------
+// State functions.
+// ---------------------------------------------------------------------------
+
+fn parse_stream_start(parser: Parser&) -> Result<Event, ParserError> {
+    let token = require_token(parser)?;
+    if token.kind != TokenKind.StreamStart {
+        return Result<Event, ParserError>.Err(set_parser_error(
+            parser, "did not find expected <stream-start>", token.start));
+    }
+    let start: Mark = token.start;
+    let taken = take_token(parser)?;
+    let encoding: Encoding = match &taken.data {
+        TokenData.StreamStart(value) => *value,
+        _ => Encoding.Utf8,
+    };
+    parser.state = ParserState.ImplicitDocumentStart;
+    parser.stream_start_produced = true;
+    Result<Event, ParserError>.Ok(val=make_event(
+        EventKind.StreamStart, start, start, EventData.StreamStart(encoding=encoding)))
+}
+
+fn parse_document_start(parser: Parser&, implicit: bool) -> Result<Event, ParserError> {
+    if !implicit {
+        loop {
+            let current = require_token(parser)?;
+            if current.kind != TokenKind.DocumentEnd {
+                break;
+            }
+            skip_token(parser)?;
+        };
+    }
+    let token = require_token(parser)?;
+    let kind: TokenKind = token.kind;
+    if implicit && kind != TokenKind.VersionDirective && kind != TokenKind.TagDirective
+            && kind != TokenKind.DocumentStart && kind != TokenKind.StreamEnd {
+        let start: Mark = token.start;
+        let (version_ignored, tags_ignored) = process_directives(parser)?;
+        release_tags(&tags_ignored);
+        push_state(parser, ParserState.DocumentEnd);
+        parser.state = ParserState.BlockNode;
+        let tags: Vec<TagDirective> = Vec<TagDirective>.new();
+        let implicit_flag = true;
+        return Result<Event, ParserError>.Ok(val=make_event(
+            EventKind.DocumentStart, start, start,
+            EventData.DocumentStart(
+                version=Option<VersionDirective>.None,
+                tags=tags,
+                implicit=implicit_flag,
+            )));
+    }
+    if kind != TokenKind.StreamEnd {
+        let start: Mark = token.start;
+        let (version, tags) = process_directives(parser)?;
+        let tags_moved = false;
+        defer { if !tags_moved { release_tags(&tags); } };
+        let current = require_token(parser)?;
+        if current.kind != TokenKind.DocumentStart {
+            return Result<Event, ParserError>.Err(set_parser_error(
+                parser, "did not find expected <document start>", current.start));
+        }
+        let end_mark: Mark = current.end;
+        push_state(parser, ParserState.DocumentEnd);
+        parser.state = ParserState.DocumentContent;
+        skip_token(parser)?;
+        tags_moved = true;
+        return Result<Event, ParserError>.Ok(val=make_event(
+            EventKind.DocumentStart, start, end_mark,
+            EventData.DocumentStart(version=version, tags=tags, implicit=false)));
+    }
+    parser.state = ParserState.End;
+    let start: Mark = token.start;
+    let end: Mark = token.end;
+    skip_token(parser)?;
+    Result<Event, ParserError>.Ok(val=make_event(
+        EventKind.StreamEnd, start, end, EventData.Empty))
+}
+
+fn parse_document_content(parser: Parser&) -> Result<Event, ParserError> {
+    let token = require_token(parser)?;
+    let kind: TokenKind = token.kind;
+    if kind == TokenKind.VersionDirective || kind == TokenKind.TagDirective
+            || kind == TokenKind.DocumentStart || kind == TokenKind.DocumentEnd
+            || kind == TokenKind.StreamEnd {
+        let mark: Mark = token.start;
+        parser.state = pop_state(parser);
+        return Result<Event, ParserError>.Ok(val=empty_scalar_event(mark));
+    }
+    parse_node(parser, true, false)
+}
+
+fn parse_document_end(parser: Parser&) -> Result<Event, ParserError> {
+    let token = require_token(parser)?;
+    let start: Mark = token.start;
+    let end: Mark = token.start;
+    let implicit: bool = true;
+    if token.kind == TokenKind.DocumentEnd {
+        end = token.end;
+        skip_token(parser)?;
+        implicit = false;
+    }
+    release_tags(&parser.tag_directives);
+    parser.tag_directives = Vec<TagDirective>.new();
+    parser.state = ParserState.DocumentStart;
+    Result<Event, ParserError>.Ok(val=make_event(
+        EventKind.DocumentEnd, start, end, EventData.DocumentEnd(implicit=implicit)))
+}
+
+fn parse_node(parser: Parser&, block: bool, indentless_sequence: bool) -> Result<Event, ParserError> {
+    let token = require_token(parser)?;
+    let kind: TokenKind = token.kind;
+    let token_start: Mark = token.start;
+    let token_end: Mark = token.end;
+    if kind == TokenKind.Alias {
+        let taken = take_token(parser)?;
+        let anchor: Vec<u8> = Vec<u8>.new();
+        match &taken.data {
+            TokenData.Alias(value) => anchor = *value,
+            _ => {},
+        }
+        parser.state = pop_state(parser);
+        return Result<Event, ParserError>.Ok(val=make_event(
+            EventKind.Alias, token_start, token_end, EventData.Alias(anchor=anchor)));
+    }
+
+    let mut_start: Mark = token_start;
+    let mut_end: Mark = token_start;
+    let anchor: Option<Vec<u8>> = Option<Vec<u8>>.None;
+    let tag_handle: Option<Vec<u8>> = Option<Vec<u8>>.None;
+    let tag_suffix: Option<Vec<u8>> = Option<Vec<u8>>.None;
+    let tag: Option<Vec<u8>> = Option<Vec<u8>>.None;
+    let mut_tag_mark: Mark = zero_mark();
+    let properties_moved = false;
+    defer { if !properties_moved { release_properties(&anchor, &tag_handle, &tag_suffix, &tag); } };
+
+    if kind == TokenKind.Anchor {
+        let taken = take_token(parser)?;
+        match &taken.data {
+            TokenData.Anchor(value) => anchor = Option<Vec<u8>>.Some(*value),
+            _ => {},
+        }
+        mut_start = token_start;
+        mut_end = token_end;
+        let next = require_token(parser)?;
+        let next_kind: TokenKind = next.kind;
+        if next_kind == TokenKind.Tag {
+            let next_start: Mark = next.start;
+            let next_end: Mark = next.end;
+            let tag_token = take_token(parser)?;
+            match &tag_token.data {
+                TokenData.Tag(handle, suffix) => {
+                    tag_handle = Option<Vec<u8>>.Some(*handle);
+                    tag_suffix = Option<Vec<u8>>.Some(*suffix);
+                },
+                _ => {},
+            }
+            mut_tag_mark = next_start;
+            mut_end = next_end;
+        }
+    } elif kind == TokenKind.Tag {
+        let taken = take_token(parser)?;
+        match &taken.data {
+            TokenData.Tag(handle, suffix) => {
+                tag_handle = Option<Vec<u8>>.Some(*handle);
+                tag_suffix = Option<Vec<u8>>.Some(*suffix);
+            },
+            _ => {},
+        }
+        mut_start = token_start;
+        mut_tag_mark = token_start;
+        mut_end = token_end;
+        let next = require_token(parser)?;
+        if next.kind == TokenKind.Anchor {
+            let next_end: Mark = next.end;
+            let anchor_token = take_token(parser)?;
+            match &anchor_token.data {
+                TokenData.Anchor(value) => anchor = Option<Vec<u8>>.Some(*value),
+                _ => {},
+            }
+            mut_end = next_end;
+        }
+    }
+
+    match &tag_handle {
+        Some(handle) => {
+            if handle.len() == 0u64 {
+                let suffix = tag_suffix.take();
+                match suffix {
+                    Some(value) => tag = Option<Vec<u8>>.Some(value),
+                    None => {},
+                }
+                drop_option_bytes(&tag_handle);
+            } else {
+                let found: bool = false;
+                let index = 0u64;
+                while index < parser.tag_directives.len() {
+                    if bytes_equal(parser.tag_directives[index].handle, *handle) {
+                        let prefix = copy_bytes(&parser.tag_directives[index].prefix);
+                        let suffix: Vec<u8> = match tag_suffix.take() {
+                            Some(value) => value,
+                            None => Vec<u8>.new(),
+                        };
+                        let combined = join_bytes(prefix, suffix);
+                        tag = Option<Vec<u8>>.Some(combined);
+                        drop_option_bytes(&tag_handle);
+                        found = true;
+                        break;
+                    }
+                    index += 1u64;
+                };
+                if !found {
+                    return Result<Event, ParserError>.Err(set_parser_error_context(
+                        parser,
+                        "while parsing a node",
+                        mut_start,
+                        "found undefined tag handle",
+                        mut_tag_mark,
+                    ));
+                }
+            }
+        },
+        None => {},
+    }
+
+    let implicit: bool = match &tag {
+        Some(value) => value.len() == 0u64,
+        None => true,
+    };
+    let current = require_token(parser)?;
+    let current_kind: TokenKind = current.kind;
+    if indentless_sequence && current_kind == TokenKind.BlockEntry {
+        let end_mark: Mark = current.end;
+        parser.state = ParserState.IndentlessSequenceEntry;
+        let data = EventData.SequenceStart(
+            anchor=anchor.take(),
+            tag=tag.take(),
+            implicit=implicit,
+            style=CollectionStyle.Block,
+        );
+        properties_moved = true;
+        return Result<Event, ParserError>.Ok(val=make_event(
+            EventKind.SequenceStart, mut_start, end_mark, data));
+    }
+    if current_kind == TokenKind.Scalar {
+        let end_mark: Mark = current.end;
+        let taken = take_token(parser)?;
+        let value: Vec<u8> = Vec<u8>.new();
+        let style: ScalarStyle = ScalarStyle.Plain;
+        match &taken.data {
+            TokenData.Scalar(data, data_style) => {
+                value = *data;
+                style = *data_style;
+            },
+            _ => {},
+        }
+        let plain_implicit: bool = (style == ScalarStyle.Plain && !has_tag(&tag))
+            || tag_is_bang(&tag);
+        let quoted_implicit: bool = !has_tag(&tag) && !plain_implicit;
+        parser.state = pop_state(parser);
+        let data = EventData.Scalar(
+            anchor=anchor.take(),
+            tag=tag.take(),
+            value=value,
+            plain_implicit=plain_implicit,
+            quoted_implicit=quoted_implicit,
+            style=style,
+        );
+        properties_moved = true;
+        return Result<Event, ParserError>.Ok(val=make_event(
+            EventKind.Scalar, mut_start, end_mark, data));
+    }
+    if current_kind == TokenKind.FlowSequenceStart {
+        let end_mark: Mark = current.end;
+        parser.state = ParserState.FlowSequenceFirstEntry;
+        let data = EventData.SequenceStart(
+            anchor=anchor.take(),
+            tag=tag.take(),
+            implicit=implicit,
+            style=CollectionStyle.Flow,
+        );
+        properties_moved = true;
+        return Result<Event, ParserError>.Ok(val=make_event(
+            EventKind.SequenceStart, mut_start, end_mark, data));
+    }
+    if current_kind == TokenKind.FlowMappingStart {
+        let end_mark: Mark = current.end;
+        parser.state = ParserState.FlowMappingFirstKey;
+        let data = EventData.MappingStart(
+            anchor=anchor.take(),
+            tag=tag.take(),
+            implicit=implicit,
+            style=CollectionStyle.Flow,
+        );
+        properties_moved = true;
+        return Result<Event, ParserError>.Ok(val=make_event(
+            EventKind.MappingStart, mut_start, end_mark, data));
+    }
+    if block && current_kind == TokenKind.BlockSequenceStart {
+        let end_mark: Mark = current.end;
+        parser.state = ParserState.BlockSequenceFirstEntry;
+        let data = EventData.SequenceStart(
+            anchor=anchor.take(),
+            tag=tag.take(),
+            implicit=implicit,
+            style=CollectionStyle.Block,
+        );
+        properties_moved = true;
+        return Result<Event, ParserError>.Ok(val=make_event(
+            EventKind.SequenceStart, mut_start, end_mark, data));
+    }
+    if block && current_kind == TokenKind.BlockMappingStart {
+        let end_mark: Mark = current.end;
+        parser.state = ParserState.BlockMappingFirstKey;
+        let data = EventData.MappingStart(
+            anchor=anchor.take(),
+            tag=tag.take(),
+            implicit=implicit,
+            style=CollectionStyle.Block,
+        );
+        properties_moved = true;
+        return Result<Event, ParserError>.Ok(val=make_event(
+            EventKind.MappingStart, mut_start, end_mark, data));
+    }
+    if has_option(&anchor) || has_tag(&tag) {
+        let empty: Vec<u8> = Vec<u8>.new();
+        parser.state = pop_state(parser);
+        let data = EventData.Scalar(
+            anchor=anchor.take(),
+            tag=tag.take(),
+            value=empty,
+            plain_implicit=implicit,
+            quoted_implicit=false,
+            style=ScalarStyle.Plain,
+        );
+        properties_moved = true;
+        return Result<Event, ParserError>.Ok(val=make_event(
+            EventKind.Scalar, mut_start, mut_end, data));
+    }
+    let context: str = if block { "while parsing a block node" } else { "while parsing a flow node" };
+    Result<Event, ParserError>.Err(set_parser_error_context(
+        parser, context, mut_start, "did not find expected node content", current.start))
+}
+
+fn has_tag(tag: Option<Vec<u8>>&) -> bool {
+    match tag {
+        Some(value) => true,
+        None => false,
+    }
+}
+
+fn has_option(value: Option<Vec<u8>>&) -> bool {
+    match value {
+        Some(_) => true,
+        None => false,
+    }
+}
+
+fn tag_is_bang(tag: Option<Vec<u8>>&) -> bool {
+    match tag {
+        Some(value) => value.len() == 1u64 && value[0u64] == 33u8,
+        None => false,
+    }
+}
+
+fn join_bytes(head: Vec<u8>, tail: Vec<u8>) -> Vec<u8> {
+    let head_moved = false;
+    let tail_moved = false;
+    defer { if !head_moved { head.drop(); } };
+    defer { if !tail_moved { tail.drop(); } };
+    let result: Vec<u8> = Vec<u8>.with_capacity(head.len() + tail.len());
+    let index = 0u64;
+    while index < head.len() {
+        result.push(head[index]);
+        index += 1u64;
+    };
+    index = 0u64;
+    while index < tail.len() {
+        result.push(tail[index]);
+        index += 1u64;
+    };
+    head_moved = true;
+    tail_moved = true;
+    result
+}
+
+fn parse_block_sequence_entry(parser: Parser&, first: bool) -> Result<Event, ParserError> {
+    if first {
+        let token = require_token(parser)?;
+        let mark: Mark = token.start;
+        push_mark(parser, mark);
+        skip_token(parser)?;
+    }
+    let token = require_token(parser)?;
+    let kind: TokenKind = token.kind;
+    if kind == TokenKind.BlockEntry {
+        let mark: Mark = token.end;
+        skip_token(parser)?;
+        let next = require_token(parser)?;
+        if next.kind != TokenKind.BlockEntry && next.kind != TokenKind.BlockEnd {
+            push_state(parser, ParserState.BlockSequenceEntry);
+            return parse_node(parser, true, false);
+        }
+        parser.state = ParserState.BlockSequenceEntry;
+        return Result<Event, ParserError>.Ok(val=empty_scalar_event(mark));
+    }
+    if kind == TokenKind.BlockEnd {
+        let start: Mark = token.start;
+        let end: Mark = token.end;
+        parser.state = pop_state(parser);
+        pop_mark(parser);
+        skip_token(parser)?;
+        return Result<Event, ParserError>.Ok(val=empty_event(EventKind.SequenceEnd, start, end));
+    }
+    let context_mark: Mark = pop_mark(parser);
+    Result<Event, ParserError>.Err(set_parser_error_context(
+        parser,
+        "while parsing a block collection",
+        context_mark,
+        "did not find expected '-' indicator",
+        token.start,
+    ))
+}
+
+fn parse_indentless_sequence_entry(parser: Parser&) -> Result<Event, ParserError> {
+    let token = require_token(parser)?;
+    let kind: TokenKind = token.kind;
+    if kind == TokenKind.BlockEntry {
+        let mark: Mark = token.end;
+        skip_token(parser)?;
+        let next = require_token(parser)?;
+        if next.kind != TokenKind.BlockEntry && next.kind != TokenKind.Key
+                && next.kind != TokenKind.Value && next.kind != TokenKind.BlockEnd {
+            push_state(parser, ParserState.IndentlessSequenceEntry);
+            return parse_node(parser, true, false);
+        }
+        parser.state = ParserState.IndentlessSequenceEntry;
+        return Result<Event, ParserError>.Ok(val=empty_scalar_event(mark));
+    }
+    let start: Mark = token.start;
+    parser.state = pop_state(parser);
+    Result<Event, ParserError>.Ok(val=empty_event(EventKind.SequenceEnd, start, start))
+}
+
+fn parse_block_mapping_key(parser: Parser&, first: bool) -> Result<Event, ParserError> {
+    if first {
+        let token = require_token(parser)?;
+        let mark: Mark = token.start;
+        push_mark(parser, mark);
+        skip_token(parser)?;
+    }
+    let token = require_token(parser)?;
+    let kind: TokenKind = token.kind;
+    if kind == TokenKind.Key {
+        let mark: Mark = token.end;
+        skip_token(parser)?;
+        let next = require_token(parser)?;
+        if next.kind != TokenKind.Key && next.kind != TokenKind.Value
+                && next.kind != TokenKind.BlockEnd {
+            push_state(parser, ParserState.BlockMappingValue);
+            return parse_node(parser, true, true);
+        }
+        parser.state = ParserState.BlockMappingValue;
+        return Result<Event, ParserError>.Ok(val=empty_scalar_event(mark));
+    }
+    if kind == TokenKind.BlockEnd {
+        let start: Mark = token.start;
+        let end: Mark = token.end;
+        parser.state = pop_state(parser);
+        pop_mark(parser);
+        skip_token(parser)?;
+        return Result<Event, ParserError>.Ok(val=empty_event(EventKind.MappingEnd, start, end));
+    }
+    let context_mark: Mark = pop_mark(parser);
+    Result<Event, ParserError>.Err(set_parser_error_context(
+        parser,
+        "while parsing a block mapping",
+        context_mark,
+        "did not find expected key",
+        token.start,
+    ))
+}
+
+fn parse_block_mapping_value(parser: Parser&) -> Result<Event, ParserError> {
+    let token = require_token(parser)?;
+    let kind: TokenKind = token.kind;
+    if kind == TokenKind.Value {
+        let mark: Mark = token.end;
+        skip_token(parser)?;
+        let next = require_token(parser)?;
+        if next.kind != TokenKind.Key && next.kind != TokenKind.Value
+                && next.kind != TokenKind.BlockEnd {
+            push_state(parser, ParserState.BlockMappingKey);
+            return parse_node(parser, true, true);
+        }
+        parser.state = ParserState.BlockMappingKey;
+        return Result<Event, ParserError>.Ok(val=empty_scalar_event(mark));
+    }
+    let mark: Mark = token.start;
+    parser.state = ParserState.BlockMappingKey;
+    Result<Event, ParserError>.Ok(val=empty_scalar_event(mark))
+}
+
+fn parse_flow_sequence_entry(parser: Parser&, first: bool) -> Result<Event, ParserError> {
+    if first {
+        let token = require_token(parser)?;
+        let mark: Mark = token.start;
+        push_mark(parser, mark);
+        skip_token(parser)?;
+    }
+    let token = require_token(parser)?;
+    let kind: TokenKind = token.kind;
+    if kind != TokenKind.FlowSequenceEnd {
+        if !first {
+            if kind == TokenKind.FlowEntry {
+                skip_token(parser)?;
+                let next = require_token(parser)?;
+                if next.kind == TokenKind.FlowSequenceEnd {
+                    let start: Mark = next.start;
+                    let end: Mark = next.end;
+                    parser.state = pop_state(parser);
+                    pop_mark(parser);
+                    skip_token(parser)?;
+                    return Result<Event, ParserError>.Ok(val=empty_event(
+                        EventKind.SequenceEnd, start, end));
+                }
+            } else {
+                let context_mark: Mark = pop_mark(parser);
+                return Result<Event, ParserError>.Err(set_parser_error_context(
+                    parser,
+                    "while parsing a flow sequence",
+                    context_mark,
+                    "did not find expected ',' or ']'",
+                    token.start,
+                ));
+            }
+        }
+        let current = require_token(parser)?;
+        if current.kind == TokenKind.Key {
+            let start: Mark = current.start;
+            let end: Mark = current.end;
+            parser.state = ParserState.FlowSequenceEntryMappingKey;
+            skip_token(parser)?;
+            return Result<Event, ParserError>.Ok(val=make_event(
+                EventKind.MappingStart, start, end,
+                EventData.MappingStart(
+                    anchor=Option<Vec<u8>>.None,
+                    tag=Option<Vec<u8>>.None,
+                    implicit=true,
+                    style=CollectionStyle.Flow,
+                )));
+        }
+        if current.kind != TokenKind.FlowSequenceEnd {
+            push_state(parser, ParserState.FlowSequenceEntry);
+            return parse_node(parser, false, false);
+        }
+    }
+    let end_token = require_token(parser)?;
+    let start: Mark = end_token.start;
+    let end: Mark = end_token.end;
+    parser.state = pop_state(parser);
+    pop_mark(parser);
+    skip_token(parser)?;
+    Result<Event, ParserError>.Ok(val=empty_event(EventKind.SequenceEnd, start, end))
+}
+
+fn parse_flow_sequence_entry_mapping_key(parser: Parser&) -> Result<Event, ParserError> {
+    let token = require_token(parser)?;
+    let kind: TokenKind = token.kind;
+    if kind != TokenKind.Value && kind != TokenKind.FlowEntry
+            && kind != TokenKind.FlowSequenceEnd {
+        push_state(parser, ParserState.FlowSequenceEntryMappingValue);
+        return parse_node(parser, false, false);
+    }
+    if kind == TokenKind.FlowSequenceEnd {
+        let mark: Mark = token.start;
+        parser.state = ParserState.FlowSequenceEntryMappingValue;
+        return Result<Event, ParserError>.Ok(val=empty_scalar_event(mark));
+    }
+    let mark: Mark = token.end;
+    skip_token(parser)?;
+    parser.state = ParserState.FlowSequenceEntryMappingValue;
+    Result<Event, ParserError>.Ok(val=empty_scalar_event(mark))
+}
+
+fn parse_flow_sequence_entry_mapping_value(parser: Parser&) -> Result<Event, ParserError> {
+    let token = require_token(parser)?;
+    let kind: TokenKind = token.kind;
+    if kind == TokenKind.Value {
+        skip_token(parser)?;
+        let next = require_token(parser)?;
+        if next.kind != TokenKind.FlowEntry && next.kind != TokenKind.FlowSequenceEnd {
+            push_state(parser, ParserState.FlowSequenceEntryMappingEnd);
+            return parse_node(parser, false, false);
+        }
+    }
+    let token2 = require_token(parser)?;
+    let mark: Mark = token2.start;
+    parser.state = ParserState.FlowSequenceEntryMappingEnd;
+    Result<Event, ParserError>.Ok(val=empty_scalar_event(mark))
+}
+
+fn parse_flow_sequence_entry_mapping_end(parser: Parser&) -> Result<Event, ParserError> {
+    let token = require_token(parser)?;
+    let mark: Mark = token.start;
+    parser.state = ParserState.FlowSequenceEntry;
+    Result<Event, ParserError>.Ok(val=empty_event(EventKind.MappingEnd, mark, mark))
+}
+
+fn parse_flow_mapping_key(parser: Parser&, first: bool) -> Result<Event, ParserError> {
+    if first {
+        let token = require_token(parser)?;
+        let mark: Mark = token.start;
+        push_mark(parser, mark);
+        skip_token(parser)?;
+    }
+    let token = require_token(parser)?;
+    let kind: TokenKind = token.kind;
+    if kind != TokenKind.FlowMappingEnd {
+        if !first {
+            if kind == TokenKind.FlowEntry {
+                skip_token(parser)?;
+                let next = require_token(parser)?;
+                if next.kind == TokenKind.FlowMappingEnd {
+                    let start: Mark = next.start;
+                    let end: Mark = next.end;
+                    parser.state = pop_state(parser);
+                    pop_mark(parser);
+                    skip_token(parser)?;
+                    return Result<Event, ParserError>.Ok(val=empty_event(
+                        EventKind.MappingEnd, start, end));
+                }
+            } else {
+                let context_mark: Mark = pop_mark(parser);
+                return Result<Event, ParserError>.Err(set_parser_error_context(
+                    parser,
+                    "while parsing a flow mapping",
+                    context_mark,
+                    "did not find expected ',' or '}'",
+                    token.start,
+                ));
+            }
+        }
+        let current = require_token(parser)?;
+        if current.kind == TokenKind.Key {
+            skip_token(parser)?;
+            let next = require_token(parser)?;
+            if next.kind != TokenKind.Value && next.kind != TokenKind.FlowEntry
+                    && next.kind != TokenKind.FlowMappingEnd {
+                push_state(parser, ParserState.FlowMappingValue);
+                return parse_node(parser, false, false);
+            }
+            parser.state = ParserState.FlowMappingValue;
+            return Result<Event, ParserError>.Ok(val=empty_scalar_event(next.start));
+        }
+        if current.kind != TokenKind.FlowMappingEnd {
+            push_state(parser, ParserState.FlowMappingEmptyValue);
+            return parse_node(parser, false, false);
+        }
+    }
+    let end_token = require_token(parser)?;
+    let start: Mark = end_token.start;
+    let end: Mark = end_token.end;
+    parser.state = pop_state(parser);
+    pop_mark(parser);
+    skip_token(parser)?;
+    Result<Event, ParserError>.Ok(val=empty_event(EventKind.MappingEnd, start, end))
+}
+
+fn parse_flow_mapping_value(parser: Parser&, empty: bool) -> Result<Event, ParserError> {
+    let token = require_token(parser)?;
+    if empty {
+        let mark: Mark = token.start;
+        parser.state = ParserState.FlowMappingKey;
+        return Result<Event, ParserError>.Ok(val=empty_scalar_event(mark));
+    }
+    if token.kind == TokenKind.Value {
+        skip_token(parser)?;
+        let next = require_token(parser)?;
+        if next.kind != TokenKind.FlowEntry && next.kind != TokenKind.FlowMappingEnd {
+            push_state(parser, ParserState.FlowMappingKey);
+            return parse_node(parser, false, false);
+        }
+    }
+    let current = require_token(parser)?;
+    let mark: Mark = current.start;
+    parser.state = ParserState.FlowMappingKey;
+    Result<Event, ParserError>.Ok(val=empty_scalar_event(mark))
+}
+
+fn state_machine(parser: Parser&) -> Result<Event, ParserError> {
+    match parser.state {
+        ParserState.StreamStart => parse_stream_start(parser),
+        ParserState.ImplicitDocumentStart => parse_document_start(parser, true),
+        ParserState.DocumentStart => parse_document_start(parser, false),
+        ParserState.DocumentContent => parse_document_content(parser),
+        ParserState.DocumentEnd => parse_document_end(parser),
+        ParserState.BlockNode => parse_node(parser, true, false),
+        ParserState.BlockNodeOrIndentlessSequence => parse_node(parser, true, true),
+        ParserState.FlowNode => parse_node(parser, false, false),
+        ParserState.BlockSequenceFirstEntry => parse_block_sequence_entry(parser, true),
+        ParserState.BlockSequenceEntry => parse_block_sequence_entry(parser, false),
+        ParserState.IndentlessSequenceEntry => parse_indentless_sequence_entry(parser),
+        ParserState.BlockMappingFirstKey => parse_block_mapping_key(parser, true),
+        ParserState.BlockMappingKey => parse_block_mapping_key(parser, false),
+        ParserState.BlockMappingValue => parse_block_mapping_value(parser),
+        ParserState.FlowSequenceFirstEntry => parse_flow_sequence_entry(parser, true),
+        ParserState.FlowSequenceEntry => parse_flow_sequence_entry(parser, false),
+        ParserState.FlowSequenceEntryMappingKey => parse_flow_sequence_entry_mapping_key(parser),
+        ParserState.FlowSequenceEntryMappingValue => parse_flow_sequence_entry_mapping_value(parser),
+        ParserState.FlowSequenceEntryMappingEnd => parse_flow_sequence_entry_mapping_end(parser),
+        ParserState.FlowMappingFirstKey => parse_flow_mapping_key(parser, true),
+        ParserState.FlowMappingKey => parse_flow_mapping_key(parser, false),
+        ParserState.FlowMappingValue => parse_flow_mapping_value(parser, false),
+        ParserState.FlowMappingEmptyValue => parse_flow_mapping_value(parser, true),
+        ParserState.End => Result<Event, ParserError>.Err(set_parser_error(
+            parser, "did not find expected node content", zero_mark())),
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Public interface.
+// ---------------------------------------------------------------------------
+
+pub fn parser_new(input: Input, encoding: Encoding, limits: Limits&) -> Parser {
+    Parser(
+        scanner=scanner_new(input, encoding, limits),
+        state=ParserState.StreamStart,
+        states=Vec<ParserState>.new(),
+        marks=Vec<Mark>.new(),
+        tag_directives=Vec<TagDirective>.new(),
+        stream_start_produced=false,
+        stream_end_produced=false,
+        error=Option<ParserError>.None,
+    )
+}
+
+pub fn parser_parse(parser: Parser&) -> Result<Option<Event>, ParserError> {
+    match &parser.error {
+        Some(error) => return Result<Option<Event>, ParserError>.Err(*error),
+        None => {},
+    }
+    if parser.stream_end_produced || parser.state == ParserState.End {
+        return Result<Option<Event>, ParserError>.Ok(val=Option<Event>.None);
+    }
+    match state_machine(parser) {
+        Ok(event) => {
+            if event.kind == EventKind.StreamEnd {
+                parser.stream_end_produced = true;
+            }
+            Result<Option<Event>, ParserError>.Ok(val=Option<Event>.Some(event))
+        },
+        Err(error) => {
+            parser.error = Option<ParserError>.Some(error);
+            Result<Option<Event>, ParserError>.Err(error)
+        },
+    }
+}
+
+pub fn parser_delete(parser: Parser&) {
+    scanner_delete(&parser.scanner);
+    parser.states.drop();
+    parser.marks.drop();
+    release_tags(&parser.tag_directives);
+    parser.tag_directives = Vec<TagDirective>.new();
+    parser.stream_start_produced = false;
+    parser.stream_end_produced = true;
+}

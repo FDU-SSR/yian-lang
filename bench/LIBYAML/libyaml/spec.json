@@ -1,0 +1,24 @@
+{
+  "name": "libyaml",
+  "measurement": {"warmups": 1, "runs": 5},
+  "source": "LIBYAML",
+  "tags": [
+    "parser",
+    "real"
+  ],
+  "argv": [
+    "--corpus",
+    "bench/LIBYAML/libyaml/corpus/kubernetes-alertmanagerconfig-crd.yaml",
+    "bench/LIBYAML/libyaml/corpus/kubernetes-prometheus-rules.yaml",
+    "bench/LIBYAML/libyaml/corpus/kubernetes-prometheus.yaml"
+  ],
+  "check": {
+    "rc": 0
+  },
+  "note": "Parse the pinned real Kubernetes YAML corpus (kube-prometheus Apache-2.0); default 64 full-corpus iterations",
+  "scale": {
+    "default": 64,
+    "fast": 8,
+    "c": "argv"
+  }
+}

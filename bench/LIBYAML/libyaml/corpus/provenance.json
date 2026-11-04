@@ -1,0 +1,28 @@
+{
+  "project": "kube-prometheus",
+  "repository": "https://github.com/prometheus-operator/kube-prometheus",
+  "commit": "b6c2f62b287524652592e6e2f7ea0d3054cb8ac6",
+  "license": "Apache-2.0",
+  "license_file": "LICENSE",
+  "note": "Unmodified Kubernetes YAML documents, pinned by commit. Each file is a single-document YAML input parsed once per benchmark iteration in the listed order.",
+  "files": [
+    {
+      "path": "kubernetes-alertmanagerconfig-crd.yaml",
+      "upstream": "manifests/setup/0alertmanagerConfigCustomResourceDefinition.yaml",
+      "bytes": 768244,
+      "sha256": "19a77db958f9b710ad0528f927e2e27de7f4a31acd8d0257e42c249e701fda94"
+    },
+    {
+      "path": "kubernetes-prometheus-rules.yaml",
+      "upstream": "manifests/prometheus-prometheusRule.yaml",
+      "bytes": 17233,
+      "sha256": "5469dcbc360b7a5487a4e6625b955c98d3504728393acf8a6e531a04cf398c16"
+    },
+    {
+      "path": "kubernetes-prometheus.yaml",
+      "upstream": "manifests/prometheus-prometheus.yaml",
+      "bytes": 1339,
+      "sha256": "91540194914f7d445904905866e9a5105f01e7908229003e39ee2c5c206c5c73"
+    }
+  ]
+}

@@ -1,0 +1,462 @@
+from libyaml.yaml.parser import Parser, parser_parse;
+from libyaml.yaml.types import CollectionStyle, ErrorKind, Event, EventData, EventKind,
+    Mark, ParserError, ScalarStyle, TagDirective, VersionDirective, event_delete,
+    mark_new, tag_directive_delete;
+from std.core.vec import Vec;
+
+// Document composer derived from libyaml 0.2.5 loader.c.
+//
+// Each load builds one independent document: a one-based node table, per-node
+// item/pair edges for sequences and mappings, and a per-document anchor table.
+// Aliases only add an edge to the referenced node id, so shared and cyclic
+// graphs survive without copying.  The returned Document owns all nodes, tags
+// and byte buffers and remains valid after the parser is deleted.
+
+const TAG_STR: str = "tag:yaml.org,2002:str";
+const TAG_SEQ: str = "tag:yaml.org,2002:seq";
+const TAG_MAP: str = "tag:yaml.org,2002:map";
+
+pub enum NodeKind {
+    Scalar,
+    Sequence,
+    Mapping,
+}
+
+pub struct NodePair {
+    pub key: i32,
+    pub value: i32,
+}
+
+pub enum NodeData {
+    Scalar {
+        value: Vec<u8>,
+        style: ScalarStyle,
+    },
+    Sequence {
+        items: Vec<i32>,
+        style: CollectionStyle,
+    },
+    Mapping {
+        pairs: Vec<NodePair>,
+        style: CollectionStyle,
+    },
+}
+
+pub struct Node {
+    pub kind: NodeKind,
+    pub tag: Vec<u8>,
+    pub start: Mark,
+    pub end: Mark,
+    pub data: NodeData,
+}
+
+pub struct Anchor {
+    pub name: Vec<u8>,
+    pub node: i32,
+    pub mark: Mark,
+}
+
+pub struct Document {
+    pub nodes: Vec<Node>,
+    pub version: Option<VersionDirective>,
+    pub tags: Vec<TagDirective>,
+    pub start_implicit: bool,
+    pub end_implicit: bool,
+    pub start: Mark,
+    pub end: Mark,
+}
+
+fn zero_mark() -> Mark {
+    mark_new(0u64, 0u64, 0u64)
+}
+
+fn bytes_from(text: str) -> Vec<u8> {
+    let result: Vec<u8> = Vec<u8>.with_capacity(text.as_slice().len());
+    result.extend_from_slice(text.as_slice());
+    result
+}
+
+fn bytes_equal(left: Vec<u8>, right: Vec<u8>) -> bool {
+    if left.len() != right.len() {
+        return false;
+    }
+    let index = 0u64;
+    while index < left.len() {
+        if left[index] != right[index] {
+            return false;
+        }
+        index += 1u64;
+    };
+    true
+}
+
+fn drop_option_bytes(value: Option<Vec<u8>>&) {
+    match value.take() {
+        Some(bytes) => bytes.drop(),
+        None => {},
+    }
+}
+
+fn set_composer_error(parser: Parser&, problem: str, problem_mark: Mark) -> ParserError {
+    let error = ParserError(
+        kind=ErrorKind.Composer,
+        problem=problem_mark,
+        context=zero_mark(),
+        problem_text=problem,
+        context_text="",
+        problem_offset=0u64,
+        problem_value=0i32,
+    );
+    parser.error = Option<ParserError>.Some(error);
+    error
+}
+
+fn set_composer_error_context(parser: Parser&, context: str, context_mark: Mark,
+        problem: str, problem_mark: Mark) -> ParserError {
+    let error = ParserError(
+        kind=ErrorKind.Composer,
+        problem=problem_mark,
+        context=context_mark,
+        problem_text=problem,
+        context_text=context,
+        problem_offset=0u64,
+        problem_value=0i32,
+    );
+    parser.error = Option<ParserError>.Some(error);
+    error
+}
+
+fn resolve_tag(tag: Option<Vec<u8>>, default_tag: str) -> Vec<u8> {
+    match tag {
+        Some(value) => {
+            if value.len() == 1u64 && value[0u64] == 33u8 {
+                value.drop();
+                return bytes_from(default_tag);
+            }
+            value
+        },
+        None => bytes_from(default_tag),
+    }
+}
+
+fn find_anchor(aliases: Vec<Anchor>&, name: Vec<u8>) -> Option<i32> {
+    let index = 0u64;
+    while index < aliases.len() {
+        if bytes_equal(aliases[index].name, name) {
+            return Option<i32>.Some(aliases[index].node);
+        }
+        index += 1u64;
+    };
+    Option<i32>.None
+}
+
+fn drop_aliases(aliases: Vec<Anchor>&) {
+    let index = 0u64;
+    while index < aliases.len() {
+        aliases[index].name.drop();
+        index += 1u64;
+    };
+    aliases.drop();
+}
+
+fn register_anchor(parser: Parser&, document: Document&, aliases: Vec<Anchor>&,
+        index: u64, anchor: Option<Vec<u8>>) -> Result<(), ParserError> {
+    match anchor {
+        Some(name) => {
+            let name_moved = false;
+            defer { if !name_moved { name.drop(); } };
+            let node_mark: Mark = document.nodes[index - 1u64].start;
+            let position = 0u64;
+            while position < aliases.len() {
+                if bytes_equal(aliases[position].name, name) {
+                    return Result<(), ParserError>.Err(set_composer_error_context(
+                        parser,
+                        "found duplicate anchor; first occurrence",
+                        aliases[position].mark,
+                        "second occurrence",
+                        node_mark,
+                    ));
+                }
+                position += 1u64;
+            };
+            aliases.push(Anchor(name=name, node=i32(index), mark=node_mark));
+            name_moved = true;
+            Result<(), ParserError>.Ok(val=())
+        },
+        None => Result<(), ParserError>.Ok(val=()),
+    }
+}
+
+fn add_node(document: Document&, context: Vec<i32>&, index: i32) -> Result<(), ParserError> {
+    if context.len() == 0u64 {
+        return Result<(), ParserError>.Ok(val=());
+    }
+    let parent: u64 = u64(context[context.len() - 1u64]) - 1u64;
+    match &document.nodes[parent].data {
+        NodeData.Sequence(items, style) => {
+            items.push(index);
+            return Result<(), ParserError>.Ok(val=());
+        },
+        NodeData.Mapping(pairs, style) => {
+            if pairs.len() > 0u64 {
+                let last: u64 = pairs.len() - 1u64;
+                if pairs[last].key != 0i32 && pairs[last].value == 0i32 {
+                    pairs[last].value = index;
+                    return Result<(), ParserError>.Ok(val=());
+                }
+            }
+            pairs.push(NodePair(key=index, value=0i32));
+            return Result<(), ParserError>.Ok(val=());
+        },
+        NodeData.Scalar(value, style) => {
+            @panic("loader parent node is not a collection");
+        },
+    }
+}
+
+fn document_end_implicit(event: Event&) -> bool {
+    match &event.data {
+        EventData.DocumentEnd(implicit) => *implicit,
+        _ => false,
+    }
+}
+
+fn load_nodes(parser: Parser&, document: Document&, aliases: Vec<Anchor>&,
+        context: Vec<i32>&) -> Result<(), ParserError> {
+    loop {
+        let event = match parser_parse(parser) {
+            Ok(Some(value)) => value,
+            Ok(None) => {
+                return Result<(), ParserError>.Err(set_composer_error(
+                    parser, "did not find expected <document end>", zero_mark()));
+            },
+            Err(error) => return Result<(), ParserError>.Err(error),
+        };
+        if event.kind == EventKind.DocumentEnd {
+            document.end_implicit = document_end_implicit(&event);
+            document.end = event.end;
+            event_delete(&event);
+            return Result<(), ParserError>.Ok(val=());
+        }
+        if event.kind == EventKind.Alias {
+            let anchor_name: Vec<u8> = Vec<u8>.new();
+            match &event.data {
+                EventData.Alias(anchor) => anchor_name = *anchor,
+                _ => {},
+            }
+            let target = find_anchor(aliases, anchor_name);
+            match target {
+                Some(index) => {
+                    event_delete(&event);
+                    add_node(document, context, index)?;
+                },
+                None => {
+                    let problem_mark: Mark = event.start;
+                    event_delete(&event);
+                    return Result<(), ParserError>.Err(set_composer_error(
+                        parser, "found undefined alias", problem_mark));
+                },
+            }
+            continue;
+        }
+        if event.kind == EventKind.Scalar {
+            let value: Vec<u8> = Vec<u8>.new();
+            let style: ScalarStyle = ScalarStyle.Plain;
+            let tag: Option<Vec<u8>> = Option<Vec<u8>>.None;
+            let anchor: Option<Vec<u8>> = Option<Vec<u8>>.None;
+            match &event.data {
+                EventData.Scalar(event_anchor, event_tag, event_value, plain, quoted, event_style) => {
+                    value = *event_value;
+                    style = *event_style;
+                    tag = event_tag.take();
+                    anchor = event_anchor.take();
+                },
+                _ => {},
+            }
+            let resolved: Vec<u8> = resolve_tag(tag, TAG_STR);
+            let node = Node(
+                kind=NodeKind.Scalar,
+                tag=resolved,
+                start=event.start,
+                end=event.end,
+                data=NodeData.Scalar(value=value, style=style),
+            );
+            document.nodes.push(node);
+            let index: u64 = document.nodes.len();
+            event.data = EventData.Empty;
+            event_delete(&event);
+            register_anchor(parser, document, aliases, index, anchor)?;
+            add_node(document, context, i32(index))?;
+            continue;
+        }
+        if event.kind == EventKind.SequenceStart {
+            let tag: Option<Vec<u8>> = Option<Vec<u8>>.None;
+            let anchor: Option<Vec<u8>> = Option<Vec<u8>>.None;
+            let style: CollectionStyle = CollectionStyle.Block;
+            match &event.data {
+                EventData.SequenceStart(event_anchor, event_tag, implicit, event_style) => {
+                    tag = event_tag.take();
+                    anchor = event_anchor.take();
+                    style = *event_style;
+                },
+                _ => {},
+            }
+            let resolved: Vec<u8> = resolve_tag(tag, TAG_SEQ);
+            let node = Node(
+                kind=NodeKind.Sequence,
+                tag=resolved,
+                start=event.start,
+                end=event.end,
+                data=NodeData.Sequence(items=Vec<i32>.new(), style=style),
+            );
+            document.nodes.push(node);
+            let index: u64 = document.nodes.len();
+            event.data = EventData.Empty;
+            event_delete(&event);
+            register_anchor(parser, document, aliases, index, anchor)?;
+            add_node(document, context, i32(index))?;
+            context.push(i32(index));
+            continue;
+        }
+        if event.kind == EventKind.SequenceEnd {
+            let context_index: u64 = context.len() - 1u64;
+            let node_index: u64 = u64(context[context_index]) - 1u64;
+            document.nodes[node_index].end = event.end;
+            context.truncate(context_index);
+            event_delete(&event);
+            continue;
+        }
+        if event.kind == EventKind.MappingStart {
+            let tag: Option<Vec<u8>> = Option<Vec<u8>>.None;
+            let anchor: Option<Vec<u8>> = Option<Vec<u8>>.None;
+            let style: CollectionStyle = CollectionStyle.Block;
+            match &event.data {
+                EventData.MappingStart(event_anchor, event_tag, implicit, event_style) => {
+                    tag = event_tag.take();
+                    anchor = event_anchor.take();
+                    style = *event_style;
+                },
+                _ => {},
+            }
+            let resolved: Vec<u8> = resolve_tag(tag, TAG_MAP);
+            let node = Node(
+                kind=NodeKind.Mapping,
+                tag=resolved,
+                start=event.start,
+                end=event.end,
+                data=NodeData.Mapping(pairs=Vec<NodePair>.new(), style=style),
+            );
+            document.nodes.push(node);
+            let index: u64 = document.nodes.len();
+            event.data = EventData.Empty;
+            event_delete(&event);
+            register_anchor(parser, document, aliases, index, anchor)?;
+            add_node(document, context, i32(index))?;
+            context.push(i32(index));
+            continue;
+        }
+        if event.kind == EventKind.MappingEnd {
+            let context_index: u64 = context.len() - 1u64;
+            let node_index: u64 = u64(context[context_index]) - 1u64;
+            document.nodes[node_index].end = event.end;
+            context.truncate(context_index);
+            event_delete(&event);
+            continue;
+        }
+        let problem_mark: Mark = event.start;
+        event_delete(&event);
+        return Result<(), ParserError>.Err(set_composer_error(
+            parser, "did not find expected <document end>", problem_mark));
+    };
+}
+
+pub fn loader_load(parser: Parser&) -> Result<Option<Document>, ParserError> {
+    if !parser.stream_start_produced {
+        match parser_parse(parser) {
+            Ok(Some(event)) => { event_delete(&event); },
+            Ok(None) => { return Result<Option<Document>, ParserError>.Ok(val=Option<Document>.None); },
+            Err(error) => { return Result<Option<Document>, ParserError>.Err(error); },
+        }
+    }
+    if parser.stream_end_produced {
+        return Result<Option<Document>, ParserError>.Ok(val=Option<Document>.None);
+    }
+    let event = match parser_parse(parser) {
+        Ok(Some(value)) => value,
+        Ok(None) => return Result<Option<Document>, ParserError>.Ok(val=Option<Document>.None),
+        Err(error) => return Result<Option<Document>, ParserError>.Err(error),
+    };
+    if event.kind == EventKind.StreamEnd {
+        event_delete(&event);
+        return Result<Option<Document>, ParserError>.Ok(val=Option<Document>.None);
+    }
+    if event.kind != EventKind.DocumentStart {
+        let problem_mark: Mark = event.start;
+        event_delete(&event);
+        return Result<Option<Document>, ParserError>.Err(set_composer_error(
+            parser, "did not find expected <document start>", problem_mark));
+    }
+    let version: Option<VersionDirective> = Option<VersionDirective>.None;
+    let tags: Vec<TagDirective> = Vec<TagDirective>.new();
+    let start_implicit: bool = false;
+    let start: Mark = event.start;
+    match &event.data {
+        EventData.DocumentStart(event_version, event_tags, implicit) => {
+            version = *event_version;
+            tags = *event_tags;
+            start_implicit = *implicit;
+        },
+        _ => {},
+    }
+    event.data = EventData.Empty;
+    event_delete(&event);
+    let document = Document(
+        nodes=Vec<Node>.new(),
+        version=version,
+        tags=tags,
+        start_implicit=start_implicit,
+        end_implicit=false,
+        start=start,
+        end=start,
+    );
+    let aliases: Vec<Anchor> = Vec<Anchor>.new();
+    let context: Vec<i32> = Vec<i32>.new();
+    match load_nodes(parser, &document, &aliases, &context) {
+        Ok(_) => {
+            drop_aliases(&aliases);
+            context.drop();
+            Result<Option<Document>, ParserError>.Ok(val=Option<Document>.Some(document))
+        },
+        Err(error) => {
+            drop_aliases(&aliases);
+            context.drop();
+            document_delete(&document);
+            Result<Option<Document>, ParserError>.Err(error)
+        },
+    }
+}
+
+fn release_node(node: Node&) {
+    match &node.data {
+        NodeData.Scalar(value, style) => { value.drop(); },
+        NodeData.Sequence(items, style) => { items.drop(); },
+        NodeData.Mapping(pairs, style) => { pairs.drop(); },
+    }
+    node.tag.drop();
+}
+
+pub fn document_delete(document: Document&) {
+    let index = 0u64;
+    while index < document.nodes.len() {
+        release_node(&document.nodes[index]);
+        index += 1u64;
+    };
+    document.nodes.drop();
+    let tag_index = 0u64;
+    while tag_index < document.tags.len() {
+        tag_directive_delete(&document.tags[tag_index]);
+        tag_index += 1u64;
+    };
+    document.tags.drop();
+    document.version = Option<VersionDirective>.None;
+}
