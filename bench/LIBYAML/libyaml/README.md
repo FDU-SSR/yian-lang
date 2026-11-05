@@ -21,6 +21,16 @@ so checksums and timings from a different corpus are not comparable.
 The YIAN tree uses sibling indices and a tail index per node, so appending a
 mapping/sequence child is O(1).
 
+The reader decodes UTF-8 input in two ways: a maximal run of TAB, LF, CR or
+printable ASCII bytes (0x20-0x7E) is reserved and copied into the decoded
+buffer with one length update, while non-ASCII bytes and control bytes still
+pass through the per-character decoder that validates encodings, character
+classes, marks and reader errors. UTF-16 input always uses that decoder. The
+scanner classifies blanks and breaks from one cached octet, and
+`read_current` copies a single-byte printable character and advances the
+reader position without re-reading its width; multi-byte characters keep the
+width-driven path.
+
 ## Workload
 
 - corpus: three real Kubernetes YAML documents from kube-prometheus
@@ -115,11 +125,23 @@ Reader and input:
 | `reader.c::yaml_parser_set_reader_error` | `fail` |
 | `yaml_private.h` `INPUT_RAW_BUFFER_SIZE`, `INPUT_BUFFER_SIZE`, `MAX_FILE_SIZE` | `RAW_BUFFER_CAPACITY`, `BUFFER_CAPACITY`, `MAX_FILE_SIZE` |
 
+`legal_ascii_run` and `append_ascii_run` have no upstream counterpart: they
+copy a run of already-valid ASCII bytes into the decoded buffer in one
+reservation, leaving non-ASCII and invalid bytes to `decode_char` and
+`append_decoded`.
+
+`Reader.cursor` is a native pointer to the decoded buffer at `position`. It is
+rebuilt by `reader_new` and `reader_update_buffer` and advanced by
+`reader_skip`, `reader_skip_line`, `read_current` and `read_line`. `byte_at`
+reads through the cursor, so character access does not re-check the buffer
+length; `reader.unread` is the availability contract and hot call sites compare
+it directly before calling `cache`.
+
 Scanner:
 
 | Upstream | YIAN |
 | --- | --- |
-| `yaml_parser_scan` | `scanner_scan`, `scanner_peek` |
+| `yaml_parser_scan` | `scanner_scan`, `scanner_scan_into`, `scanner_peek`, `scanner_ensure`, `scanner_head`, `scanner_skip` |
 | `yaml_parser_fetch_more_tokens`, `yaml_parser_fetch_next_token` | `fetch_more_tokens`, `fetch_next_token` |
 | `yaml_parser_set_scanner_error` | `set_scanner_error` |
 | `yaml_parser_stale_simple_keys`, `yaml_parser_save_simple_key`, `yaml_parser_remove_simple_key` | `stale_simple_keys`, `save_simple_key`, `remove_simple_key` |
@@ -133,15 +155,30 @@ Scanner:
 | `yaml_parser_scan_block_scalar`, `scan_block_scalar_breaks` | Functions of the same names. |
 | `yaml_parser_scan_flow_scalar` | `scan_flow_scalar` |
 | `yaml_parser_scan_plain_scalar` | `scan_plain_scalar` |
-| `CACHE`, `SKIP`, `SKIP_LINE`, `READ`, `READ_LINE` | `cache`, `skip`, `skip_line`, `read_current`, `read_line` (character movement delegates to `reader_skip`/`reader_skip_line`). |
+| `CACHE`, `SKIP`, `SKIP_LINE`, `READ`, `READ_LINE` | `cache`, `skip`, `skip_line`, `read_current`, `read_line` (character movement delegates to `reader_skip`/`reader_skip_line`; hot loops compare `unread` directly and call `cache` only when it is short). |
 | `TOKEN_INIT` and the token initializer macros | `empty_token` plus `Token`/`TokenData` construction at the fetch site. |
 | `CHECK`, `CHECK_AT`, `IS_*`, `AS_*`, `WIDTH` | `check`, `check_at`, `is_*`, `as_*`, `width_at`. |
+
+`is_blank_at`, `is_breakz_at` and `is_blankz_at` test the ASCII candidates of
+their upstream character-class macros with one `byte_at` read and keep the
+multi-byte branches for C2 85 and E2 80 A8/A9. `read_current` copies a
+single-byte printable character directly and advances the reader mark and
+position as `reader_skip` would, without re-reading the octet. `scan_plain_scalar`
+copies a run of ordinary printable ASCII with `plain_ascii_run` and
+`append_plain_run` (one reservation, one mark advance), leaving `:` `#` `,` `[`
+`]` `{` `}`, blanks, breaks and column-zero document indicators to the
+character path.
+
+Scanner internals report failure as `Result<_, i32>` and keep the first
+`ParserError` in `Scanner.error`; token producers write into a `Token&` and
+`fetch_*` enqueues that token. `scanner_skip` advances the queue head without
+copying the consumed token.
 
 Parser:
 
 | Upstream | YIAN |
 | --- | --- |
-| `yaml_parser_parse` | `parser_parse` |
+| `yaml_parser_parse` | `parser_parse`, `parser_parse_ref`, `parser_parse_into` |
 | `yaml_parser_state_machine` | `state_machine` |
 | `yaml_parser_set_parser_error`, `yaml_parser_set_parser_error_context` | `set_parser_error`, `set_parser_error_context` |
 | `yaml_parser_parse_stream_start` | `parse_stream_start` |
@@ -151,15 +188,20 @@ Parser:
 | `yaml_parser_parse_flow_sequence_entry`, `parse_flow_sequence_entry_mapping_key/value/end`, `parse_flow_mapping_key`, `parse_flow_mapping_value` | Functions of the same names. |
 | `yaml_parser_process_empty_scalar` | `empty_scalar_event` |
 | `yaml_parser_process_directives`, `yaml_parser_append_tag_directive` | `process_directives`, `append_tag_directive` |
-| `PEEK_TOKEN`, `SKIP_TOKEN` | `require_token`/`take_token`/`skip_token` built on `scanner_peek`/`scanner_scan`. |
+| `PEEK_TOKEN`, `SKIP_TOKEN` | `require_token` (`scanner_ensure` + `scanner_head`), `take_token` (`scanner_scan_into` into a `Token&`), `skip_token` (`scanner_skip`). |
 | `MAX_NESTING_LEVEL`, `yaml_get_max_nest_level`, `yaml_set_max_nest_level` | `Limits` (`limits_new`, `limits_get`, `limits_set`) |
-| Event initializer macros | `Event`/`EventData` construction at the state function. |
+| Event initializer macros | `ok_event` plus `Event`/`EventData` construction at the state function. |
+
+Parser state functions write the event into `Parser.event` through `ok_event`
+and return a status with the first error kept in `Parser.error`.
+`parser_parse_ref` exposes that slot to the loader without copying it;
+`parser_parse_into` copies it for callers that need an owned event.
 
 Loader:
 
 | Upstream | YIAN |
 | --- | --- |
-| `yaml_parser_load` | `loader_load` |
+| `yaml_parser_load` | `loader_load` (consumes `parser_parse_ref`) |
 | `yaml_parser_load_document` | `loader_load` plus `load_nodes` |
 | `yaml_parser_load_nodes` | `load_nodes` |
 | `yaml_parser_load_alias` | Alias branch of `load_nodes` plus `add_node` |

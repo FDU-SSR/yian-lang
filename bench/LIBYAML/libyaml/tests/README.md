@@ -55,7 +55,7 @@ Both programs accept:
 
 `--inspect` uses a fresh parser for the requested mode and consumes the complete
 stream. The default `--file PATH` form keeps the first-document tree checksum
-used by the generated benchmark corpus. Exit codes are `0` for a completed
+used by the vendored benchmark corpus. Exit codes are `0` for a completed
 observation, `1` for a reader/scanner/parser/composer error, `2` for usage, file
 or tool errors, and `3` for the cycle rejection of the checksum entry point.
 

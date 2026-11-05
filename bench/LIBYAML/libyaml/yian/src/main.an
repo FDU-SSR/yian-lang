@@ -7,9 +7,11 @@
 // tokens, events or documents for the complete stream.
 
 from libyaml.yaml.loader import Document, NodeData, document_delete, loader_load;
-from libyaml.yaml.parser import Parser, parser_delete, parser_new, parser_parse;
+from libyaml.yaml.parser import Parser, parser_delete, parser_error, parser_new,
+    parser_parse_ref;
 from libyaml.yaml.reader import Input;
-from libyaml.yaml.scanner import Scanner, scanner_delete, scanner_new, scanner_scan;
+from libyaml.yaml.scanner import Scanner, scanner_delete, scanner_error, scanner_new,
+    scanner_scan_into;
 from libyaml.yaml.types import CollectionStyle, Encoding, ErrorKind, Event, EventData,
     EventKind, Mark, ParserError, ScalarStyle, Token, TokenData, TokenKind,
     VersionDirective, event_delete, limits_new, token_delete;
@@ -700,30 +702,31 @@ fn inspect_tokens(bytes: u8[], source: FileChunk&, chunk: u64) -> i32 {
     out.truncate(0u64);
     let code: i32 = 0i32;
     loop {
-        match scanner_scan(&scanner) {
-            Ok(token) => {
-                match token {
-                    Some(value) => {
-                        append_token(&out, &value);
-                        emit(&out);
-                        out.truncate(0u64);
-                        let done: bool = value.kind == TokenKind.StreamEnd;
-                        let last: Token = value;
-                        token_delete(&last);
-                        if done {
-                            break;
-                        }
-                    },
-                    None => { break; },
-                }
-            },
-            Err(error) => {
-                append_error(&out, &error);
-                emit(&out);
-                out.truncate(0u64);
-                code = 1i32;
+        let token: Token = Token(
+            kind=TokenKind.StreamEnd,
+            start=Mark(index=0u64, line=0u64, column=0u64),
+            end=Mark(index=0u64, line=0u64, column=0u64),
+            data=TokenData.Empty,
+        );
+        let status: i32 = scanner_scan_into(&scanner, &token);
+        if status == 1i32 {
+            append_token(&out, &token);
+            emit(&out);
+            out.truncate(0u64);
+            let done: bool = token.kind == TokenKind.StreamEnd;
+            token_delete(&token);
+            if done {
                 break;
-            },
+            }
+        } elif status == 0i32 {
+            break;
+        } else {
+            let error: ParserError = scanner_error(&scanner);
+            append_error(&out, &error);
+            emit(&out);
+            out.truncate(0u64);
+            code = 1i32;
+            break;
         }
     };
     if code == 0i32 {
@@ -750,15 +753,15 @@ fn inspect_events(bytes: u8[], source: FileChunk&, chunk: u64) -> i32 {
     out.truncate(0u64);
     let code: i32 = 0i32;
     loop {
-        match parser_parse(&parser) {
+        match parser_parse_ref(&parser) {
             Ok(value) => {
                 match value {
                     Some(event) => {
-                        append_event(&out, &event);
+                        append_event(&out, event);
                         emit(&out);
                         out.truncate(0u64);
                         let done: bool = event.kind == EventKind.StreamEnd;
-                        event_delete(&event);
+                        event_delete(event);
                         if done {
                             break;
                         }
@@ -766,7 +769,8 @@ fn inspect_events(bytes: u8[], source: FileChunk&, chunk: u64) -> i32 {
                     None => { break; },
                 }
             },
-            Err(error) => {
+            Err(_) => {
+                let error: ParserError = parser_error(&parser);
                 append_error(&out, &error);
                 emit(&out);
                 out.truncate(0u64);

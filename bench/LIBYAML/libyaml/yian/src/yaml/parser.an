@@ -1,5 +1,6 @@
 from libyaml.yaml.reader import Input;
-from libyaml.yaml.scanner import Scanner, scanner_delete, scanner_new, scanner_peek, scanner_scan;
+from libyaml.yaml.scanner import Scanner, scanner_delete, scanner_ensure, scanner_error,
+    scanner_head, scanner_new, scanner_peek, scanner_scan, scanner_scan_into, scanner_skip;
 from libyaml.yaml.types import CollectionStyle, Encoding, ErrorKind, Event, EventData,
     EventKind, Limits, Mark, ParserError, ParserState, ScalarStyle, TagDirective, Token,
     TokenData, TokenKind, VersionDirective, mark_new, tag_directive_delete, token_delete;
@@ -21,12 +22,68 @@ pub struct Parser {
     pub tag_directives: Vec<TagDirective>,
     pub stream_start_produced: bool,
     pub stream_end_produced: bool,
+    // Current event, written in place by the parse state functions; the caller
+    // takes ownership of the payloads it reads out of this slot.
+    pub event: Event,
     pub error: Option<ParserError>,
 }
 
 fn zero_mark() -> Mark {
     mark_new(0u64, 0u64, 0u64)
 }
+
+fn fail_status(_error: ParserError) -> i32 {
+    0i32
+}
+
+fn empty_value_token() -> Token {
+    Token(kind=TokenKind.StreamEnd, start=zero_mark(), end=zero_mark(), data=TokenData.Empty)
+}
+
+// Store the constructed event in the parser slot.  This keeps the state
+// functions at a register-sized Result while the event payload stays in one
+// place, mirroring C's in-place event construction.
+fn ok_event(parser: Parser&, value: Event) -> Result<(), i32> {
+    parser.event = value;
+    Result<(), i32>.Ok(val=())
+}
+// Internal error propagation follows the C parser: failures return a status
+// flag and the first ParserError stays in parser.error.
+fn fail_unit(_error: ParserError) -> Result<(), i32> {
+    Result<(), i32>.Err(msg=1i32)
+}
+
+fn fail_token(_error: ParserError) -> Result<Token, i32> {
+    Result<Token, i32>.Err(msg=1i32)
+}
+
+fn fail_token_ref(_error: ParserError) -> Result<Token&, i32> {
+    Result<Token&, i32>.Err(msg=1i32)
+}
+
+
+fn fail_directives(_error: ParserError) -> Result<(Option<VersionDirective>, Vec<TagDirective>), i32> {
+    Result<(Option<VersionDirective>, Vec<TagDirective>), i32>.Err(msg=1i32)
+}
+
+fn take_error(parser: Parser&) -> ParserError {
+    let error: ParserError = ParserError(
+        kind=ErrorKind.Parser,
+        problem=zero_mark(),
+        context=zero_mark(),
+        problem_text="internal parser error",
+        context_text="",
+        problem_offset=0u64,
+        problem_value=0i32,
+    );
+    match &parser.error {
+        Some(value) => { error = *value; },
+        None => {},
+    }
+    error
+}
+
+
 
 fn copy_bytes(source: Vec<u8>&) -> Vec<u8> {
     let result: Vec<u8> = Vec<u8>.with_capacity(source.len());
@@ -124,34 +181,35 @@ fn set_parser_error_context(parser: Parser&, context: str, context_mark: Mark,
 // token out of the scanner queue so payload ownership can move into an event.
 // ---------------------------------------------------------------------------
 
-fn require_token(parser: Parser&) -> Result<Token&, ParserError> {
-    match scanner_peek(&parser.scanner) {
-        Ok(Some(token)) => Result<Token&, ParserError>.Ok(val=token),
-        Ok(None) => Result<Token&, ParserError>.Err(set_parser_error(
+fn require_token(parser: Parser&) -> Result<Token&, i32> {
+    match scanner_ensure(&parser.scanner) {
+        1i32 => Result<Token&, i32>.Ok(val=scanner_head(&parser.scanner)),
+        0i32 => fail_token_ref(set_parser_error(
             parser, "did not find expected node content", zero_mark())),
-        Err(error) => {
+        _ => {
+            let error: ParserError = scanner_error(&parser.scanner);
             parser.error = Option<ParserError>.Some(error);
-            Result<Token&, ParserError>.Err(error)
+            fail_token_ref(error)
         },
     }
 }
 
-fn take_token(parser: Parser&) -> Result<Token, ParserError> {
-    match scanner_scan(&parser.scanner) {
-        Ok(Some(token)) => Result<Token, ParserError>.Ok(val=token),
-        Ok(None) => Result<Token, ParserError>.Err(set_parser_error(
+fn take_token(parser: Parser&, token: Token&) -> i32 {
+    match scanner_scan_into(&parser.scanner, token) {
+        1i32 => 1i32,
+        0i32 => fail_status(set_parser_error(
             parser, "did not find expected node content", zero_mark())),
-        Err(error) => {
+        _ => {
+            let error: ParserError = scanner_error(&parser.scanner);
             parser.error = Option<ParserError>.Some(error);
-            Result<Token, ParserError>.Err(error)
+            0i32
         },
     }
 }
 
-fn skip_token(parser: Parser&) -> Result<(), ParserError> {
-    let token = take_token(parser)?;
-    token.data = TokenData.Empty;
-    Result<(), ParserError>.Ok(val=())
+fn skip_token(parser: Parser&) -> Result<(), i32> {
+    scanner_skip(&parser.scanner);
+    Result<(), i32>.Ok(val=())
 }
 
 fn push_state(parser: Parser&, state: ParserState) {
@@ -206,7 +264,7 @@ fn empty_scalar_event(mark: Mark) -> Event {
 // ---------------------------------------------------------------------------
 
 fn append_tag_directive(parser: Parser&, handle: Vec<u8>, prefix: Vec<u8>,
-        allow_duplicates: bool, mark: Mark) -> Result<(), ParserError> {
+        allow_duplicates: bool, mark: Mark) -> Result<(), i32> {
     let handle_moved = false;
     let prefix_moved = false;
     defer { if !handle_moved { handle.drop(); } };
@@ -215,9 +273,9 @@ fn append_tag_directive(parser: Parser&, handle: Vec<u8>, prefix: Vec<u8>,
     while index < parser.tag_directives.len() {
         if bytes_equal(parser.tag_directives[index].handle, handle) {
             if allow_duplicates {
-                return Result<(), ParserError>.Ok(val=());
+                return Result<(), i32>.Ok(val=());
             }
-            return Result<(), ParserError>.Err(set_parser_error(
+            return fail_unit(set_parser_error(
                 parser, "found duplicate %TAG directive", mark));
         }
         index += 1u64;
@@ -225,10 +283,10 @@ fn append_tag_directive(parser: Parser&, handle: Vec<u8>, prefix: Vec<u8>,
     parser.tag_directives.push(TagDirective(handle=handle, prefix=prefix));
     handle_moved = true;
     prefix_moved = true;
-    Result<(), ParserError>.Ok(val=())
+    Result<(), i32>.Ok(val=())
 }
 
-fn process_directives(parser: Parser&) -> Result<(Option<VersionDirective>, Vec<TagDirective>), ParserError> {
+fn process_directives(parser: Parser&) -> Result<(Option<VersionDirective>, Vec<TagDirective>), i32> {
     let version: Option<VersionDirective> = Option<VersionDirective>.None;
     let tags: Vec<TagDirective> = Vec<TagDirective>.new();
     let tags_moved = false;
@@ -240,7 +298,8 @@ fn process_directives(parser: Parser&) -> Result<(Option<VersionDirective>, Vec<
             break;
         }
         let start: Mark = token.start;
-        let taken = take_token(parser)?;
+        let taken: Token = empty_value_token();
+        if take_token(parser, &taken) == 0i32 { return Result<(Option<VersionDirective>, Vec<TagDirective>), i32>.Err(msg=1i32); }
         if kind == TokenKind.VersionDirective {
             let major: i32 = 0i32;
             let minor: i32 = 0i32;
@@ -253,13 +312,13 @@ fn process_directives(parser: Parser&) -> Result<(Option<VersionDirective>, Vec<
             }
             match &version {
                 Some(_) => {
-                    return Result<(Option<VersionDirective>, Vec<TagDirective>), ParserError>.Err(
+                    return fail_directives(
                         set_parser_error(parser, "found duplicate %YAML directive", start));
                 },
                 None => {},
             }
             if major != 1i32 || (minor != 1i32 && minor != 2i32) {
-                return Result<(Option<VersionDirective>, Vec<TagDirective>), ParserError>.Err(
+                return fail_directives(
                     set_parser_error(parser, "found incompatible YAML document", start));
             }
             version = Option<VersionDirective>.Some(VersionDirective(major=major, minor=minor));
@@ -302,7 +361,7 @@ fn process_directives(parser: Parser&) -> Result<(Option<VersionDirective>, Vec<
     append_tag_directive(parser, secondary_handle, secondary_prefix, true, default_mark)?;
     let result: Vec<TagDirective> = tags;
     tags_moved = true;
-    Result<(Option<VersionDirective>, Vec<TagDirective>), ParserError>.Ok(
+    Result<(Option<VersionDirective>, Vec<TagDirective>), i32>.Ok(
         val=(version, result))
 }
 
@@ -310,25 +369,26 @@ fn process_directives(parser: Parser&) -> Result<(Option<VersionDirective>, Vec<
 // State functions.
 // ---------------------------------------------------------------------------
 
-fn parse_stream_start(parser: Parser&) -> Result<Event, ParserError> {
+fn parse_stream_start(parser: Parser&) -> Result<(), i32> {
     let token = require_token(parser)?;
     if token.kind != TokenKind.StreamStart {
-        return Result<Event, ParserError>.Err(set_parser_error(
+        return fail_unit(set_parser_error(
             parser, "did not find expected <stream-start>", token.start));
     }
     let start: Mark = token.start;
-    let taken = take_token(parser)?;
+    let taken: Token = empty_value_token();
+    if take_token(parser, &taken) == 0i32 { return Result<(), i32>.Err(msg=1i32); }
     let encoding: Encoding = match &taken.data {
         TokenData.StreamStart(value) => *value,
         _ => Encoding.Utf8,
     };
     parser.state = ParserState.ImplicitDocumentStart;
     parser.stream_start_produced = true;
-    Result<Event, ParserError>.Ok(val=make_event(
+    ok_event(parser, make_event(
         EventKind.StreamStart, start, start, EventData.StreamStart(encoding=encoding)))
 }
 
-fn parse_document_start(parser: Parser&, implicit: bool) -> Result<Event, ParserError> {
+fn parse_document_start(parser: Parser&, implicit: bool) -> Result<(), i32> {
     if !implicit {
         loop {
             let current = require_token(parser)?;
@@ -349,7 +409,7 @@ fn parse_document_start(parser: Parser&, implicit: bool) -> Result<Event, Parser
         parser.state = ParserState.BlockNode;
         let tags: Vec<TagDirective> = Vec<TagDirective>.new();
         let implicit_flag = true;
-        return Result<Event, ParserError>.Ok(val=make_event(
+        return ok_event(parser, make_event(
             EventKind.DocumentStart, start, start,
             EventData.DocumentStart(
                 version=Option<VersionDirective>.None,
@@ -364,7 +424,7 @@ fn parse_document_start(parser: Parser&, implicit: bool) -> Result<Event, Parser
         defer { if !tags_moved { release_tags(&tags); } };
         let current = require_token(parser)?;
         if current.kind != TokenKind.DocumentStart {
-            return Result<Event, ParserError>.Err(set_parser_error(
+            return fail_unit(set_parser_error(
                 parser, "did not find expected <document start>", current.start));
         }
         let end_mark: Mark = current.end;
@@ -372,7 +432,7 @@ fn parse_document_start(parser: Parser&, implicit: bool) -> Result<Event, Parser
         parser.state = ParserState.DocumentContent;
         skip_token(parser)?;
         tags_moved = true;
-        return Result<Event, ParserError>.Ok(val=make_event(
+        return ok_event(parser, make_event(
             EventKind.DocumentStart, start, end_mark,
             EventData.DocumentStart(version=version, tags=tags, implicit=false)));
     }
@@ -380,11 +440,11 @@ fn parse_document_start(parser: Parser&, implicit: bool) -> Result<Event, Parser
     let start: Mark = token.start;
     let end: Mark = token.end;
     skip_token(parser)?;
-    Result<Event, ParserError>.Ok(val=make_event(
+    ok_event(parser, make_event(
         EventKind.StreamEnd, start, end, EventData.Empty))
 }
 
-fn parse_document_content(parser: Parser&) -> Result<Event, ParserError> {
+fn parse_document_content(parser: Parser&) -> Result<(), i32> {
     let token = require_token(parser)?;
     let kind: TokenKind = token.kind;
     if kind == TokenKind.VersionDirective || kind == TokenKind.TagDirective
@@ -392,12 +452,12 @@ fn parse_document_content(parser: Parser&) -> Result<Event, ParserError> {
             || kind == TokenKind.StreamEnd {
         let mark: Mark = token.start;
         parser.state = pop_state(parser);
-        return Result<Event, ParserError>.Ok(val=empty_scalar_event(mark));
+        return ok_event(parser, empty_scalar_event(mark));
     }
     parse_node(parser, true, false)
 }
 
-fn parse_document_end(parser: Parser&) -> Result<Event, ParserError> {
+fn parse_document_end(parser: Parser&) -> Result<(), i32> {
     let token = require_token(parser)?;
     let start: Mark = token.start;
     let end: Mark = token.start;
@@ -410,24 +470,25 @@ fn parse_document_end(parser: Parser&) -> Result<Event, ParserError> {
     release_tags(&parser.tag_directives);
     parser.tag_directives = Vec<TagDirective>.new();
     parser.state = ParserState.DocumentStart;
-    Result<Event, ParserError>.Ok(val=make_event(
+    ok_event(parser, make_event(
         EventKind.DocumentEnd, start, end, EventData.DocumentEnd(implicit=implicit)))
 }
 
-fn parse_node(parser: Parser&, block: bool, indentless_sequence: bool) -> Result<Event, ParserError> {
+fn parse_node(parser: Parser&, block: bool, indentless_sequence: bool) -> Result<(), i32> {
     let token = require_token(parser)?;
     let kind: TokenKind = token.kind;
     let token_start: Mark = token.start;
     let token_end: Mark = token.end;
     if kind == TokenKind.Alias {
-        let taken = take_token(parser)?;
+        let taken: Token = empty_value_token();
+        if take_token(parser, &taken) == 0i32 { return Result<(), i32>.Err(msg=1i32); }
         let anchor: Vec<u8> = Vec<u8>.new();
         match &taken.data {
             TokenData.Alias(value) => anchor = *value,
             _ => {},
         }
         parser.state = pop_state(parser);
-        return Result<Event, ParserError>.Ok(val=make_event(
+        return ok_event(parser, make_event(
             EventKind.Alias, token_start, token_end, EventData.Alias(anchor=anchor)));
     }
 
@@ -442,7 +503,8 @@ fn parse_node(parser: Parser&, block: bool, indentless_sequence: bool) -> Result
     defer { if !properties_moved { release_properties(&anchor, &tag_handle, &tag_suffix, &tag); } };
 
     if kind == TokenKind.Anchor {
-        let taken = take_token(parser)?;
+        let taken: Token = empty_value_token();
+        if take_token(parser, &taken) == 0i32 { return Result<(), i32>.Err(msg=1i32); }
         match &taken.data {
             TokenData.Anchor(value) => anchor = Option<Vec<u8>>.Some(*value),
             _ => {},
@@ -454,7 +516,8 @@ fn parse_node(parser: Parser&, block: bool, indentless_sequence: bool) -> Result
         if next_kind == TokenKind.Tag {
             let next_start: Mark = next.start;
             let next_end: Mark = next.end;
-            let tag_token = take_token(parser)?;
+            let tag_token: Token = empty_value_token();
+            if take_token(parser, &tag_token) == 0i32 { return Result<(), i32>.Err(msg=1i32); }
             match &tag_token.data {
                 TokenData.Tag(handle, suffix) => {
                     tag_handle = Option<Vec<u8>>.Some(*handle);
@@ -466,7 +529,8 @@ fn parse_node(parser: Parser&, block: bool, indentless_sequence: bool) -> Result
             mut_end = next_end;
         }
     } elif kind == TokenKind.Tag {
-        let taken = take_token(parser)?;
+        let taken: Token = empty_value_token();
+        if take_token(parser, &taken) == 0i32 { return Result<(), i32>.Err(msg=1i32); }
         match &taken.data {
             TokenData.Tag(handle, suffix) => {
                 tag_handle = Option<Vec<u8>>.Some(*handle);
@@ -480,7 +544,8 @@ fn parse_node(parser: Parser&, block: bool, indentless_sequence: bool) -> Result
         let next = require_token(parser)?;
         if next.kind == TokenKind.Anchor {
             let next_end: Mark = next.end;
-            let anchor_token = take_token(parser)?;
+            let anchor_token: Token = empty_value_token();
+            if take_token(parser, &anchor_token) == 0i32 { return Result<(), i32>.Err(msg=1i32); }
             match &anchor_token.data {
                 TokenData.Anchor(value) => anchor = Option<Vec<u8>>.Some(*value),
                 _ => {},
@@ -517,7 +582,7 @@ fn parse_node(parser: Parser&, block: bool, indentless_sequence: bool) -> Result
                     index += 1u64;
                 };
                 if !found {
-                    return Result<Event, ParserError>.Err(set_parser_error_context(
+                    return fail_unit(set_parser_error_context(
                         parser,
                         "while parsing a node",
                         mut_start,
@@ -546,21 +611,21 @@ fn parse_node(parser: Parser&, block: bool, indentless_sequence: bool) -> Result
             style=CollectionStyle.Block,
         );
         properties_moved = true;
-        return Result<Event, ParserError>.Ok(val=make_event(
+        return ok_event(parser, make_event(
             EventKind.SequenceStart, mut_start, end_mark, data));
     }
     if current_kind == TokenKind.Scalar {
         let end_mark: Mark = current.end;
-        let taken = take_token(parser)?;
         let value: Vec<u8> = Vec<u8>.new();
         let style: ScalarStyle = ScalarStyle.Plain;
-        match &taken.data {
+        match &current.data {
             TokenData.Scalar(data, data_style) => {
                 value = *data;
                 style = *data_style;
             },
             _ => {},
         }
+        skip_token(parser)?;
         let plain_implicit: bool = (style == ScalarStyle.Plain && !has_tag(&tag))
             || tag_is_bang(&tag);
         let quoted_implicit: bool = !has_tag(&tag) && !plain_implicit;
@@ -574,7 +639,7 @@ fn parse_node(parser: Parser&, block: bool, indentless_sequence: bool) -> Result
             style=style,
         );
         properties_moved = true;
-        return Result<Event, ParserError>.Ok(val=make_event(
+        return ok_event(parser, make_event(
             EventKind.Scalar, mut_start, end_mark, data));
     }
     if current_kind == TokenKind.FlowSequenceStart {
@@ -587,7 +652,7 @@ fn parse_node(parser: Parser&, block: bool, indentless_sequence: bool) -> Result
             style=CollectionStyle.Flow,
         );
         properties_moved = true;
-        return Result<Event, ParserError>.Ok(val=make_event(
+        return ok_event(parser, make_event(
             EventKind.SequenceStart, mut_start, end_mark, data));
     }
     if current_kind == TokenKind.FlowMappingStart {
@@ -600,7 +665,7 @@ fn parse_node(parser: Parser&, block: bool, indentless_sequence: bool) -> Result
             style=CollectionStyle.Flow,
         );
         properties_moved = true;
-        return Result<Event, ParserError>.Ok(val=make_event(
+        return ok_event(parser, make_event(
             EventKind.MappingStart, mut_start, end_mark, data));
     }
     if block && current_kind == TokenKind.BlockSequenceStart {
@@ -613,7 +678,7 @@ fn parse_node(parser: Parser&, block: bool, indentless_sequence: bool) -> Result
             style=CollectionStyle.Block,
         );
         properties_moved = true;
-        return Result<Event, ParserError>.Ok(val=make_event(
+        return ok_event(parser, make_event(
             EventKind.SequenceStart, mut_start, end_mark, data));
     }
     if block && current_kind == TokenKind.BlockMappingStart {
@@ -626,7 +691,7 @@ fn parse_node(parser: Parser&, block: bool, indentless_sequence: bool) -> Result
             style=CollectionStyle.Block,
         );
         properties_moved = true;
-        return Result<Event, ParserError>.Ok(val=make_event(
+        return ok_event(parser, make_event(
             EventKind.MappingStart, mut_start, end_mark, data));
     }
     if has_option(&anchor) || has_tag(&tag) {
@@ -641,11 +706,11 @@ fn parse_node(parser: Parser&, block: bool, indentless_sequence: bool) -> Result
             style=ScalarStyle.Plain,
         );
         properties_moved = true;
-        return Result<Event, ParserError>.Ok(val=make_event(
+        return ok_event(parser, make_event(
             EventKind.Scalar, mut_start, mut_end, data));
     }
     let context: str = if block { "while parsing a block node" } else { "while parsing a flow node" };
-    Result<Event, ParserError>.Err(set_parser_error_context(
+    fail_unit(set_parser_error_context(
         parser, context, mut_start, "did not find expected node content", current.start))
 }
 
@@ -691,7 +756,7 @@ fn join_bytes(head: Vec<u8>, tail: Vec<u8>) -> Vec<u8> {
     result
 }
 
-fn parse_block_sequence_entry(parser: Parser&, first: bool) -> Result<Event, ParserError> {
+fn parse_block_sequence_entry(parser: Parser&, first: bool) -> Result<(), i32> {
     if first {
         let token = require_token(parser)?;
         let mark: Mark = token.start;
@@ -709,7 +774,7 @@ fn parse_block_sequence_entry(parser: Parser&, first: bool) -> Result<Event, Par
             return parse_node(parser, true, false);
         }
         parser.state = ParserState.BlockSequenceEntry;
-        return Result<Event, ParserError>.Ok(val=empty_scalar_event(mark));
+        return ok_event(parser, empty_scalar_event(mark));
     }
     if kind == TokenKind.BlockEnd {
         let start: Mark = token.start;
@@ -717,10 +782,10 @@ fn parse_block_sequence_entry(parser: Parser&, first: bool) -> Result<Event, Par
         parser.state = pop_state(parser);
         pop_mark(parser);
         skip_token(parser)?;
-        return Result<Event, ParserError>.Ok(val=empty_event(EventKind.SequenceEnd, start, end));
+        return ok_event(parser, empty_event(EventKind.SequenceEnd, start, end));
     }
     let context_mark: Mark = pop_mark(parser);
-    Result<Event, ParserError>.Err(set_parser_error_context(
+    fail_unit(set_parser_error_context(
         parser,
         "while parsing a block collection",
         context_mark,
@@ -729,7 +794,7 @@ fn parse_block_sequence_entry(parser: Parser&, first: bool) -> Result<Event, Par
     ))
 }
 
-fn parse_indentless_sequence_entry(parser: Parser&) -> Result<Event, ParserError> {
+fn parse_indentless_sequence_entry(parser: Parser&) -> Result<(), i32> {
     let token = require_token(parser)?;
     let kind: TokenKind = token.kind;
     if kind == TokenKind.BlockEntry {
@@ -742,14 +807,14 @@ fn parse_indentless_sequence_entry(parser: Parser&) -> Result<Event, ParserError
             return parse_node(parser, true, false);
         }
         parser.state = ParserState.IndentlessSequenceEntry;
-        return Result<Event, ParserError>.Ok(val=empty_scalar_event(mark));
+        return ok_event(parser, empty_scalar_event(mark));
     }
     let start: Mark = token.start;
     parser.state = pop_state(parser);
-    Result<Event, ParserError>.Ok(val=empty_event(EventKind.SequenceEnd, start, start))
+    ok_event(parser, empty_event(EventKind.SequenceEnd, start, start))
 }
 
-fn parse_block_mapping_key(parser: Parser&, first: bool) -> Result<Event, ParserError> {
+fn parse_block_mapping_key(parser: Parser&, first: bool) -> Result<(), i32> {
     if first {
         let token = require_token(parser)?;
         let mark: Mark = token.start;
@@ -768,7 +833,7 @@ fn parse_block_mapping_key(parser: Parser&, first: bool) -> Result<Event, Parser
             return parse_node(parser, true, true);
         }
         parser.state = ParserState.BlockMappingValue;
-        return Result<Event, ParserError>.Ok(val=empty_scalar_event(mark));
+        return ok_event(parser, empty_scalar_event(mark));
     }
     if kind == TokenKind.BlockEnd {
         let start: Mark = token.start;
@@ -776,10 +841,10 @@ fn parse_block_mapping_key(parser: Parser&, first: bool) -> Result<Event, Parser
         parser.state = pop_state(parser);
         pop_mark(parser);
         skip_token(parser)?;
-        return Result<Event, ParserError>.Ok(val=empty_event(EventKind.MappingEnd, start, end));
+        return ok_event(parser, empty_event(EventKind.MappingEnd, start, end));
     }
     let context_mark: Mark = pop_mark(parser);
-    Result<Event, ParserError>.Err(set_parser_error_context(
+    fail_unit(set_parser_error_context(
         parser,
         "while parsing a block mapping",
         context_mark,
@@ -788,7 +853,7 @@ fn parse_block_mapping_key(parser: Parser&, first: bool) -> Result<Event, Parser
     ))
 }
 
-fn parse_block_mapping_value(parser: Parser&) -> Result<Event, ParserError> {
+fn parse_block_mapping_value(parser: Parser&) -> Result<(), i32> {
     let token = require_token(parser)?;
     let kind: TokenKind = token.kind;
     if kind == TokenKind.Value {
@@ -801,14 +866,14 @@ fn parse_block_mapping_value(parser: Parser&) -> Result<Event, ParserError> {
             return parse_node(parser, true, true);
         }
         parser.state = ParserState.BlockMappingKey;
-        return Result<Event, ParserError>.Ok(val=empty_scalar_event(mark));
+        return ok_event(parser, empty_scalar_event(mark));
     }
     let mark: Mark = token.start;
     parser.state = ParserState.BlockMappingKey;
-    Result<Event, ParserError>.Ok(val=empty_scalar_event(mark))
+    ok_event(parser, empty_scalar_event(mark))
 }
 
-fn parse_flow_sequence_entry(parser: Parser&, first: bool) -> Result<Event, ParserError> {
+fn parse_flow_sequence_entry(parser: Parser&, first: bool) -> Result<(), i32> {
     if first {
         let token = require_token(parser)?;
         let mark: Mark = token.start;
@@ -828,12 +893,12 @@ fn parse_flow_sequence_entry(parser: Parser&, first: bool) -> Result<Event, Pars
                     parser.state = pop_state(parser);
                     pop_mark(parser);
                     skip_token(parser)?;
-                    return Result<Event, ParserError>.Ok(val=empty_event(
+                    return ok_event(parser, empty_event(
                         EventKind.SequenceEnd, start, end));
                 }
             } else {
                 let context_mark: Mark = pop_mark(parser);
-                return Result<Event, ParserError>.Err(set_parser_error_context(
+                return fail_unit(set_parser_error_context(
                     parser,
                     "while parsing a flow sequence",
                     context_mark,
@@ -848,7 +913,7 @@ fn parse_flow_sequence_entry(parser: Parser&, first: bool) -> Result<Event, Pars
             let end: Mark = current.end;
             parser.state = ParserState.FlowSequenceEntryMappingKey;
             skip_token(parser)?;
-            return Result<Event, ParserError>.Ok(val=make_event(
+            return ok_event(parser, make_event(
                 EventKind.MappingStart, start, end,
                 EventData.MappingStart(
                     anchor=Option<Vec<u8>>.None,
@@ -868,10 +933,10 @@ fn parse_flow_sequence_entry(parser: Parser&, first: bool) -> Result<Event, Pars
     parser.state = pop_state(parser);
     pop_mark(parser);
     skip_token(parser)?;
-    Result<Event, ParserError>.Ok(val=empty_event(EventKind.SequenceEnd, start, end))
+    ok_event(parser, empty_event(EventKind.SequenceEnd, start, end))
 }
 
-fn parse_flow_sequence_entry_mapping_key(parser: Parser&) -> Result<Event, ParserError> {
+fn parse_flow_sequence_entry_mapping_key(parser: Parser&) -> Result<(), i32> {
     let token = require_token(parser)?;
     let kind: TokenKind = token.kind;
     if kind != TokenKind.Value && kind != TokenKind.FlowEntry
@@ -882,15 +947,15 @@ fn parse_flow_sequence_entry_mapping_key(parser: Parser&) -> Result<Event, Parse
     if kind == TokenKind.FlowSequenceEnd {
         let mark: Mark = token.start;
         parser.state = ParserState.FlowSequenceEntryMappingValue;
-        return Result<Event, ParserError>.Ok(val=empty_scalar_event(mark));
+        return ok_event(parser, empty_scalar_event(mark));
     }
     let mark: Mark = token.end;
     skip_token(parser)?;
     parser.state = ParserState.FlowSequenceEntryMappingValue;
-    Result<Event, ParserError>.Ok(val=empty_scalar_event(mark))
+    ok_event(parser, empty_scalar_event(mark))
 }
 
-fn parse_flow_sequence_entry_mapping_value(parser: Parser&) -> Result<Event, ParserError> {
+fn parse_flow_sequence_entry_mapping_value(parser: Parser&) -> Result<(), i32> {
     let token = require_token(parser)?;
     let kind: TokenKind = token.kind;
     if kind == TokenKind.Value {
@@ -904,17 +969,17 @@ fn parse_flow_sequence_entry_mapping_value(parser: Parser&) -> Result<Event, Par
     let token2 = require_token(parser)?;
     let mark: Mark = token2.start;
     parser.state = ParserState.FlowSequenceEntryMappingEnd;
-    Result<Event, ParserError>.Ok(val=empty_scalar_event(mark))
+    ok_event(parser, empty_scalar_event(mark))
 }
 
-fn parse_flow_sequence_entry_mapping_end(parser: Parser&) -> Result<Event, ParserError> {
+fn parse_flow_sequence_entry_mapping_end(parser: Parser&) -> Result<(), i32> {
     let token = require_token(parser)?;
     let mark: Mark = token.start;
     parser.state = ParserState.FlowSequenceEntry;
-    Result<Event, ParserError>.Ok(val=empty_event(EventKind.MappingEnd, mark, mark))
+    ok_event(parser, empty_event(EventKind.MappingEnd, mark, mark))
 }
 
-fn parse_flow_mapping_key(parser: Parser&, first: bool) -> Result<Event, ParserError> {
+fn parse_flow_mapping_key(parser: Parser&, first: bool) -> Result<(), i32> {
     if first {
         let token = require_token(parser)?;
         let mark: Mark = token.start;
@@ -934,12 +999,12 @@ fn parse_flow_mapping_key(parser: Parser&, first: bool) -> Result<Event, ParserE
                     parser.state = pop_state(parser);
                     pop_mark(parser);
                     skip_token(parser)?;
-                    return Result<Event, ParserError>.Ok(val=empty_event(
+                    return ok_event(parser, empty_event(
                         EventKind.MappingEnd, start, end));
                 }
             } else {
                 let context_mark: Mark = pop_mark(parser);
-                return Result<Event, ParserError>.Err(set_parser_error_context(
+                return fail_unit(set_parser_error_context(
                     parser,
                     "while parsing a flow mapping",
                     context_mark,
@@ -958,7 +1023,7 @@ fn parse_flow_mapping_key(parser: Parser&, first: bool) -> Result<Event, ParserE
                 return parse_node(parser, false, false);
             }
             parser.state = ParserState.FlowMappingValue;
-            return Result<Event, ParserError>.Ok(val=empty_scalar_event(next.start));
+            return ok_event(parser, empty_scalar_event(next.start));
         }
         if current.kind != TokenKind.FlowMappingEnd {
             push_state(parser, ParserState.FlowMappingEmptyValue);
@@ -971,15 +1036,15 @@ fn parse_flow_mapping_key(parser: Parser&, first: bool) -> Result<Event, ParserE
     parser.state = pop_state(parser);
     pop_mark(parser);
     skip_token(parser)?;
-    Result<Event, ParserError>.Ok(val=empty_event(EventKind.MappingEnd, start, end))
+    ok_event(parser, empty_event(EventKind.MappingEnd, start, end))
 }
 
-fn parse_flow_mapping_value(parser: Parser&, empty: bool) -> Result<Event, ParserError> {
+fn parse_flow_mapping_value(parser: Parser&, empty: bool) -> Result<(), i32> {
     let token = require_token(parser)?;
     if empty {
         let mark: Mark = token.start;
         parser.state = ParserState.FlowMappingKey;
-        return Result<Event, ParserError>.Ok(val=empty_scalar_event(mark));
+        return ok_event(parser, empty_scalar_event(mark));
     }
     if token.kind == TokenKind.Value {
         skip_token(parser)?;
@@ -992,10 +1057,10 @@ fn parse_flow_mapping_value(parser: Parser&, empty: bool) -> Result<Event, Parse
     let current = require_token(parser)?;
     let mark: Mark = current.start;
     parser.state = ParserState.FlowMappingKey;
-    Result<Event, ParserError>.Ok(val=empty_scalar_event(mark))
+    ok_event(parser, empty_scalar_event(mark))
 }
 
-fn state_machine(parser: Parser&) -> Result<Event, ParserError> {
+fn state_machine(parser: Parser&) -> Result<(), i32> {
     match parser.state {
         ParserState.StreamStart => parse_stream_start(parser),
         ParserState.ImplicitDocumentStart => parse_document_start(parser, true),
@@ -1020,7 +1085,7 @@ fn state_machine(parser: Parser&) -> Result<Event, ParserError> {
         ParserState.FlowMappingKey => parse_flow_mapping_key(parser, false),
         ParserState.FlowMappingValue => parse_flow_mapping_value(parser, false),
         ParserState.FlowMappingEmptyValue => parse_flow_mapping_value(parser, true),
-        ParserState.End => Result<Event, ParserError>.Err(set_parser_error(
+        ParserState.End => fail_unit(set_parser_error(
             parser, "did not find expected node content", zero_mark())),
     }
 }
@@ -1038,29 +1103,74 @@ pub fn parser_new(input: Input, encoding: Encoding, limits: Limits&) -> Parser {
         tag_directives=Vec<TagDirective>.new(),
         stream_start_produced=false,
         stream_end_produced=false,
+        event=Event(kind=EventKind.StreamStart, start=zero_mark(), end=zero_mark(),
+            data=EventData.Empty),
         error=Option<ParserError>.None,
     )
 }
 
+// Store one event into the caller's object.  Returns 1 when an event was
+// written, 0 at end of stream and -1 on error (the error stays in
+// parser.error).  This mirrors C yaml_parser_parse(parser, event*).
+pub fn parser_parse_into(parser: Parser&, event: Event&) -> i32 {
+    match &parser.error {
+        Some(_) => { return -1i32; },
+        None => {},
+    }
+    if parser.stream_end_produced || parser.state == ParserState.End {
+        return 0i32;
+    }
+    match state_machine(parser) {
+        Ok(_) => {
+            let finished: bool = parser.event.kind == EventKind.StreamEnd;
+            *event = parser.event;
+            if finished {
+                parser.stream_end_produced = true;
+            }
+            1i32
+        },
+        Err(_) => { -1i32 },
+    }
+}
+
+pub fn parser_error(parser: Parser&) -> ParserError {
+    take_error(parser)
+}
+
+// Return a reference to the parser's current event.  The reference stays valid
+// until the next parser call; the caller owns the payloads it removes.
+pub fn parser_parse_ref(parser: Parser&) -> Result<Option<Event&>, ParserError> {
+    match &parser.error {
+        Some(error) => { return Result<Option<Event&>, ParserError>.Err(*error); },
+        None => {},
+    }
+    if parser.stream_end_produced || parser.state == ParserState.End {
+        return Result<Option<Event&>, ParserError>.Ok(val=Option<Event&>.None);
+    }
+    match state_machine(parser) {
+        Ok(_) => {
+            if parser.event.kind == EventKind.StreamEnd {
+                parser.stream_end_produced = true;
+            }
+            Result<Option<Event&>, ParserError>.Ok(val=Option<Event&>.Some(&parser.event))
+        },
+        Err(_) => Result<Option<Event&>, ParserError>.Err(take_error(parser)),
+    }
+}
+
 pub fn parser_parse(parser: Parser&) -> Result<Option<Event>, ParserError> {
     match &parser.error {
-        Some(error) => return Result<Option<Event>, ParserError>.Err(*error),
+        Some(error) => { return Result<Option<Event>, ParserError>.Err(*error); },
         None => {},
     }
     if parser.stream_end_produced || parser.state == ParserState.End {
         return Result<Option<Event>, ParserError>.Ok(val=Option<Event>.None);
     }
-    match state_machine(parser) {
-        Ok(event) => {
-            if event.kind == EventKind.StreamEnd {
-                parser.stream_end_produced = true;
-            }
-            Result<Option<Event>, ParserError>.Ok(val=Option<Event>.Some(event))
-        },
-        Err(error) => {
-            parser.error = Option<ParserError>.Some(error);
-            Result<Option<Event>, ParserError>.Err(error)
-        },
+    let event: Event = empty_event(EventKind.StreamStart, zero_mark(), zero_mark());
+    match parser_parse_into(parser, &event) {
+        1i32 => Result<Option<Event>, ParserError>.Ok(val=Option<Event>.Some(event)),
+        0i32 => Result<Option<Event>, ParserError>.Ok(val=Option<Event>.None),
+        _ => Result<Option<Event>, ParserError>.Err(take_error(parser)),
     }
 }
 

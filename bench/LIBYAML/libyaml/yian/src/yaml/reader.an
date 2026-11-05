@@ -32,6 +32,9 @@ pub struct Reader {
     pub raw_buffer: Vec<u8>,
     pub raw_position: u64,
     pub buffer: Vec<u8>,
+    // Native cursor into buffer at `position`, rebuilt only when the buffer can
+    // move (reader_update_buffer) or the position advances.
+    pub cursor: u8*,
     pub position: u64,
     pub unread: u64,
     pub offset: u64,
@@ -71,11 +74,7 @@ fn width_of(byte: u8) -> u64 {
 }
 
 fn byte_at(reader: Reader&, offset: u64) -> u8 {
-    let index: u64 = reader.position + offset;
-    if index >= reader.buffer.len() {
-        return 0u8;
-    }
-    reader.buffer[index]
+    reader.cursor[offset]
 }
 
 fn is_break(reader: Reader&) -> bool {
@@ -229,6 +228,40 @@ fn append_decoded(reader: Reader&, value: u32, width: u64) -> Result<(), ParserE
     Result<(), ParserError>.Ok(val=())
 }
 
+// Length of the contiguous run of raw bytes that UTF-8 decodes to themselves:
+// TAB, LF, CR and printable ASCII.  The run stops at the first non-ASCII,
+// control, DEL or EOF-sentinel byte so decode_char keeps validating it.
+fn legal_ascii_run(reader: Reader&) -> u64 {
+    let index: u64 = reader.raw_position;
+    let end: u64 = reader.raw_buffer.len();
+    while index < end {
+        let byte: u8 = reader.raw_buffer[index];
+        let legal: bool = byte == 9u8 || byte == 10u8 || byte == 13u8
+            || (byte >= 0x20u8 && byte <= 0x7Eu8);
+        if !legal {
+            break;
+        }
+        index += 1u64;
+    }
+    index - reader.raw_position
+}
+
+// Copy a validated ASCII run into the decoded buffer with one reservation.
+// The destination pointer is released before the next reserve/push/refill.
+fn append_ascii_run(reader: Reader&, count: u64) {
+    let start: u64 = reader.raw_position;
+    let target: u8* = reader.buffer.spare(count);
+    let index = 0u64;
+    while index < count {
+        target[index] = reader.raw_buffer[start + index];
+        index += 1u64;
+    };
+    reader.buffer.advance_len(count);
+    reader.raw_position += count;
+    reader.offset += count;
+    reader.unread += count;
+}
+
 fn read_source(reader: Reader&, capacity: u64) -> Result<u64, IoError> {
     if capacity == 0u64 {
         return Result<u64, IoError>.Ok(val=0u64);
@@ -323,19 +356,28 @@ fn determine_encoding(reader: Reader&) -> Result<(), ParserError> {
 }
 
 pub fn reader_new(input: Input, encoding: Encoding) -> Reader {
+    let buffer: Vec<u8> = Vec<u8>.with_capacity(BUFFER_CAPACITY);
+    let cursor: u8* = buffer.as_slice().ptr();
     Reader(
         input=input,
         encoding=encoding,
         eof=false,
         raw_buffer=Vec<u8>.with_capacity(RAW_BUFFER_CAPACITY),
         raw_position=0u64,
-        buffer=Vec<u8>.with_capacity(BUFFER_CAPACITY),
+        buffer=buffer,
+        cursor=cursor,
         position=0u64,
         unread=0u64,
         offset=0u64,
         mark=mark_new(0u64, 0u64, 0u64),
         error=Option<ParserError>.None,
     )
+}
+
+// Keep the native cursor in step with position.  Only reader_update_buffer can
+// move the decoded buffer, so every other path just advances the cursor.
+fn sync_cursor(reader: Reader&) {
+    reader.cursor = reader.buffer.as_slice().ptr() + reader.position;
 }
 
 pub fn reader_update_buffer(reader: Reader&, length: u64) -> Result<(), ParserError> {
@@ -374,6 +416,13 @@ pub fn reader_update_buffer(reader: Reader&, length: u64) -> Result<(), ParserEr
         }
         first = false;
         while reader.raw_position != reader.raw_buffer.len() {
+            if reader.encoding == Encoding.Utf8 {
+                let count: u64 = legal_ascii_run(reader);
+                if count > 0u64 {
+                    append_ascii_run(reader, count);
+                    continue;
+                }
+            }
             match decode_char(reader)? {
                 Decoded.Value(value, width) => append_decoded(reader, value, width)?,
                 Decoded.Incomplete => { break; },
@@ -382,12 +431,14 @@ pub fn reader_update_buffer(reader: Reader&, length: u64) -> Result<(), ParserEr
         if reader.eof {
             reader.buffer.push(0u8);
             reader.unread += 1u64;
+            sync_cursor(reader);
             return Result<(), ParserError>.Ok(val=());
         }
     }
     if reader.offset >= MAX_FILE_SIZE {
         return Result<(), ParserError>.Err(fail(reader, "input is too long", reader.offset, -1i32));
     }
+    sync_cursor(reader);
     Result<(), ParserError>.Ok(val=())
 }
 
@@ -399,6 +450,7 @@ pub fn reader_skip(reader: Reader&, count: u64) {
         reader.mark.column += 1u64;
         reader.unread -= 1u64;
         reader.position += width;
+        reader.cursor = reader.cursor + width;
         index += 1u64;
     };
 }
@@ -410,6 +462,7 @@ pub fn reader_skip_line(reader: Reader&) {
         reader.mark.line += 1u64;
         reader.unread -= 2u64;
         reader.position += 2u64;
+        reader.cursor = reader.cursor + 2u64;
         return;
     }
     if is_break(reader) {
@@ -419,6 +472,7 @@ pub fn reader_skip_line(reader: Reader&) {
         reader.mark.line += 1u64;
         reader.unread -= 1u64;
         reader.position += width;
+        reader.cursor = reader.cursor + width;
     }
 }
 
@@ -427,6 +481,7 @@ pub fn reader_delete(reader: Reader&) {
     reader.buffer.drop();
     reader.raw_buffer = Vec<u8>.new();
     reader.buffer = Vec<u8>.new();
+    reader.cursor = reader.buffer.as_slice().ptr();
     reader.unread = 0u64;
     reader.position = 0u64;
     reader.raw_position = 0u64;
