@@ -1,4 +1,5 @@
 from yianc.codegen.llvm.module import FunctionLowering;
+from yianc.codegen.cfg.model import GuardKind, GuardSite;
 from yianc.codegen.cfg.ids import ValueId;
 from yianc.codegen.error import CodegenError;
 from yianc.codegen.abi.runtime import failure_message, ENV_WORD;
@@ -91,12 +92,14 @@ impl FunctionLowering {
                 let source = self.get(args[0])?;
                 let length = self.get(args[1])?;
                 if self.fat(source_type)? {
+                    self.require_guard(GuardKind.Count, GuardSite.Before)?;
                     self.check_count(length)?;
                     let index = self.pointer_index(source);
                     let size = self.pointer_size(source);
                     let available = self.builder.binary(BinaryOp.Sub, size, index, "");
                     let valid = self.builder.binary(BinaryOp.And,
                         self.builder.icmp(IntCompare.Ule, index, size, ""), self.builder.icmp(IntCompare.Ule, length, available, ""), "");
+                    self.require_guard(GuardKind.ViewParts, GuardSite.Before)?;
                     self.checked(valid, "S004")?;
                 }
                 self.make_pointer(type_id, self.pointer_data(source_type, source)?, self.pointer_word(source_type, source)?, self.integer(0u64), length)?
@@ -113,6 +116,7 @@ impl FunctionLowering {
                 let length = self.view_length(source);
                 let ordered = self.builder.icmp(IntCompare.Ule, start, end, "");
                 let bounded = self.builder.icmp(IntCompare.Ule, end, length, "");
+                self.require_guard(GuardKind.SliceRange, GuardSite.Before)?;
                 self.checked(self.builder.binary(BinaryOp.And, ordered, bounded, ""), "S001")?;
                 let element = match self.owner.session.types.require(source_type)? {
                     Slice(element) => *element,
@@ -130,7 +134,10 @@ impl FunctionLowering {
                     let source = self.get(args[0])?;
                     let source_type = self.cfg.value(args[0])?.type_id;
                     let length = self.view_length(source);
-                    if !self.owner.types.raw_pointers() { self.check_count(length)?; }
+                    if !self.owner.types.raw_pointers() {
+                        self.require_guard(GuardKind.Count, GuardSite.Before)?;
+                        self.check_count(length)?;
+                    }
                     self.make_pointer(type_id, self.builder.extract_value(source, 0u32, ""), self.pointer_word(source_type, source)?, self.integer(0u64), length)?
                 }
             },
@@ -157,6 +164,7 @@ impl FunctionLowering {
                 let global = self.owner.runtime_global("__yian_argc", i32_type);
                 let count = self.builder.cast(CastOp.Zext, self.builder.load(i32_type, global.value(), ""), i64_type, "");
                 let in_range = self.builder.icmp(IntCompare.Ult, self.get(args[0])?, count, "");
+                self.require_guard(GuardKind.ArgumentIndex, GuardSite.Before)?;
                 self.checked(in_range, "S001")?;
                 let argv = self.owner.runtime_global("__yian_argv", pointer);
                 let base = self.builder.load(pointer, argv.value(), "");
@@ -164,6 +172,7 @@ impl FunctionLowering {
                 let slot = self.builder.gep(pointer, base, indices.as_slice(), false, "");
                 let data = self.builder.load(pointer, slot, "");
                 let nonnull = self.builder.icmp(IntCompare.Ne, data, module.const_null(pointer), "");
+                self.require_guard(GuardKind.ArgumentData, GuardSite.AfterArgumentLoad)?;
                 self.checked(nonnull, "S002")?;
                 let parameters = [pointer];
                 let arguments = [data];
@@ -189,6 +198,7 @@ impl FunctionLowering {
                     let size = module.abi_size(self.owner.types.value_type(type_args[0])?);
                     let count = self.get(args[if kind == BuiltinKind.Alloc { 0u64 } else { 1u64 }])?;
                     let fits = self.builder.icmp(IntCompare.Ule, count, module.const_int(i64_type, 0xFFFFFFFFFFFFFFFFu64 / size), "");
+                    self.require_guard(GuardKind.AllocationSize, GuardSite.Before)?;
                     self.checked(fits, "R001")?;
                     let bytes = self.builder.binary(BinaryOp.Mul, count, module.const_int(i64_type, size), "");
                     let zero = self.builder.icmp(IntCompare.Eq, bytes, module.const_int(i64_type, 0u64), "");
@@ -203,6 +213,7 @@ impl FunctionLowering {
                         self.external_call("realloc", pointer, parameters.as_slice(), arguments.as_slice())?
                     };
                     let valid = self.builder.icmp(IntCompare.Ne, allocated, module.const_null(pointer), "");
+                    self.require_guard(GuardKind.AllocationResult, GuardSite.Before)?;
                     self.checked(valid, "R002")?;
                     allocated
                 }

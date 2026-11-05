@@ -1,4 +1,5 @@
 from std.cli import ArgumentParser, Nargs, ArgMatches, Action;
+from std.core.process import env_var;
 
 const EXIT_FAILURE: i32 = 1;
 const EXIT_USAGE_ERROR: i32 = 2;
@@ -41,6 +42,39 @@ pub struct CompilerConfig {
     pub log_file: Option<String>,
     pub link_libraries: Vec<String>,
     pub link_searches: Vec<String>,
+    pub cfg_inline: bool,
+    pub fat_check_elimination: bool,
+}
+
+// Empty and unset select the default; only 0 and 1 are accepted values.
+fn environment_switch(name: str, fallback: bool) -> Result<bool, String> {
+    // Nested Result/Option patterns are avoided so the value branch is unambiguous.
+    match env_var(name) {
+        Ok(option) => match option {
+            Some(value) => {
+                defer value.drop();
+                if value.as_str() == "" { return Result<bool, String>.Ok(fallback); }
+                if value.as_str() == "0" { return Result<bool, String>.Ok(false); }
+                if value.as_str() == "1" { return Result<bool, String>.Ok(true); }
+                let message = String.new();
+                message.push_str("error: ");
+                message.push_str(name);
+                message.push_str(" must be 0 or 1\n");
+                Result<bool, String>.Err(message)
+            },
+            None => Result<bool, String>.Ok(fallback),
+        },
+        Err(problem) => {
+            defer problem.drop();
+            let message = String.new();
+            message.push_str("error: could not read ");
+            message.push_str(name);
+            message.push_str(": ");
+            message.push_str(problem.msg());
+            message.push('\n');
+            Result<bool, String>.Err(message)
+        },
+    }
 }
 
 fn string_values(arg_matches: ArgMatches&, name: str) -> Vec<String> {
@@ -60,7 +94,7 @@ impl CompilerConfig {
     static fn help(text: String) -> Self {
         Self(CompilerAction.Help(text), Vec<String>.new(), String.new(), false, Option<String>.None, false, false,
             OutputKind.Exe, false, Option<String>.None, 0u8, false, false, Option<String>.None, Option<String>.None, Option<String>.None, Option<String>.None,
-            Vec<String>.new(), Vec<String>.new())
+            Vec<String>.new(), Vec<String>.new(), true, true)
     }
 
     static fn from_matches(arg_matches: ArgMatches&) -> Result<Self, String> {
@@ -111,6 +145,10 @@ impl CompilerConfig {
         let log_file = match arg_matches.get_string("log-file") { Ok(Some(value)) => Option<String>.Some(String.from(&value)), _ => Option<String>.None, };
         let link_libraries = string_values(arg_matches, "link-lib");
         let link_searches = string_values(arg_matches, "link-search");
+        let cfg_inline_disabled = *arg_matches.get_bool("no-cfg-inline").unwrap().unwrap();
+        let eliminate_disabled = *arg_matches.get_bool("no-fat-check-elimination").unwrap().unwrap();
+        let cfg_inline = environment_switch("YIAN_CFG_INLINE", true)? && !cfg_inline_disabled;
+        let fat_check_elimination = environment_switch("YIAN_FAT_CHECK_ELIMINATION", true)? && !eliminate_disabled;
 
         let runtime_profile_error = match &runtime_profile_dir {
             Some(value) if value.is_empty() => Option<String>.Some(String.from(&"error: --runtime-profile-dir PATH cannot be empty\n")),
@@ -149,7 +187,8 @@ impl CompilerConfig {
 
         let action = if check { CompilerAction.Check } else { CompilerAction.Compile };
         Result<Self, String>.Ok(Self(action, inputs, root, arg_matches.get_string("compiler-root").unwrap().is_some(), packages, raw, ffi, target, target_explicit, output, optimization,
-            dump, profile, profile_output, runtime_profile_dir, log_spec, log_file, link_libraries, link_searches))
+            dump, profile, profile_output, runtime_profile_dir, log_spec, log_file, link_libraries, link_searches,
+            cfg_inline, fat_check_elimination))
     }
 }
 
@@ -258,6 +297,14 @@ pub fn parse_args() -> CompilerConfig {
     parser.add_argument("link-search")
     .long("link-search").action(Action.Append)
     .help("native library directory");
+
+    parser.add_argument("no-cfg-inline")
+    .long("no-cfg-inline").action(Action.StoreTrue)
+    .help("disable CFG inlining");
+
+    parser.add_argument("no-fat-check-elimination")
+    .long("no-fat-check-elimination").action(Action.StoreTrue)
+    .help("disable fat safety-check elimination");
 
     parser.add_argument("inputs")
     .nargs(Nargs.ZeroOrMore).metavar("INPUT")

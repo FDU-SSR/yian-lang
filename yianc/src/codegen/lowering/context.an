@@ -2,7 +2,7 @@ from yianc.analysis.session.session import AnalysisSession;
 from yianc.analysis.session.output import AnalysisOutput, AnalyzedProcedure;
 from yianc.analysis.ty.callable import store_signature;
 from yianc.codegen.types import BackendTypes;
-from yianc.codegen.cfg.ids import FunctionId, BlockId, ValueId, LocalId;
+from yianc.codegen.cfg.ids import FunctionId, BlockId, ValueId, LocalId, ScopeId;
 from yianc.codegen.cfg.model import CfgModule, CfgFunction, ValueKind, Operation, Terminator;
 from yianc.codegen.cfg.type_contract import assert_cfg_type;
 from yianc.codegen.error import CodegenError;
@@ -127,6 +127,8 @@ impl Lowering {
 
     pub fn finish(procedure: AnalyzedProcedure&) -> Result<(), CodegenError> {
         let root = self.session.hir.require(procedure.root)?;
+        // The root scope enters once before any parameter or local address is observed.
+        self.effect(root.span, Operation.ScopeEnter(ScopeId(0u64)))?;
         let parameter_start = 0u64;
         let parameter_position = 0u64;
         match self.types.closure_environment(procedure.type_id) {
@@ -165,6 +167,8 @@ impl Lowering {
             } else {
                 Option<ValueId>.Some(value)
             };
+            // Exit values and deferred actions precede the logical frame exit.
+            self.effect(root.span, Operation.ScopeExit(ScopeId(0u64)))?;
             self.end(Terminator.Return(result))?;
         }
         Result<(), CodegenError>.Ok(())

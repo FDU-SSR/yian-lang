@@ -1,4 +1,5 @@
 from yianc.codegen.llvm.module import FunctionLowering;
+from yianc.codegen.cfg.model import GuardKind, GuardSite;
 from yianc.codegen.cfg.ids import ValueId;
 from yianc.codegen.cfg.model import IndexBounds;
 from yianc.codegen.error import CodegenError;
@@ -24,6 +25,7 @@ impl FunctionLowering {
         let offset = self.get(index)?;
         if subtract { offset = self.builder.neg(offset, ""); }
         if self.fat(type_id)? {
+            self.require_guard(GuardKind.PointerStep, GuardSite.Before)?;
             let value = self.get(pointer)?;
             let old_index = self.pointer_index(value);
             let next = self.builder.binary(BinaryOp.Add, old_index, offset, "");
@@ -46,6 +48,7 @@ impl FunctionLowering {
         let size = module.abi_size(self.owner.types.value_type(element)?);
         if size == 0u64 { return Result<IrValue, CodegenError>.Ok(module.const_int(integer, 0u64)); }
         if self.fat(self.cfg.value(left)?.type_id)? {
+            self.require_guard(GuardKind.PointerDifference, GuardSite.Before)?;
             let first = self.get(left)?;
             let second = self.get(right)?;
             let same = self.builder.icmp(IntCompare.Eq, self.builder.extract_value(first, 0u32, ""), self.builder.extract_value(second, 0u32, ""), "");
@@ -72,6 +75,7 @@ impl FunctionLowering {
         let source = self.get(address)?;
         let result_pointer = match self.owner.session.types.require(type_id)? { Pointer(_) => true, _ => false, };
         if self.fat(source_type)? && result_pointer {
+            self.require_guard(GuardKind.IndexOffset, GuardSite.Before)?;
             let absolute = self.builder.binary(BinaryOp.Add, self.pointer_index(source), self.get(index)?, "");
             let valid = self.builder.binary(BinaryOp.And,
                 self.builder.icmp(IntCompare.Uge, absolute, self.pointer_index(source), ""),
@@ -100,6 +104,7 @@ impl FunctionLowering {
                 }
                 return Result<IrValue, CodegenError>.Ok(if op == BinaryOperator.Neq { self.builder.not(equal, "") } else { equal });
             }
+            self.require_guard(GuardKind.PointerOrder, GuardSite.Before)?;
             self.checked(equal, "S005")?;
             let predicate = match op {
                 Lt => IntCompare.Ult, Leq => IntCompare.Ule, Gt => IntCompare.Ugt, Geq => IntCompare.Uge,

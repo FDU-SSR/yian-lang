@@ -1,0 +1,46 @@
+// Natural loops hoist a stable live check into the preheader.  Zero-iteration
+// and conditional bodies must not become speculative checks, and replacing a
+// reference keeps the access definition.
+
+fn main() {
+    let p: i32* = dyn[4] 1i32;
+    let i: u64 = 0u64;
+    let total: i32 = 0;
+    loop {
+        let x: i32 = *p;
+        total += x;
+        i += 1u64;
+        if i >= 4u64 { break; }
+    }
+
+    let gone: i32* = dyn[1] 7i32;
+    del gone;
+    let j: u64 = 3u64;
+    while j < 3u64 {
+        let y: i32 = *gone;
+        total += y;
+        j += 1u64;
+    }
+
+    let k: u64 = 0u64;
+    while k < 3u64 {
+        if k == 9u64 {
+            let z: i32 = *gone;
+            total += z;
+        }
+        k += 1u64;
+    }
+
+    let first: i32 = 3;
+    let second: i32 = 5;
+    let r: i32& = &first;
+    let m: u64 = 0u64;
+    loop {
+        total += *r;
+        r = &second;
+        m += 1u64;
+        if m >= 2u64 { break; }
+    }
+    assert total == 4 + 3 + 5: "loop accesses";
+    @print("live-loop pass\n");
+}

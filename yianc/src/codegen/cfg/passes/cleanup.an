@@ -1,5 +1,5 @@
 from yianc.codegen.cfg.ids import FunctionId, BlockId;
-from yianc.codegen.cfg.model import CfgModule, CfgFunction, Instruction, Terminator;
+from yianc.codegen.cfg.model import CfgModule, CfgFunction, Instruction, Terminator, SafetyStage;
 from yianc.codegen.error import CodegenError;
 from std.core.iter import Iterator, IntoIterator;
 from std.core.ops import Index;
@@ -59,6 +59,9 @@ fn clean_function(function: CfgFunction&) -> Result<(), CodegenError> {
 }
 
 pub fn cleanup(module: CfgModule&) -> Result<(), CodegenError> {
+    if module.safety_stage != SafetyStage.Neutral {
+        return Result<(), CodegenError>.Err(CodegenError.invalid("CFG cleanup requires a neutral graph"));
+    }
     for index in 0u64..module.len() { clean_function(*module.function(FunctionId(index)).unwrap())?; }
     Result<(), CodegenError>.Ok(())
 }

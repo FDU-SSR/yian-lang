@@ -1,4 +1,5 @@
 from yianc.codegen.llvm.module import FunctionLowering;
+from yianc.codegen.cfg.ids import ScopeId;
 from yianc.codegen.error import CodegenError;
 from yianc.codegen.abi.runtime import FRAME_LOCK_SLOTS, LOCK_TABLE_SLOTS, LOCK_MASK, FRAME_KEY_LIMIT, SENTINEL, HEAP_LOCK_BASE, HEADER_BYTES, LITERAL_WORD;
 from yianc.common.ids import TypeId;
@@ -35,14 +36,23 @@ impl FunctionLowering {
     }
 
     pub fn check_access_as(type_id: TypeId, value: IrValue, code: str) -> Result<(), CodegenError> {
+        self.check_live(type_id, value, code)?;
+        self.check_access_bounds(type_id, value, code)
+    }
+
+    // A live check consumes only the lock word identity and its code decides the failure.
+    pub fn check_live(type_id: TypeId, value: IrValue, code: str) -> Result<(), CodegenError> {
+        if !self.fat(type_id)? { return Result<(), CodegenError>.Ok(()); }
+        let valid = self.live(self.pointer_word(type_id, value)?, code)?;
+        self.checked(valid, code)
+    }
+
+    // Bounds apply to fat pointers; references have no element index.
+    pub fn check_access_bounds(type_id: TypeId, value: IrValue, code: str) -> Result<(), CodegenError> {
         if !self.fat(type_id)? { return Result<(), CodegenError>.Ok(()); }
         let reference = match self.owner.session.types.require(type_id)? { Reference(_) => true, _ => false, };
-        let valid = self.live(self.pointer_word(type_id, value)?, code)?;
-        if !reference {
-            valid = self.builder.binary(BinaryOp.And, valid,
-                self.builder.icmp(IntCompare.Ult, self.pointer_index(value), self.pointer_size(value), ""), "");
-        }
-        self.checked(valid, code)
+        if reference { return Result<(), CodegenError>.Ok(()); }
+        self.checked(self.builder.icmp(IntCompare.Ult, self.pointer_index(value), self.pointer_size(value), ""), code)
     }
 
     pub fn memory_address(type_id: TypeId, value: IrValue) -> Result<IrValue, CodegenError> {
@@ -60,10 +70,20 @@ impl FunctionLowering {
         Result<(), CodegenError>.Ok(())
     }
 
+    // Scope entry starts a fresh dynamic frame; the first executed address acquires its slot.
+    pub fn enter_frame(scope: ScopeId) -> Result<(), CodegenError> {
+        if self.owner.types.raw_pointers() { return Result<(), CodegenError>.Ok(()); }
+        match self.frames[scope.index] {
+            Some(state) => { self.builder.store(self.integer(0u64), state); },
+            None => {},
+        }
+        Result<(), CodegenError>.Ok(())
+    }
+
     // The first executed local address acquires one slot. Later addresses reuse its identity, including on loop backedges.
-    pub fn frame_lock() -> Result<IrValue, CodegenError> {
+    pub fn frame_lock(scope: ScopeId) -> Result<IrValue, CodegenError> {
         if self.owner.types.raw_pointers() { return Result<IrValue, CodegenError>.Ok(self.integer(LITERAL_WORD)); }
-        let state = match self.frame_state {
+        let state = match self.frames[scope.index] {
             Some(value) => value,
             None => return Result<IrValue, CodegenError>.Err(CodegenError.invalid("local address has no frame word slot")),
         };
@@ -103,8 +123,9 @@ impl FunctionLowering {
     }
 
     // Paths without an address have no slot to release. An acquired slot is invalidated with a volatile store.
-    pub fn end_frame() {
-        match self.frame_state {
+    pub fn end_frame(scope: ScopeId) -> Result<(), CodegenError> {
+        if self.owner.types.raw_pointers() { return Result<(), CodegenError>.Ok(()); }
+        match self.frames[scope.index] {
             Some(state) => {
                 let integer = self.owner.module.int_type(64u32);
                 let word = self.builder.load(integer, state, "");
@@ -123,6 +144,7 @@ impl FunctionLowering {
             },
             None => {},
         }
+        Result<(), CodegenError>.Ok(())
     }
 
     // Heap anchors reconstruct an address within the allocator's single 4 GiB window.

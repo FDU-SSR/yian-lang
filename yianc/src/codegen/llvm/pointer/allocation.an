@@ -1,4 +1,5 @@
 from yianc.codegen.llvm.module import FunctionLowering;
+from yianc.codegen.cfg.model import GuardKind, GuardSite;
 from yianc.codegen.error import CodegenError;
 from yianc.codegen.abi.runtime import LOCK_MASK, HEADER_BYTES, HEAP_LOCK_BASE;
 from yianc.common.ids import TypeId;
@@ -52,8 +53,10 @@ impl FunctionLowering {
         if self.owner.types.is_zst(type_id)? {
             return Result<IrValue, CodegenError>.Ok(module.const_null(self.owner.types.value_type(type_id)?));
         }
+        self.require_guard(GuardKind.Count, GuardSite.Before)?;
         self.check_count(count)?;
         let size = module.abi_size(self.owner.types.value_type(element)?);
+        self.require_guard(GuardKind.AllocationSize, GuardSite.Before)?;
         let fits = self.builder.icmp(IntCompare.Ule, count, self.integer((0xFFFFFFFFFFFFFFFFu64 - HEADER_BYTES) / size), "");
         self.checked(fits, "R001")?;
         let bytes = self.builder.binary(BinaryOp.Mul, count, self.integer(size), "");
@@ -100,6 +103,7 @@ impl FunctionLowering {
 
     pub fn release_fat(type_id: TypeId, value: IrValue) -> Result<(), CodegenError> {
         let module = self.owner.module;
+        self.require_guard(GuardKind.HeapRoot, GuardSite.BeforeRelease)?;
         let base = self.checked_heap_base(type_id, value)?;
         let word_parameters = [module.int_type(64u32)];
         let word_arguments = [self.pointer_word(type_id, value)?];
@@ -111,6 +115,7 @@ impl FunctionLowering {
     }
 
     pub fn reallocate_fat(type_id: TypeId, element: TypeId, previous: IrValue, count: IrValue) -> Result<IrValue, CodegenError> {
+        self.require_guard(GuardKind.HeapRoot, GuardSite.BeforeRelease)?;
         self.checked_heap_base(type_id, previous)?;
         let replacement = self.allocate_fat(type_id, element, count)?;
         let old_count = self.pointer_size(previous);

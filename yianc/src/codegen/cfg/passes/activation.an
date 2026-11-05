@@ -1,0 +1,497 @@
+from yianc.codegen.cfg.ids import FunctionId, BlockId, ValueId, LocalId, ScopeId;
+from yianc.codegen.cfg.model import CfgModule, CfgFunction, Instruction, Operation, SafetyCheck,
+    SafetyStage, OperationGuard, GuardKind, GuardSite, FrameScopePlan, FunctionFatPlan;
+from yianc.codegen.cfg.passes.checks import insert_checks, expected_checks, same_check;
+from yianc.codegen.representation import PointerRepresentation, TypeRepresentation, classify_representation;
+from yianc.codegen.types import BackendTypes;
+from yianc.codegen.error import CodegenError;
+from yianc.analysis.ty.model import TypeData, NominalKind;
+from yianc.analysis.ty.store import TypeStore;
+from yianc.common.ids import TypeId;
+from yianc.frontend.ast.atoms import BuiltinKind;
+from yianc.frontend.ast.operator import BinaryOperator;
+from std.core.iter import Iterator, IntoIterator;
+from std.core.ops import Index;
+
+// Representation closure walks completed type records once and records every reachable type.
+struct TypeSet {
+    seen: Vec<bool>,
+}
+
+impl Drop for TypeSet {
+    pub fn drop() { self.seen.drop(); }
+}
+
+impl TypeSet {
+    static fn new(store: TypeStore&) -> Self {
+        let seen = Vec<bool>.new();
+        for index in 0u64..store.len() { seen.push(false); }
+        Self(seen)
+    }
+
+    fn add(store: TypeStore&, types: BackendTypes&, type_id: TypeId) -> Result<(), CodegenError> {
+        // Interning hidden receivers can grow the store while the closure is collected.
+        while type_id.index >= self.seen.len() { self.seen.push(false); }
+        if self.seen[type_id.index] { return Result<(), CodegenError>.Ok(()); }
+        self.seen[type_id.index] = true;
+        match store.require(type_id)? {
+            Pointer(inner) | CPointer(inner) | Reference(inner) | Slice(inner) => {
+                self.add(store, types, *inner)?;
+            },
+            Array(element, length) => {
+                self.add(store, types, *element)?;
+                self.add(store, types, *length)?;
+            },
+            Tuple(elements) => {
+                for element in *elements { self.add(store, types, *element)?; }
+            },
+            FunctionPointer(parameters, resultado) => {
+                for parameter in *parameters { self.add(store, types, *parameter)?; }
+                self.add(store, types, *resultado)?;
+            },
+            Closure(captures, _, _, _, environment, _) => {
+                for capture in *captures { self.add(store, types, capture.type_id)?; }
+                match environment { Some(value) => { self.add(store, types, *value)?; }, None => {}, }
+            },
+            Nominal(definition, _) => {
+                match store.definition(*definition).unwrap().header().kind {
+                    Struct => { for field in types.fields_of(type_id)? { self.add(store, types, field.type_id)?; } },
+                    Enum => {
+                        for variant in types.variants_of(type_id)? {
+                            match variant.payload { Some(value) => { self.add(store, types, value)?; }, None => {}, }
+                        }
+                    },
+                    _ => {},
+                }
+            },
+            _ => {},
+        }
+        Result<(), CodegenError>.Ok(())
+    }
+
+    fn add_callable(store: TypeStore&, types: BackendTypes&, callable: TypeId) -> Result<(), CodegenError> {
+        self.add(store, types, callable)?;
+        match store.require(callable)? {
+            Nominal(_, _) => {
+                let signature = types.signature(callable)?;
+                for parameter in signature.parameters { self.add(store, types, parameter.type_id)?; }
+                self.add(store, types, signature.result)?;
+                match signature.receiver {
+                    Some(receiver) => {
+                        self.add(store, types, receiver)?;
+                        let reference = store.reference(receiver);
+                        self.add(store, types, reference)?;
+                    },
+                    None => {},
+                }
+            },
+            _ => {},
+        }
+        match types.closure_environment(callable) {
+            Some(environment) => {
+                self.add(store, types, environment)?;
+                let reference = store.reference(environment);
+                self.add(store, types, reference)?;
+            },
+            None => {},
+        }
+        Result<(), CodegenError>.Ok(())
+    }
+}
+
+fn collect_operation(store: TypeStore&, types: BackendTypes&, set: TypeSet&, instruction: Instruction&)
+-> Result<(), CodegenError> {
+    match &instruction.operation {
+        Call(callable, _) => { set.add_callable(store, types, *callable)?; },
+        FieldAddress(_, aggregate, _) | EnumInitAt(_, aggregate, _, _) | EnumTagAt(_, aggregate)
+        | EnumFieldAt(_, aggregate, _, _) | EnumCopyAt(_, _, aggregate) => { set.add(store, types, *aggregate)?; },
+        EnumPayloadAddress(_, enumeration) => { set.add(store, types, *enumeration)?; },
+        Builtin(_, type_args, _) => {
+            for type_id in *type_args { set.add(store, types, *type_id)?; }
+        },
+        DynamicCall(_, method, _, _) => { set.add_callable(store, types, *method)?; },
+        TraitObject(_, methods) => {
+            for method in *methods { set.add_callable(store, types, *method)?; }
+        },
+        IndexAddress(_, element, _, _) => { set.add(store, types, *element)?; },
+        _ => {},
+    }
+    Result<(), CodegenError>.Ok(())
+}
+
+fn collect_module(module: CfgModule&, types: BackendTypes&) -> Result<TypeSet, CodegenError> {
+    let store = types.semantic_store();
+    let set = TypeSet.new(store);
+    let accepted = false;
+    defer { if !accepted { set.drop(); } };
+    for function_index in 0u64..module.len() {
+        let function = *module.function(FunctionId(function_index)).unwrap();
+        set.add(store, types, function.callable)?;
+        set.add(store, types, function.result_type)?;
+        for parameter in function.parameters { set.add(store, types, *parameter)?; }
+        set.add_callable(store, types, function.callable)?;
+        for local_index in 0u64..function.local_count() {
+            set.add(store, types, function.local(LocalId(local_index))?.type_id)?;
+        }
+        for value_index in 0u64..function.value_count() {
+            set.add(store, types, function.value(ValueId(value_index))?.type_id)?;
+        }
+        for block_index in 0u64..function.block_count() {
+            for instruction in function.block(BlockId(block_index))?.instructions {
+                collect_operation(store, types, &set, instruction)?;
+            }
+        }
+    }
+    accepted = true;
+    Result<TypeSet, CodegenError>.Ok(set)
+}
+
+fn bind_representations(module: CfgModule&, types: BackendTypes&) -> Result<(), CodegenError> {
+    if !module.representations.is_empty() {
+        return Result<(), CodegenError>.Err(CodegenError.invalid("CFG representations are already populated"));
+    }
+    let set = collect_module(module, types)?;
+    defer set.drop();
+    let store = types.semantic_store();
+    let raw = types.raw_pointers();
+    for index in 0u64..set.seen.len() {
+        if !set.seen[index] { continue; }
+        let type_id = TypeId(index);
+        let representation = classify_representation(store, type_id, raw)?;
+        module.representations.push(TypeRepresentation(type_id, representation));
+    }
+    types.bind_representations(&module.representations)?;
+    Result<(), CodegenError>.Ok(())
+}
+
+fn scope_needs_lock(function: CfgFunction&, types: BackendTypes&) -> Result<Vec<bool>, CodegenError> {
+    let needs = Vec<bool>.new();
+    for index in 0u64..function.scopes.len() { needs.push(false); }
+    if types.raw_pointers() { return Result<Vec<bool>, CodegenError>.Ok(needs); }
+    for block_index in 0u64..function.block_count() {
+        for instruction in function.block(BlockId(block_index))?.instructions {
+            match &instruction.operation {
+                Address(local) => {
+                    let record = function.local(*local)?;
+                    function.scope(record.scope)?;
+                    if !types.is_zst(record.type_id)? { needs[record.scope.index] = true; }
+                },
+                _ => {},
+            }
+        }
+    }
+    Result<Vec<bool>, CodegenError>.Ok(needs)
+}
+
+fn plan_function(function: CfgFunction&, types: BackendTypes&) -> Result<(), CodegenError> {
+    match &function.fat_plan {
+        Some(_) => return Result<(), CodegenError>.Err(CodegenError.invalid("CFG fat plan is already populated")),
+        None => {},
+    }
+    let needs = scope_needs_lock(function, types)?;
+    defer needs.drop();
+    if types.raw_pointers() { return Result<(), CodegenError>.Ok(()); }
+    let plans = Vec<FrameScopePlan>.new();
+    for value in needs { plans.push(FrameScopePlan(*value)); }
+    function.fat_plan = Option<FunctionFatPlan>.Some(FunctionFatPlan(plans));
+    Result<(), CodegenError>.Ok(())
+}
+
+fn is_fat(types: BackendTypes&, type_id: TypeId) -> Result<bool, CodegenError> {
+    Result<bool, CodegenError>.Ok(match types.representation(type_id)? {
+        FatPointer | FatReference | FatView | FatTraitObject => true,
+        _ => false,
+    })
+}
+
+fn is_pointer_like(types: BackendTypes&, type_id: TypeId) -> Result<bool, CodegenError> {
+    Result<bool, CodegenError>.Ok(match types.semantic_store().require(type_id)? {
+        Pointer(_) | Reference(_) | Slice(_) | Str => true,
+        _ => false,
+    })
+}
+
+fn push_guard(guards: Vec<OperationGuard>&, kind: GuardKind, site: GuardSite) {
+    guards.push(OperationGuard(kind, site));
+}
+
+fn cast_guards(function: CfgFunction&, types: BackendTypes&, operand: ValueId, result: ValueId,
+    guards: Vec<OperationGuard>&) -> Result<(), CodegenError> {
+    let store = types.semantic_store();
+    let source = function.value(operand)?.type_id;
+    let target = function.value(result)?.type_id;
+    if source == target { return Result<(), CodegenError>.Ok(()); }
+    match store.require(source)? {
+        Nominal(definition, _) => match store.definition(*definition).unwrap().header().kind {
+            Function | Method => return Result<(), CodegenError>.Ok(()),
+            _ => {},
+        },
+        _ => {},
+    }
+    let source_pointer = is_pointer_like(types, source)?;
+    let target_pointer = is_pointer_like(types, target)?;
+    if !source_pointer || !target_pointer { return Result<(), CodegenError>.Ok(()); }
+    if types.is_zst(target)? { return Result<(), CodegenError>.Ok(()); }
+    let array = false;
+    match store.require(source)? {
+        Pointer(inner) | Reference(inner) => match store.require(*inner)? {
+            Array(element, length) => match store.require(target)? {
+                Pointer(target_element) | Reference(target_element) => {
+                    if *element == *target_element {
+                        match store.require(*length)? {
+                            LiteralValue(_, negative, _) => { if !*negative { array = true; } },
+                            _ => {},
+                        }
+                    }
+                },
+                _ => {},
+            },
+            _ => {},
+        },
+        _ => {},
+    }
+    if types.is_zst(source)? { return Result<(), CodegenError>.Ok(()); }
+    if types.raw_pointers() { return Result<(), CodegenError>.Ok(()); }
+    if array { push_guard(guards, GuardKind.Count, GuardSite.Before); }
+    match (store.require(source)?, store.require(target)?) {
+        (Pointer(_), Pointer(_)) => {
+            if array { push_guard(guards, GuardKind.CastAccess, GuardSite.Before); }
+        },
+        (Pointer(_), Reference(_)) | (Slice(_), Reference(_)) => {},
+        (Str, Reference(_)) => {
+            push_guard(guards, GuardKind.CastNonempty, GuardSite.Before);
+            push_guard(guards, GuardKind.CastView, GuardSite.Before);
+        },
+        (Pointer(_), Slice(_)) => push_guard(guards, GuardKind.PointerRemaining, GuardSite.Before),
+        _ => {},
+    }
+    Result<(), CodegenError>.Ok(())
+}
+
+fn builtin_guards(function: CfgFunction&, types: BackendTypes&, instruction: Instruction&,
+    kind: BuiltinKind, args: Vec<ValueId>&, guards: Vec<OperationGuard>&) -> Result<(), CodegenError> {
+    match kind {
+        Alloc | Realloc => {
+            let result = *instruction.result.unwrap();
+            let type_id = function.value(result)?.type_id;
+            if types.is_zst(type_id)? { return Result<(), CodegenError>.Ok(()); }
+            if !types.raw_pointers() {
+                if kind == BuiltinKind.Realloc { push_guard(guards, GuardKind.HeapRoot, GuardSite.BeforeRelease); }
+                push_guard(guards, GuardKind.Count, GuardSite.Before);
+                push_guard(guards, GuardKind.AllocationSize, GuardSite.Before);
+                if kind == BuiltinKind.Realloc { push_guard(guards, GuardKind.HeapRoot, GuardSite.BeforeRelease); }
+            } else {
+                push_guard(guards, GuardKind.AllocationSize, GuardSite.Before);
+                push_guard(guards, GuardKind.AllocationResult, GuardSite.Before);
+            }
+        },
+        SliceFromParts | StrFromParts => {
+            let source = function.value(args[0])?.type_id;
+            if is_fat(types, source)? {
+                push_guard(guards, GuardKind.Count, GuardSite.Before);
+                push_guard(guards, GuardKind.ViewParts, GuardSite.Before);
+            }
+        },
+        SliceRange => push_guard(guards, GuardKind.SliceRange, GuardSite.Before),
+        SliceGetPtr | StrGetPtr => {
+            let result = *instruction.result.unwrap();
+            let type_id = function.value(result)?.type_id;
+            if !types.raw_pointers() && !types.is_zst(type_id)? {
+                push_guard(guards, GuardKind.Count, GuardSite.Before);
+            }
+        },
+        ArgBytes => {
+            push_guard(guards, GuardKind.ArgumentIndex, GuardSite.Before);
+            push_guard(guards, GuardKind.ArgumentData, GuardSite.AfterArgumentLoad);
+        },
+        _ => {},
+    }
+    Result<(), CodegenError>.Ok(())
+}
+
+fn expected_guards(function: CfgFunction&, types: BackendTypes&, instruction: Instruction&)
+-> Result<Vec<OperationGuard>, CodegenError> {
+    let guards = Vec<OperationGuard>.new();
+    let accepted = false;
+    defer { if !accepted { guards.drop(); } };
+    match &instruction.operation {
+        Delete(value) => {
+            let type_id = function.value(*value)?.type_id;
+            if !types.raw_pointers() && !types.is_zst(type_id)? {
+                push_guard(&guards, GuardKind.HeapRoot, GuardSite.BeforeRelease);
+            }
+        },
+        PointerOffset(pointer, _, _) => {
+            let type_id = function.value(*pointer)?.type_id;
+            if is_fat(types, type_id)? { push_guard(&guards, GuardKind.PointerStep, GuardSite.Before); }
+        },
+        PointerDifference(left, _) => {
+            let type_id = function.value(*left)?.type_id;
+            if is_fat(types, type_id)? { push_guard(&guards, GuardKind.PointerDifference, GuardSite.Before); }
+        },
+        IndexAddress(address, _, _, _) => {
+            let source = function.value(*address)?.type_id;
+            let result = function.value(*instruction.result.unwrap())?.type_id;
+            let pointer_result = match types.semantic_store().require(result)? { Pointer(_) => true, _ => false, };
+            if !types.is_zst(result)? && is_fat(types, source)? && pointer_result {
+                push_guard(&guards, GuardKind.IndexOffset, GuardSite.Before);
+            }
+        },
+        Binary(op, left, _) => {
+            let type_id = function.value(*left)?.type_id;
+            if is_fat(types, type_id)? && *op != BinaryOperator.Eq && *op != BinaryOperator.Neq {
+                push_guard(&guards, GuardKind.PointerOrder, GuardSite.Before);
+            }
+        },
+        DynamicCall(_, _, _, _) => {
+            if !types.raw_pointers() { push_guard(&guards, GuardKind.DynamicReceiver, GuardSite.Before); }
+        },
+        Cast(operand) => { cast_guards(function, types, *operand, *instruction.result.unwrap(), &guards)?; },
+        Builtin(kind, _, args) => { builtin_guards(function, types, instruction, *kind, args, &guards)?; },
+        _ => {},
+    }
+    accepted = true;
+    Result<Vec<OperationGuard>, CodegenError>.Ok(guards)
+}
+
+fn insert_guards(module: CfgModule&, types: BackendTypes&) -> Result<(), CodegenError> {
+    for function_index in 0u64..module.len() {
+        let function = *module.function(FunctionId(function_index)).unwrap();
+        for block_index in 0u64..function.block_count() {
+            for instruction in function.block(BlockId(block_index))?.instructions {
+                let expected = match expected_guards(function, types, instruction) {
+                    Ok(value) => value,
+                    Err(problem) => return Result<(), CodegenError>.Err(problem.with_location(instruction.span)),
+                };
+                defer expected.drop();
+                instruction.guards.clear();
+                for record_index in 0u64..expected.len() { instruction.guards.push(expected[record_index]); }
+            }
+        }
+    }
+    Result<(), CodegenError>.Ok(())
+}
+
+// Fat activation fixes representations, frame plans, safety checks, and guarded templates.
+pub fn prepare_safety(module: CfgModule&, types: BackendTypes&) -> Result<(), CodegenError> {
+    if module.safety_stage != SafetyStage.Neutral {
+        return Result<(), CodegenError>.Err(CodegenError.invalid("safety preparation requires a neutral CFG"));
+    }
+    bind_representations(module, types)?;
+    for function_index in 0u64..module.len() {
+        let function = *module.function(FunctionId(function_index)).unwrap();
+        plan_function(function, types)?;
+    }
+    insert_checks(module, types)?;
+    insert_guards(module, types)?;
+    module.safety_stage = SafetyStage.Prepared;
+    Result<(), CodegenError>.Ok(())
+}
+
+fn same_guard(left: OperationGuard&, right: OperationGuard&) -> bool {
+    left.kind == right.kind && left.site == right.site
+}
+
+fn verify_representations(module: CfgModule&, types: BackendTypes&) -> Result<(), CodegenError> {
+    let set = collect_module(module, types)?;
+    defer set.drop();
+    let store = types.semantic_store();
+    let expected = 0u64;
+    for index in 0u64..set.seen.len() { if set.seen[index] { expected += 1u64; } }
+    if module.representations.len() != expected {
+        return Result<(), CodegenError>.Err(CodegenError.invalid("CFG representation table is incomplete"));
+    }
+    let position = 0u64;
+    for index in 0u64..set.seen.len() {
+        if !set.seen[index] { continue; }
+        let entry = module.representations[position];
+        if entry.type_id.index != index {
+            return Result<(), CodegenError>.Err(CodegenError.invalid("CFG representation order is not canonical"));
+        }
+        let classified = classify_representation(store, entry.type_id, types.raw_pointers())?;
+        if classified != entry.representation {
+            return Result<(), CodegenError>.Err(CodegenError.invalid("CFG representation disagrees with the classifier"));
+        }
+        types.representation(entry.type_id)?;
+        position += 1u64;
+    }
+    Result<(), CodegenError>.Ok(())
+}
+
+// Activation verification covers representations, frame plans, and operation guards.
+pub fn verify_activation(module: CfgModule&, types: BackendTypes&) -> Result<(), CodegenError> {
+    verify_representations(module, types)?;
+    for function_index in 0u64..module.len() {
+        let function = *module.function(FunctionId(function_index)).unwrap();
+        let needs = scope_needs_lock(function, types)?;
+        defer needs.drop();
+        match &function.fat_plan {
+            Some(plan) => {
+                if types.raw_pointers() {
+                    return Result<(), CodegenError>.Err(CodegenError.invalid("raw CFG has a fat plan"));
+                }
+                if plan.scopes.len() != function.scopes.len() || plan.scopes.len() != needs.len() {
+                    return Result<(), CodegenError>.Err(CodegenError.invalid("CFG fat plan scope count is inconsistent"));
+                }
+                for index in 0u64..needs.len() {
+                    if plan.scopes[index].needs_lock != needs[index] {
+                        return Result<(), CodegenError>.Err(CodegenError.invalid("CFG fat plan lock decision is inconsistent"));
+                    }
+                }
+            },
+            None => {
+                if !types.raw_pointers() {
+                    return Result<(), CodegenError>.Err(CodegenError.invalid("fat CFG has no frame plan"));
+                }
+            },
+        }
+        for block_index in 0u64..function.block_count() {
+            for instruction in function.block(BlockId(block_index))?.instructions {
+                let guards = expected_guards(function, types, instruction)?;
+                defer guards.drop();
+                if guards.len() != instruction.guards.len() {
+                    return Result<(), CodegenError>.Err(CodegenError.invalid("CFG operation guards are incomplete"));
+                }
+                for index in 0u64..guards.len() {
+                    if !same_guard(&guards[index], &instruction.guards[index]) {
+                        return Result<(), CodegenError>.Err(CodegenError.invalid("CFG operation guard disagrees with activation"));
+                    }
+                }
+            }
+        }
+    }
+    Result<(), CodegenError>.Ok(())
+}
+
+// Prepared graphs still carry every safety check and no live proof.
+pub fn verify_prepared(module: CfgModule&, types: BackendTypes&) -> Result<(), CodegenError> {
+    if module.safety_stage != SafetyStage.Prepared {
+        return Result<(), CodegenError>.Err(CodegenError.invalid("prepared verification requires a prepared CFG"));
+    }
+    verify_activation(module, types)?;
+    for function_index in 0u64..module.len() {
+        let function = *module.function(FunctionId(function_index)).unwrap();
+        for block_index in 0u64..function.block_count() {
+            for instruction in function.block(BlockId(block_index))?.instructions {
+                match &instruction.operation {
+                    SafetyPoint => return Result<(), CodegenError>.Err(CodegenError.invalid("prepared CFG carries a safety point")),
+                    _ => {},
+                }
+                let checks = expected_checks(function, types, instruction)?;
+                defer checks.drop();
+                if checks.len() != instruction.checks.len() {
+                    return Result<(), CodegenError>.Err(CodegenError.invalid("CFG safety checks are incomplete"));
+                }
+                for index in 0u64..checks.len() {
+                    if !same_check(&checks[index], &instruction.checks[index]) {
+                        return Result<(), CodegenError>.Err(CodegenError.invalid("CFG safety check disagrees with activation"));
+                    }
+                }
+                if !instruction.live_proofs.is_empty() {
+                    return Result<(), CodegenError>.Err(CodegenError.invalid("prepared CFG carries live proofs"));
+                }
+            }
+        }
+    }
+    Result<(), CodegenError>.Ok(())
+}

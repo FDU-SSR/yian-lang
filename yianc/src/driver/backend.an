@@ -6,8 +6,11 @@ from yianc.codegen.types import BackendTypes;
 from yianc.analysis.constant.evaluate import TypeSizeProvider;
 from yianc.codegen.cfg.model import CfgModule;
 from yianc.codegen.cfg.verify import verify_cfg, verify_structure;
-from yianc.codegen.cfg.passes.checks import insert_checks;
 from yianc.codegen.cfg.passes.cleanup import cleanup;
+from yianc.codegen.cfg.passes.inline import inline_cfg;
+from yianc.codegen.cfg.passes.activation import prepare_safety;
+from yianc.codegen.cfg.passes.eliminate import eliminate_checks;
+from yianc.codegen.cfg.passes.options import CfgPassOptions;
 from yianc.codegen.lowering.context import lower_module;
 from yianc.codegen.llvm.module import LlvmLowering;
 from yianc.codegen.error import CodegenError;
@@ -74,11 +77,29 @@ fn cleanup_observed(cfg: CfgModule&, trace: Option<CompilerTrace&>) -> Result<()
     Result<(), CodegenError>.Ok(val= ())
 }
 
-fn insert_checks_observed(cfg: CfgModule&, types: BackendTypes&, trace: Option<CompilerTrace&>) -> Result<(), CodegenError> {
-    let token = start_profile(trace, "cfg.insert_checks", ProfileKind.Pass);
+fn inline_observed(cfg: CfgModule&, types: BackendTypes&, options: CfgPassOptions, trace: Option<CompilerTrace&>) -> Result<(), CodegenError> {
+    let token = start_profile(trace, "cfg.inline", ProfileKind.Pass);
     let success = false;
-    defer end_profile(trace, "cfg.insert_checks", token, success);
-    insert_checks(cfg, types)?;
+    defer end_profile(trace, "cfg.inline", token, success);
+    inline_cfg(cfg, types, options)?;
+    success = true;
+    Result<(), CodegenError>.Ok(val= ())
+}
+
+fn prepare_safety_observed(cfg: CfgModule&, types: BackendTypes&, trace: Option<CompilerTrace&>) -> Result<(), CodegenError> {
+    let token = start_profile(trace, "cfg.prepare_safety", ProfileKind.Pass);
+    let success = false;
+    defer end_profile(trace, "cfg.prepare_safety", token, success);
+    prepare_safety(cfg, types)?;
+    success = true;
+    Result<(), CodegenError>.Ok(val= ())
+}
+
+fn eliminate_observed(cfg: CfgModule&, types: BackendTypes&, options: CfgPassOptions, trace: Option<CompilerTrace&>) -> Result<(), CodegenError> {
+    let token = start_profile(trace, "cfg.eliminate_checks", ProfileKind.Pass);
+    let success = false;
+    defer end_profile(trace, "cfg.eliminate_checks", token, success);
+    eliminate_checks(cfg, types, options)?;
     success = true;
     Result<(), CodegenError>.Ok(val= ())
 }
@@ -162,13 +183,15 @@ pub struct BackendDriver {
     phase: BackendPhase,
     program: String,
     runtime_profile_dir: Option<String>,
+    pass_options: CfgPassOptions,
 }
 
 impl BackendDriver {
     static pub fn new(analysis: AnalysisSession&, options: BackendOptions, trace: Option<CompilerTrace&>) -> Result<Self, CodegenError> {
+        let pass_options = CfgPassOptions(options.cfg_inline, options.fat_check_elimination);
         let backend = BackendSession.new_observed(analysis, options, trace)?;
         Result<Self, CodegenError>.Ok(Self(backend, Option<CfgModule>.None, BackendPhase.Created,
-            String.new(), Option<String>.None))
+            String.new(), Option<String>.None, pass_options))
     }
 
     pub fn size_provider() -> TypeSizeProvider& {
@@ -198,7 +221,20 @@ impl BackendDriver {
         defer { if !accepted { cfg.drop(); } };
         verify_structure_observed(&cfg, trace)?;
         cleanup_observed(&cfg, trace)?;
-        insert_checks_observed(&cfg, self.session.backend_types(), trace)?;
+        verify_cfg_observed(&cfg, self.session.backend_types(), trace)?;
+        if self.runtime_profile_dir.is_some() {
+            match trace { Some(observer) => observer.skip("cfg.inline", "runtime profiling keeps logical function boundaries"), None => {}, }
+        } elif self.session.backend_types().raw_pointers() {
+            match trace { Some(observer) => observer.skip("cfg.inline", "raw-pointer mode keeps original function boundaries"), None => {}, }
+        } elif !self.pass_options.inline {
+            match trace { Some(observer) => observer.skip("cfg.inline", "CFG inlining is disabled by configuration"), None => {}, }
+        } else {
+            inline_observed(&cfg, self.session.backend_types(), self.pass_options, trace)?;
+        }
+        verify_cfg_observed(&cfg, self.session.backend_types(), trace)?;
+        prepare_safety_observed(&cfg, self.session.backend_types(), trace)?;
+        verify_cfg_observed(&cfg, self.session.backend_types(), trace)?;
+        eliminate_observed(&cfg, self.session.backend_types(), self.pass_options, trace)?;
         verify_cfg_observed(&cfg, self.session.backend_types(), trace)?;
         self.cfg = Option<CfgModule>.Some(cfg);
         accepted = true;
@@ -209,8 +245,6 @@ impl BackendDriver {
     fn generate(trace: Option<CompilerTrace&>) -> Result<(), CodegenError> {
         self.phase = BackendPhase.Failed;
         let cfg = self.cfg_ref();
-        verify_cfg_observed(cfg, self.session.backend_types(), trace)?;
-        insert_checks_observed(cfg, self.session.backend_types(), trace)?;
         verify_cfg_observed(cfg, self.session.backend_types(), trace)?;
         let profile_dir = match &self.runtime_profile_dir { Some(value) => Option<str>.Some(value.as_str()), None => Option<str>.None };
         lower_llvm(self.session.analysis_session(), self.session.backend_types(), self.session.llvm_module(), cfg,

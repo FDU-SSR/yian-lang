@@ -3,8 +3,9 @@ from yianc.analysis.session.output import AnalysisOutput;
 from yianc.analysis.hir.node import HirNode;
 from yianc.analysis.hir.pattern import PatternNode;
 from yianc.analysis.hir.traversal import HirVisitor, walk_expr;
-from yianc.codegen.cfg.model import CfgModule;
-from yianc.codegen.cfg.ids import FunctionId, BlockId, ValueId;
+from yianc.codegen.cfg.model import CfgModule, SafetyStage, GuardKind, GuardSite;
+from yianc.codegen.cfg.ids import FunctionId, BlockId, ValueId, ScopeId;
+from yianc.codegen.representation import PointerRepresentation;
 from yianc.codegen.error import CodegenError;
 from yianc.common.ids import UnitId, HirId, PatternId;
 from yianc.common.traversal import WalkControl;
@@ -31,6 +32,34 @@ fn save(output: Writer&, path: str) -> Result<(), AnalysisError> {
         Ok(value) => Result<(), AnalysisError>.Ok(value),
         Err(problem) => { defer problem.drop(); Result<(), AnalysisError>.Err(AnalysisError.internal(problem.msg())) },
     }
+}
+
+
+fn stage_name(stage: SafetyStage) -> str {
+    match stage { Neutral => "neutral", Prepared => "prepared", Optimized => "optimized" }
+}
+
+fn representation_name(representation: PointerRepresentation) -> str {
+    match representation {
+        NonPointer => "non-pointer", ZeroSized => "zero-sized", RawAddress => "raw-address",
+        RawView => "raw-view", RawTraitObject => "raw-trait-object", FatPointer => "fat-pointer",
+        FatReference => "fat-reference", FatView => "fat-view", FatTraitObject => "fat-trait-object",
+    }
+}
+
+fn guard_kind_name(kind: GuardKind) -> str {
+    match kind {
+        Count => "count", AllocationSize => "allocation-size", AllocationResult => "allocation-result",
+        HeapRoot => "heap-root", PointerStep => "pointer-step", PointerDifference => "pointer-difference",
+        PointerOrder => "pointer-order", IndexOffset => "index-offset", ViewParts => "view-parts",
+        SliceRange => "slice-range", ArgumentIndex => "argument-index", ArgumentData => "argument-data",
+        PointerRemaining => "pointer-remaining", CastAccess => "cast-access", CastView => "cast-view",
+        CastNonempty => "cast-nonempty", DynamicReceiver => "dynamic-receiver",
+    }
+}
+
+fn guard_site_name(site: GuardSite) -> str {
+    match site { Before => "before", AfterAllocation => "after-allocation", BeforeRelease => "before-release", AfterArgumentLoad => "after-argument-load" }
 }
 
 pub struct StageDumps { pub enabled: bool, pub trace: Option<CompilerTrace&> }
@@ -220,6 +249,38 @@ pub fn cfg_dump(module: CfgModule&) -> Result<(), CodegenError> {
         output.begin_array();
         for parameter in function.parameters { output.write_u64(parameter.index); }
         output.end_array();
+        output.key("safety_stage");
+        output.write_string(stage_name(module.safety_stage));
+        output.key("scopes");
+        output.begin_array();
+        for scope_index in 0u64..function.scopes.len() {
+            let scope = function.scope(ScopeId(scope_index))?;
+            output.begin_object();
+            output.key("id");
+            output.write_u64(scope_index);
+            output.key("parent");
+            match scope.parent { Some(value) => output.write_u64(value.index), None => output.write_null(), }
+            output.key("callable");
+            output.write_u64(scope.callable.index);
+            output.key("needs_lock");
+            match &function.fat_plan {
+                Some(plan) => output.write_bool(plan.scopes[scope_index].needs_lock),
+                None => output.write_null(),
+            }
+            output.end_object();
+        }
+        output.end_array();
+        output.key("representations");
+        output.begin_array();
+        for representation in module.representations {
+            output.begin_object();
+            output.key("type");
+            output.write_u64(representation.type_id.index);
+            output.key("representation");
+            output.write_string(representation_name(representation.representation));
+            output.end_object();
+        }
+        output.end_array();
         output.key("values");
         output.begin_array();
         for index in 0u64..function.value_count() {
@@ -280,7 +341,7 @@ pub fn cfg_dump(module: CfgModule&) -> Result<(), CodegenError> {
                     output.key("kind");
                     output.write_string(check.name());
                     match check {
-                        Access(_, kind) => { output.key("code"); output.write_string(kind.code()); },
+                        Access(_, kind) | Live(_, kind) | AccessBounds(_, kind) => { output.key("code"); output.write_string(kind.code()); },
                         _ => {},
                     }
                     output.key("operands");
@@ -289,6 +350,35 @@ pub fn cfg_dump(module: CfgModule&) -> Result<(), CodegenError> {
                     defer operands.drop();
                     for operand in operands { output.write_u64(operand.index); }
                     output.end_array();
+                    output.end_object();
+                }
+                output.end_array();
+                output.key("guards");
+                output.begin_array();
+                for guard_record in instruction.guards {
+                    output.begin_object();
+                    output.key("kind");
+                    output.write_string(guard_kind_name(guard_record.kind));
+                    output.key("site");
+                    output.write_string(guard_site_name(guard_record.site));
+                    output.end_object();
+                }
+                output.end_array();
+                output.key("live_proofs");
+                output.begin_array();
+                for proof in instruction.live_proofs {
+                    output.begin_object();
+                    output.key("address");
+                    output.write_u64(proof.address.index);
+                    output.key("witness");
+                    output.begin_object();
+                    output.key("block");
+                    output.write_u64(proof.witness.block.index);
+                    output.key("instruction");
+                    output.write_u64(proof.witness.instruction);
+                    output.key("check");
+                    output.write_u64(proof.witness.check);
+                    output.end_object();
                     output.end_object();
                 }
                 output.end_array();
@@ -324,6 +414,7 @@ pub fn cfg_dump(module: CfgModule&) -> Result<(), CodegenError> {
                         output.write_u64(*field);
                     },
                     Extract(_, field) | FieldAddress(_, _, field) => { output.key("field"); output.write_u64(*field); },
+                    ScopeEnter(scope) | ScopeExit(scope) => { output.key("scope"); output.write_u64(scope.index); },
                     _ => {},
                 }
                 output.end_object();

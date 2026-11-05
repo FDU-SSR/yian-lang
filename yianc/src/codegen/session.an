@@ -12,6 +12,8 @@ pub struct BackendOptions {
     pub raw_pointers: bool,
     pub optimization: u8,
     pub runtime_profile_dir: Option<str>,
+    pub cfg_inline: bool,
+    pub fat_check_elimination: bool,
 }
 
 pub struct EmitOptions {

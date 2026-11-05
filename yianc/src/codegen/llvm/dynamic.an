@@ -1,4 +1,5 @@
 from yianc.codegen.llvm.module import LlvmLowering, FunctionLowering;
+from yianc.codegen.cfg.model import GuardKind, GuardSite;
 from yianc.codegen.cfg.ids import ValueId;
 from yianc.codegen.error import CodegenError;
 from yianc.analysis.ty.callable import store_signature;
@@ -123,6 +124,7 @@ impl FunctionLowering {
         }
         let object = self.get(receiver)?;
         if !self.owner.types.raw_pointers() {
+            self.require_guard(GuardKind.DynamicReceiver, GuardSite.Before)?;
             self.checked(self.live(self.builder.extract_value(object, 1u32, ""), "S003")?, "S003")?;
         }
         let table = self.builder.extract_value(object, if self.owner.types.raw_pointers() { 1u32 } else { 2u32 }, "");

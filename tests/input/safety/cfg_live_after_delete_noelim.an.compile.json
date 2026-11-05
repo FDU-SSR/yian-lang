@@ -1,0 +1,5 @@
+{
+  "pointer_modes": ["fat"],
+  "raw_inapplicable_reason": "the fixture intentionally dereferences a released allocation, which raw-pointer mode cannot diagnose",
+  "compiler_args": ["--no-fat-check-elimination"]
+}
