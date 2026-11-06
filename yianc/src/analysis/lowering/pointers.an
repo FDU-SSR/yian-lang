@@ -145,6 +145,25 @@ impl ExprChecker {
                         HirKind.Builtin(Builtin(BuiltinKind.SliceRange, types, arguments))));
                 }
             },
+            Pointer(element) => {
+                // T* indexing has the same observable behavior as the standard
+                // Index<u64, T*> implementation: pointer arithmetic followed by
+                // a dereference. Lower it directly so the generic trait call and
+                // its reference arguments stay out of the hot path.
+                let index_type = self.type_of(index);
+                let valid_index = match self.ctx.session.types.require(index_type)? {
+                    TypeData.Integer(bits, signed) => *bits == 64u32 && !*signed,
+                    TypeData.IntLiteral => true,
+                    _ => false,
+                };
+                if valid_index {
+                    let offset = self.coerce(index, TypeId(U64_TYPE_ID))?;
+                    let address = self.node(span, self.ctx.session.types.pointer(*element), false,
+                        HirKind.Binary(Binary(BinaryOperator.Add, object, offset)));
+                    return Result<HirId, AnalysisError>.Ok(self.node(span, *element, true,
+                        HirKind.Unary(Unary(UnaryOperator.Deref, address))));
+                }
+            },
             _ => {},
         }
 
