@@ -1,6 +1,6 @@
 from yianc.codegen.cfg.ids import FunctionId, BlockId, ValueId, LocalId, ScopeId;
 from yianc.codegen.cfg.model import CfgModule, CfgFunction, Operation, ValueKind, Terminator, Instruction,
-    IndexBounds, SafetyCheck, OperationGuard, LiveProof, SafetyStage;
+IndexBounds, SafetyCheck, OperationGuard, LiveProof, InBoundsProof, SafetyStage;
 from yianc.codegen.cfg.passes.options import CfgPassOptions;
 from yianc.codegen.types import BackendTypes;
 from yianc.codegen.error import CodegenError;
@@ -101,7 +101,7 @@ fn clone_operation(operation: Operation&, values: HashMap<ValueId, ValueId>&, bl
         },
         Extract(aggregate, field) => Operation.Extract(remap_value(values, *aggregate)?, *field),
         FieldAddress(address, aggregate, field) =>
-            Operation.FieldAddress(remap_value(values, *address)?, *aggregate, *field),
+        Operation.FieldAddress(remap_value(values, *address)?, *aggregate, *field),
         Builtin(kind, type_args, args) => {
             let cloned_types = Vec<TypeId>.new();
             for type_id in *type_args { cloned_types.push(*type_id); }
@@ -123,17 +123,17 @@ fn clone_operation(operation: Operation&, values: HashMap<ValueId, ValueId>&, bl
         },
         EnumTagAt(address, enumeration) => Operation.EnumTagAt(remap_value(values, *address)?, *enumeration),
         EnumFieldAt(address, enumeration, discriminant, field) =>
-            Operation.EnumFieldAt(remap_value(values, *address)?, *enumeration, *discriminant, *field),
+        Operation.EnumFieldAt(remap_value(values, *address)?, *enumeration, *discriminant, *field),
         EnumCopyAt(destination, source, enumeration) =>
-            Operation.EnumCopyAt(remap_value(values, *destination)?, remap_value(values, *source)?, *enumeration),
+        Operation.EnumCopyAt(remap_value(values, *destination)?, remap_value(values, *source)?, *enumeration),
         Delete(value) => Operation.Delete(remap_value(values, *value)?),
         PointerOffset(pointer, index, subtract) =>
-            Operation.PointerOffset(remap_value(values, *pointer)?, remap_value(values, *index)?, *subtract),
+        Operation.PointerOffset(remap_value(values, *pointer)?, remap_value(values, *index)?, *subtract),
         PointerDifference(left, right) =>
-            Operation.PointerDifference(remap_value(values, *left)?, remap_value(values, *right)?),
+        Operation.PointerDifference(remap_value(values, *left)?, remap_value(values, *right)?),
         IndexAddress(address, element, index, bounds) =>
-            Operation.IndexAddress(remap_value(values, *address)?, *element, remap_value(values, *index)?,
-                remap_bounds(bounds, values)?),
+        Operation.IndexAddress(remap_value(values, *address)?, *element, remap_value(values, *index)?,
+            remap_bounds(bounds, values)?),
         Repeat(element, count) => Operation.Repeat(remap_value(values, *element)?, *count),
         Invoke(callable, args) => {
             let cloned_args = Vec<ValueId>.new();
@@ -141,7 +141,7 @@ fn clone_operation(operation: Operation&, values: HashMap<ValueId, ValueId>&, bl
             Operation.Invoke(remap_value(values, *callable)?, cloned_args)
         },
         Fill(destination, element, count) =>
-            Operation.Fill(remap_value(values, *destination)?, remap_value(values, *element)?, remap_value(values, *count)?),
+        Operation.Fill(remap_value(values, *destination)?, remap_value(values, *element)?, remap_value(values, *count)?),
         TraitObject(source, methods) => {
             let cloned_methods = Vec<TypeId>.new();
             for method in *methods { cloned_methods.push(*method); }
@@ -439,7 +439,7 @@ fn inline_call(module: CfgModule&, types: BackendTypes&, function: CfgFunction&,
                 return Result<Option<u64>, CodegenError>.Err(CodegenError.invalid("inline callee block already has a terminator"));
             }
             function.block(mapped_block)?.instructions.push(Instruction(instruction.span, result, operation,
-                Vec<SafetyCheck>.new(), Vec<OperationGuard>.new(), Vec<LiveProof>.new()));
+                Vec<SafetyCheck>.new(), Vec<OperationGuard>.new(), Vec<LiveProof>.new(), Vec<InBoundsProof>.new()));
             match result {
                 Some(value) => { function.value(value)?.kind = ValueKind.Temporary(mapped_block, position); },
                 None => {},
@@ -495,7 +495,7 @@ fn inline_call(module: CfgModule&, types: BackendTypes&, function: CfgFunction&,
                 }
                 function.block(continuation)?.instructions.insert(0u64,
                     Instruction(call_span, Option<ValueId>.Some(value), Operation.Phi(return_values),
-                        Vec<SafetyCheck>.new(), Vec<OperationGuard>.new(), Vec<LiveProof>.new()));
+                    Vec<SafetyCheck>.new(), Vec<OperationGuard>.new(), Vec<LiveProof>.new(), Vec<InBoundsProof>.new()));
                 function.value(value)?.kind = ValueKind.Temporary(continuation, 0u64);
             } else {
                 function.value(value)?.kind = ValueKind.Undef;

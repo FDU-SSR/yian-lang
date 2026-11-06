@@ -1,6 +1,6 @@
 from yianc.codegen.cfg.ids import FunctionId, BlockId, ValueId, LocalId, ScopeId;
 from yianc.codegen.cfg.model import CfgModule, CfgFunction, Instruction, Operation, SafetyCheck,
-    SafetyStage, OperationGuard, GuardKind, GuardSite, FrameScopePlan, FunctionFatPlan;
+SafetyStage, OperationGuard, GuardKind, GuardSite, FrameScopePlan, FunctionFatPlan;
 from yianc.codegen.cfg.passes.checks import insert_checks, expected_checks, same_check;
 from yianc.codegen.representation import PointerRepresentation, TypeRepresentation, classify_representation;
 from yianc.codegen.types import BackendTypes;
@@ -199,16 +199,16 @@ fn plan_function(function: CfgFunction&, types: BackendTypes&) -> Result<(), Cod
 
 fn is_fat(types: BackendTypes&, type_id: TypeId) -> Result<bool, CodegenError> {
     Result<bool, CodegenError>.Ok(match types.representation(type_id)? {
-        FatPointer | FatReference | FatView | FatTraitObject => true,
-        _ => false,
-    })
+            FatPointer | FatReference | FatView | FatTraitObject => true,
+            _ => false,
+        })
 }
 
 fn is_pointer_like(types: BackendTypes&, type_id: TypeId) -> Result<bool, CodegenError> {
     Result<bool, CodegenError>.Ok(match types.semantic_store().require(type_id)? {
-        Pointer(_) | Reference(_) | Slice(_) | Str => true,
-        _ => false,
-    })
+            Pointer(_) | Reference(_) | Slice(_) | Str => true,
+            _ => false,
+        })
 }
 
 fn push_guard(guards: Vec<OperationGuard>&, kind: GuardKind, site: GuardSite) {
@@ -489,6 +489,9 @@ pub fn verify_prepared(module: CfgModule&, types: BackendTypes&) -> Result<(), C
                 }
                 if !instruction.live_proofs.is_empty() {
                     return Result<(), CodegenError>.Err(CodegenError.invalid("prepared CFG carries live proofs"));
+                }
+                if !instruction.bounds_proofs.is_empty() {
+                    return Result<(), CodegenError>.Err(CodegenError.invalid("prepared CFG carries InBounds proofs"));
                 }
             }
         }

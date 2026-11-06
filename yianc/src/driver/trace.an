@@ -182,7 +182,7 @@ impl CompilerTrace {
             "analysis.validate_declarations", "analysis.select_entry", "analysis.check_procedures", "analysis.normalize_address_storage",
             "analysis.verify_hir", "analysis.check_coverage", "analysis.check_assignment", "backend.initialize",
             "backend.finish_analysis", "cfg.lower", "cfg.verify_structure", "cfg.cleanup", "cfg.inline", "cfg.prepare_safety",
-            "cfg.insert_checks", "cfg.eliminate_checks", "cfg.verify",
+            "cfg.insert_checks", "cfg.eliminate_checks", "cfg.eliminate_inbounds", "cfg.verify",
             "llvm.lower", "llvm.verify_before_optimization", "llvm.optimize", "llvm.verify_after_optimization", "llvm.emit_native",
             "llvm.serialize_ir", "llvm.serialize_bitcode", "native.prepare", "native.runtime_compile", "native.runtime_archive",
             "native.c_shim_compile", "native.link_flags", "native.link", "io.dump", "io.artifact_publish",

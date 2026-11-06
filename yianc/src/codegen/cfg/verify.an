@@ -604,6 +604,9 @@ fn verify_neutral(module: CfgModule&) -> Result<(), CodegenError> {
                 if !instruction.live_proofs.is_empty() {
                     return Result<(), CodegenError>.Err(CodegenError.invalid("neutral CFG carries live proofs"));
                 }
+                if !instruction.bounds_proofs.is_empty() {
+                    return Result<(), CodegenError>.Err(CodegenError.invalid("neutral CFG carries InBounds proofs"));
+                }
             }
         }
     }

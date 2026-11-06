@@ -1,0 +1,508 @@
+from yianc.codegen.cfg.ids import FunctionId, BlockId, ValueId;
+from yianc.common.ids import TypeId;
+from yianc.codegen.cfg.model import CfgModule, CfgFunction, Instruction, SafetyCheck, CheckLocation,
+InBoundsProof, SafetyStage, PRODUCER_CHECK, Operation, BuiltinKind, GuardKind, ValueKind;
+from yianc.codegen.cfg.dominance import Dominance, dominators;
+from yianc.codegen.cfg.passes.checks import expected_checks, same_check;
+from yianc.codegen.types import BackendTypes;
+from yianc.codegen.error import CodegenError;
+from yianc.codegen.representation import PointerRepresentation;
+from yianc.analysis.ty.model import TypeData;
+from std.collections.hash_map import HashMap;
+from std.core.iter import Iterator, IntoIterator;
+from std.core.ops import Index;
+
+const ITERATION_LIMIT: u64 = 64u64;
+const FACT_LIMIT: u64 = 4096u64;
+
+// Fat pointers constructed from a nonempty reference or a positive allocation
+// carry a statically valid index/size pair. The verifier recomputes this rule.
+fn is_fat_pointer(types: BackendTypes&, type_id: TypeId) -> Result<bool, CodegenError> {
+    match types.representation(type_id)? {
+        PointerRepresentation.FatPointer => Result<bool, CodegenError>.Ok(true),
+        _ => Result<bool, CodegenError>.Ok(false),
+    }
+}
+
+fn count_is_positive(function: CfgFunction&, count: ValueId) -> Result<bool, CodegenError> {
+    match &function.value(count)?.kind {
+        ValueKind.Integer(bits) => Result<bool, CodegenError>.Ok((*bits) > 0u64),
+        _ => Result<bool, CodegenError>.Ok(false),
+    }
+}
+
+fn guard_present(instruction: Instruction&, kind: GuardKind) -> bool {
+    for guard in instruction.guards {
+        if guard.kind == kind { return true; }
+    }
+    false
+}
+
+// Returns the result value when this instruction constructs a fat pointer whose
+// index/size fields satisfy the InBounds predicate by construction.
+pub fn producer_in_bounds(function: CfgFunction&, types: BackendTypes&, instruction: Instruction&)
+-> Result<Option<ValueId>, CodegenError> {
+    let result = match instruction.result {
+        Some(value) => value,
+        None => return Result<Option<ValueId>, CodegenError>.Ok(Option<ValueId>.None),
+    };
+    let result_type = function.value(result)?.type_id;
+    if types.is_zst(result_type)? || !is_fat_pointer(types, result_type)? {
+        return Result<Option<ValueId>, CodegenError>.Ok(Option<ValueId>.None);
+    }
+    match &instruction.operation {
+        Cast(value) => {
+            let source_type = function.value(*value)?.type_id;
+            if types.is_zst(source_type)? { return Result<Option<ValueId>, CodegenError>.Ok(Option<ValueId>.None); }
+            match types.semantic_store().require(source_type)? {
+                TypeData.Reference(element) => match types.semantic_store().require(result_type)? {
+                    TypeData.Pointer(pointee) => {
+                        let nonempty = match types.semantic_store().require(*element)? {
+                            TypeData.Array(inner, count) => {
+                                if *inner == *pointee {
+                                    match types.semantic_store().require(*count)? {
+                                        TypeData.LiteralValue(bits, negative, _) => {
+                                            if *negative || *bits == 0u64 {
+                                                return Result<Option<ValueId>, CodegenError>.Ok(Option<ValueId>.None);
+                                            }
+                                        },
+                                        _ => return Result<Option<ValueId>, CodegenError>.Ok(Option<ValueId>.None),
+                                    }
+                                }
+                                true
+                            },
+                            _ => true,
+                        };
+                        if nonempty { return Result<Option<ValueId>, CodegenError>.Ok(Option<ValueId>.Some(result)); }
+                        Result<Option<ValueId>, CodegenError>.Ok(Option<ValueId>.None)
+                    },
+                    _ => Result<Option<ValueId>, CodegenError>.Ok(Option<ValueId>.None),
+                },
+                _ => Result<Option<ValueId>, CodegenError>.Ok(Option<ValueId>.None),
+            }
+        },
+        IndexAddress(address, _, _, _) => {
+            let source_type = function.value(*address)?.type_id;
+            let source_fat = match types.representation(source_type)? {
+                PointerRepresentation.FatPointer | PointerRepresentation.FatReference |
+                PointerRepresentation.FatView | PointerRepresentation.FatTraitObject => true,
+                _ => false,
+            };
+            if source_fat && !guard_present(instruction, GuardKind.IndexOffset) {
+                return Result<Option<ValueId>, CodegenError>.Ok(Option<ValueId>.None);
+            }
+            Result<Option<ValueId>, CodegenError>.Ok(Option<ValueId>.Some(result))
+        },
+        Builtin(kind, _, args) => {
+            let count = match kind {
+                BuiltinKind.Alloc => match args.as_slice().get(0u64) { Some(value) => *value, None => return Result<Option<ValueId>, CodegenError>.Ok(Option<ValueId>.None) },
+                BuiltinKind.Realloc => match args.as_slice().get(1u64) { Some(value) => *value, None => return Result<Option<ValueId>, CodegenError>.Ok(Option<ValueId>.None) },
+                _ => return Result<Option<ValueId>, CodegenError>.Ok(Option<ValueId>.None),
+            };
+            if !count_is_positive(function, count)? {
+                return Result<Option<ValueId>, CodegenError>.Ok(Option<ValueId>.None);
+            }
+            Result<Option<ValueId>, CodegenError>.Ok(Option<ValueId>.Some(result))
+        },
+        _ => Result<Option<ValueId>, CodegenError>.Ok(Option<ValueId>.None),
+    }
+}
+
+fn release_rows(rows: Vec<Vec<BlockId>>&) {
+    for row in *rows { row.drop(); }
+    rows.drop();
+}
+
+fn predecessors(function: CfgFunction&) -> Result<Vec<Vec<BlockId>>, CodegenError> {
+    let rows = Vec<Vec<BlockId>>.new();
+    let accepted = false;
+    defer { if !accepted { release_rows(&rows); } };
+    for index in 0u64..function.block_count() { rows.push(Vec<BlockId>.new()); }
+    for index in 0u64..function.block_count() {
+        let origin = BlockId(index);
+        let block = function.block(origin)?;
+        let destinations = Vec<BlockId>.new();
+        defer destinations.drop();
+        match &block.terminator {
+            Some(terminator) => match terminator {
+                Jump(destination) => destinations.push(*destination),
+                Branch(_, yes, no) => {
+                    destinations.push(*yes);
+                    if *no != *yes { destinations.push(*no); }
+                },
+                _ => {},
+            },
+            None => return Result<Vec<Vec<BlockId>>, CodegenError>.Err(CodegenError.invalid("CFG block has no terminator")),
+        }
+        for destination in destinations {
+            function.block(*destination)?;
+            rows[destination.index].push(origin);
+        }
+    }
+    accepted = true;
+    Result<Vec<Vec<BlockId>>, CodegenError>.Ok(rows)
+}
+
+fn same_location(left: CheckLocation&, right: CheckLocation&) -> bool {
+    left.block == right.block && left.instruction == right.instruction && left.check == right.check
+}
+
+fn witness_dominates(witness: CheckLocation&, dominance: Dominance&, block: BlockId, instruction: u64,
+    check: u64) -> Result<bool, CodegenError> {
+    if witness.block == block {
+        if witness.instruction < instruction { return Result<bool, CodegenError>.Ok(true); }
+        if witness.instruction == instruction && witness.check < check {
+            return Result<bool, CodegenError>.Ok(true);
+        }
+        return Result<bool, CodegenError>.Ok(false);
+    }
+    dominance.dominates(witness.block, block)
+}
+
+fn copy_state(state: HashMap<ValueId, CheckLocation>&) -> HashMap<ValueId, CheckLocation> {
+    let result = HashMap<ValueId, CheckLocation>.new();
+    for entry in state.entries() { result.insert(*entry[0], *entry[1]); }
+    result
+}
+
+fn same_state(left: HashMap<ValueId, CheckLocation>&, right: HashMap<ValueId, CheckLocation>&) -> bool {
+    if left.len() != right.len() { return false; }
+    for entry in left.entries() {
+        match right.get(entry[0]) {
+            Some(value) => { if !same_location(entry[1], value) { return false; } },
+            None => return false,
+        }
+    }
+    true
+}
+
+// Keep only facts present on every processed predecessor path with the identical witness.
+// Unknown predecessor states are ignored until they are processed; the fixed point
+// re-merges them before any decision is applied.
+fn intersect(rows: Vec<Vec<BlockId>>&, states: Vec<Option<HashMap<ValueId, CheckLocation>>>&, block: BlockId)
+-> Option<HashMap<ValueId, CheckLocation>> {
+    let preds = &rows[block.index];
+    if preds.len() == 0u64 { return Option<HashMap<ValueId, CheckLocation>>.None; }
+    let current = Option<HashMap<ValueId, CheckLocation>>.None;
+    for pred in *preds {
+        match &states[pred.index] {
+            Some(other) => match current {
+                Some(existing) => {
+                    let dropped = Vec<ValueId>.new();
+                    defer dropped.drop();
+                    for entry in existing.entries() {
+                        match other.get(entry[0]) {
+                            Some(value) => { if !same_location(entry[1], value) { dropped.push(*entry[0]); } },
+                            None => dropped.push(*entry[0]),
+                        }
+                    }
+                    for key in dropped { existing.remove(key); }
+                },
+                None => { current = Option<HashMap<ValueId, CheckLocation>>.Some(copy_state(other)); },
+            },
+            None => {},
+        }
+    }
+    current
+}
+
+fn drop_states(states: Vec<Option<HashMap<ValueId, CheckLocation>>>&) {
+    for state in *states {
+        match state { Some(value) => value.drop(), None => {}, }
+    }
+    states.drop();
+}
+
+fn release_decisions(decisions: Vec<Vec<Option<CheckLocation>>>&) {
+    for row in *decisions { row.drop(); }
+    decisions.drop();
+}
+
+struct BlockResult {
+    out_state: HashMap<ValueId, CheckLocation>,
+    decisions: Vec<Vec<Option<CheckLocation>>>,
+}
+
+impl Drop for BlockResult {
+    pub fn drop() {
+        self.out_state.drop();
+        for row in self.decisions { row.drop(); }
+        self.decisions.drop();
+    }
+}
+
+fn simulate_block(function: CfgFunction&, types: BackendTypes&, block_id: BlockId,
+    input: HashMap<ValueId, CheckLocation>&, dominance: Dominance&) -> Result<BlockResult, CodegenError> {
+    let state = copy_state(input);
+    let decisions = Vec<Vec<Option<CheckLocation>>>.new();
+    let accepted = false;
+    defer {
+        if !accepted {
+            state.drop();
+            release_decisions(&decisions);
+        }
+    };
+    let instruction_index = 0u64;
+    for instruction in function.block(block_id)?.instructions {
+        let row = Vec<Option<CheckLocation>>.new();
+        let kept = 0u64;
+        for check_index in 0u64..instruction.checks.len() {
+            match &instruction.checks[check_index] {
+                InBounds(pointer) => {
+                    let witness = match state.get(pointer) {
+                        Some(value) => Option<CheckLocation>.Some(*value),
+                        None => Option<CheckLocation>.None,
+                    };
+                    let removable = match witness {
+                        Some(value) => witness_dominates(&value, dominance, block_id, instruction_index, kept)?,
+                        None => false,
+                    };
+                    if removable {
+                        match witness {
+                            Some(value) => row.push(Option<CheckLocation>.Some(value)),
+                            None => row.push(Option<CheckLocation>.None),
+                        }
+                    } else {
+                        state.insert(*pointer, CheckLocation(block_id, instruction_index, kept));
+                        row.push(Option<CheckLocation>.None);
+                        kept += 1u64;
+                    }
+                },
+                _ => {
+                    row.push(Option<CheckLocation>.None);
+                    kept += 1u64;
+                },
+            }
+        }
+        decisions.push(row);
+        match producer_in_bounds(function, types, instruction)? {
+            Some(result) => { state.insert(result, CheckLocation(block_id, instruction_index, PRODUCER_CHECK)); },
+            None => {},
+        }
+        instruction_index += 1u64;
+    }
+    accepted = true;
+    Result<BlockResult, CodegenError>.Ok(BlockResult(state, decisions))
+}
+
+fn apply_decisions(function: CfgFunction&, block_id: BlockId,
+    decisions: Vec<Vec<Option<CheckLocation>>>&) -> Result<(), CodegenError> {
+    let instruction_index = 0u64;
+    for instruction in function.block(block_id)?.instructions {
+        if instruction_index >= decisions.len() {
+            return Result<(), CodegenError>.Err(CodegenError.invalid("bounds decision table is incomplete"));
+        }
+        let checks = Vec<SafetyCheck>.new();
+        let proofs = Vec<InBoundsProof>.new();
+        let accepted = false;
+        defer { if !accepted { checks.drop(); proofs.drop(); } };
+        for check_index in 0u64..instruction.checks.len() {
+            match decisions[instruction_index][check_index] {
+                Some(witness) => match &instruction.checks[check_index] {
+                    InBounds(pointer) => proofs.push(InBoundsProof(*pointer, witness)),
+                    _ => return Result<(), CodegenError>.Err(CodegenError.invalid("bounds decision targets a non-InBounds check")),
+                },
+                None => checks.push(instruction.checks[check_index]),
+            }
+        }
+        instruction.checks.clear();
+        for check_index in 0u64..checks.len() { instruction.checks.push(checks[check_index]); }
+        instruction.bounds_proofs.clear();
+        for proof_index in 0u64..proofs.len() { instruction.bounds_proofs.push(proofs[proof_index]); }
+        accepted = true;
+        checks.drop();
+        proofs.drop();
+        instruction_index += 1u64;
+    }
+    Result<(), CodegenError>.Ok(())
+}
+
+fn analyze_function(function: CfgFunction&, types: BackendTypes&, rows: Vec<Vec<BlockId>>&,
+    dominance: Dominance&) -> Result<bool, CodegenError> {
+    let count = function.block_count();
+    let states = Vec<Option<HashMap<ValueId, CheckLocation>>>.new();
+    defer drop_states(&states);
+    for index in 0u64..count { states.push(Option<HashMap<ValueId, CheckLocation>>.None); }
+    states[0u64] = Option<HashMap<ValueId, CheckLocation>>.Some(HashMap<ValueId, CheckLocation>.new());
+    let converged = false;
+    let round = 0u64;
+    while round < ITERATION_LIMIT {
+        round += 1u64;
+        let changed = false;
+        for block_index in 0u64..count {
+            let block = BlockId(block_index);
+            let incoming = if block_index == 0u64 {
+                Option<HashMap<ValueId, CheckLocation>>.Some(HashMap<ValueId, CheckLocation>.new())
+            } else {
+                intersect(rows, &states, block)
+            };
+            match incoming {
+                Some(state) => {
+                    let result = simulate_block(function, types, block, &state, dominance)?;
+                    defer result.drop();
+                    if result.out_state.len() > FACT_LIMIT { state.drop(); return Result<bool, CodegenError>.Ok(false); }
+                    match &states[block_index] {
+                        Some(existing) => { if !same_state(existing, &result.out_state) { changed = true; } },
+                        None => { changed = true; },
+                    }
+                    match states[block_index] { Some(value) => value.drop(), None => {}, }
+                    states[block_index] = Option<HashMap<ValueId, CheckLocation>>.Some(copy_state(&result.out_state));
+                    state.drop();
+                },
+                None => {},
+            }
+        }
+        if !changed { converged = true; break; }
+    }
+    if !converged { return Result<bool, CodegenError>.Ok(false); }
+    // Apply only after the fact set has converged; a failed function stays untouched.
+    for block_index in 0u64..count {
+        let block = BlockId(block_index);
+        let incoming = if block_index == 0u64 {
+            Option<HashMap<ValueId, CheckLocation>>.Some(HashMap<ValueId, CheckLocation>.new())
+        } else {
+            intersect(rows, &states, block)
+        };
+        match incoming {
+            Some(state) => {
+                let result = simulate_block(function, types, block, &state, dominance)?;
+                apply_decisions(function, block, &result.decisions)?;
+                result.drop();
+                state.drop();
+            },
+            None => {},
+        }
+    }
+    Result<bool, CodegenError>.Ok(true)
+}
+
+pub fn eliminate_inbounds(module: CfgModule&, types: BackendTypes&) -> Result<(), CodegenError> {
+    if module.safety_stage != SafetyStage.Optimized {
+        return Result<(), CodegenError>.Err(CodegenError.invalid("InBounds elimination requires an optimized CFG"));
+    }
+    if types.raw_pointers() { return Result<(), CodegenError>.Ok(()); }
+    for function_index in 0u64..module.len() {
+        let function = *module.function(FunctionId(function_index)).unwrap();
+        let rows = predecessors(function)?;
+        defer release_rows(&rows);
+        let dominance = dominators(function, &rows)?;
+        defer dominance.drop();
+        let converged = analyze_function(function, types, &rows, &dominance)?;
+        if !converged { continue; }
+    }
+    Result<(), CodegenError>.Ok(())
+}
+
+fn verify_block(function: CfgFunction&, types: BackendTypes&, block_id: BlockId,
+    input: HashMap<ValueId, CheckLocation>&, dominance: Dominance&) -> Result<HashMap<ValueId, CheckLocation>, CodegenError> {
+    let state = copy_state(input);
+    let accepted = false;
+    defer { if !accepted { state.drop(); } };
+    let instruction_index = 0u64;
+    for instruction in function.block(block_id)?.instructions {
+        let expected = expected_checks(function, types, instruction)?;
+        defer expected.drop();
+        let actual_index = 0u64;
+        let proof_index = 0u64;
+        for expected_index in 0u64..expected.len() {
+            match &expected[expected_index] {
+                InBounds(pointer) => {
+                    let kept = actual_index < instruction.checks.len()
+                    && same_check(&expected[expected_index], &instruction.checks[actual_index]);
+                    if kept {
+                        state.insert(*pointer, CheckLocation(block_id, instruction_index, actual_index));
+                        actual_index += 1u64;
+                    } else {
+                        if proof_index >= instruction.bounds_proofs.len() {
+                            return Result<HashMap<ValueId, CheckLocation>, CodegenError>.Err(CodegenError.invalid("optimized CFG removed an InBounds check without a proof"));
+                        }
+                        let proof = instruction.bounds_proofs[proof_index];
+                        proof_index += 1u64;
+                        if proof.pointer != *pointer {
+                            return Result<HashMap<ValueId, CheckLocation>, CodegenError>.Err(CodegenError.invalid("InBounds proof pointer disagrees with the removed check"));
+                        }
+                        let witness = match state.get(pointer) {
+                            Some(value) => *value,
+                            None => return Result<HashMap<ValueId, CheckLocation>, CodegenError>.Err(CodegenError.invalid("InBounds proof has no dominating fact")),
+                        };
+                        if !witness_dominates(&witness, dominance, block_id, instruction_index, actual_index)? {
+                            return Result<HashMap<ValueId, CheckLocation>, CodegenError>.Err(CodegenError.invalid("InBounds proof witness does not dominate the removed check"));
+                        }
+                        if !same_location(&proof.witness, &witness) {
+                            return Result<HashMap<ValueId, CheckLocation>, CodegenError>.Err(CodegenError.invalid("InBounds proof witness disagrees with the dominating fact"));
+                        }
+                        if witness.check == PRODUCER_CHECK {
+                            let witness_block = witness.block;
+                            let witness_index = witness.instruction;
+                            let producer = function.block(witness_block)?.instructions[witness_index];
+                            match producer_in_bounds(function, types, &producer)? {
+                                Some(result) => { if result != *pointer { return Result<HashMap<ValueId, CheckLocation>, CodegenError>.Err(CodegenError.invalid("InBounds producer witness constructs a different pointer")); } },
+                                None => return Result<HashMap<ValueId, CheckLocation>, CodegenError>.Err(CodegenError.invalid("InBounds producer witness is not a producer")),
+                            }
+                        }
+                    }
+                },
+                _ => {
+                    if actual_index >= instruction.checks.len() || !same_check(&expected[expected_index], &instruction.checks[actual_index]) {
+                        return Result<HashMap<ValueId, CheckLocation>, CodegenError>.Err(CodegenError.invalid("optimized CFG removed a non-InBounds check"));
+                    }
+                    actual_index += 1u64;
+                },
+            }
+        }
+        if actual_index != instruction.checks.len() || proof_index != instruction.bounds_proofs.len() {
+            return Result<HashMap<ValueId, CheckLocation>, CodegenError>.Err(CodegenError.invalid("optimized CFG has unmatched safety checks or InBounds proofs"));
+        }
+        match producer_in_bounds(function, types, instruction)? {
+            Some(result) => { state.insert(result, CheckLocation(block_id, instruction_index, PRODUCER_CHECK)); },
+            None => {},
+        }
+        instruction_index += 1u64;
+    }
+    accepted = true;
+    Result<HashMap<ValueId, CheckLocation>, CodegenError>.Ok(state)
+}
+
+pub fn verify_inbounds(function: CfgFunction&, types: BackendTypes&) -> Result<(), CodegenError> {
+    if types.raw_pointers() { return Result<(), CodegenError>.Ok(()); }
+    let rows = predecessors(function)?;
+    defer release_rows(&rows);
+    let dominance = dominators(function, &rows)?;
+    defer dominance.drop();
+    let count = function.block_count();
+    let states = Vec<Option<HashMap<ValueId, CheckLocation>>>.new();
+    defer drop_states(&states);
+    for index in 0u64..count { states.push(Option<HashMap<ValueId, CheckLocation>>.None); }
+    states[0u64] = Option<HashMap<ValueId, CheckLocation>>.Some(HashMap<ValueId, CheckLocation>.new());
+    let converged = false;
+    let round = 0u64;
+    while round < ITERATION_LIMIT {
+        round += 1u64;
+        let changed = false;
+        for block_index in 0u64..count {
+            let block = BlockId(block_index);
+            let incoming = if block_index == 0u64 {
+                Option<HashMap<ValueId, CheckLocation>>.Some(HashMap<ValueId, CheckLocation>.new())
+            } else {
+                intersect(&rows, &states, block)
+            };
+            match incoming {
+                Some(state) => {
+                    let result = verify_block(function, types, block, &state, &dominance)?;
+                    if result.len() > FACT_LIMIT { state.drop(); result.drop(); return Result<(), CodegenError>.Err(CodegenError.invalid("InBounds verification exceeded its fact budget")); }
+                    match &states[block_index] {
+                        Some(existing) => { if !same_state(existing, &result) { changed = true; } },
+                        None => { changed = true; },
+                    }
+                    match states[block_index] { Some(value) => value.drop(), None => {}, }
+                    states[block_index] = Option<HashMap<ValueId, CheckLocation>>.Some(result);
+                    state.drop();
+                },
+                None => {},
+            }
+        }
+        if !changed { converged = true; break; }
+    }
+    if !converged { return Result<(), CodegenError>.Err(CodegenError.invalid("InBounds verification did not converge")); }
+    Result<(), CodegenError>.Ok(())
+}

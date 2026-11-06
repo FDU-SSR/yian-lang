@@ -1,9 +1,10 @@
 from yianc.codegen.cfg.ids import FunctionId, BlockId, ValueId, LocalId, ScopeId;
 from yianc.codegen.cfg.model import CfgModule, CfgFunction, Operation, SafetyCheck, CheckLocation,
-    LiveProof, SafetyStage, Instruction, AccessKind, OperationGuard;
+LiveProof, InBoundsProof, SafetyStage, Instruction, AccessKind, OperationGuard, PRODUCER_CHECK;
 from yianc.codegen.cfg.dominance import Dominance, dominators;
 from yianc.codegen.cfg.passes.checks import expected_checks, same_check;
 from yianc.codegen.cfg.passes.activation import verify_activation;
+from yianc.codegen.cfg.passes.inbounds import verify_inbounds;
 from yianc.codegen.cfg.passes.options import CfgPassOptions;
 from yianc.codegen.types import BackendTypes;
 from yianc.codegen.error import CodegenError;
@@ -19,8 +20,6 @@ from std.core.ops import Index, PartialEq;
 
 const ITERATION_LIMIT: u64 = 64u64;
 const FACT_LIMIT: u64 = 4096u64;
-// Producer witnesses mark facts established by Address or a fresh allocation.
-const PRODUCER_CHECK: u64 = 0xFFFFFFFFFFFFFFFFu64;
 
 // A canonical symbolic word is a frame word shared by one logical scope or one SSA value.
 enum WordKey {
@@ -582,16 +581,16 @@ fn is_pure_operation(operation: Operation&) -> bool {
 
 fn is_address_type(types: BackendTypes&, type_id: TypeId) -> Result<bool, CodegenError> {
     Result<bool, CodegenError>.Ok(match types.semantic_store().require(type_id)? {
-        Pointer(_) | Reference(_) => true,
-        _ => false,
-    })
+            Pointer(_) | Reference(_) => true,
+            _ => false,
+        })
 }
 
 fn is_fat_address(types: BackendTypes&, type_id: TypeId) -> Result<bool, CodegenError> {
     Result<bool, CodegenError>.Ok(match types.representation(type_id)? {
-        FatPointer | FatReference => true,
-        _ => false,
-    })
+            FatPointer | FatReference => true,
+            _ => false,
+        })
 }
 
 fn value_available(function: CfgFunction&, id: ValueId, target: BlockId, dominance: Dominance&)
@@ -730,7 +729,7 @@ fn hoist_loops(function: CfgFunction&, types: BackendTypes&, rows: Vec<Vec<Block
                 }
             }
             let pure = expected.is_empty() && instruction.guards.is_empty()
-                && is_pure_operation(&instruction.operation);
+            && is_pure_operation(&instruction.operation);
             expected.drop();
             if !pure { scanning = false; }
             instruction_index += 1u64;
@@ -740,7 +739,7 @@ fn hoist_loops(function: CfgFunction&, types: BackendTypes&, rows: Vec<Vec<Block
             checks.push(SafetyCheck.Live(decision[1], decision[2]));
             function.block(loop_record.preheader)?.instructions.push(Instruction(decision[3],
                 Option<ValueId>.None, Operation.SafetyPoint, checks,
-                Vec<OperationGuard>.new(), Vec<LiveProof>.new()));
+                Vec<OperationGuard>.new(), Vec<LiveProof>.new(), Vec<InBoundsProof>.new()));
         }
     }
     Result<(), CodegenError>.Ok(())
@@ -786,10 +785,12 @@ fn simulate_block(function: CfgFunction&, types: BackendTypes&, block_id: BlockI
                         None => Option<CheckLocation>.None,
                     };
                     // The hoisted point always keeps its own check and becomes the loop witness.
-                    let removable = if safety { false } else { match witness {
-                        Some(value) => witness_dominates(&value, dominance, block_id, instruction_index, kept)?,
-                        None => false,
-                    } };
+                    let removable = if safety { false } else {
+                        match witness {
+                            Some(value) => witness_dominates(&value, dominance, block_id, instruction_index, kept)?,
+                            None => false,
+                        }
+                    };
                     if removable {
                         match witness {
                             Some(value) => row.push(Option<CheckLocation>.Some(value)),
@@ -877,6 +878,7 @@ fn restore_function(function: CfgFunction&, types: BackendTypes&) -> Result<(), 
             for check_index in 0u64..expected.len() { instruction.checks.push(expected[check_index]); }
             expected.drop();
             instruction.live_proofs.clear();
+            instruction.bounds_proofs.clear();
         }
     }
     Result<(), CodegenError>.Ok(())
@@ -1032,7 +1034,7 @@ fn verify_safety_point(function: CfgFunction&, types: BackendTypes&, rows: Vec<V
                         }
                     }
                     let pure = expected.is_empty() && header_instruction.guards.is_empty()
-                        && is_pure_operation(&header_instruction.operation);
+                    && is_pure_operation(&header_instruction.operation);
                     expected.drop();
                     if !pure { scanning = false; }
                 }
@@ -1086,7 +1088,7 @@ fn verify_block(function: CfgFunction&, types: BackendTypes&, block_id: BlockId,
                 return Result<VerifyResult, CodegenError>.Err(CodegenError.invalid("optimized CFG has an extra safety check"));
             }
             let matched = actual_index < instruction.checks.len()
-                && same_check(&expected[expected_index], &instruction.checks[actual_index]);
+            && same_check(&expected[expected_index], &instruction.checks[actual_index]);
             if matched {
                 match &instruction.checks[actual_index] {
                     Live(address, _) => {
@@ -1131,6 +1133,7 @@ fn verify_block(function: CfgFunction&, types: BackendTypes&, block_id: BlockId,
                     }
                     expected_index += 1u64;
                 },
+                InBounds(_) => { expected_index += 1u64; },
                 _ => return Result<VerifyResult, CodegenError>.Err(CodegenError.invalid("optimized CFG is missing a required safety check")),
             }
         }
@@ -1236,6 +1239,9 @@ fn verify_exact(function: CfgFunction&, types: BackendTypes&) -> Result<(), Code
             if !instruction.live_proofs.is_empty() {
                 return Result<(), CodegenError>.Err(CodegenError.invalid("restored CFG carries live proofs"));
             }
+            if !instruction.bounds_proofs.is_empty() {
+                return Result<(), CodegenError>.Err(CodegenError.invalid("restored CFG carries InBounds proofs"));
+            }
         }
     }
     Result<(), CodegenError>.Ok(())
@@ -1277,7 +1283,15 @@ pub fn verify_optimized(module: CfgModule&, types: BackendTypes&) -> Result<(), 
     for index in 0u64..module.len() {
         let function = *module.function(FunctionId(index)).unwrap();
         let verified = verify_function(function, types, &summaries)?;
-        if !verified {
+        if verified {
+            match verify_inbounds(function, types) {
+                Ok(_) => {},
+                Err(_) => {
+                    restore_function(function, types)?;
+                    verify_exact(function, types)?;
+                },
+            }
+        } else {
             restore_function(function, types)?;
             verify_exact(function, types)?;
         }

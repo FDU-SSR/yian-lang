@@ -34,7 +34,6 @@ fn save(output: Writer&, path: str) -> Result<(), AnalysisError> {
     }
 }
 
-
 fn stage_name(stage: SafetyStage) -> str {
     match stage { Neutral => "neutral", Prepared => "prepared", Optimized => "optimized" }
 }
@@ -370,6 +369,24 @@ pub fn cfg_dump(module: CfgModule&) -> Result<(), CodegenError> {
                     output.begin_object();
                     output.key("address");
                     output.write_u64(proof.address.index);
+                    output.key("witness");
+                    output.begin_object();
+                    output.key("block");
+                    output.write_u64(proof.witness.block.index);
+                    output.key("instruction");
+                    output.write_u64(proof.witness.instruction);
+                    output.key("check");
+                    output.write_u64(proof.witness.check);
+                    output.end_object();
+                    output.end_object();
+                }
+                output.end_array();
+                output.key("bounds_proofs");
+                output.begin_array();
+                for proof in instruction.bounds_proofs {
+                    output.begin_object();
+                    output.key("pointer");
+                    output.write_u64(proof.pointer.index);
                     output.key("witness");
                     output.begin_object();
                     output.key("block");
