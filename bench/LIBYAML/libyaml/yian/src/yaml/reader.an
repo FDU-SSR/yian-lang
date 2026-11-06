@@ -250,13 +250,8 @@ fn legal_ascii_run(reader: Reader&) -> u64 {
 // The destination pointer is released before the next reserve/push/refill.
 fn append_ascii_run(reader: Reader&, count: u64) {
     let start: u64 = reader.raw_position;
-    let target: u8* = reader.buffer.spare(count);
-    let index = 0u64;
-    while index < count {
-        target[index] = reader.raw_buffer[start + index];
-        index += 1u64;
-    };
-    reader.buffer.advance_len(count);
+    let end: u64 = start + count;
+    reader.buffer.extend_from_slice(reader.raw_buffer.as_slice()[start..end]);
     reader.raw_position += count;
     reader.offset += count;
     reader.unread += count;
@@ -275,12 +270,9 @@ fn read_source(reader: Reader&, capacity: u64) -> Result<u64, IoError> {
             if remaining < count {
                 count = remaining;
             }
-            let index = 0u64;
-            while index < count {
-                reader.raw_buffer.push(bytes[offset + index]);
-                index += 1u64;
-            };
-            *position = offset + count;
+            let end: u64 = offset + count;
+            reader.raw_buffer.extend_from_slice(bytes[offset..end]);
+            *position = end;
             return Result<u64, IoError>.Ok(val=count);
         },
         Input.Stream(source) => {

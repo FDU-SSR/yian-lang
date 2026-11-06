@@ -415,13 +415,9 @@ fn plain_ascii_run(scanner: Scanner&) -> u64 {
 // Append one validated run with a single reservation instead of one Vec push
 // per character, and advance the reader by the whole run.
 fn append_plain_run(scanner: Scanner&, out: Vec<u8>&, count: u64) {
-    let target: u8* = out.spare(count);
-    let index = 0u64;
-    while index < count {
-        target[index] = byte_at(scanner, index);
-        index += 1u64;
-    };
-    out.advance_len(count);
+    let start: u64 = scanner.reader.position;
+    let end: u64 = start + count;
+    out.extend_from_slice(scanner.reader.buffer.as_slice()[start..end]);
     scanner.reader.mark.index += count;
     scanner.reader.mark.column += count;
     scanner.reader.unread -= count;
