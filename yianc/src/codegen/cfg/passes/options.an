@@ -2,5 +2,4 @@
 pub struct CfgPassOptions {
     pub inline: bool,
     pub eliminate: bool,
-    pub inbounds: bool,
 }

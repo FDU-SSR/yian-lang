@@ -514,18 +514,11 @@ fn main() {
 
 ### 12.10 编译期检查消除与循环外提
 
-胖指针的每次解引用都需要验证生命周期字（S002/S003）；裸指针还需要验证索引范围（S001/S002）。字段重锚定还需要 `InBounds` 前提。编译器可以在不削弱这些错误契约的前提下省略已证明冗余的生命周期与边界检查：
+胖指针的每次解引用都需要验证生命周期字（S002/S003）；裸指针还需要验证索引范围（S001/S002）。编译器可以在不削弱这些错误契约的前提下省略已证明冗余的生命周期检查：
 
-- CFG 先插入中立的 `Live` 与 `AccessBounds` 义务。`Live` 表示“该生命周期字仍然有效”，`AccessBounds` 表示“索引仍在范围内”；两者分开，生命周期事实只由 `Live` 复用；`InBounds` 由独立的边界生产者 pass 处理。
+- CFG 先插入中立的 `Live` 与 `AccessBounds` 义务。`Live` 表示“该生命周期字仍然有效”，`AccessBounds` 表示“索引仍在范围内”；两者分开，只有 `Live` 参与复用。
 - 前向 must 数据流以符号 word 为单位收集事实。同一 word 已经由支配当前使用点的保留 `Live` 检查证明有效，且中间没有 `del`、`realloc`、未知调用或作用域退出时，后续 `Live` 检查可以省略；省略处保留 proof 指向支配见证。
 - `AccessBounds`、索引、视图、非空、拷贝和裸模式既有边界检查不会被删除。对象释放、可能释放参数的调用、动态调用和未知外部调用会使相关事实失效。
-
-`InBounds` 生产者消除是独立的 fat CFG 优化：
-
-- `InBounds(pointer)` 表示 `pointer.index < pointer.size`。只有由构造过程立即保证该关系的 fat 指针才产生生产者事实：非空 `Reference` 到 `Pointer` 的 `Cast`、带严格 `IndexOffset` guard 的 `IndexAddress` pointer 结果，以及 count 为静态正数的 `Alloc`/`Realloc`。
-- 事实是 SSA 值属性；`del`、调用和作用域退出不改变既有值的 index/size。块入口只保留所有已处理前驱路径共有的同一 witness；无支配 witness 的检查保留。
-- 省略处记录 `InBoundsProof`，witness 指向支配的保留 `InBounds` 检查或生产者指令。独立 verifier 重新计算生产者规则和支配关系，不信任 proof；验证失败会恢复该函数的全部检查并执行 exact 验证。
-- 来自 `Load`/`Read`、参数、`Call`/`Invoke`/`DynamicCall`、`Phi` 和 `Pointer→Pointer Cast` 的指针没有生产者事实，继续执行原检查。raw 模式跳过该 pass；raw CFG 中既有的 `InBounds` 检查对非 fat 地址不展开运行时检查。
 - 自然循环的稳定检查可以移动到循环 preheader 执行一次。只有原检查位于循环头且在每个入口路径上都必然执行时才外提；零次循环体内、条件分支内的访问以及替换引用后的访问保留原检查，不进行投机检查。
 - 每个省略的检查在编译产物中仍由 LLVM 展开为一个真实的失败分支；非法访问仍以原错误码、原顺序终止。编译器验证阶段会独立重算 must 条件并拒绝缺少支配见证的 proof。
 

@@ -52,7 +52,7 @@ fn main() {
 
     let runtime_profile_dir = match &config.runtime_profile_dir { Some(value) => Option<str>.Some(value.as_str()), None => Option<str>.None };
     // Analysis needs the target layout provider from the initialized backend session.
-    let backend = match BackendDriver.new(middle.analysis_session(), BackendOptions(config.raw_pointers, config.optimization, runtime_profile_dir, config.cfg_inline, config.fat_check_elimination, config.cfg_inbounds), Option<CompilerTrace&>.Some(&trace)) {
+    let backend = match BackendDriver.new(middle.analysis_session(), BackendOptions(config.raw_pointers, config.optimization, runtime_profile_dir, config.cfg_inline, config.fat_check_elimination), Option<CompilerTrace&>.Some(&trace)) {
         Ok(value) => value,
         Err(problem) => {
             report(&problem.diagnostic, Option<SourceManager&>.Some(middle.analysis_session().source_manager()));

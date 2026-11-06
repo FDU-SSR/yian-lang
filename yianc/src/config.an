@@ -44,7 +44,6 @@ pub struct CompilerConfig {
     pub link_searches: Vec<String>,
     pub cfg_inline: bool,
     pub fat_check_elimination: bool,
-    pub cfg_inbounds: bool,
 }
 
 // Empty and unset select the default; only 0 and 1 are accepted values.
@@ -95,7 +94,7 @@ impl CompilerConfig {
     static fn help(text: String) -> Self {
         Self(CompilerAction.Help(text), Vec<String>.new(), String.new(), false, Option<String>.None, false, false,
             OutputKind.Exe, false, Option<String>.None, 0u8, false, false, Option<String>.None, Option<String>.None, Option<String>.None, Option<String>.None,
-            Vec<String>.new(), Vec<String>.new(), true, true, true)
+            Vec<String>.new(), Vec<String>.new(), true, true)
     }
 
     static fn from_matches(arg_matches: ArgMatches&) -> Result<Self, String> {
@@ -148,10 +147,8 @@ impl CompilerConfig {
         let link_searches = string_values(arg_matches, "link-search");
         let cfg_inline_disabled = *arg_matches.get_bool("no-cfg-inline").unwrap().unwrap();
         let eliminate_disabled = *arg_matches.get_bool("no-fat-check-elimination").unwrap().unwrap();
-        let inbounds_disabled = *arg_matches.get_bool("no-cfg-inbounds").unwrap().unwrap();
         let cfg_inline = environment_switch("YIAN_CFG_INLINE", true)? && !cfg_inline_disabled;
         let fat_check_elimination = environment_switch("YIAN_FAT_CHECK_ELIMINATION", true)? && !eliminate_disabled;
-        let cfg_inbounds = environment_switch("YIAN_CFG_INBOUNDS", true)? && !inbounds_disabled;
 
         let runtime_profile_error = match &runtime_profile_dir {
             Some(value) if value.is_empty() => Option<String>.Some(String.from(&"error: --runtime-profile-dir PATH cannot be empty\n")),
@@ -191,7 +188,7 @@ impl CompilerConfig {
         let action = if check { CompilerAction.Check } else { CompilerAction.Compile };
         Result<Self, String>.Ok(Self(action, inputs, root, arg_matches.get_string("compiler-root").unwrap().is_some(), packages, raw, ffi, target, target_explicit, output, optimization,
             dump, profile, profile_output, runtime_profile_dir, log_spec, log_file, link_libraries, link_searches,
-            cfg_inline, fat_check_elimination, cfg_inbounds))
+            cfg_inline, fat_check_elimination))
     }
 }
 
@@ -308,10 +305,6 @@ pub fn parse_args() -> CompilerConfig {
     parser.add_argument("no-fat-check-elimination")
     .long("no-fat-check-elimination").action(Action.StoreTrue)
     .help("disable fat safety-check elimination");
-
-    parser.add_argument("no-cfg-inbounds")
-    .long("no-cfg-inbounds").action(Action.StoreTrue)
-    .help("disable InBounds producer elimination");
 
     parser.add_argument("inputs")
     .nargs(Nargs.ZeroOrMore).metavar("INPUT")

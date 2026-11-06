@@ -63,6 +63,7 @@ pub enum SafetyStage {
     Optimized,
 }
 
+
 pub enum IndexBounds {
     Array { length: ValueId },
     Slice { length: ValueId },
@@ -224,14 +225,6 @@ pub struct LiveProof {
     pub witness: CheckLocation,
 }
 
-pub struct InBoundsProof {
-    pub pointer: ValueId,
-    pub witness: CheckLocation,
-}
-
-// Producer witnesses mark facts established by an instruction's construction, not by a kept check.
-pub const PRODUCER_CHECK: u64 = 0xFFFFFFFFFFFFFFFFu64;
-
 pub struct Instruction {
     pub span: SourceSpan,
     pub result: Option<ValueId>,
@@ -239,7 +232,6 @@ pub struct Instruction {
     pub checks: Vec<SafetyCheck>,
     pub guards: Vec<OperationGuard>,
     pub live_proofs: Vec<LiveProof>,
-    pub bounds_proofs: Vec<InBoundsProof>,
 }
 
 // Checks borrow value identities. They carry no LLVM handles or mutable liveness facts.
@@ -296,7 +288,6 @@ impl Drop for Instruction {
         self.checks.drop();
         self.guards.drop();
         self.live_proofs.drop();
-        self.bounds_proofs.drop();
     }
 }
 
@@ -459,7 +450,7 @@ impl CfgFunction {
             None => Option<ValueId>.None,
         };
         target.instructions.push(Instruction(span, result, operation,
-            Vec<SafetyCheck>.new(), Vec<OperationGuard>.new(), Vec<LiveProof>.new(), Vec<InBoundsProof>.new()));
+            Vec<SafetyCheck>.new(), Vec<OperationGuard>.new(), Vec<LiveProof>.new()));
         Result<Option<ValueId>, CodegenError>.Ok(result)
     }
 

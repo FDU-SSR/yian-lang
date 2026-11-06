@@ -196,7 +196,7 @@ yianc --dump lib/src tests/basic/array/assign.an
 
 编译模式把 `tokens.txt`、`ast.txt`、`hir.txt`、`cfg.txt` 写到 `build/`，运行代码生成时另写 `ir.ll`。`--check --dump` 只写 `tokens.txt`、`ast.txt` 和成功分析时的 `hir.txt`。默认关闭。
 
-`cfg.txt` 的顶层数组和既有字段保持不变；每个函数额外写出 `safety_stage`（`neutral`/`prepared`/`optimized`）、`scopes`（id、parent、callable、needs_lock）和 `representations`（type、representation）。每条指令额外写出 `guards`（kind、site）、`live_proofs`（address、witness）和 `bounds_proofs`（pointer、witness）；`scope-enter`/`scope-exit` 写出 `scope` 整数。
+`cfg.txt` 的顶层数组和既有字段保持不变；每个函数额外写出 `safety_stage`（`neutral`/`prepared`/`optimized`）、`scopes`（id、parent、callable、needs_lock）和 `representations`（type、representation）。每条指令额外写出 `guards`（kind、site）和 `live_proofs`（address、witness）；`scope-enter`/`scope-exit` 写出 `scope` 整数。
 
 ### 2.8 `--compiler-root` — 指定检出根
 
@@ -230,20 +230,19 @@ definite-assignment 检查；不进入 CFG/LLVM，不生成编译器产物。诊
 `--runtime-profile-dir` 只用于插桩 `exe` 构建，与 `--check` 组合会报配置错误。
 `--dump` 只写 `tokens.txt`、`ast.txt` 和成功分析时的 `hir.txt`。
 
-### 2.11 `--no-cfg-inline`、`--no-fat-check-elimination` 与 `--no-cfg-inbounds` — 关闭 CFG 优化
+### 2.11 `--no-cfg-inline` 与 `--no-fat-check-elimination` — 关闭 CFG 优化
 
-默认编译在 CFG 上依次执行中立图构建、有界 CFG 内联、安全激活（检查、逻辑帧计划、表示绑定）和按槽检查消除，然后交给 LLVM 机械展开。三个开关独立关闭可选优化：
+默认编译在 CFG 上依次执行中立图构建、有界 CFG 内联、安全激活（检查、逻辑帧计划、表示绑定）和按槽检查消除，然后交给 LLVM 机械展开。两个开关独立关闭可选优化：
 
 ```bash
 yianc --no-cfg-inline lib/src main.an
 yianc --no-fat-check-elimination lib/src main.an
-yianc --no-cfg-inbounds lib/src main.an
 yianc --no-cfg-inline --no-fat-check-elimination lib/src main.an
 ```
 
-对应环境变量为 `YIAN_CFG_INLINE`、`YIAN_FAT_CHECK_ELIMINATION` 与 `YIAN_CFG_INBOUNDS`：未设置或为空时使用默认值（开启），`0` 关闭，`1` 开启；其他非空值作为用法错误退出 2。命令行禁用优先于环境变量。
+对应环境变量为 `YIAN_CFG_INLINE` 与 `YIAN_FAT_CHECK_ELIMINATION`：未设置或为空时使用默认值（开启），`0` 关闭，`1` 开启；其他非空值作为用法错误退出 2。命令行禁用优先于环境变量。
 
-关闭优化不关闭安全激活：检查插入、逻辑子帧和表示选择仍然执行，程序语义不变。`--no-cfg-inbounds` 只关闭 fat `InBounds` 生产者证明消除；raw 模式本来跳过该 pass。`--raw-pointers` 下不插入胖指针生命周期检查或帧锁，原有裸指针边界与范围检查保留。`--runtime-profile-dir` 构建跳过 CFG 内联，以保持插桩函数的逻辑边界。`--check` 接受这些开关，但不运行后端 pass。
+关闭优化不关闭安全激活：检查插入、逻辑子帧和表示选择仍然执行，程序语义不变。`--raw-pointers` 下不插入胖指针生命周期检查或帧锁，原有裸指针边界与范围检查保留。`--runtime-profile-dir` 构建跳过 CFG 内联，以保持插桩函数的逻辑边界。`--check` 接受这两个开关，但不运行后端 pass。
 
 ### 2.12 格式化源码 — `yian-fmt`
 
