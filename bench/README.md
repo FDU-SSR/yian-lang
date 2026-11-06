@@ -37,10 +37,11 @@ or covered by YIAN guards. See [`native/README.md`](native/README.md).
 
 The suite contains 32 projects: 28 C/YIAN pairs (14 AWFY, 10 BG, 3 fatptr, and
 LIBYAML) plus 4 two-state allocator projects. `full` selects 27 of the 28 pairs;
-LIBYAML is selected only by `real` and reported independently. `bg` selects the
-ten official BG tasks; `paper` selects all 14 AWFY and all ten BG projects, and
-`fast` remains eight IDs. Set membership and task scales are in `sets/*.json`
-and each project's `spec.json`.
+LIBYAML is selected by `real`, separately from the paper aggregate. `bg` selects
+the ten official BG tasks; `paper` selects all 14 AWFY and all ten BG projects;
+`fast` remains eight IDs. The paper analysis uses the 24 grouped benchmarks for
+its geomeans and reports all LIBYAML data separately from the `real` set. Set
+membership and task scales are in `sets/*.json` and each project's `spec.json`.
 
 The paired projects are reviewed against the
 [C → YIAN translation specification](../docs/c-to-yian.md). AWFY retains its
@@ -233,8 +234,11 @@ python3 bench/bench_asan.py --bench BG/fasta --pin 0
 Results are written to `results/asan.csv` for the paper set and to
 `results/asan-<set>.csv` for other sets, including every wall-time/RSS pair,
 per-leg statistics, derived ratios and geometric means. `--set paper` selects the paper's
-24 benchmarks; `--set full` selects 27 of the 28 paired projects (LIBYAML is
-measured only by `real`). The semantic guard
+24 benchmarks; LIBYAML is measured separately by `real` and written to
+`results/asan-real.csv`. LIBYAML's complete three-state and ASan data are written
+to `results/real.csv` and `results/asan-real.csv`; they are not included in
+`paper.csv` / `asan.csv` or their geomeans. `--set full` selects 27 of the 28
+paired projects (LIBYAML is selected by `real`). The semantic guard
 requires C warmup to pass the spec's `check`, ASan stdout/exit codes to match C
 plain, and the YIAN leg to pass the same spec's output/exit checks.
 

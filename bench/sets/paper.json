@@ -6,5 +6,5 @@
     "BG/*"
   ],
   "exclude": [],
-  "note": "The paper's 24 benchmarks (all 14 AWFY + all 10 BG); both three-state and ASan comparisons use this profile"
+  "note": "The paper's 24 grouped AWFY/BG benchmarks; LIBYAML is measured and reported separately by the real set"
 }

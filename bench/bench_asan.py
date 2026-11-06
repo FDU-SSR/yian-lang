@@ -21,7 +21,7 @@ Outputs, under ``bench/results/``:
 
 Usage:
 
-  python bench/bench_asan.py                       # the paper's 24 AWFY/BG benchmarks
+  python bench/bench_asan.py                       # the paper's 24 AWFY/BG benchmarks; LIBYAML is measured separately by real
   python bench/bench_asan.py --bench BG/fasta
   python bench/bench_asan.py --set full --pin 4
 """

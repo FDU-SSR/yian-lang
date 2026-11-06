@@ -14,11 +14,12 @@ sources. Sets, scale profiles, run protocol, and result files are documented in
 | Paired C/YIAN projects | `bench/AWFY/<name>/c/`, `bench/BG/<name>/c/`, `bench/fatptr/<name>/c/`, `bench/LIBYAML/libyaml/c/` | 28 | The AWFY/fatptr references are repository C projects; BG references retain the selected official sources and disclose any small C portability patch. Workload criteria are in the [C → YIAN specification](../docs/c-to-yian.md). |
 
 The repository contains 28 C/YIAN pairs (14 AWFY, 10 BG, 3 fatptr, and
-LIBYAML). The `full` three-state set selects 27 of them; LIBYAML is selected only
-by `sets/real.json` and reported separately. `sets/bg.json` selects the ten BG
-projects, and the `paper` set selects all 24 AWFY and BG projects (14 AWFY and
-10 BG). The four `ALLOC` projects are selected only by the fat/raw allocator
-runner. GMP 6.3.0 and PCRE2 10.47 are fixed project-local
+LIBYAML). The `full` three-state set selects 27 of them; LIBYAML is selected
+separately by `sets/real.json` and is not part of the paper geomean group.
+`sets/bg.json` selects the ten BG projects, and the `paper` set selects all 14
+AWFY and all ten BG projects (24 benchmarks). The paper analysis reports
+LIBYAML's three-state and ASan data separately from that group. The four
+`ALLOC` projects are selected only by the fat/raw allocator runner. GMP 6.3.0 and PCRE2 10.47 are fixed project-local
 dependencies for pidigits and regexredux; they are not benchmark projects. Both
 libraries use the same static archives in C/raw/fat and are not ASan-instrumented
 or covered by YIAN guards. See [`native/README.md`](native/README.md) and each

@@ -42,7 +42,11 @@ def make_record(
 
 
 def write_csv(path: Path, records: list[dict[str, object]]) -> None:
-    """Write scalar statistics, numbered samples and aggregate ratios only."""
+    """Write scalar statistics, numbered samples and aggregate ratios only.
+
+    LIBYAML is a standalone real-project workload. Its rows stay in the table
+    for direct inspection but are excluded from every geomean aggregate.
+    """
     rows = [dict(record) for record in records]
     groups = {}
     seen = set()
@@ -68,6 +72,7 @@ def write_csv(path: Path, records: list[dict[str, object]]) -> None:
             ):
                 if baseline in states:
                     row[column] = row[statistic] / states[baseline][statistic]
+    aggregate_rows = [row for row in rows if not str(row["benchmark"]).startswith("LIBYAML/")]
     count = max((len(row["samples_ms"]) for row in rows), default=0)
     fields = list(FIELDS) + [name for i in range(1, count + 1) for name in (f"time_ms_{i}", f"rss_kb_{i}")]
     output = []
@@ -83,7 +88,7 @@ def write_csv(path: Path, records: list[dict[str, object]]) -> None:
     for state in dict.fromkeys(row["state"] for row in rows):
         aggregate = {"benchmark": "geomean", "state": state}
         for field in FIELDS[10:]:
-            values = [row[field] for row in rows if row["state"] == state and row.get(field) is not None]
+            values = [row[field] for row in aggregate_rows if row["state"] == state and row.get(field) is not None]
             if values:
                 aggregate[field] = round(statistics.geometric_mean(values), 6)
         if len(aggregate) > 2:
