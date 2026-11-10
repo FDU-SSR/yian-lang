@@ -408,7 +408,10 @@ uint64_t __secl_lock_bump_take(void) {
 
 void __secl_lock_release(uint64_t word) {
     uint64_t index = word & 0xFFFFFFFFu;
-    uint32_t key = (uint32_t)__secl_lock_table[index] + 1;
-    lock_store(index, key, (uint32_t)__secl_lock_free_head);
+    uint32_t old = (uint32_t)__secl_lock_table[index];
+    if (old >= YIAN_HEAP_KEY_LIMIT) {
+        lock_fail();
+    }
+    lock_store(index, old + 1, (uint32_t)__secl_lock_free_head);
     __secl_lock_free_head = index + 1;
 }

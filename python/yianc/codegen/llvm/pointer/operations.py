@@ -34,7 +34,7 @@ class PointerOps:
     def __builder(self) -> ir.IRBuilder:
         return self.__core.flow.builder
 
-    def element_ptr(self, base: LLValue, offset: LLValue) -> LLValue:
+    def element_ptr(self, base: LLValue, offset: LLValue, backward: bool = False) -> LLValue:
         ptr_type = self.__type_ctx[base.type_id]
         assert isinstance(ptr_type, Type.PointerType)
         if self.__ll_type_ctx.is_zst(ptr_type.pointee_type):
@@ -43,16 +43,19 @@ class PointerOps:
             return base
         if self.__pointers.is_fat(base):
             index = self.__pointers.extract_fat_field(base, ABI.FAT_INDEX)
-            new_index = LLValue(
-                self.__type_ctx.u64_id,
-                self.__builder.add(index.ir_val, offset.ir_val),  # type: ignore
+            next_index = (
+                self.__builder.sub(index.ir_val, offset.ir_val)  # type: ignore
+                if backward
+                else self.__builder.add(index.ir_val, offset.ir_val)  # type: ignore
             )
+            new_index = LLValue(self.__type_ctx.u64_id, next_index)  # type: ignore
             return self.__pointers.insert_field_value(base, new_index, ABI.FAT_INDEX)
         element_type_id = ptr_type.pointee_type
         element_ll = self.__ll_type_ctx.get_ll_type(element_type_id).ir_type
         opaque_base = self.__core.ir.bitcast(base.ir_val, self.__ll_type_ctx.ptr_type)  # type: ignore
+        delta = self.__builder.neg(offset.ir_val) if backward else offset.ir_val  # type: ignore
         result = self.__builder.gep(
-            opaque_base, [offset.ir_val], inbounds=False, source_etype=element_ll
+            opaque_base, [delta], inbounds=False, source_etype=element_ll
         )  # type: ignore
         return LLValue(base.type_id, result)
 

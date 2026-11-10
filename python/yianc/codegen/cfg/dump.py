@@ -53,10 +53,11 @@ def __dump_stmt(stmt: IR.Stmt) -> str:
         case IR.FieldPtr(result=result, base=base, field_index=idx):
             return f"%{result.name} = fieldptr {__dump_value(base)}[{idx}]"
 
-        case IR.ElementPtr(result=result, base=base, offset=offset):
+        case IR.ElementPtr(result=result, base=base, offset=offset, backward=backward):
+            op = "-" if backward else "+"
             return (
                 f"%{result.name} = elementptr"
-                f" {__dump_value(base)}, {__dump_value(offset)}"
+                f" {__dump_value(base)} {op} {__dump_value(offset)}"
                 f"  [{__type_str(result.type_id)}]"
             )
 
@@ -155,8 +156,9 @@ def __dump_stmt(stmt: IR.Stmt) -> str:
         case IR.CheckRefAccess(ptr=ptr):
             return f"check_ref_access {__dump_value(ptr)}  (仅 live,免 in_bounds, tiered-pointers)"
 
-        case IR.CheckElementArith(base=base, offset=offset):
-            return f"check_element_arith {__dump_value(base)}, {__dump_value(offset)}  (0 ≤ index+n ≤ size)"
+        case IR.CheckElementArith(base=base, offset=offset, backward=backward):
+            rule = "n ≤ index and index-n ≤ size" if backward else "0 ≤ index+n ≤ size"
+            return f"check_element_arith {__dump_value(base)}, {__dump_value(offset)}  ({rule})"
 
         case IR.CheckElementAccess(base=base, offset=offset, ptr=ptr):
             return (

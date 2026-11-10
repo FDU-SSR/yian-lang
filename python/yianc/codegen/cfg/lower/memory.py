@@ -52,11 +52,14 @@ class MemoryOps:
         ).result
         return realloc
 
-    def build_element_ptr(self, base: IR.Value, offset: IR.Value, result_type: int) -> IR.Value:
-        # The insertion pass reconstructs arithmetic validity (0 <= index+n <= size) and discharges nested
-        # derivation obligations along IR.ElementPtr edges; this layer only emits nodes and records provenance.
+    def build_element_ptr(self, base: IR.Value, offset: IR.Value, result_type: int, backward: bool = False) -> IR.Value:
+        # The insertion pass reconstructs arithmetic validity (0 <= index+n <= size for p+n,
+        # n <= index and index-n <= size for p-n) and discharges nested derivation obligations
+        # along IR.ElementPtr edges; this layer only emits nodes and records provenance.
         result = IR.Reg(name=self.__state.emitter.new_name(), type_id=result_type)
-        elem_ptr = self.__state.emitter.emit(IR.ElementPtr(result=result, base=base, offset=offset)).result
+        elem_ptr = self.__state.emitter.emit(
+            IR.ElementPtr(result=result, base=base, offset=offset, backward=backward)
+        ).result
         return elem_ptr
 
     def build_field_ptr(self, base: IR.Value, field_index: int, field_type: int) -> IR.Value:

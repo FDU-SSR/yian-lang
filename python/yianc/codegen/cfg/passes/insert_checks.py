@@ -159,15 +159,16 @@ class _CheckPlanner:
                 return
             self.__out.append(IR.CheckSafeAccess(ptr=ptr, live=not live_covered))
 
-    def __plan_element_ptr(self, base: IR.Value, offset: IR.Value) -> None:
+    def __plan_element_ptr(self, base: IR.Value, offset: IR.Value, backward: bool = False) -> None:
         """Check ElementPtr arithmetic validity; discharge nested pending in_bounds(elem,1) first."""
         if not self.__prov.is_fat_pointer(base):
             return
         owed_elem = self.__pop_owed(base)
         if owed_elem is not None and not self.__dedup(self.__ptr_key(owed_elem, "ib")):
             self.__out.append(IR.CheckInBounds(ptr=owed_elem))
-        if not self.__dedup(self.__pair_key(base, offset, "elarith")):
-            self.__out.append(IR.CheckElementArith(base=base, offset=offset))
+        key = self.__pair_key(base, offset, "elarith-back" if backward else "elarith")
+        if not self.__dedup(key):
+            self.__out.append(IR.CheckElementArith(base=base, offset=offset, backward=backward))
 
     def __plan_field_ptr(self, base: IR.Value) -> str | None:
         """FieldPtr re-anchoring preconditions; matched chains defer obligations to combined access checks.
@@ -225,8 +226,8 @@ class _CheckPlanner:
                 return
             case IR.Load(ptr=ptr) | IR.EnumIsVariant(address=ptr) | IR.Store(ptr=ptr):
                 self.__plan_access(ptr)
-            case IR.ElementPtr(result=reg, base=base, offset=offset):
-                self.__plan_element_ptr(base, offset)
+            case IR.ElementPtr(result=reg, base=base, offset=offset, backward=backward):
+                self.__plan_element_ptr(base, offset, backward)
                 self.__out.append(stmt)
                 self.__prov.observe(stmt)
                 if self.__prov.is_fat_pointer(base):

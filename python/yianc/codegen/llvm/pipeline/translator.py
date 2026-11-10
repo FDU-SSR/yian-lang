@@ -176,7 +176,9 @@ class LLTranslator:
                 value = builder.memory.gep(self.__resolve(builder, stmt.base), [0, stmt.field_index])
                 self.__bind_result(stmt.result, value)
             case IR.ElementPtr():
-                value = builder.pointer_ops.element_ptr(self.__resolve(builder, stmt.base), self.__resolve(builder, stmt.offset))
+                value = builder.pointer_ops.element_ptr(
+                    self.__resolve(builder, stmt.base), self.__resolve(builder, stmt.offset), stmt.backward
+                )
                 self.__bind_result(stmt.result, value)
             case IR.PtrDiff():
                 value = builder.pointer_ops.ptr_diff(self.__resolve(builder, stmt.lhs), self.__resolve(builder, stmt.rhs))
@@ -238,7 +240,9 @@ class LLTranslator:
             case IR.CheckRefAccess():
                 builder.safety.check_ref_access(self.__resolve(builder, stmt.ptr))
             case IR.CheckElementArith():
-                builder.safety.check_element_arith(self.__resolve(builder, stmt.base), self.__resolve(builder, stmt.offset))
+                builder.safety.check_element_arith(
+                    self.__resolve(builder, stmt.base), self.__resolve(builder, stmt.offset), stmt.backward
+                )
             case IR.CheckElementAccess():
                 builder.safety.check_element_access(
                     self.__resolve(builder, stmt.base),

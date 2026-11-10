@@ -229,11 +229,14 @@ class FatSafety:
         lock_index = self.__core.flow.emit_either(has_free, take_fast, take_slow, i64)  # type: ignore
         entry = self.__builder.gep(table, [ir.Constant(i64, 0), lock_index], inbounds=True)  # type: ignore
         stored = self.__builder.load(entry, typ=i64)  # type: ignore
+        old_key = self.__builder.and_(stored, ir.Constant(i64, ABI.KEY_MASK))  # type: ignore
+        # An entry whose key reaches the limit traps instead of wrapping to an issued key.
+        self.__core.flow.emit_check(
+            LLValue(self.__type_ctx.bool_id, self.__builder.icmp_unsigned(  # type: ignore
+                "<", old_key, ir.Constant(i64, ABI.HEAP_KEY_LIMIT))),  # type: ignore
+            RuntimeErrorCode.R003, "lockkey")
         next_key = self.__builder.and_(  # type: ignore
-            self.__builder.add(  # type: ignore
-                self.__builder.and_(stored, ir.Constant(i64, ABI.KEY_MASK)),  # type: ignore
-                ir.Constant(i64, 1),  # type: ignore
-            ),
+            self.__builder.add(old_key, ir.Constant(i64, 1)),  # type: ignore
             ir.Constant(i64, ABI.KEY_MASK),  # type: ignore
         )
         next_entry = self.__builder.or_(  # type: ignore
@@ -642,36 +645,32 @@ class FatSafety:
         cond = self.__check_live(word, data)
         self.__core.flow.emit_check(cond, RuntimeErrorCode.S003, "ref")
 
-    def __element_arith_cond(self, base: LLValue, offset: LLValue) -> ir.Value:
+    def __element_arith_cond(self, base: LLValue, offset: LLValue, backward: bool = False) -> ir.Value:
         index = self.extract_fat_field(base, ABI.FAT_INDEX).ir_val
         size = self.extract_fat_field(base, ABI.FAT_SIZE).ir_val
         off64 = self.__builder.bitcast(offset.ir_val, ir.IntType(64))  # type: ignore
+        if backward:
+            fits = self.__builder.icmp_unsigned("<=", off64, index)  # type: ignore
+            total = self.__builder.sub(index, off64)  # type: ignore
+            in_range = self.__builder.icmp_unsigned("<=", total, size)  # type: ignore
+            return self.__builder.and_(fits, in_range)  # type: ignore
         total = self.__builder.add(index, off64)  # type: ignore
         no_wrap = self.__builder.icmp_unsigned(">=", total, index)  # type: ignore
         in_range = self.__builder.icmp_unsigned("<=", total, size)  # type: ignore
         return self.__builder.and_(no_wrap, in_range)  # type: ignore
 
-    def check_element_arith(self, base: LLValue, offset: LLValue) -> None:
-        """Check 0 <= index+offset <= size using u64 no-wrap and upper-bound comparisons.
+    def check_element_arith(self, base: LLValue, offset: LLValue, backward: bool = False) -> None:
+        """Check arithmetic validity for p+n or p-n using u64 comparisons.
 
-        Pointer arithmetic does not access memory, so, like PtrDiff/PtrCmp, it omits
-        allocation liveness. Dereference and external I/O check live at their access boundaries.
-
-        For unsigned indices, nonnegativity is automatic. Decompose the condition into:
-        (a) no_wrap = icmp uge sum,index (sum=index+offset; unsigned wrap means sum<index),
-        (b) in_range = icmp ule sum,size, combining them with and.
-        For positive offsets below 2^63 and index+offset below 2^64, no_wrap is true,
-        leaving the upper bound, equivalent to the i128 formulation.
-        On overflow sum<index rejects the operation, equivalent to i128 sum>=2^64>size.
-        Offsets >=2^63 are very large unsigned indices and report a safety error;
-        sign-extension would instead treat them as negative and could admit a subslice
-        when base.index >= |offset|. The u64 form lets ConstraintElimination relate
-        loop/branch constraints and remove redundant checks,
-        while no-wrap remains enforced without wide integers. LLVM emits the predicate.
+        For p+n the condition is 0 <= index+n <= size; no-wrap rejects unsigned overflow.
+        For p-n the unsigned displacement must not exceed index, and index-n must stay
+        within size. Pointer arithmetic does not access memory, so, like PtrDiff/PtrCmp,
+        it omits allocation liveness. Dereference and external I/O check live at their
+        access boundaries.
         """
         if not self.is_fat(base):
             return
-        cond = self.__element_arith_cond(base, offset)
+        cond = self.__element_arith_cond(base, offset, backward)
         self.__core.flow.emit_check(LLValue(self.__type_ctx.bool_id, cond), RuntimeErrorCode.S004, "elarith")
 
     def check_element_access(self, base: LLValue, offset: LLValue, ptr: LLValue, live: bool = True) -> None:

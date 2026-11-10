@@ -52,10 +52,11 @@ class FieldPtr:
 
 @dataclass
 class ElementPtr:
-    """Given ptr, get ptr + offset"""
+    """Given ptr, get ptr + offset or ptr - offset when backward."""
     result: Reg
     base: Value
     offset: Value
+    backward: bool = False
 
 
 @dataclass
@@ -249,13 +250,15 @@ class CheckRefAccess:
 
 @dataclass
 class CheckElementArith:
-    """ElementPtr arithmetic validity check: 0 <= index+n <= size.
+    """ElementPtr arithmetic validity check: 0 <= index+n <= size for p+n.
 
-    Crossing one-past-end or the lower bound reports a safety error. No-wrap is enforced
-    through u64 overflow detection (icmp uge sum,index), emitted by LLVM.
+    For p-n the check is n <= index and index-n <= size. Crossing one-past-end or the
+    lower bound reports a safety error. No-wrap is enforced through u64 overflow
+    detection (icmp uge sum,index), emitted by LLVM.
     """
     base: Value
     offset: Value
+    backward: bool = False
 
 
 @dataclass

@@ -1,7 +1,7 @@
 from yianc.codegen.llvm.module import FunctionLowering;
 from yianc.codegen.cfg.model import GuardKind, GuardSite;
 from yianc.codegen.error import CodegenError;
-from yianc.codegen.abi.runtime import LOCK_MASK, HEADER_BYTES, HEAP_LOCK_BASE;
+from yianc.codegen.abi.runtime import LOCK_MASK, HEADER_BYTES, HEAP_LOCK_BASE, HEAP_KEY_LIMIT;
 from yianc.common.ids import TypeId;
 from llvm.ir import IrValue, BinaryOp, CastOp, IntCompare;
 
@@ -38,6 +38,9 @@ impl FunctionLowering {
         self.builder.add_incoming(index, values.as_slice(), blocks.as_slice());
         let slot = self.lock_slot(index);
         let old = self.builder.load(integer, slot, "");
+        // An entry whose key reaches the limit traps instead of wrapping to an issued key.
+        let old_key = self.builder.binary(BinaryOp.And, old, self.integer(LOCK_MASK), "");
+        self.checked(self.builder.icmp(IntCompare.Ult, old_key, self.integer(HEAP_KEY_LIMIT), ""), "R003")?;
         let key = self.builder.binary(BinaryOp.And,
             self.builder.binary(BinaryOp.Add, old, self.integer(1u64), ""), self.integer(LOCK_MASK), "");
         let anchor = self.builder.binary(BinaryOp.And,

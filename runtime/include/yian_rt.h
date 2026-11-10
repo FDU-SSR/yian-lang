@@ -28,6 +28,10 @@
 #define YIAN_ENV_LOCK_INDEX (YIAN_FRAME_LOCK_SLOTS + 1u)
 #define YIAN_HEAP_LOCK_BASE (YIAN_FRAME_LOCK_SLOTS + 2u)
 
+/* Both key classes stop below 0xFFFFFFFF, which the frame exit SENTINEL reads in its low half.
+ * Heap release and allocation trap when an entry's key reaches this limit instead of wrapping. */
+#define YIAN_HEAP_KEY_LIMIT 0xFFFFFFFEu
+
 /* Heap header bytes must match runtime.an::HEADER_BYTES.
  * 8 B = {extent:u32,pad:u32}; payload = base + YIAN_HDR_BYTES. */
 #define YIAN_HDR_BYTES 8u
