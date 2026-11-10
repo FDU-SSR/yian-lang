@@ -754,11 +754,10 @@ class FatSafety:
         self.__core.flow.emit_check(LLValue(self.__type_ctx.bool_id, cond), RuntimeErrorCode.S005, "ptrcmp")
 
     def check_delete(self, ptr: LLValue) -> None:
-        """Validate and release a complete, live heap view.
+        """Validate and release a live heap root view.
 
-        The view must be live, start at the heap allocation base, and cover
-        exactly the active payload extent recorded in the block header.  Pool
-        capacity can exceed that logical extent.
+        The view must be live and start at the heap allocation base; a root view at
+        any extent may release the block. Pool capacity can exceed the logical extent.
         """
         if not self.is_fat(ptr):
             return
@@ -787,13 +786,7 @@ class FatSafety:
             ptr_index = self.extract_fat_field(ptr, ABI.FAT_INDEX).ir_val
             raw_index_ok = self.__builder.icmp_signed("==", ptr_index, ir.Constant(ir.IntType(64), 0))  # type: ignore
             raw_cond = self.__builder.and_(raw_data_ok, raw_index_ok)  # type: ignore
-        _, block_int = self.__heap_block(data_int, anchor)
-        active_size = self.__load_guarded_u32(block_int, ABI.BlockHeader.EXTENT_OFFSET, header_guard)
-        extent_ok = self.__delete_extent_ok(ptr, ptr_type, active_size)
-        cond: ir.Value = self.__builder.and_(
-            header_guard,
-            self.__builder.and_(raw_cond, extent_ok),  # type: ignore
-        )  # type: ignore
+        cond: ir.Value = self.__builder.and_(header_guard, raw_cond)  # type: ignore
         self.__core.flow.emit_check(LLValue(self.__type_ctx.bool_id, cond), RuntimeErrorCode.S006, "del")
 
     def __heap_block(self, data_int: ir.Value, anchor: ir.Value) -> tuple[ir.Value, ir.Value]:
@@ -824,38 +817,6 @@ class FatSafety:
             return builder.zext(builder.load(field, typ=i32), i64)  # type: ignore
 
         return self.__core.flow.emit_guarded(guard, load_field, ir.IntType(64))  # type: ignore
-
-    def __delete_extent_ok(
-        self,
-        ptr: LLValue,
-        ptr_type: Type.PointerType | Type.SliceType | Type.StrType | Type.RefType,
-        active_size: ir.Value,
-    ) -> ir.Value:
-        """Check that *ptr* denotes exactly the active heap payload."""
-        i128: ir.IntType = ir.IntType(128)  # type: ignore
-        if isinstance(ptr_type, Type.PointerType):
-            count = self.extract_fat_field(ptr, ABI.FAT_SIZE).ir_val
-            element_type = ptr_type.pointee_type
-        elif isinstance(ptr_type, (Type.SliceType, Type.StrType)):
-            count = self.extract_fat_field(ptr, ABI.SLICE_SIZE).ir_val
-            element_type = ptr_type.element_type if isinstance(ptr_type, Type.SliceType) else self.__type_ctx.u8_id
-        else:
-            count = ir.Constant(ir.IntType(64), 1)  # type: ignore
-            element_type = ptr_type.pointee_type
-
-        element_size = self.__ll_type_ctx.get_type_size(element_type)
-        logical_bytes, logical_no_wrap = self.__mul_u64_i128(count, element_size)
-        active_bytes = self.__builder.zext(  # type: ignore
-            self.__builder.mul(active_size, ir.Constant(ir.IntType(64), element_size)),  # type: ignore
-            i128,
-        )
-        return cast(
-            ir.Value,
-            self.__builder.and_(  # type: ignore
-                logical_no_wrap,
-                self.__builder.icmp_unsigned("==", logical_bytes, active_bytes),  # type: ignore
-            ),
-        )
 
     def __mul_u64_i128(self, value: ir.Value, factor: int) -> tuple[ir.Value, ir.Value]:
         """Multiply a u64 value in i128 and return (product, no_wrap)."""

@@ -74,7 +74,7 @@ impl FunctionLowering {
         self.make_pointer(type_id, data, word, self.integer(0u64), count)
     }
 
-    // Complete root views may release an allocation. Derived or narrowed views cannot.
+    // Root views may release an allocation; a view whose data address is not the block root cannot.
     pub fn checked_heap_base(type_id: TypeId, value: IrValue) -> Result<IrValue, CodegenError> {
         let module = self.owner.module;
         let data = self.builder.extract_value(value, 0u32, "");
@@ -87,18 +87,14 @@ impl FunctionLowering {
         let anchor = self.heap_anchor(data, word);
         let data_integer = self.builder.cast(CastOp.Ptrtoint, data, module.int_type(64u32), "");
         let valid = self.builder.icmp(IntCompare.Eq, data_integer, anchor, "");
-        let extent = self.heap_extent(anchor);
-        let count = match self.owner.session.types.require(type_id)? {
+        match self.owner.session.types.require(type_id)? {
             Pointer(_) => {
                 valid = self.builder.binary(BinaryOp.And, valid,
                     self.builder.icmp(IntCompare.Eq, self.pointer_index(value), self.integer(0u64), ""), "");
-                self.pointer_size(value)
             },
-            Slice(_) | Str => self.view_length(value),
-            Reference(_) => self.integer(1u64),
+            Slice(_) | Str | Reference(_) => {},
             _ => return Result<IrValue, CodegenError>.Err(CodegenError.invalid("deallocation has no language pointer")),
         };
-        valid = self.builder.binary(BinaryOp.And, valid, self.builder.icmp(IntCompare.Eq, count, extent, ""), "");
         self.checked(valid, "S006")?;
         Result<IrValue, CodegenError>.Ok(self.builder.cast(CastOp.Inttoptr,
             self.builder.binary(BinaryOp.Sub, anchor, self.integer(HEADER_BYTES), ""), module.pointer_type(0u32), ""))
