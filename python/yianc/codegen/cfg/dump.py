@@ -175,10 +175,10 @@ def __dump_stmt(stmt: IR.Stmt) -> str:
             args = ", ".join(__dump_value(v) for v in operands)
             return f"check_request {kind} {args}  (标记, 待插入 pass 物化)"
         case IR.CheckPtrDiff(lhs=lhs, rhs=rhs):
-            return f"check_ptrdiff {__dump_value(lhs)}, {__dump_value(rhs)}  (data 相等 + 良构 + 无回绕)"
+            return f"check_ptrdiff {__dump_value(lhs)}, {__dump_value(rhs)}  (data 相等 + 生命周期词相等 + 良构 + 无回绕)"
 
         case IR.CheckPtrCmp(lhs=lhs, rhs=rhs):
-            return f"check_ptrcmp {__dump_value(lhs)}, {__dump_value(rhs)}  (data 相等)"
+            return f"check_ptrcmp {__dump_value(lhs)}, {__dump_value(rhs)}  (data 相等 + 生命周期词相等)"
 
         case IR.PtrCmp(result=result, op=op, lhs=lhs, rhs=rhs):
             return (

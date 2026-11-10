@@ -437,7 +437,7 @@ class FatSafety:
     def cmp_fat_values(self, op: BinaryOperator, lhs: ir.Value, rhs: ir.Value) -> ir.Value:
         """Compare fields of fat ir.Value aggregates.
 
-        Equality uses (data,index); ordering first checks equal data and rejects different objects.
+        Equality uses (data,index); ordering requires equal data and lifetime word.
         CFG did not route these values here, so insert the precondition locally.
         """
         data_l, idx_l = self.__fat_value_pair(lhs)
@@ -448,6 +448,10 @@ class FatSafety:
             both = self.__builder.and_(data_eq, idx_eq)  # type: ignore
             return self.__builder.not_(both) if op == BinaryOperator.Neq else both  # type: ignore
         data_ok = self.__builder.icmp_signed("==", data_l, data_r)  # type: ignore
+        if isinstance(lhs.type, ir.LiteralStructType) and len(lhs.type.elements) >= 4:  # type: ignore
+            word_l = self.__builder.extract_value(lhs, ABI.FAT_WORD)  # type: ignore
+            word_r = self.__builder.extract_value(rhs, ABI.FAT_WORD)  # type: ignore
+            data_ok = self.__builder.and_(data_ok, self.__builder.icmp_signed("==", word_l, word_r))  # type: ignore
         self.__core.flow.emit_check(LLValue(self.__type_ctx.bool_id, data_ok), RuntimeErrorCode.S005, "ptrcmp")
         predicate = {
             BinaryOperator.Lt: "<", BinaryOperator.Gt: ">",
@@ -707,7 +711,7 @@ class FatSafety:
         self.__core.flow.emit_check(LLValue(self.__type_ctx.bool_id, cond), RuntimeErrorCode.S001, "rb")
 
     def check_ptrdiff(self, lhs: LLValue, rhs: LLValue) -> None:
-        """Preconditions: equal data, both indices <= size, and a representable difference.
+        """Preconditions: equal data and lifetime word, both indices <= size, and a representable difference.
 
         PtrDiff does not access memory and, like pointer arithmetic, omits allocation liveness.
         """
@@ -716,6 +720,9 @@ class FatSafety:
         data_l = self.extract_fat_field(lhs, ABI.FAT_DATA).ir_val
         data_r = self.extract_fat_field(rhs, ABI.FAT_DATA).ir_val
         data_eq = self.__builder.icmp_signed("==", data_l, data_r)  # type: ignore
+        word_l = self.extract_fat_field(lhs, ABI.FAT_WORD).ir_val
+        word_r = self.extract_fat_field(rhs, ABI.FAT_WORD).ir_val
+        pair_eq = self.__builder.icmp_signed("==", word_l, word_r)  # type: ignore
         idx_l = self.extract_fat_field(lhs, ABI.FAT_INDEX).ir_val
         idx_r = self.extract_fat_field(rhs, ABI.FAT_INDEX).ir_val
         size_l = self.extract_fat_field(lhs, ABI.FAT_SIZE).ir_val
@@ -727,11 +734,11 @@ class FatSafety:
         diff64 = self.__builder.trunc(diff128, ir.IntType(64))  # type: ignore
         no_wrap = self.__builder.icmp_signed("==", self.__builder.sext(diff64, i128), diff128)  # type: ignore
         wf_cond = self.__builder.and_(wf_l, wf_r)  # type: ignore
-        cond: ir.Value = self.__builder.and_(data_eq, self.__builder.and_(wf_cond, no_wrap))  # type: ignore
+        cond: ir.Value = self.__builder.and_(data_eq, self.__builder.and_(pair_eq, self.__builder.and_(wf_cond, no_wrap)))  # type: ignore
         self.__core.flow.emit_check(LLValue(self.__type_ctx.bool_id, cond), RuntimeErrorCode.S005, "ptrdiff")
 
     def check_ptr_cmp(self, lhs: LLValue, rhs: LLValue) -> None:
-        """Ordering precondition: equal data; cross-object ordering reports S005.
+        """Ordering precondition: equal data and lifetime word; cross-object ordering reports S005.
 
         PtrCmp does not access memory and, like pointer arithmetic, omits allocation liveness.
         """
@@ -739,7 +746,12 @@ class FatSafety:
             return
         data_l = self.extract_fat_field(lhs, ABI.FAT_DATA).ir_val
         data_r = self.extract_fat_field(rhs, ABI.FAT_DATA).ir_val
-        cond = self.__builder.icmp_signed("==", data_l, data_r)  # type: ignore
+        word_l = self.extract_fat_field(lhs, ABI.FAT_WORD).ir_val
+        word_r = self.extract_fat_field(rhs, ABI.FAT_WORD).ir_val
+        cond = self.__builder.and_(
+            self.__builder.icmp_signed("==", data_l, data_r),  # type: ignore
+            self.__builder.icmp_signed("==", word_l, word_r),  # type: ignore
+        )
         self.__core.flow.emit_check(LLValue(self.__type_ctx.bool_id, cond), RuntimeErrorCode.S005, "ptrcmp")
 
     def check_delete(self, ptr: LLValue) -> None:

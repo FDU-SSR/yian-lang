@@ -1,6 +1,6 @@
 // Fat-pointer cross-object difference negative test.
 //
-// CheckPtrDiff preconditions: equal data, valid arithmetic, and no wrap.
+// CheckPtrDiff preconditions: equal data, equal lifetime word, valid arithmetic, and no wrap.
 // a/b are independent dyn allocations with unequal data; the precondition fails and exits with code 1.
 
 fn main() {

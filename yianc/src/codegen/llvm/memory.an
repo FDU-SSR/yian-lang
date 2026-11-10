@@ -44,17 +44,21 @@ impl FunctionLowering {
     pub fn pointer_difference(left: ValueId, right: ValueId) -> Result<IrValue, CodegenError> {
         let module = self.owner.module;
         let integer = module.int_type(64u32);
-        let element = self.pointed_type(self.cfg.value(left)?.type_id)?;
+        let type_id = self.cfg.value(left)?.type_id;
+        let element = self.pointed_type(type_id)?;
         let size = module.abi_size(self.owner.types.value_type(element)?);
         if size == 0u64 { return Result<IrValue, CodegenError>.Ok(module.const_int(integer, 0u64)); }
-        if self.fat(self.cfg.value(left)?.type_id)? {
+        if self.fat(type_id)? {
             self.require_guard(GuardKind.PointerDifference, GuardSite.Before)?;
             let first = self.get(left)?;
             let second = self.get(right)?;
             let same = self.builder.icmp(IntCompare.Eq, self.builder.extract_value(first, 0u32, ""), self.builder.extract_value(second, 0u32, ""), "");
+            let same_pair = self.builder.icmp(IntCompare.Eq,
+                self.pointer_word(type_id, first)?, self.pointer_word(type_id, second)?, "");
             let lhs_index = self.pointer_index(first);
             let rhs_index = self.pointer_index(second);
-            let valid = self.builder.binary(BinaryOp.And, same, self.builder.binary(BinaryOp.And,
+            let valid = self.builder.binary(BinaryOp.And, self.builder.binary(BinaryOp.And, same, same_pair, ""),
+                self.builder.binary(BinaryOp.And,
                 self.builder.icmp(IntCompare.Ule, lhs_index, self.pointer_size(first), ""),
                 self.builder.icmp(IntCompare.Ule, rhs_index, self.pointer_size(second), ""), ""), "");
             self.checked(valid, "S005")?;
@@ -105,7 +109,9 @@ impl FunctionLowering {
                 return Result<IrValue, CodegenError>.Ok(if op == BinaryOperator.Neq { self.builder.not(equal, "") } else { equal });
             }
             self.require_guard(GuardKind.PointerOrder, GuardSite.Before)?;
-            self.checked(equal, "S005")?;
+            let same_pair = self.builder.icmp(IntCompare.Eq,
+                self.pointer_word(type_id, first)?, self.pointer_word(type_id, second)?, "");
+            self.checked(self.builder.binary(BinaryOp.And, equal, same_pair, ""), "S005")?;
             let predicate = match op {
                 Lt => IntCompare.Ult, Leq => IntCompare.Ule, Gt => IntCompare.Ugt, Geq => IntCompare.Uge,
                 _ => return Result<IrValue, CodegenError>.Err(CodegenError.invalid("invalid pointer comparison")),

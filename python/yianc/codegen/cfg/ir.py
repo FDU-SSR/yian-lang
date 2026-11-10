@@ -335,10 +335,11 @@ class CheckRequest:
 
 @dataclass
 class CheckPtrDiff:
-    """PtrDiff preconditions: equal data, valid arithmetic, and no wrap.
+    """PtrDiff preconditions: equal data and lifetime word, valid arithmetic, and no wrap.
 
-    Differences between objects report a safety error. This operation does not access memory,
-    so it does not check allocation liveness; dereferencing the result performs access checks. LLVM emits it.
+    Differences between objects or lifetimes report a safety error. This operation does not access
+    memory, so it does not check allocation liveness; dereferencing the result performs access checks.
+    LLVM emits it.
     """
     lhs: Value
     rhs: Value
@@ -346,10 +347,10 @@ class CheckPtrDiff:
 
 @dataclass
 class CheckPtrCmp:
-    """Ordering precondition: equal data.
+    """Ordering precondition: equal data and lifetime word.
 
-    Cross-object ordering reports a safety error in LLVM. Equality compares (data,index)
-    without this check. Pointer comparison does not access memory and therefore
+    Cross-object or cross-lifetime ordering reports a safety error in LLVM. Equality compares
+    (data,index) without this check. Pointer comparison does not access memory and therefore
     does not check allocation liveness.
     """
     lhs: Value

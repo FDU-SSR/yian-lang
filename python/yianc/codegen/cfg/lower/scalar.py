@@ -43,8 +43,9 @@ class ScalarOps:
 
         # -- Compare pointer fields --
         # Route fat-pointer comparisons (both PointerType with non-ZST pointees) through PtrCmp:
-        # ordering inserts CheckPtrCmp for equal data, rejecting different objects; equality compares
-        # (data,index). FunctionPointerType is not PointerType and does not use this path.
+        # ordering inserts CheckPtrCmp for equal data and lifetime word, rejecting different objects
+        # or lifetimes; equality compares (data,index). FunctionPointerType is not PointerType and
+        # does not use this path.
         if op.is_comparison() and self.__state.pointers.is_fat_pointer(lhs) and self.__state.pointers.is_fat_pointer(rhs):
             return self.__memory.build_ptr_cmp(op, lhs, rhs, type_id)
 
