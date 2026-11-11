@@ -1,6 +1,6 @@
 # CVE mechanism witness project
 
-The dataset contains 39 identifiers, each of which is a pair of programs under
+The dataset contains 40 identifiers, each of which is a pair of programs under
 `cve/<identifier>/`: `c/` is the vulnerable reference program and `yian/` is the
 corresponding YIAN rewrite. Translation, representation differences and semantic
 correspondence are reviewed uniformly against the
@@ -8,13 +8,13 @@ correspondence are reviewed uniformly against the
 current dataset and runner behavior. Each case README records its concrete
 representation and local verification scope.
 
-All 39 cases have a `README.md` recording the C-to-YIAN function correspondence,
-representation differences and first illegal operation. Sixteen are
+All 40 cases have a `README.md` recording the C-to-YIAN function correspondence,
+representation differences and first illegal operation. Seventeen are
 source-mapped to upstream records: the fifteen note.md P0/P1 cases (the Linux
-cleanup case rewrites only the YIAN side) and the BIND 9 SIG(0) case. The
-other 23 retain earlier minimized witnesses, audited against the same
-contract: input is driven by the same `args` or the same byte sequence, and
-hard-coded trigger values are derived from the input. The
+cleanup case rewrites only the YIAN side), the BIND 9 SIG(0) case, and the
+HHVM mb_detect_order case. The other 23 retain earlier minimized witnesses,
+audited against the same contract: input is driven by the same `args` or the
+same byte sequence, and hard-coded trigger values are derived from the input. The
 mutable static tables of tx, svc_insts and tinyproxy use heap objects held by the
 entry point. The read-only static arrays of ScreenPressor, FreeType, HyperKit,
 LibreDWG, RemoteFX and stb_image use array constants and caller-held local
@@ -26,7 +26,7 @@ Status return values and output parameters are represented separately: parsing,
 decoding and allocation functions preserve C's status/count and write-back order;
 nullable pointers use Option<pointer or slice>. HyperKit callers ignore the
 failure status and continue using the retained iovec. This does not claim that
-all 39 pairs fully conform to the specification. The project is independent of
+all 40 pairs fully conform to the specification. The project is independent of
 the compiler regression tests under `tests/`; directory completeness or a guard
 hit alone does not prove correspondence with the upstream defect.
 
@@ -73,7 +73,7 @@ Each identifier keeps only one C project and one YIAN project currently in use;
 safety diagnostic, and does not record old copies or per-case hashes.
 
 Each case's `README.md` records the C-to-YIAN function correspondence, input and
-first illegal operation, representation differences and run command; the 16
+first illegal operation, representation differences and run command; the 17
 upstream rewrite cases additionally record the version/fix and replacement
 facilities. All cases are reduced models and do not claim to be complete ports
 of the upstream projects; some upstream projects are not C projects, and the C
@@ -132,11 +132,11 @@ default checked fat pointers. CMake enables ASan and disables leak checking to
 focus on memory access and release errors. Clang builds explicitly enable
 use-after-return detection. Both sides use the same `args` from `case.json`.
 
-The whole-set command is `python scripts/run_cve.py --all`, selecting 39 YIAN
-projects; adding `--language both` selects 39 C projects and 39 YIAN projects.
-A full run on the current sources with `--language both` selected 78 projects
-and reported 78 PASS results. The 39 YIAN projects exited 1 with their declared
-diagnostics. The 39 C projects built and ran; 38 produced the expected ASan
+The whole-set command is `python scripts/run_cve.py --all`, selecting 40 YIAN
+projects; adding `--language both` selects 40 C projects and 40 YIAN projects.
+A full run on the current sources with `--language both` selected 80 projects
+and reported 80 PASS results. The 40 YIAN projects exited 1 with their declared
+diagnostics. The 40 C projects built and ran; 39 produced the expected ASan
 observation and one completed without it, which the C verdict does not treat as
 a failure.
 In agent work these are batch runs requiring explicit authorization;

@@ -157,7 +157,7 @@ Native pipeline:
 ## CVE witnesses and benchmarks
 
 - Translation/equivalence review uses [docs/c-to-yian.md](docs/c-to-yian.md) as the sole translation specification. Keep general rules there and concrete mappings, differences and evidence in case READMEs. Earlier audits do not establish conformance to the current rules.
-- `cve/` is separate from compiler self-tests: 39 vulnerable C/YIAN pairs, one README per pair, sixteen source-mapped to upstream records, no fixed variants. Packaging or a guard hit alone does not prove faithful upstream reproduction. See [provenance and runner semantics](cve/README.md).
+- `cve/` is separate from compiler self-tests: 40 vulnerable C/YIAN pairs, one README per pair, seventeen source-mapped to upstream records, no fixed variants. Packaging or a guard hit alone does not prove faithful upstream reproduction. See [provenance and runner semantics](cve/README.md).
 - `python scripts/run_cve.py --case CVE-2021-33304` selects one YIAN witness; `--language c|both` adds the ASan C reference. `--list`/`--check-layout` start no tools. `--all` requires explicit batch authorization.
 - [bench/README.md](bench/README.md) defines sets, scales, runners and result files; [bench/SUITES.md](bench/SUITES.md) records sources/licenses. Check benchmark count, states, scale, warmups and samples before running. Measurement requires explicit authorization. `bench/results/` is machine-local, Git-ignored output; do not force-add result files. Performance results contain only numeric measurements/statistics/ratios and benchmark/state labels. Do not persist source/tool/environment/parameter/validation metadata, sidecars, logs or archives. Runtime checks remain transient; historical samples do not validate changed sources.
 
