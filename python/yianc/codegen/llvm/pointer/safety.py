@@ -362,7 +362,7 @@ class FatSafety:
         acquire_frame_lock records the address in __frame_lock_slot_name.
         This method records acquisition state; its argument is word, not the address.
         """
-        assert isinstance(e_f, IR.Reg), "帧锁必须为入口寄存器"
+        assert isinstance(e_f, IR.Reg), "frame lock must be an entry register"
         self.__frame_lock_acquired = True
 
     def release_frame_lock(self) -> None:

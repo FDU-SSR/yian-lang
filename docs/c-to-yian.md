@@ -1,30 +1,34 @@
-# C → YIAN 语法改写规则
+# C to YIAN syntax rewrite rules
 
-以仓库中的 C 程序为参考，说明本次论文实验中 C 特有结构如何改写成 YIAN。
-本文件是翻译规则的唯一维护位置；案例 README 和源码注释记录具体应用与差异。
+This guide uses the repository's C programs as references and explains how
+C-specific constructs are rewritten in YIAN for the paper experiments.
+It is the single maintained specification of these rules; case READMEs and
+source comments record their applications and representation differences.
 
-## 1. 可以直接对应的语法
+## 1. Syntax with direct counterparts
 
-| C | YIAN | 说明 |
+| C | YIAN | Notes |
 | --- | --- | --- |
-| `int32_t x = 1;` | `let x: i32 = 1;` | 普通数值按原位宽与符号性 |
-| `float`、`double` | `f32`、`f64` | 按原位宽映射；保留 IEEE 754 运算与舍入 |
-| `int32_t f(int32_t x)` | `fn f(x: i32) -> i32` | 业务函数保持为函数，不改成 impl 中的方法；复用标准库方法不受此限制 |
-| `if (...)`、`else if`、`while (...)` | `if ...`、`elif ...`、`while ...` | 条件须为 `bool` |
-| 算术、比较、位运算、`&&`、`||` | 对应运算符 | 保持类型、运算次序和短路行为 |
-| `x = y;`、`x += y;` 等语句 | 对应赋值语句 | 用作子表达式时须展开 |
-| `a[i]`、`&x`、`*p`、指针加减 | `a[u64(i)]`、`&x`、`*p`、`p + u64(n)` / `p - u64(n)` | 索引和指针运算的整数操作数限定为 u64 |
-| `p->field` | `p.field` | YIAN 字段访问支持自动解引用 |
-| 结构体、字段及普通类型别名 | `struct`、字段及 `typedef` | 改写声明语法，保留字段含义和对象关系 |
+| `int32_t x = 1;` | `let x: i32 = 1;` | Preserve numeric width and signedness |
+| `float`, `double` | `f32`, `f64` | Preserve width, IEEE 754 operations and rounding |
+| `int32_t f(int32_t x)` | `fn f(x: i32) -> i32` | Keep application functions as functions, without moving them into impl methods; existing standard-library methods may still be reused |
+| `if (...)`, `else if`, `while (...)` | `if ...`, `elif ...`, `while ...` | Conditions must be `bool` |
+| Arithmetic, comparisons, bit operations, `&&`, `||` | Corresponding operators | Preserve types, operation order and short-circuit behavior |
+| Statements such as `x = y;`, `x += y;` | Corresponding assignments | Expand assignments used as subexpressions |
+| `a[i]`, `&x`, `*p`, pointer addition/subtraction | `a[u64(i)]`, `&x`, `*p`, `p + u64(n)` / `p - u64(n)` | Integer operands of indexing and pointer arithmetic must be u64 |
+| `p->field` | `p.field` | YIAN field access supports automatic dereferencing |
+| Structures, fields and ordinary type aliases | `struct`, fields and `typedef` | Rewrite declaration syntax while preserving field meanings and object relationships |
 
-类型和声明细节见[类型系统](grammar/02.type_system.md)、[变量](grammar/03.variables.md)和
-[结构体](grammar/11.structs_enums.md)。下文示例中的 `use`、`skip` 等函数表示原 C 调用，
-须替换为对应实现。
+Declaration details are described in [types](grammar/02.type_system.md),
+[variables](grammar/03.variables.md) and [structures](grammar/11.structs_enums.md).
+Functions such as `use` and `skip` below stand for original C calls and must
+be replaced with the corresponding implementations.
 
-## 2. 逻辑标记与枚举
+## 2. Logical flags and enumerations
 
-仅作为真假标记的 C `int` 可以用 `bool`，包括数组和结构体字段；对应的 0/1 写入使用
-false/true。例如：
+A C `int` used only as a Boolean flag may become `bool`, including array
+elements and structure fields; replace corresponding 0/1 writes with
+false/true. For example:
 
 ```c
 int32_t enabled = 0;
@@ -38,8 +42,9 @@ enabled = true;
 if enabled { use(); }
 ```
 
-C 数值枚举若需要参与整数运算、位操作、协议编码或依赖底层整数值，使用对应整数类型
-（普通 C int 枚举用 i32）。例如：
+Use the corresponding integer type for C numeric enumerations that participate
+in arithmetic, bit operations, protocol encoding or operations depending on
+their underlying values (i32 for ordinary C int enumerations). For example:
 
 ```c
 enum mode { MODE_EDIT = 1, MODE_SHELL = 2 };
@@ -52,7 +57,7 @@ const MODE_SHELL: i32 = 2;
 let flags: i32 = MODE_EDIT | MODE_SHELL;
 ```
 
-只区分变体身份的枚举使用 YIAN `enum`：
+Use a YIAN `enum` when only variant identity matters:
 
 ```c
 enum state { STATE_IDLE, STATE_RUNNING };
@@ -70,15 +75,20 @@ let current: State = State.Idle;
 if current == State.Running { work(); }
 ```
 
-## 3. 存储期、状态与只读常量
+## 3. Storage duration, state and read-only constants
 
-除下面的静态可变对象和只读静态变量规则外，保持对象的存储期和存储类别。
+Preserve storage duration and storage class except for the rules below for
+mutable static objects and read-only static variables.
 
-**静态可变对象 → 堆分配。** C 中具有静态生命周期的可变变量（含文件作用域对象和函数内
-static）在 YIAN 中统一改写为堆分配。由程序入口或覆盖全部使用者的状态所有者分配一次，
-通过引用/切片传入函数并在重复调用间复用；初值、零初始化、显式复位、别名和状态共享保持不变。
-不能把分配放到每次调用或递归内部，也不能在仍有使用者时释放。需要清理时，在最后一次使用后释放。
-这是允许静态存储改为堆存储的规则；C 自动对象不据此移到堆上。
+**Mutable static objects become heap allocations.** Rewrite mutable C variables
+with static storage duration, including file-scope objects and function-local
+statics, as heap allocations. Allocate once at program entry or in a state
+owner whose lifetime covers all users. Pass references/slices into functions
+and reuse them across calls. Preserve initial values, zero initialization,
+explicit resets, aliases and shared state. Do not allocate inside each call
+or recursion, or free storage while users remain. If cleanup is required,
+free after the last use. This rule permits static storage to become heap
+storage; it does not move C automatic objects to the heap.
 
 ```c
 static struct stats {
@@ -109,11 +119,15 @@ fn main() {
 }
 ```
 
-可变性按对象本身判断：`static const char *headers[]` 的指针槽可变，数组须堆分配，
-所指字符串仍是只读常量；`static const char *const headers[]` 则不属于静态可变对象。
+Determine mutability from the object itself: the pointer slots in
+`static const char *headers[]` are mutable, so the array requires heap
+allocation, while its strings remain read-only constants.
+`static const char *const headers[]` is not a mutable static object.
 
-**只读静态变量 → 对应类型的常量。** C 中具有静态存储期的只读变量（含文件作用域
-对象和函数内 `static const`），改写为对应类型的 YIAN 模块级常量。例如：
+**Read-only static variables become constants of corresponding types.**
+Rewrite read-only C variables with static storage duration, including
+file-scope objects and function-local `static const` variables, as YIAN
+module-level constants of corresponding types. For example:
 
 ```c
 static const uint16_t limit = 4096;
@@ -125,36 +139,46 @@ const LIMIT: u16 = 4096;
 const TABLE: u16[4] = [1, 2, 3, 4];
 ```
 
-保留变量的类型、位宽和符号性；数组还须保留维度、长度、元素顺序及完整内容，包括 C
-初始化隐含的零填充和实际存在的末尾 NUL。任意字节输入使用 `u8[N]`，不通过 Unicode
-字符串改变字节。初始化必须满足 YIAN 的编译期求值规则；支持的类型和嵌套数组见
-[模块级常量](grammar/03.variables.md#模块级常量)。
+Preserve type, bit width and signedness. For arrays, also preserve dimensions,
+lengths, element order and complete contents, including implicit zero filling
+and any actual trailing NUL. Represent arbitrary byte input as `u8[N]`;
+do not change its bytes through Unicode strings. Initializers must satisfy
+YIAN compile-time evaluation rules; see [module-level constants](grammar/03.variables.md)
+for supported types and nested arrays.
 
-此规则允许将只读静态变量表示为常量值及其使用所需的局部存储。YIAN 常量在使用点按值复制，
-借用时按临时值规则提升为局部存储，没有对应的运行期静态对象。若多个使用者需要同一存储，
-在覆盖这些使用者的作用域中取得一次局部副本并共享引用或切片；引用不得逃出该存储的有效期。
-不能把重复引用常量当成共享同一对象。若程序依赖跨调用的地址身份、静态存储期，或类型、
-初始化表达式超出常量支持范围，反馈具体限制，不把仅有内容相同判为改写完成。
+This rule permits a read-only static variable to become a constant value and
+the local storage needed by its uses. YIAN constants are copied by value at
+use sites; borrowing promotes them to local storage under the temporary-value
+rules. There is no corresponding runtime static object. When several users
+require shared storage, create one local copy in a scope covering those users
+and share references or slices. References must not escape that storage's
+lifetime. Repeated references to a constant do not necessarily share an object.
+If a program depends on address identity across calls or static storage
+duration, or its type/initializer exceeds constant support, report the
+specific limitation. Identical contents alone do not establish a completed rewrite.
 
-无法表示为常量的只读静态变量，反馈具体限制。上述规则允许调整 C 的状态组织形式，
-同时保持所需程序行为。
+Report the specific limitation for a read-only static variable that cannot be
+represented as a constant. These rules permit reorganizing C state while
+preserving the required program behavior.
 
-## 4. 指针表示、NULL 和非布尔条件
+## 4. Pointer representations, NULL and non-Boolean conditions
 
-按 C 指针的用途选择 YIAN 表示：
+Choose the YIAN representation according to the C pointer's use:
 
-| C 指针用途 | 非空表示 | 可空表示 |
+| C pointer use | Non-null representation | Nullable representation |
 | --- | --- | --- |
-| 指向单对象 | `T&` | `Option<T&>` |
-| 指向连续多对象，且无需指针运算 | `T[]` | `Option<T[]>` |
-| 需要指针加减、移动或差值 | `T*` | `Option<T*>` |
+| Points to one object | `T&` | `Option<T&>` |
+| Points to contiguous objects without pointer arithmetic | `T[]` | `Option<T[]>` |
+| Requires pointer addition, movement or differences | `T*` | `Option<T*>` |
 
-同一对象的别名仍指向同一存储。选择引用或切片不产生对象副本；切片长度取原对象的
-实际范围，不通过缩小或扩大范围改变访问结果。
+Aliases to the same object must still refer to the same storage. Choosing a
+reference or slice does not copy the object. Use the original object's actual
+extent as the slice length; do not shrink or enlarge it to change access results.
 
-### NULL → Option
+### NULL becomes Option
 
-NULL 对应所选表示的 `None`，实际对象或区域对应 `Some(value)`。例如单对象指针：
+Represent NULL as `None` and an actual object or region as `Some(value)`
+in the selected representation. For a single-object pointer:
 
 ```c
 int32_t *p = NULL;
@@ -172,24 +196,28 @@ match p {
 }
 ```
 
-| C 操作 | YIAN 结构 |
+| C operation | YIAN construct |
 | --- | --- |
-| `p == NULL`、`!p` | `p.is_none()` |
-| `p != NULL`、`if (p)` | `p.is_some()` |
-| 访问非空分支中的 `*p` 或 `p->field` | `match p` 或 `if let Some(ptr) = p`，使用载荷中的引用、切片或指针 |
-| 返回 NULL / 返回指针 | 返回所选 `Option<...>.None` / `Option<...>.Some(value)` |
-| 指向一个可修改可空指针槽的 `T **` | 对槽使用引用，如 `Option<T&>&`；槽内表示仍依其用途选择，保留槽地址与槽内值的区别 |
+| `p == NULL`, `!p` | `p.is_none()` |
+| `p != NULL`, `if (p)` | `p.is_some()` |
+| `*p` or `p->field` in a non-null branch | `match p` or `if let Some(ptr) = p`, using the payload reference, slice or pointer |
+| Return NULL / return a pointer | Return the selected `Option<...>.None` / `Option<...>.Some(value)` |
+| `T **` pointing to a mutable nullable pointer slot | Reference the slot, e.g. `Option<T&>&`; choose the slot's inner representation by its use, preserving the distinction between slot address and stored value |
 
-包装和解构只改变表示，不复制指向对象，也不消除别名。`None` 不能无条件 `unwrap()`：
-这会引入 panic；它与内存安全 guard 的诊断和触发操作不同。若 C 的目标错误就是 NULL
-解引用，须单独说明 YIAN 的阻断方式，不能声称命中了同一内存访问 guard。
-手写 panic、提前退出或不同位置的错误不算对应操作的安全 guard；C 进入未定义行为
-后的结果不作等价要求。
+Wrapping and destructuring change representation without copying pointees or
+removing aliases. Do not unconditionally `unwrap()` a possible `None`:
+this introduces a panic with a different diagnosis and triggering operation
+from a memory-safety guard. If the target C error is a NULL dereference,
+describe how YIAN blocks it separately; do not claim the same memory-access
+guard was reached. A handwritten panic, early exit or error at another
+operation does not count as the corresponding operation's safety guard.
+Equivalence is not required after C enters undefined behavior.
 
-### 整数、字节和短路条件
+### Integer, byte and short-circuit conditions
 
-C 的 `if (n)`、`while (*p)` 分别改为 `if n != 0`、`while *p != 0`；
-`!n` 改为 `n == 0`。`p && p->field` 可展开为：
+Rewrite C `if (n)` and `while (*p)` as `if n != 0` and
+`while *p != 0`; rewrite `!n` as `n == 0`.
+Expand `p && p->field` as:
 
 ```yian
 if let Some(ptr) = p {
@@ -197,13 +225,16 @@ if let Some(ptr) = p {
 }
 ```
 
-仅在原条件为真时调用 `use`，空分支不读取字段。原代码若有 `else`，也须保留所有为假
-的路径；不能只翻译成功分支。`&&`、`||` 的两侧仍按原先的短路顺序求值。
+Call `use` only when the original condition is true; do not read fields in
+the null branch. Preserve every false path when the original has an `else`,
+not just the successful branch. Preserve short-circuit evaluation order on
+both sides of `&&` and `||`.
 
-## 5. 三段式 for → while
+## 5. Three-part for becomes while
 
-一般的 `for (init; cond; step) { body }` 展开为局部作用域内的初始化和 `while`。
-关键顺序是：初始化一次 → 判断条件 → 执行循环体 → 更新 → 再判断。
+Expand `for (init; cond; step) { body }` into initialization and a `while`
+inside a local scope. The order is: initialize once, test the condition,
+execute the body, update, then test again.
 
 ```c
 for (int32_t i = 0; i < n; ++i) {
@@ -228,27 +259,35 @@ for (int32_t i = 0; i < n; ++i) {
 }
 ```
 
-- 每个跳向这个 C `for` 的 `continue` 前执行一次完整更新段；嵌套循环自身的
-  `continue` 不改。更新表达式复杂时也须保持其内部顺序。
-- `break` 和 `return` 不执行更新段。不能用 `defer step()` 代替更新段，因为它也会在
-  `break`、`return` 时执行。
-- `cond` 每轮重新求值；省略条件时用 `loop`。省略初始化或更新段时不补造操作。
-- C 在循环头声明的变量留在新块内；若使用原有变量，须保留循环后的值和可见性。
-- 无花括号的 C 循环只控制紧随的一条语句，按语法结构确定循环体，不按缩进扩展。
-- 循环下标统一为 u64。上例适用于 n 非负的计数范围；有符号边界可能为负时须先保留
-  原条件的真假语义，不能直接将负边界转换为巨大 u64。递减循环也不能照搬 `i >= 0`，
-  应在处理零后退出，避免无符号回绕。索引与指针偏移的转换见第 11 节；循环控制中的
-  负哨兵须单独保持其退出语义。
+- Execute the complete update once before every `continue` targeting this
+  C `for`. Leave a nested loop's own `continue` unchanged. Preserve the
+  internal order of complex update expressions.
+- `break` and `return` do not execute the update. Do not substitute
+  `defer step()`, which also runs on `break` and `return`.
+- Reevaluate `cond` on each iteration. Use `loop` for an omitted condition.
+  Do not invent operations for omitted initialization or update clauses.
+- Keep a variable declared in the C loop header inside the new block. For an
+  existing variable, preserve its value and visibility after the loop.
+- An unbraced C loop controls only the next statement. Determine its body
+  from syntax, without extending it based on indentation.
+- Use u64 loop indices. The example assumes a nonnegative n. If a signed
+  bound can be negative, preserve the original condition's truth value first;
+  do not convert a negative bound directly to a huge u64. A decrementing loop
+  cannot retain `i >= 0`; exit after processing zero to avoid unsigned
+  wraparound. See Section 11 for index/offset conversions, and preserve the
+  exit behavior of negative sentinels in loop control separately.
 
-仅当边界在循环期间不变、步长为 1、循环体不改写计数器且循环后的计数器值不被使用时，
-非负计数范围内的 `for (int32_t i = 0; i < n; ++i)` 可简写成 `for i in 0u64..u64(n)`。
-范围上界在构造范围时求值，
-不能用它替换每轮都会变化或有副作用的 C 条件。
+A nonnegative counting loop `for (int32_t i = 0; i < n; ++i)` may become
+`for i in 0u64..u64(n)` only if the bound stays constant during the loop,
+the step is one, the body does not modify the counter, and the counter's
+post-loop value is unused. A range's upper bound is evaluated when the range
+is constructed; it cannot replace a C condition that changes each iteration
+or has side effects.
 
-## 6. do-while → 带首次迭代标记的 while
+## 6. do-while becomes while with a first-iteration flag
 
-C `do { body } while (cond);` 至少执行一次循环体；`continue` 跳到条件判断，
-`break` 则直接退出。统一使用以下展开：
+C `do { body } while (cond);` executes the body at least once.
+A `continue` jumps to the condition; a `break` exits directly. Use:
 
 ```c
 do {
@@ -268,28 +307,33 @@ do {
 }
 ```
 
-首次通过短路跳过 `again()`，之后每次循环体正常结束或 `continue` 才求值；`break`
-和 `return` 不求值。`first` 须使用不会遮蔽原变量的新名称。
-没有 `continue` 时也可用 `loop { body; if !cond { break; } }`；存在 `continue`
-时不能直接套用该写法，否则会跳过条件判断。
+Short-circuit evaluation skips `again()` on the first iteration. Thereafter
+it is evaluated only after normal body completion or `continue`; `break`
+and `return` do not evaluate it. Choose a fresh `first` name that does not
+shadow an original variable. Without `continue`, the form
+`loop { body; if !cond { break; } }` is also valid. With `continue`, that
+form would incorrectly skip the condition.
 
-## 7. 自增、自减、赋值表达式和逗号表达式
+## 7. Increment, decrement, assignment and comma expressions
 
-独立语句 `i++`、`++i` 均改成 `i += 1`，自减相应改成 `i -= 1`。
-用作表达式时，显式区分旧值和新值，并只求值一次原操作数：
+Rewrite standalone `i++` and `++i` as `i += 1`, and decrements as
+`i -= 1`. In expressions, distinguish old and new values explicitly and
+evaluate the original operand only once:
 
-| C | YIAN 展开 |
+| C | YIAN expansion |
 | --- | --- |
 | `x = i++;` | `let old = i; i += 1; x = old;` |
 | `x = ++i;` | `i += 1; x = i;` |
 | `if (--count == 0)` | `count -= 1; if count == 0` |
 | `x = *p++;` | `let old = p; p += u64(1); x = *old;` |
 | `a = b = value;` | `let assigned = value; b = assigned; a = assigned;` |
-| `(f(), g())` | 顺序调用 `f();`，再用 `g()` 的结果 |
+| `(f(), g())` | Call `f();` first, then use the result of `g()` |
 
-涉及 `a[index()]++` 等复杂左值时，先保存索引或地址，避免重复求值。只在 C 已确定
-先后次序的地方按此拆分；C 本身没有确定顺序的复合副作用不能随意选一个顺序并称等价。
-短路右侧中的赋值必须留在对应分支内。例如：
+For complex lvalues such as `a[index()]++`, save the index or address first
+to avoid repeated evaluation. Decompose side effects only where C determines
+their order; an arbitrarily chosen order for unsequenced C side effects does
+not establish equivalence. Keep assignments on a short-circuit right-hand
+side inside the corresponding branch. For example:
 
 ```c
 while ((c = next()) != 0) { use(c); }
@@ -303,7 +347,7 @@ loop {
 }
 ```
 
-## 8. 三元表达式 → if 表达式
+## 8. Conditional expressions become if expressions
 
 ```c
 int32_t value = cond ? left() : right();
@@ -313,16 +357,19 @@ int32_t value = cond ? left() : right();
 let value: i32 = if cond { left() } else { right() };
 ```
 
-条件为整数或指针时先按第 4 节转为布尔条件。只求值被选中的分支，不提前调用两侧函数。
-C 条件表达式会进行的数值类型转换，须在 YIAN 分支中显式保留。
+Convert integer/pointer conditions to Boolean conditions under Section 4.
+Evaluate only the selected branch; do not call both branch functions in
+advance. Explicitly preserve the numeric conversions performed by C's
+conditional expression in the YIAN branches.
 
-## 9. switch → match，贯穿分支显式展开
+## 9. switch becomes match with explicit fall-through expansion
 
-各分支以 `break` 结束的普通 `switch` 改成 `match`；C 的 `default` 对应 `_`。
-同一分支的多个标签可用 `0 | 1 => ...`。删除只用于退出 `switch` 的 `break`，不能将它
-照搬为退出外围循环的 `break`。选择表达式只求值一次。
+A `switch` whose branches end with `break` becomes `match`; C's
+`default` becomes `_`. Several labels may share an arm, e.g.
+`0 | 1 => ...`. Remove a `break` that only exits the switch; do not turn
+it into a break from an enclosing loop. Evaluate the selector once.
 
-有贯穿行为时不能把每个 `case` 独立照搬成一个 arm。例如：
+With fall-through, do not independently map each case to an arm. For example:
 
 ```c
 switch (kind()) {
@@ -340,117 +387,169 @@ match kind() {
 }
 ```
 
-复制的是分支代码，运行时的调用次数仍与 C 相同。复杂的条件贯穿、共享局部变量或
-分支内跳转需先整理控制流，确保进入各标签后的操作次序和退出目标保持一致。
+The branch code is duplicated, but runtime call counts remain the same as C.
+For conditional fall-through, shared locals or jumps within branches,
+restructure control flow while preserving operation order and exit targets
+after entry at each label.
 
-## 10. goto 和清理路径
+## 10. goto and cleanup paths
 
-YIAN 没有 C 标签与 `goto` 的直接对应语法。向前跳到共同清理段可改为单次 `loop` 加
-`break`：正常路径和错误路径退出该块后，再执行原清理段；多个跳转目标可用状态变量
-配合 `loop`/`match` 表达。须保留每个跳转跳过的业务操作、返回值和必要清理结果。
+YIAN has no direct counterpart to C labels and `goto`. Forward jumps to a
+shared cleanup section can use a single-iteration `loop` with `break`:
+both normal and error paths leave that block before executing the original
+cleanup. Multiple jump targets may use state variables with `loop`/`match`.
+Preserve skipped application operations, return values and required cleanup
+results for each jump.
 
-仅当清理在相同的作用域退出路径上执行时，才适合改用 `defer`。它在退出时读取变量的
-最新值、按后登记先执行的顺序清理，且安全错误或异常终止不执行清理，不能机械替换所有
-`goto cleanup`。具体语言行为见[控制流](grammar/06.control_flow.md)。
+Use `defer` only when cleanup runs on the same scope-exit paths. It reads
+variables' latest values at exit and executes in reverse registration order.
+Safety errors and abnormal termination do not execute cleanup, so it cannot
+mechanically replace every `goto cleanup`. See
+[control flow](grammar/06.control_flow.md) for language behavior.
 
-清理允许按功能改写，不要求内部每次释放或遍历顺序严格对应。必须保留程序所需的
-清理结果，以及漏洞依赖的释放对象、别名失效和后续访问关系；不得将释放指针槽地址
-改为释放槽内指针，或通过提前清空别名消除原有触发行为。若程序依赖特定清理次序，
-该次序也是需要保留的功能。
+Cleanup may be rewritten by function; individual frees or traversal order
+need not match internally. Preserve required cleanup results and the
+vulnerability's freed object, invalidated aliases and subsequent accesses.
+Do not replace freeing a pointer slot's address with freeing its stored pointer,
+or clear aliases early to remove the trigger. Preserve a specific cleanup
+order when program behavior depends on it.
 
-## 11. C 强制转换、数组和字符串
+## 11. C casts, arrays and strings
 
-- 数值强制转换 `(uint16_t)x` 改为 `u16(x)`。保留转换位置和截断宽度，不能为避免溢出
-  将先窄化后计算改成先扩大再计算。C 整数提升和混合符号比较所需的转换也须显式补齐。
-- 整数转换按目标宽度取模；负值转为无符号类型按二进制补码解释，例如 `(size_t)-1` 对应
-  `u64(-1)`。无符号算术按 2^N 回绕，YIAN 的 `u32`/`u64` 运行时运算同样回绕；有符号
-  溢出在 C 中是未定义行为，不要求等价。常量表达式中的算术溢出按第 3 节报编译错误，
-  不能靠常量复现回绕。
-- C 字节型 `char` 按原符号性选择 `i8` 或 `u8`；YIAN `char` 是 Unicode 码点，不能直接
-  替代字节缓冲。字节 NUL 用 `0u8`。
-- C 栈数组 `uint8_t a[N]` 使用 YIAN 固定数组 `let a: u8[N] = ...;`，不改成堆分配。
-  必须补初始化时，说明补充值在原路径上不会先被读取。需要数组首指针时显式写 `&a[u64(0)]`，
-  并确认该处原本就有元素；零容量数组不能为了取地址而增加一次元素访问。
-- C 聚合初始化 `T x = {a, b};`、`T x = {.field = v};` 和 `T x = {0};` 改写为 YIAN
-  构造 `T(a, b)`、`T(field=v)`，按字段顺序或字段名给出全部字段；C 未写出的字段补零值。
-  数组初始化按元素顺序写成 `[...]`，部分初始化时补齐零值，并说明补齐值在原路径上不会
-  先被读取。
-- C 字符串字面量自带末尾 NUL，YIAN `str` 不自动包含它。需要 C 字节序列时可用
-  `let text: str = "abc\0";` 和 `text.as_slice()`，或显式数组 `[97u8, 98, 99, 0]`。
-  保持原来的只读/可写用途；可写栈字符串使用固定字节数组。库函数内部的字符串表示和
-  扫描可按第 12 节简化；显式 C 访问表达式仍按原操作翻译。
-- `sizeof(T)` 改为 `@sizeof<T>`；字节数与元素数分别核对。胖指针改变的物理尺寸不能
-  直接代入 C 的协议长度、偏移或分配公式。指针重解释、`void*` 或整数地址没有统一替换
-  模板，须按实际访问建立带类型的表示并保留对象、偏移和访问宽度。
+- Rewrite numeric casts such as `(uint16_t)x` as `u16(x)`. Preserve cast
+  position and truncation width; do not replace narrowing before computation
+  with widening before computation to avoid overflow. Explicitly add the
+  conversions required by C integer promotion and mixed-sign comparisons.
+- Integer conversions reduce modulo the target width. Negative values become
+  unsigned through two's-complement interpretation, e.g. `(size_t)-1`
+  becomes `u64(-1)`. Unsigned arithmetic wraps modulo 2^N, as do YIAN
+  `u32`/`u64` runtime operations. Signed overflow is undefined in C and
+  needs no equivalent behavior. Arithmetic overflow in constant expressions
+  is a compile error under Section 3; do not use constants to reproduce wrapping.
+- Map byte-valued C `char` to `i8` or `u8` according to signedness.
+  YIAN `char` is a Unicode code point and cannot directly replace a byte
+  buffer. Use `0u8` for a NUL byte.
+- Map C stack arrays `uint8_t a[N]` to fixed YIAN arrays
+  `let a: u8[N] = ...;`, without moving them to the heap. If initialization
+  must be added, explain why the added values are not read first on the
+  original path. Explicitly use `&a[u64(0)]` when an initial element pointer
+  is needed and an element actually exists. Do not add an element access
+  merely to obtain the address of a zero-capacity array.
+- Rewrite aggregate initializers `T x = {a, b};`, `T x = {.field = v};`
+  and `T x = {0};` using `T(a, b)` or `T(field=v)`. Supply every field
+  by order or name, zero-filling omitted C fields. Write array initializers
+  as `[...]` in element order, completing partial initializers with zeros
+  and explaining why added values are not read first on the original path.
+- C string literals include a trailing NUL; YIAN `str` does not add it.
+  For C byte sequences, use `let text: str = "abc\0";` with
+  `text.as_slice()`, or an explicit `[97u8, 98, 99, 0]` array.
+  Preserve read-only/writable use; writable stack strings use fixed byte
+  arrays. Library-internal string representation and scanning may be
+  simplified under Section 12. Translate explicit C access expressions
+  according to their original operations.
+- Rewrite `sizeof(T)` as `@sizeof<T>`; check byte counts and element
+  counts separately. Physical size changes from fat pointers cannot simply
+  replace C protocol lengths, offsets or allocation formulas. Pointer
+  reinterpretation, `void*` and integer addresses have no universal template:
+  establish a typed representation for actual accesses and preserve objects,
+  offsets and access widths.
 
-动态数组需同时支持 raw/fat 时，先用 `let allocation = dyn[n] value;` 取得分配，
-再用 `let view: T[] = allocation[0u64..u64(n)];` 形成全范围切片。raw 模式不支持
-直接将一般指针隐式转为切片。
+For dynamic arrays supporting both raw and fat modes, first allocate with
+`let allocation = dyn[n] value;`, then form a full-range slice with
+`let view: T[] = allocation[0u64..u64(n)];`. Raw mode does not support
+implicit conversion directly from a general pointer to a slice.
 
-固定长度 C 字符数组按初始化后的实际字节翻译；显式长度恰好容纳正文时，数组可能
-不包含字面量末尾的 NUL，例如 revcomp 的 387 字节输入。
+Translate fixed C character arrays according to their actual initialized
+bytes. A length just sufficient for the text may exclude its literal's final
+NUL, as in revcomp's 387-byte input.
 
-### 索引和指针运算的整数类型
+### Integer types for indexing and pointer arithmetic
 
-索引和指针加减中的整数操作数限定为 `u64`，源整数表达式在使用时必须显式转换，
-不依赖隐式转换：`a[i]` → `a[u64(i)]`，`p + n` → `p + u64(n)`，
-`p - n` → `p - u64(n)`。直接使用的循环下标等变量本身也须为 `u64`。
+Integer operands of indexing and pointer addition/subtraction must be `u64`.
+Convert the source integer expression explicitly at its use:
+`a[i]` becomes `a[u64(i)]`, `p + n` becomes `p + u64(n)`, and
+`p - n` becomes `p - u64(n)`. Variables used directly, including loop
+indices, must themselves be `u64`.
 
-先按 C 表达式原有的计算和转换顺序求出整数值，再在索引或偏移的使用处转换。
-例如 `a[n - 1]` 使用 `a[u64(n - 1)]`，不擅自提前成 `a[u64(n) - 1]`。
-负整数同样按此规则转换，不因得到较大的无符号值单独判为翻译违规；实际越界仍由
-YIAN 语言检查处理。指针差值 `p - q` 没有整数偏移操作数，不属于这项转换。
+Compute the integer value in the original C expression's calculation and
+conversion order, then convert at the index/offset use. For example,
+`a[n - 1]` becomes `a[u64(n - 1)]`, without moving the conversion to
+`a[u64(n) - 1]`. Negative integers follow the same rule; obtaining a large
+unsigned value does not itself violate the rewrite rule. Actual out-of-bounds
+operations are handled by YIAN checks. A pointer difference `p - q` has no
+integer offset operand and is outside this conversion rule.
 
-### C 属性、union 和回调结构
+### C attributes, unions and callback structures
 
-这些结构允许按功能改写；仅在程序或实验明确依赖某项属性时，要求保留其作用。
+These constructs may be rewritten by function. Preserve an attribute's effect
+when the program or experiment explicitly depends on it.
 
-| C 结构 | YIAN 改写方式 | 需要保留的作用 |
+| C construct | YIAN rewrite | Required effect |
 | --- | --- | --- |
-| packed 结构 | 按字节和固定偏移解析，或用适合程序的字段表示 | 协议中的字节含义、宽度和偏移；不要求内存中的结构体同样 packed |
-| union 或标签加多种字段 | 按用途使用 enum 或其他带类型的表示 | 所需变体和数据；若实际读取重叠字节，须保留这些字节的含义 |
-| 函数指针及 void* 回调上下文 | 普通函数、函数指针或显式上下文参数 | 实际需要的分派、参数、状态更新与调用时机；业务函数仍保持为函数 |
-| inline、noinline 等编译属性 | 按程序和实验需求处理 | 例如调用开销实验依赖实际调用边界时，应验证该边界保留，不能仅以结果相同判断 |
+| Packed structure | Parse bytes at fixed offsets, or use suitable fields | Preserve protocol byte meanings, widths and offsets; the in-memory structure need not also be packed |
+| Union or tag with several fields | Use an enum or another typed representation | Preserve required variants and data; if overlapping bytes are read, preserve their meanings |
+| Function pointer and void* callback context | Ordinary functions, function pointers or explicit context parameters | Preserve dispatch, arguments, state updates and call timing; application functions remain functions |
+| Compiler attributes such as inline/noinline | Handle according to program and experiment needs | If a call-overhead experiment depends on a real call boundary, verify it remains; equal results alone are insufficient |
 
-不要求为未使用的属性或分支实现同样的底层机制。记录实际采用的表示和实验依赖，
-避免将按功能替代误写成底层布局或生成代码完全相同。
+Unused attributes or branches do not require the same underlying mechanisms.
+Record the chosen representation and experimental dependencies; functional
+substitution does not establish identical layouts or generated code.
 
-## 12. 库函数、动态容器、分配与 C 入口
+## 12. Library functions, dynamic containers, allocation and C entry points
 
-C 库函数无需实现完整接口或严格复刻内部操作，只需满足本程序使用的功能与输入需求。
-优先使用 YIAN 标准库已有功能；没有对应功能时可提供够用的辅助函数。不因省略未使用的
-库函数分支、改变内部扫描方式或内部表示就判为翻译违规。替代函数仍须支持实际使用的
-输入、返回结果与必要副作用；承担漏洞触发的读写或释放时，要保留用于判定的目标行为。
+C library functions need only support the functionality and inputs used by
+the program; complete interfaces or identical internal operations are not
+required. Prefer existing YIAN standard-library functionality and otherwise
+provide sufficient helpers. Omitting unused branches or changing internal
+scanning/representation does not itself violate the rewrite rules.
+Substitutes must support the actual inputs, outputs and required side effects.
+Preserve the target behavior used for evaluation when library code performs
+the triggering read, write or free.
 
-动态容器无需在容量、增长策略、内部布局或逐次分配释放上严格对应 C，只要满足程序
-实现需要即可，尽量复用 `Vec`、`String` 等标准库容器。检查所需的元素、操作、别名和
-资源处理是否可用；不以分配次数或内部容量不同单独判违规。容器替代不授权改变外围
-对象的存储期；静态可变对象的堆分配例外见第 3 节。也不能通过复制或清空别名消除所需的漏洞触发行为。
+Dynamic containers need not match C capacity, growth strategy, layout or
+individual allocations/frees, provided they meet program needs. Reuse
+standard containers such as `Vec` and `String` where practical. Check
+required elements, operations, aliases and resource handling; different
+allocation counts or capacities alone are not violations. Container
+substitution does not permit changing surrounding objects' storage duration;
+see Section 3 for mutable statics. It also must not copy or clear aliases
+to remove the required vulnerability trigger.
 
-| C | YIAN 候选结构 | 必须保持的行为 |
+| C | Candidate YIAN construct | Required behavior |
 | --- | --- | --- |
-| `malloc(n * sizeof(T))` | `dyn[n] initial_value`，或用途对应的标准库容器 | 独立缓冲核对数量、对象类型和别名；容器按上述功能边界处理 |
-| `calloc(n, sizeof(T))` | `dyn[n] zero_value` | 按类型提供零值，核对数量和字节含义 |
-| `free(p)` | `del p` | 释放同一分配对象；不额外深复制或清空其他别名 |
-| 可空对象或区域的 `free(p)` | `if let Some(value) = p { del value; }` | NULL 时不操作；释放后不擅自设为 None，以免消除所需的悬垂状态 |
-| `int main(...)` | `fn main()` 加原业务入口 | 参数通过现有环境接口读取；普通返回码按需用 `exit(code)` 保留 |
+| `malloc(n * sizeof(T))` | `dyn[n] initial_value` or a suitable standard container | For standalone buffers, check count, element type and aliases; apply the functional rules above to containers |
+| `calloc(n, sizeof(T))` | `dyn[n] zero_value` | Supply a typed zero value and check count and byte meaning |
+| `free(p)` | `del p` | Release the same allocation without deep copying or clearing other aliases |
+| `free(p)` for a nullable object/region | `if let Some(value) = p { del value; }` | Do nothing for NULL; do not reset to None after freeing and thereby remove the required dangling state |
+| `int main(...)` | `fn main()` with the original application entry | Read arguments through the environment API; preserve ordinary exit codes with `exit(code)` as needed |
 
-`dyn[0]` 是零长度分配：任何元素读写都失败，`del` 仍释放它。C 的 `malloc(0)`、
-`calloc(0, n)` 和 `realloc(p, 0)` 结果由实现定义；例如 glibc 的 `malloc(0)` 返回非
-NULL，`realloc(p, 0)` 释放旧块并返回 NULL。案例按实际依赖选择并在 README 记录，
-替代表示保留零容量块与 NULL 的区别。
+`dyn[0]` allocates zero elements: every element read/write fails, while
+`del` still frees it. Results of C `malloc(0)`, `calloc(0, n)` and
+`realloc(p, 0)` are implementation-defined. For example, glibc's
+`malloc(0)` returns non-NULL, while `realloc(p, 0)` frees the old block
+and returns NULL. Choose according to the case's actual dependency and record
+it in the README. Preserve the distinction between a zero-capacity allocation
+and NULL.
 
-`dyn` 分配失败终止进程，不返回 NULL。普通实验路径可注明分配成功；如果分配失败参与
-原 C 的错误清理路径，必须显式保留该失败状态与后续操作，不能直接删掉分支。
-`realloc` 允许用“新分配、复制所需内容、释放旧块、更新指针”或容器操作代替，不要求
-复刻其原地扩容或搬迁选择，只需满足程序所需行为。必须保留漏洞依赖的释放、旧别名
-失效和后续访问关系。复制范围和分配失败仅在程序实际需要时对应实现。
+Allocation failure in `dyn` terminates the process rather than returning
+NULL. Ordinary experiment paths may assume successful allocation. If failure
+participates in the original C error-cleanup path, explicitly preserve that
+state and subsequent operations instead of deleting the branch.
+`realloc` may use allocate/copy/free/update or container operations without
+reproducing its exact in-place growth or relocation choices, provided required
+behavior is preserved. Retain the vulnerability's release, old-alias
+invalidation and subsequent access. Match copied ranges and allocation-failure
+handling where the program actually needs them.
 
-`#include` 和函数声明改为现有包/模块的 `from ... import ...`。简单数值宏改为模块级
-`const`；函数式宏按实际展开后的求值次数改写，不能直接改成只求值一次的函数调用。
-这些组织形式的变化不改变原计算和存储期。
+Replace `#include` and function declarations with existing package/module
+`from ... import ...` declarations. Simple numeric macros become
+module-level `const`. For function-like macros, preserve actual evaluation
+counts after expansion; do not directly replace repeated evaluation with a
+single-evaluation function call. These organizational changes do not change
+the original computation or storage duration.
 
-需要命令行参数时，使用标准库 `std.core.env.args()`；不将运行时参数静默替换为源码常量：
+Read command-line arguments with `std.core.env.args()`; do not silently
+replace runtime arguments with source constants:
 
 ```yian
 from std.core.env import args, exit;
@@ -471,23 +570,31 @@ fn main() {
 }
 ```
 
-例中的默认值和错误码应替换为原程序的约定。`args()` 包含程序名；返回的字符串由调用者
-释放，`Vec.drop()` 不自动释放其中的 String 缓冲。
+Replace the example's default value and error code with the original program's
+conventions. `args()` includes the program name. The caller releases the
+returned strings; `Vec.drop()` does not automatically free their String buffers.
 
-### 格式化输出：printf 子集 → 插值规格
+### Formatted output: printf subset to interpolation specifications
 
-只需要固定的字段表示时，优先用插值规格替换 `printf` 系列调用，而不是手写进位、补零或空格循环。
-支持的范围是定点小数、最小宽度、左右对齐和数字补零：
+For fixed field representations, prefer interpolation specifications over
+handwritten rounding, zero-padding or space loops for `printf` calls.
+The supported subset covers fixed-point decimals, minimum width, left/right
+alignment and numeric zero-padding:
 
-| C | YIAN | 说明 |
+| C | YIAN | Notes |
 | --- | --- | --- |
-| `printf("%.9f\n", value)` | `@println(f"{value:.9f}")` | 精确二进制值按最近舍入、中点取偶；负零保留符号 |
-| `printf("%08.2f", value)` | `f"{value:08.2f}"` | 宽度是最小宽度，负号在补零之前，过长不截断 |
-| `printf("%5d", value)` | `f"{value:5}"` | 数字默认右对齐；`<` 可选左对齐 |
-| `printf("%-5s", text)` | `f"{text:5}"` | 文本默认左对齐，按 Unicode 标量计宽 |
-| `printf("%*s", width, "")` 空格填充 | `f"{empty:>{width}}"` | 动态宽度来自 `u64`/有符号整数参数 |
+| `printf("%.9f\n", value)` | `@println(f"{value:.9f}")` | Round the exact binary value to nearest, ties to even; preserve negative zero's sign |
+| `printf("%08.2f", value)` | `f"{value:08.2f}"` | Width is a minimum; the sign precedes zero-padding; longer output is not truncated |
+| `printf("%5d", value)` | `f"{value:5}"` | Numbers are right-aligned by default; `<` selects left alignment |
+| `printf("%-5s", text)` | `f"{text:5}"` | Text is left-aligned by default, with width counted in Unicode scalars |
+| `printf("%*s", width, "")` for spaces | `f"{empty:>{width}}"` | Dynamic width comes from a `u64` or signed integer argument |
 
-限制：`f` 只适用于 `f16`/`f32`/`f64`；整数、`char`、`str`、`String` 只接受宽度与对齐。精度上限 1024、
-宽度上限 65535；不提供整数进制、正号/前缀、任意填充字符、居中、字符串截断或终端列宽。字面量超界
-是编译错误，动态参数按原值范围返回 `IoErrorKind.InvalidInput`。这一子集不承诺完整 `printf` 或 locale
-行为；需要科学计数法时使用默认的浮点最短表示。
+The `f` specifier applies only to `f16`/`f32`/`f64`; integers,
+`char`, `str` and `String` accept only width and alignment. Maximum
+precision is 1024 and maximum width is 65535. Integer bases, explicit plus
+signs/prefixes, arbitrary fill characters, centering, string truncation and
+terminal-column width are unsupported. Out-of-range literals are compile
+errors; dynamic arguments are checked before conversion, and invalid values
+return `IoErrorKind.InvalidInput`. This subset does not promise full `printf`
+or locale behavior. Use the default shortest floating-point representation
+when scientific notation is needed.

@@ -75,7 +75,7 @@ class MemoryOps:
         # As with ElementPtr arithmetic, this operation does not access memory or check allocation liveness.
         if self.__state.pointers.is_fat_pointer(lhs) and self.__state.pointers.is_fat_pointer(rhs):
             self.__state.emitter.emit(IR.CheckRequest(kind=IR.CHECK_REQUEST_PTRDIFF, operands=[lhs, rhs]))
-            _ch_block().debug(lambda: "check insert PtrDiff: data 相等 + 生命周期词相等 + 良构 + 无回绕")
+            _ch_block().debug(lambda: "check insert PtrDiff: equal data + equal lifetime words + well-formed + no wraparound")
         result = IR.Reg(name=self.__state.emitter.new_name(), type_id=TypeCtx.i64_id)
         return self.__state.emitter.emit(IR.PtrDiff(result=result, lhs=lhs, rhs=rhs)).result
 
@@ -85,7 +85,7 @@ class MemoryOps:
         # Like ElementPtr arithmetic, comparison does not access memory or check allocation liveness.
         if op in (BinaryOperator.Lt, BinaryOperator.Gt, BinaryOperator.Leq, BinaryOperator.Geq):
             self.__state.emitter.emit(IR.CheckRequest(kind=IR.CHECK_REQUEST_PTRCMP, operands=[lhs, rhs]))
-            _ch_block().debug(lambda: "check insert PtrCmp: data 相等 + 生命周期词相等")
+            _ch_block().debug(lambda: "check insert PtrCmp: equal data + equal lifetime words")
         result = IR.Reg(name=self.__state.emitter.new_name(), type_id=type_id)
         return self.__state.emitter.emit(IR.PtrCmp(result=result, op=op, lhs=lhs, rhs=rhs)).result
 
