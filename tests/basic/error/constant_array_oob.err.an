@@ -1,0 +1,6 @@
+// Expected compilation error: the compile-time index must be within the array
+const TABLE: i32[1] = [7];
+const BAD: i32 = TABLE[1];
+
+fn main() {
+}

@@ -1,9 +1,5 @@
-from std.core.drop import Drop;
-from std.core.option import Option;
 from std.core.path import PathBuf;
-from std.core.string import String;
-from std.core.vec import Vec;
-from anx.manifest.model import NativeLLVM, PackageKind;
+from anx.manifest.model import NativeC, NativeLLVM, PackageKind;
 from anx.diagnostics.model import Diagnostic, release_diagnostics;
 
 pub struct Package {
@@ -18,17 +14,18 @@ pub struct Package {
     dev_dependencies: Vec<String>,
     ffi_allowed: bool,
     native_llvm: Option<NativeLLVM>,
+    native_c: Option<NativeC>,
 }
 
 impl Package {
     static pub fn new(name: str, kind: PackageKind, version: str, root: PathBuf,
         manifest_path: PathBuf, source_root: PathBuf, entry: Option<PathBuf>,
         dependencies: Vec<String>, dev_dependencies: Vec<String>, ffi_allowed: bool,
-        native_llvm: Option<NativeLLVM>) -> Self {
+        native_llvm: Option<NativeLLVM>, native_c: Option<NativeC>) -> Self {
         Self(name=String.from(&name), kind=kind, version=String.from(&version), root=root,
             manifest_path=manifest_path, source_root=source_root, entry=entry,
             dependencies=dependencies, dev_dependencies=dev_dependencies,
-            ffi_allowed=ffi_allowed, native_llvm=native_llvm)
+            ffi_allowed=ffi_allowed, native_llvm=native_llvm, native_c=native_c)
     }
 
     pub fn name() -> str { self.name.as_str() }
@@ -48,6 +45,9 @@ impl Package {
     pub fn native_llvm() -> Option<NativeLLVM&> {
         match &self.native_llvm { Some(value) => Option<NativeLLVM&>.Some(value), None => Option<NativeLLVM&>.None }
     }
+    pub fn native_c() -> Option<NativeC&> {
+        match &self.native_c { Some(value) => Option<NativeC&>.Some(value), None => Option<NativeC&>.None }
+    }
 }
 
 impl Drop for Package {
@@ -65,6 +65,7 @@ impl Drop for Package {
         while index < self.dev_dependencies.len() { self.dev_dependencies[index].drop(); index += 1u64; }
         self.dev_dependencies.drop();
         match self.native_llvm.take() { Some(value) => value.drop(), None => {}, }
+        match self.native_c.take() { Some(value) => value.drop(), None => {}, }
     }
 }
 

@@ -1,12 +1,10 @@
 from std.core.hash import Murmur3Hasher, Hash;
-
 from std.core.slice import SliceIter, RevSliceIter;
 from std.core.option import Option;
 from std.core.iter import Iterator, IntoIterator;
 from std.core.convert import From, Into;
 from std.core.ops import PartialEq, Index;
 from std.core.range import Range;
-from std.core.fmt import ToString;
 from std.core.string import String;
 
 impl str {
@@ -601,11 +599,5 @@ impl Hash<Murmur3Hasher> for str {
     fn hash(hasher: Murmur3Hasher&) {
         let bytes: u8[] = self.as_slice();
         hasher.write(bytes);
-    }
-}
-
-impl ToString for str {
-    fn to_string() -> String {
-        String.from(self)
     }
 }

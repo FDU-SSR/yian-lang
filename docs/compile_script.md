@@ -2,7 +2,7 @@
 
 本文档说明日常使用的原生 `yianc` 命令行。Python 恢复编译器通过
 `PYTHONPATH=python python -m yianc.main` 显式调用，只维护冷启动所需兼容性，不承诺与 native 完整功能对等。
-安装后的 `yianc` 是由 `yianc/` 构建的原生程序，也是日常编译、分析和格式化的权威入口。
+安装后的 `yianc` 是由 `yianc/` 构建的原生程序，是日常编译与分析的权威入口；格式化由独立的 `yian-fmt` 命令完成。
 
 ## 1. 基本用法
 
@@ -58,11 +58,10 @@ yianc <path> [path...]
 | 值     | 说明                     |
 | ------ | ------------------------ |
 | `exe`  | 可执行文件（默认）       |
-| `none` | 完成语义分析与 CFG 下降，不发射 LLVM 或原生目标 |
 | `ll`   | LLVM IR 文本 (.ll)       |
 | `bc`   | LLVM bitcode (.bc)       |
-| `obj`  | 目标文件 (.o)            |
-| `asm`  | 汇编文件 (.s)            |
+
+`--check` 是独立的检查模式，不通过 `-t` 选择。
 
 ```bash
 yianc -t ll lib/src tests/basic/array/assign.an
@@ -70,15 +69,13 @@ yianc -t ll lib/src tests/basic/array/assign.an
 
 ### 2.3 `-o` / `--output` — 输出文件路径
 
-除汇编外，产物默认输出到 `build/` 目录。用 `-o` 覆盖：
+产物默认输出到 `build/` 目录。用 `-o` 覆盖：
 
 ```bash
 yianc -o my_prog lib/src tests/basic/array/assign.an
 ```
 
-默认路径：`build/a.out`（exe）、`build/<name>.ll`（ll）、`build/<name>.bc`（bc）、
-`build/<name>.o`（obj）；汇编为当前目录下的 `<name>.s`（asm）。`<name>` 是第一个输入文件的
-词干。
+默认路径：`build/a.out`（exe）、`build/<name>.ll`（ll）、`build/<name>.bc`（bc）。`<name>` 是第一个输入文件的词干。
 
 ### 2.4 `-O` — 优化等级
 
@@ -88,20 +85,60 @@ yianc -O2 lib/src tests/basic/array/assign.an
 
 可选值：`0`, `1`, `2`, `3`。默认 0。`-O` 同时作用于三个位置：
 
-1. **LLVM IR 级优化 pass**：对非 `-t ll` 目标（exe/bc/obj/asm），发射前按该等级运行 LLVM 优化 pipeline（`-O0` 不运行 IR pass）；
+1. **LLVM IR 级优化 pass**：对非 `-t ll` 目标（exe/bc），发射前按该等级运行 LLVM 优化 pipeline（`-O0` 不运行 IR pass）；
 2. **后端 target machine**：`create_target_machine(opt=N)`，`-O0` → 0；
 3. **链接 C 编译器**：按 `$YIAN_CC` → `clang` → `cc` 选择链接器，并加 `-O<N>`。
 
 `-t ll` 输出始终为**未优化**的 IR（零优化保留，供调试）；`-t bc` 导出的是序列化后的 IR，
 按同一个 `-O` 档位处理。
 
-### 2.5 `--profile` — 打印各阶段耗时
+### 2.5 `--profile` / `--profile-output PATH` — 编译耗时报告
 
 ```bash
-yianc --profile lib/src tests/basic/array/assign.an
+yianc --profile-output build/profile/compiler.json lib/src tests/basic/array/assign.an
+yianc --profile --profile-output build/profile/compiler.json lib/src tests/basic/array/assign.an
 ```
 
-链接可执行文件时打印实际使用的链接器及其版本；末尾打印 llvmlite 绑定的 LLVM 版本。
+`--profile` 保留 stderr 上的 `[profile]` 文本汇总。native `yianc` 的 `--profile-output PATH` 会额外写结构化
+JSON，并在同目录写一个扩展名为 `.txt` 的可读汇总。两者可同时使用；单独使用 `--profile-output` 不输出
+终端 profile 文本。报告含目标、优化级别、指针模式、成功状态、每项的 `pass_id`、父项、类型、调用次数、
+累计耗时、自耗时、失败次数、不完整标记、未运行原因和统计错误。耗时为包含子项的总耗时，`self_ns` 扣除
+直接子项；重复执行的 pass 累计调用次数及耗时。
+`work_finished_at_ns` 记录编译工作结束、profile 序列化开始前的 monotonic 时间；anx 用它关闭子进程等待区间，
+因此 JSON/文本序列化和写盘时间不计入 `build_total_ns`。
+
+计时覆盖输入收集/读取、词法/解析/desugar、语义解析与检查、地址存储归一化、HIR 验证/覆盖/赋值、CFG
+lower/验证/清理/check insertion、LLVM lowering/优化前后验证/优化/native emission 或 IR/bitcode 序列化，
+以及 runtime、C shim、链接参数、最终链接和产物发布。优化等级 `-O0` 不运行 LLVM 优化；`--check` 在语义分析后结束，未执行项标为 `not_run`，不会伪造零耗时成功。原生链接阶段仅在 `exe` 目标运行。
+
+`--profile-output` 可用于编译模式与 `--check`；编译报告的目标为 `"exe"`、`"ll"` 或 `"bc"`，检查报告的目标为 `"check"`。报告写入失败只打印警告，不改变原编译结果。`anx
+build profile` 用该接口保存每次 compiler 调用的独立明细并生成命令级报告；命令选项见
+[anx CLI](anx/03.cli.md)。`anx run profile` 启动产物后的执行不计入编译计时；它使用下节的运行时插桩接口，
+不读取编译报告。Python 恢复编译器的 `--profile` 属于其恢复 CLI 行为；它不支持 native
+`--profile-output`。
+
+### 2.5.1 `--runtime-profile-dir PATH` — 运行时插桩构建
+
+```bash
+yianc --runtime-profile-dir /abs/run/dir -O2 -o build/app lib/src main.an
+```
+
+该 native 选项只用于生成插桩可执行文件。`PATH` 必须是非空绝对路径，目标必须是 `exe`；与 `--check`、
+`-t ll`/`-t bc` 一起使用会报配置错误。`anx run profile` 自动分配本次 run 目录并传入该选项，
+普通构建不传。
+
+编译为本次构建中的每个生成 callable 分配 `function_id`，输出只读的描述符表与
+`__yian_profile_config`，并在函数真实入口和每个正常 `ret` 前调用 `__yian_profile_enter(uint64_t)` /
+`__yian_profile_leave(uint64_t)`；extern、头文件声明和 ABI thunk 不单独插桩。描述符包含包、模块、
+规范源码路径、从 1 开始的行列号（列按 Unicode scalar value 计数）、函数/方法/闭包类别、方法所属类型、
+具体泛型实参和生成来源。插桩函数加 `noinline`、`nomerge` 与 `"disable-tail-calls"="true"` 字符串属性，
+profiling session 将 `MergeFunctions` 设为 `false`；优化级别仍按 `-O`/`--release` 保留，不降级到 `-O0`。
+
+配置结构含 ABI 版本、报告目录、run id、程序绝对路径、指针模式、优化级别、描述符数量和描述符指针。
+所有字符串是 UTF-8 字节切片，带显式长度，不需要 NUL 结尾。报告目录由运行环境创建；collector 在
+`main` 正常返回后写 `profile.json` 与 `summary.txt`。格式、计时口径和正常返回保证见
+[anx CLI 的 `run profile`](anx/03.cli.md)。report 目录缺失、时钟或分配故障属于 profiling 故障边界，
+不改变普通编译或既有安全错误协议；普通编译既不定义 collector，也不引用插桩符号。
 
 ### 2.6 `--packages` — 包名导入解析
 
@@ -109,7 +146,7 @@ yianc --profile lib/src tests/basic/array/assign.an
 yianc --packages pkg.json files...
 ```
 
-接受一个 **v2** 契约的 JSON 文件（由 `anx build` 生成）：
+接受由 `anx build` 生成的 **v2 或 v3** 契约 JSON 文件：
 
 ```json
 {
@@ -139,15 +176,15 @@ yianc --packages pkg.json files...
 }
 ```
 
-- `format`：契约版本，只接受 `2`；其它取值直接报错，不回退猜测。
+- `format`：契约版本，接受 `2` 或 `3`；其它取值直接报错，不回退猜测。v2 不可包含 v3 的 `nativeC` 或 `nativeRoots` 字段。
 - `root`：本次构建的根包规范名，程序入口取 `packages[root].entry`；省略时退回 Standalone 的入口查找（非标准库文件中唯一的 `main`）。
 - `packages`：包规范名 → 该包的全部信息。`sourceRoot` 是源码根；`kind` 取 `"bin"`/`"lib"`/`"hybrid"`；`entry` 只有 `"bin"`/`"hybrid"` 才有；`dependencies` 是**直接**依赖的规范名列表。`std` 必须存在。
-- 每个包的 `ffi` 是布尔值，只对该包源码生效；未写时按 `false` 处理。有 `[native.llvm]` 的包另带 `nativeLLVM`，包含 LLVM 主版本 `22`、组件数组和相对包根的 C shim 路径数组。编译器会重新校验这些字段。
+- 每个包的 `ffi` 是布尔值，只对该包源码生效；未写时按 `false` 处理。有 `[native.llvm]` 的包另带 `nativeLLVM`，包含 LLVM 主版本 `22`、组件数组和相对包根的 C shim 路径数组。v3 可包含 `nativeC`，其 `sources`、`includeDirs`、`archives` 分别列出包内 `.c` 源、头文件目录和普通 `.a` 归档；每包仍须 `ffi = true`。顶层 `nativeRoots` 只增加 native 输入闭包，不授予导入权限。编译器会重新校验这些字段。
 - 包 `P` 的可见集合 = `{P} ∪ packages[P].dependencies ∪ {"std"}`；导入第一段不在集合内报「未声明依赖」，完全不在 `packages` 中报「未知包」。
 - 导入方所属的包由「文件落在哪个 `sourceRoot` 之下」确定，命中多个时取最长前缀。
 - 导入路径必须解析到一个存在的 `.an` 文件（`from pkg import x` 中的 `pkg` 是目录，会报错），且任何包的 `entry` 都不可被导入。
 
-不传 `--packages` 时为 Standalone 模式：`std` 查标准库查找表，其余各段按导入方文件目录相对解析，导入的文件必须已经出现在本次命令行里。标准库根由 `--compiler-root` / `YIAN_LIB` / `YIAN_ROOT` 配置，包模式下取 v2 的 `std.sourceRoot`；它不从输入路径推断，因此不会因为路径里出现 `lib` 就获得标准库权限。受限内建只在标准库根与仓库自身的低层测试夹具根（`tests/basic/std`、`tests/safety/std`）中可用。
+不传 `--packages` 时为 Standalone 模式：`std` 查标准库查找表，其余各段按导入方文件目录相对解析，导入的文件必须已经出现在本次命令行里。标准库根由 `--compiler-root` / `YIAN_LIB` / `YIAN_ROOT` 配置，包模式下取 v2/v3 的 `std.sourceRoot`；它不从输入路径推断，因此不会因为路径里出现 `lib` 就获得标准库权限。受限内建只在标准库根与仓库自身的低层测试夹具根（`tests/basic/std`、`tests/safety/std`）中可用。
 
 通常不直接使用，由 `anx build` / `anx check` 自动生成并传入。
 
@@ -157,13 +194,14 @@ yianc --packages pkg.json files...
 yianc --dump lib/src tests/basic/array/assign.an
 ```
 
-把 `tokens.txt`、`ast.txt`、`hir.txt`、`cfg.txt` 写到 `build/`；运行代码生成时另写 `ir.ll`。
-默认关闭。
+编译模式把 `tokens.txt`、`ast.txt`、`hir.txt`、`cfg.txt` 写到 `build/`，运行代码生成时另写 `ir.ll`。`--check --dump` 只写 `tokens.txt`、`ast.txt` 和成功分析时的 `hir.txt`。默认关闭。
+
+`cfg.txt` 的顶层数组和既有字段保持不变；每个函数额外写出 `safety_stage`（`neutral`/`prepared`/`optimized`）、`scopes`（id、parent、callable、needs_lock）和 `representations`（type、representation）。每条指令额外写出 `guards`（kind、site）和 `live_proofs`（address、witness）；`scope-enter`/`scope-exit` 写出 `scope` 整数。
 
 ### 2.8 `--compiler-root` — 指定检出根
 
 ```bash
-yianc --compiler-root /path/to/yian lib/src main.an -t none
+yianc --check --compiler-root /path/to/yian lib/src main.an
 ```
 
 标准库取 `<PATH>/lib/src`。查找顺序是 `--compiler-root` → `YIAN_LIB`（标准库源码根本身）
@@ -178,29 +216,50 @@ yianc --raw-pointers lib/src main.an
 用裸 8 字节指针替换胖指针表示，不发射 fat 指针检查、锁槽与帧锁；固定数组边界检查仍可发射。这是诊断模式，不提供内存安全保证。
 `anx build --raw-pointers` 把该开关透传给编译器。
 
-### 2.10 `--analyze` / `--json` — 只做分析
+### 2.10 `--check` — 只做前端与中端检查
 
 ```bash
-yianc --analyze lib/src main.an
-yianc --analyze --json lib/src main.an
+yianc --check lib/src main.an
 ```
 
-运行完整语义分析：词法与语法分析、名称与类型解析、类型检查、编译期分支选择、模式覆盖与 definite-assignment
-检查；不运行 CFG/LLVM 代码生成，也不写 `build/`。
-`--json` 把诊断作为单个 JSON 对象写到 stdout（其余输出走 stderr）；退出码 `0` 表示成功，
-`1` 表示有错误；只有警告时仍返回 `0`。`--json` 必须与 `--analyze` 一起使用。
+运行前端与中端：词法、语法、desugar、名称与类型解析、类型检查、编译期分支选择、模式覆盖与
+definite-assignment 检查；不进入 CFG/LLVM，不生成编译器产物。诊断以文本写到 stderr；退出码
+`0` 表示成功，`1` 表示有错误；只有警告时仍返回 `0`。不要求 `main`，存在时校验其签名。
+`--check` 接受 `--packages`、`--compiler-root`、`--raw-pointers`、`--allow-ffi`、`-O`、`--dump`、
+`--profile`、`--profile-output` 和日志选项；显式 `-t`、`-o`、`--link-lib`、`--link-search` 会报配置错误。
+`--runtime-profile-dir` 只用于插桩 `exe` 构建，与 `--check` 组合会报配置错误。
+`--dump` 只写 `tokens.txt`、`ast.txt` 和成功分析时的 `hir.txt`。
 
-### 2.11 `--format` / `-w` / `--check` — 格式化源码
+### 2.11 `--no-cfg-inline` 与 `--no-fat-check-elimination` — 关闭 CFG 优化
+
+默认编译在 CFG 上依次执行中立图构建、有界 CFG 内联、安全激活（检查、逻辑帧计划、表示绑定）和按槽检查消除，然后交给 LLVM 机械展开。两个开关独立关闭可选优化：
 
 ```bash
-yianc --format main.an          # One file: print formatted source to stdout.
-yianc --format -w src           # Multiple files: rewrite in place.
-yianc --format --check src      # Report only files needing formatting.
+yianc --no-cfg-inline lib/src main.an
+yianc --no-fat-check-elimination lib/src main.an
+yianc --no-cfg-inline --no-fat-check-elimination lib/src main.an
 ```
 
-只做词法与语法分析，再按规范化空白、换行与注释位置重新发射。无法格式化的文件被跳过并在
-stderr 打印 `skip <path>: cannot be formatted`。`--check` 列出需要格式化的文件，有差异时
-退出 `1`。`anx fmt` 是同一格式化器在项目上的入口。
+对应环境变量为 `YIAN_CFG_INLINE` 与 `YIAN_FAT_CHECK_ELIMINATION`：未设置或为空时使用默认值（开启），`0` 关闭，`1` 开启；其他非空值作为用法错误退出 2。命令行禁用优先于环境变量。
+
+关闭优化不关闭安全激活：检查插入、逻辑子帧和表示选择仍然执行，程序语义不变。`--raw-pointers` 下不插入胖指针生命周期检查或帧锁，原有裸指针边界与范围检查保留。`--runtime-profile-dir` 构建跳过 CFG 内联，以保持插桩函数的逻辑边界。`--check` 接受这两个开关，但不运行后端 pass。
+
+### 2.12 格式化源码 — `yian-fmt`
+
+native `yianc` 不包含格式化 action，`--format`、`--format-check`、`-w` 和 `--write` 都是未知选项。
+格式化使用独立命令：
+
+```bash
+yian-fmt main.an                  # One file: print formatted source to stdout.
+yian-fmt --write src              # Multiple files: rewrite in place.
+yian-fmt --check src              # Report files needing formatting; exit 1 on differences.
+yian-fmt --stdin --stdin-filepath label.an < main.an
+```
+
+`yian-fmt` 只做词法与语法分析，再按规范化空白、换行与注释位置重新发射。文件模式无法格式化的文件
+打印 `skip <path>: cannot be formatted` 并继续处理；退出码 2 优先于 3，差异检查为 1。stdin 模式只
+输出格式化文本。`anx fmt` 与语言服务器通过子进程调用同一命令。完整契约见
+[格式化器](manual/28.formatter.md)。
 
 ### 2.12 `--allow-ffi` / `--link-lib` / `--link-search` — FFI 与原生链接
 
@@ -208,21 +267,16 @@ stderr 打印 `skip <path>: cannot be formatted`。`--check` 列出需要格式�
 yianc --allow-ffi --link-lib m --link-search /path/to/libs lib/src main.an
 ```
 
-`--allow-ffi` 只授予独立编译源码 FFI 权限；包模式的权限由各包的 `ffi` 字段决定。`--link-lib NAME` 和 `--link-search DIR` 可重复，分别向生成可执行文件时的链接命令加入 `-lNAME` 和 `-LDIR`。它们不会自动执行在 `-t ll`、`-t bc` 或 `-t asm` 输出上；`-t obj` 保留待最终链接的外部符号。编译器会拒绝非法库名。
+`--allow-ffi` 只授予独立编译源码 FFI 权限；包模式的权限由各包的 `ffi` 字段决定。`--link-lib NAME` 和 `--link-search DIR` 可重复，分别向生成可执行文件时的链接命令加入 `-lNAME` 和 `-LDIR`。它们只在 `-t exe` 的最终链接步骤使用；`-t ll` 与 `-t bc` 保留外部符号。编译器会拒绝非法库名。
 
-声明 `[native.llvm]` 的包使用 LLVM 22 的 `llvm-config` 确定组件及系统库参数，要求 Linux x86-64 LP64 环境和 x86-64 Linux C 链接器。`-t exe` 编译并链接包内 C shim；`-t obj` 将 shim 和 YIAN 运行时合入可重定位目标文件，但仍需由最终链接器解析 LLVM 符号。语言层的 C ABI 限制与封送操作见 [FFI 参考](grammar/17.ffi.md)。
+声明 `[native.llvm]` 的包使用 LLVM 22 的 `llvm-config` 确定组件及系统库参数，要求 Linux x86-64 LP64 环境和 x86-64 Linux C 链接器。`[native.c]` 的 shim 使用 `-O2 -fPIC -std=c11` 和所属包的 include dirs；所有程序、运行时和 shim 对象先链接，之后按可达包顺序将显式归档放入一个 linker group。没有 LLVM 声明时不查询 `llvm-config`。`-t exe` 编译并链接包内 native 输入、YIAN 运行时及所需系统库。Python recovery 仍只接受 v2。语言层的 C ABI 限制与封送操作见 [FFI 参考](grammar/17.ffi.md)。
 
-### 2.13 `--frontend-json` — 前端观察
+### 2.13 前端观察与 Python recovery CLI
 
-```bash
-yianc --frontend-json tokens tests/basic/array/access.an
-yianc --frontend-json ast tests/basic/array/access.an
-yianc --frontend-json desugared tests/basic/array/access.an
-```
-
-在 stdout 输出一个前端 JSON 对象，停在指定阶段，不进行名称与类型解析或代码生成，
-不写构建产物。前端观察无需标准库输入；它与 `--analyze --json` 的语义诊断出口不同。
-YIAN 实现的同名入口见[自举编译器](manual/30.bootstrap.md)。
+native `yianc` 不提供前端 JSON 观察入口；需要查看前端产物时使用 `--dump`，它会写出
+`tokens.txt`、`ast.txt`、`hir.txt` 等文件。Python recovery CLI 保留
+`--frontend-json {tokens,ast,desugared}`、`--analyze` 和 `--json`，其行为只属于恢复路径，
+见[自举编译器](manual/30.bootstrap.md)与 [Python CLI](manual/14.cli_build.md)。
 
 ## 3. 日志与调试输出
 
@@ -324,10 +378,10 @@ yianc --log-spec "main=DEBUG" lib/src tests/basic/array/assign.an
 [DEBUG][main        ]generated 5 CFG functions
 ```
 
-### 4.4 语义分析与 CFG 检查（不发射 LLVM）
+### 4.4 前端与中端检查（不发射 LLVM）
 
 ```bash
-yianc -t none lib/src tests/basic/array/assign.an
+yianc --check lib/src tests/basic/array/assign.an
 ```
 
 ### 4.5 导出 LLVM IR
@@ -338,7 +392,7 @@ yianc -t ll -o output.ll lib/src tests/basic/array/assign.an
 
 ## 5. 运行时库与链接
 
-`-t exe` 与 `-t obj` 的产物需要运行时库（`runtime/`）：进程级对象（参数、锁槽、键计数器、帧锁影子栈）、失败路径、C 入口包装 `main`，以及堆分配器。
+`-t exe` 的产物需要运行时库（`runtime/`）：进程级对象（参数、锁槽、键计数器、帧锁影子栈）、失败路径、C 入口包装 `main`，以及堆分配器。
 
 ```text
 yianc/src/codegen/abi/runtime.an 共享帧锁/块头常量与运行时消息
@@ -352,10 +406,14 @@ build/runtime/libyian_rt.{o,a}   产物（首次使用时构建并缓存）
 | 目标 | 处理 |
 | --- | --- |
 | `exe` | `clang <user>.o build/runtime/libyian_rt.a -o <out>` |
-| `obj` | `clang -r -nostdlib <user>.o libyian_rt.o -o <out>`，产物单文件自包含 |
-| `ll` / `bc` / `asm` | 运行时不并入：运行时符号是外部声明/未定义符号，需要自行链接运行时库 |
+| `ll` / `bc` | 运行时不并入：运行时符号是外部声明/未定义符号，需要自行链接运行时库 |
 
-自行链接 `-t ll`/`bc`/`asm` 的产物时，需要满足下表这些符号（都在 `yian_rt.h` 里声明）：
+原生 `yianc` 对模块内普通生成函数（`yian.fn.<TypeId>`，含方法、泛型实例与闭包生成函数）使用
+`internal` 链接性，对 `ll`、`bc`、`exe` 一致生效；入口 `__yian_main`、`extern "C"`
+声明与运行时符号保持外部名称。因此 `-t ll`/`bc` 产物只留下运行时符号与 C 声明待链接，
+未被引用的普通函数可被优化器和链接器删除。`pub` 是 YIAN 级可见性，不改变该分类。
+
+自行链接 `-t ll`/`bc` 的产物时，需要满足下表这些符号（都在 `yian_rt.h` 里声明）：
 
 | 类别 | 符号 |
 | --- | --- |

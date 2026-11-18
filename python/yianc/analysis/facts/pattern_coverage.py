@@ -165,7 +165,7 @@ class PatternCoverageQueries:
                         value = ord(pattern.value) if isinstance(pattern.value, str) else pattern.value
                         cuts.update((max(low, min(high, value)), max(low, min(high, value + 1))))
                     elif isinstance(pattern, HIR.RangePattern):
-                        cuts.update((max(low, min(high, pattern.lower)), max(low, min(high, pattern.upper))))
+                        cuts.update((max(low, min(high, pattern.lower)), max(low, min(high, pattern.upper + 1))))
                 ordered = sorted(cuts)
                 for start, end in zip(ordered, ordered[1:]):
                     if start < end:
@@ -230,7 +230,7 @@ class PatternCoverageQueries:
             return None
         if isinstance(pattern, HIR.RangePattern):
             bounds = constructor.key
-            return [] if constructor.kind == "scalar" and isinstance(bounds, tuple) and pattern.lower <= bounds[0] and bounds[1] <= pattern.upper else None
+            return [] if constructor.kind == "scalar" and isinstance(bounds, tuple) and pattern.lower <= bounds[0] and bounds[1] <= pattern.upper + 1 else None
         if isinstance(pattern, HIR.EnumPattern):
             if constructor.kind != "enum" or constructor.key != pattern.variant.discriminant:
                 return None

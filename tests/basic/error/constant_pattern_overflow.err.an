@@ -1,0 +1,7 @@
+// Expected compilation error: pattern constants are converted with the same checks
+fn main() {
+    let x = match 0u8 {
+        256 => 1,
+        _ => 0,
+    };
+}

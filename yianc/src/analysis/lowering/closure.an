@@ -13,12 +13,8 @@ from yianc.frontend.ast.node import CaptureItem, Parameter as SyntaxParameter, T
 from yianc.frontend.source import Span;
 from yianc.diagnostics.model import AnalysisError;
 from std.collections.hash_map import HashMap;
-from std.core.clone import Clone;
-from std.core.drop import Drop;
 from std.core.iter import Iterator, IntoIterator;
-from std.core.option import Option;
-from std.core.result import Result;
-from std.core.vec import Vec;
+from yianc.analysis.ty.store import VOID_TYPE_ID;
 
 impl ExprChecker {
     pub fn closure(span: Span, captures: Vec<CaptureItem&>&, syntax_parameters: Vec<SyntaxParameter>&, return_type: Option<TypeSyntax&>&, body: Block&) -> Result<HirId, AnalysisError> {
@@ -50,10 +46,9 @@ impl ExprChecker {
             }
         };
         let result = match return_type {
-            Some(value) => self.local_type(*value)?, None => self.ctx.primitives.void
+            Some(value) => self.local_type(*value)?, None => TypeId(VOID_TYPE_ID)
         };
         let scope = self.ctx.session.symbols.create_scope(Option<ScopeId>.Some(self.ctx.scopes[self.unit.index]))?;
-        self.ctx.session.editor_facts.record_scope(self.ctx.span(self.unit, span), scope);
         self.ctx.session.symbols.inherit_types(scope, self.scope)?;
 
         for capture in *captures {
@@ -94,6 +89,6 @@ impl ExprChecker {
         types_moved = true;
         let type_id = self.ctx.session.types.closure(descriptions, parameter_types, result, location, Option<TypeId>.Some(environment), Option<TypeId>.Some(call_type));
         values_moved = true;
-        Result<HirId, AnalysisError>.Ok(self.node(span, type_id, true, HirKind.Closure(Closure(values))))
+        Result<HirId, AnalysisError>.Ok(self.node(span, type_id, false, HirKind.Closure(Closure(values))))
     }
 }

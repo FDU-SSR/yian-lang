@@ -364,12 +364,35 @@ ide-support/vscode/node_modules/
 # The VS Code extension ships its own launch/task config for F5.
 !ide-support/vscode/.vscode/
 
-# Benchmark results: track only full-scale and allocator records (full.*, alloc.*).
-# Other sets and temporary subsets are development artifacts. The general results/ rule above
-# ignores the directory; restore it here, then allow only these two result sets.
-!bench/results/
-bench/results/*
-!bench/results/full.md
-!bench/results/full.csv
-!bench/results/alloc.md
-!bench/results/alloc.csv
+# Benchmark measurements belong to the machine that produced them.
+/bench/results/
+
+# Fixed source and license inputs stay in the tree after clone; native archives
+# and configured headers are rebuilt locally and are not tracked.
+!bench/native/
+!bench/native/README.md
+!bench/native/manifest.json
+!bench/native/rebuild.sh
+!bench/native/record_manifest.py
+!bench/native/gmp/
+!bench/native/gmp/package.anx
+!bench/native/pcre2/
+!bench/native/pcre2/package.anx
+!bench/native/licenses/
+!bench/native/licenses/gmp/
+!bench/native/licenses/gmp/COPYING
+!bench/native/licenses/gmp/COPYINGv2
+!bench/native/licenses/gmp/COPYINGv3
+!bench/native/licenses/gmp/COPYING.LESSERv3
+!bench/native/licenses/pcre2/
+!bench/native/licenses/pcre2/LICENCE.md
+!bench/native/sources/
+!bench/native/sources/gmp-6.3.0.tar.xz
+!bench/native/sources/gmp-6.3.0.tar.xz.sig
+!bench/native/sources/pcre2-10.47.tar.gz
+!bench/native/sources/pcre2-10.47.tar.gz.sig
+
+# Native build outputs and fixture archives are local artifacts.
+bench/native/*/include/
+bench/native/*/lib/
+tests/fixtures/native_c_chain/vendor/*/lib/

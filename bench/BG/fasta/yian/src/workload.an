@@ -1,0 +1,174 @@
+// bench/BG/fasta/yian/src/workload.an — Benchmarks Game FASTA generator.
+//
+// Source: bench/BG/fasta/c/upstream/main.c (fasta-gcc-1; revised BSD).
+// Scale: default n=25000000; the runner materializes fast n=100000 at this marker.
+//
+// Emit the complete ONE, TWO, and THREE FASTA records. The PRNG state runs
+// continuously from TWO into THREE, matching the source's call order.
+
+from std.core.io import BufWriter, Stdout, Write;
+
+const IA: i64 = 3877i64;
+const IC: i64 = 29573i64;
+const IM: i64 = 139968i64;
+const LINE_LENGTH: u64 = 60u64;
+const ALU: str = "GGCCGGGCGCGGTGGCTCACGCCTGTAATCCCAGCACTTTGGGAGGCCGAGGCGGGCGGATCACCTGAGGTCAGGAGTTCGAGACCAGCCTGGCCAACATGGTGAAACCCCGTCTCTACTAAAAATACAAAAATTAGCCGGGCGTGGTGGCGCGCGCCTGTAATCCCAGCTACTCGGGAGGCTGAGGCAGGAGAATCGCTTGAACCCGGGAGGCGGAGGTTGCAGTGAGCCGAGATCGCGCCACTGCACTCCAGCCTGGGCGACAGAGCGAGACTCCGTCTCAAAAA";
+
+struct AminoAcid {
+    symbol: u8,
+    probability: f64,
+}
+
+fn gen_random(maximum: f64, seed: i64&) -> f64 {
+    *seed = (*seed * IA + IC) % IM;
+    return maximum * f64(*seed) / f64(IM);
+}
+
+fn makeCumulative(genelist: AminoAcid[], count: i32) {
+    let cumulative: f64 = 0.0;
+    let i: u64 = 0;
+    while i < u64(count) {
+        cumulative += genelist[i].probability;
+        genelist[i].probability = cumulative;
+        i += 1;
+    }
+}
+
+fn selectRandom(genelist: AminoAcid[], count: i32, seed: i64&) -> u8 {
+    let random: f64 = gen_random(1.0, seed);
+    if random < genelist[0u64].probability {
+        return genelist[0u64].symbol;
+    }
+
+    let low: i32 = 0;
+    let high: i32 = count - 1;
+    while high > low + 1 {
+        let middle: i32 = (high + low) / 2;
+        if random < genelist[u64(middle)].probability {
+            high = middle;
+        } else {
+            low = middle;
+        }
+    }
+    return genelist[u64(high)].symbol;
+}
+
+fn makeRandomFasta(
+    id: str,
+    description: str,
+    genelist: AminoAcid[],
+    count: i32,
+    n: i32,
+    seed: i64&
+) {
+    let output_stream: Stdout = Stdout.new();
+    let buffered: BufWriter<Stdout> = BufWriter<Stdout>.new(&output_stream);
+    buffered.write_str(">").unwrap();
+    buffered.write_str(id).unwrap();
+    buffered.write_str(" ").unwrap();
+    buffered.write_str(description).unwrap();
+    buffered.write_str("\n").unwrap();
+
+    let remaining: u64 = u64(n);
+    let line: u8[61] = [0u8; 61];
+    while remaining > 0u64 {
+        let length: u64 = if remaining < LINE_LENGTH { remaining } else { LINE_LENGTH };
+        let i: u64 = 0;
+        while i < length {
+            line[i] = selectRandom(genelist, count, seed);
+            i += 1;
+        }
+        line[length] = b'\n';
+        buffered.write_all(line[0u64..(length + 1u64)]).unwrap();
+        remaining -= length;
+    }
+    buffered.finish().unwrap();
+    buffered.drop();
+    output_stream.drop();
+}
+
+fn makeRepeatFasta(
+    id: str,
+    description: str,
+    sequence: str,
+    n: i32
+) {
+    let output_stream: Stdout = Stdout.new();
+    let buffered: BufWriter<Stdout> = BufWriter<Stdout>.new(&output_stream);
+    buffered.write_str(">").unwrap();
+    buffered.write_str(id).unwrap();
+    buffered.write_str(" ").unwrap();
+    buffered.write_str(description).unwrap();
+    buffered.write_str("\n").unwrap();
+
+    let bytes: u8[] = sequence.as_slice();
+    let sequence_length: u64 = bytes.len();
+    let position: u64 = 0;
+    let remaining: u64 = u64(n);
+    let line: u8[61] = [0u8; 61];
+    while remaining > 0u64 {
+        let length: u64 = if remaining < LINE_LENGTH { remaining } else { LINE_LENGTH };
+        let i: u64 = 0;
+        while i < length {
+            line[i] = bytes[(position + i) % sequence_length];
+            i += 1;
+        }
+        line[length] = b'\n';
+        buffered.write_all(line[0u64..(length + 1u64)]).unwrap();
+        position += length;
+        remaining -= length;
+    }
+    buffered.finish().unwrap();
+    buffered.drop();
+    output_stream.drop();
+}
+
+pub fn run(n: i32) -> i32 {
+    if n <= 0 || n > 25000000 { return 2; }
+
+
+    let seed: i64& = dyn 42i64;
+
+    let iub: AminoAcid[] = {
+        let extent: u64 = 15u64;
+        let allocation = dyn[extent] AminoAcid(0u8, 0.0);
+        allocation[0u64..extent]
+    };
+    iub[0u64] = AminoAcid(b'a', 0.27);
+    iub[1u64] = AminoAcid(b'c', 0.12);
+    iub[2u64] = AminoAcid(b'g', 0.12);
+    iub[3u64] = AminoAcid(b't', 0.27);
+    iub[4u64] = AminoAcid(b'B', 0.02);
+    iub[5u64] = AminoAcid(b'D', 0.02);
+    iub[6u64] = AminoAcid(b'H', 0.02);
+    iub[7u64] = AminoAcid(b'K', 0.02);
+    iub[8u64] = AminoAcid(b'M', 0.02);
+    iub[9u64] = AminoAcid(b'N', 0.02);
+    iub[10u64] = AminoAcid(b'R', 0.02);
+    iub[11u64] = AminoAcid(b'S', 0.02);
+    iub[12u64] = AminoAcid(b'V', 0.02);
+    iub[13u64] = AminoAcid(b'W', 0.02);
+    iub[14u64] = AminoAcid(b'Y', 0.02);
+
+    let homosapiens: AminoAcid[] = {
+        let extent: u64 = 4u64;
+        let allocation = dyn[extent] AminoAcid(0u8, 0.0);
+        allocation[0u64..extent]
+    };
+    homosapiens[0u64] = AminoAcid(b'a', 0.3029549426680);
+    homosapiens[1u64] = AminoAcid(b'c', 0.1979883004921);
+    homosapiens[2u64] = AminoAcid(b'g', 0.1975473066391);
+    homosapiens[3u64] = AminoAcid(b't', 0.3015094502008);
+
+    makeCumulative(iub, 15);
+    makeCumulative(homosapiens, 4);
+    makeRepeatFasta("ONE", "Homo sapiens alu", ALU, n * 2);
+    makeRandomFasta("TWO", "IUB ambiguity codes", iub, 15, n * 3, seed);
+    makeRandomFasta("THREE", "Homo sapiens frequency", homosapiens, 4, n * 5, seed);
+
+    del homosapiens;
+    del iub;
+    del seed;
+
+    return 0;
+}

@@ -1,0 +1,93 @@
+from std.core.env import args;
+
+// bench/AWFY/an/permute.an: recursive permutation swaps (shootout permute).
+//
+// Reference: AWFY benchmarks/Java/src/Permute.java; see AWFY LICENSE.md.
+// Semantic reference: bench/AWFY/c/permute.c, the project's C implementation.
+// Scale: n=6; assert count==8660.
+//
+// Algorithm: permute_inner(v) recursively swaps permutations of the v.len()-element prefix; every
+//       call increments count. At len 0 return after counting; otherwise recurse on v[0..len-1],
+//       then for i from len-1 down to zero, swap/recurse/swap. swap_indices swaps v[i] and v[j]
+//       through pointer indexing. Total calls = 1+n*(1+(n-1)*(1+...)).
+//
+// Array representation: the current prefix is the slice passed to permute_inner; its length is the
+//   recursion depth, so no separate n parameter is needed. The range view inherits the parent lock
+//   and is checked against the parent length; allocation liveness is checked on element access.
+//   count is i32&. benchmark_permute binds v directly as i32[] (an allocation followed by its
+//   full-range slice; del T[] validly releases the whole block).
+//
+// Fat and raw modes share this source.
+fn swap_indices(i: u64, j: u64, v: i32*) {
+    let p: i32* = v + u64(i);
+    let q: i32* = v + u64(j);
+    let tmp: i32 = *p;
+    *p = *q;
+    *q = tmp;
+}
+
+fn permute_inner(v: i32[], count: i32&) {
+    *count += 1;
+    if v.len() != 0u64 {
+        let n1: u64 = v.len() - 1u64;
+        permute_inner(v[0u64..n1], count);
+        let i: u64 = n1;
+        loop {
+            swap_indices(n1, i, v.ptr());
+            permute_inner(v[0u64..n1], count);
+            swap_indices(n1, i, v.ptr());
+            if i == 0 { break; }
+            i -= 1;
+        }
+    }
+}
+
+fn benchmark_permute(count: i32&) -> i32 {
+    *count = 0;
+    let v: i32[] = {
+        let extent: u64 = u64(6);
+        let allocation = dyn[extent] 0i32;
+        allocation[0u64..u64(extent)]
+    };
+    permute_inner(v[0u64..6u64], count);
+    del v;
+    return *count;
+}
+
+// Decimal prefix parsing for the C atoi/atoll workload argument.
+fn c_decimal(text: str) -> i64 {
+    let bytes = text.as_slice();
+    let i: u64 = 0;
+    while i < bytes.len() && (bytes[u64(i)] == 32 || (bytes[u64(i)] >= 9 && bytes[u64(i)] <= 13)) { i += 1; }
+    let negative: bool = false;
+    if i < bytes.len() && (bytes[u64(i)] == b'-' || bytes[u64(i)] == b'+') {
+        negative = bytes[u64(i)] == b'-';
+        i += 1;
+    }
+    let value: i64 = 0;
+    while i < bytes.len() && bytes[u64(i)] >= b'0' && bytes[u64(i)] <= b'9' {
+        value = value * 10 + i64(bytes[u64(i)] - b'0');
+        i += 1;
+    }
+    return if negative { -value } else { value };
+}
+
+fn main() {
+    let ITER: u64 = 70866; // bench-scale
+    let argv = args();
+    if argv.len() > 1u64 {
+        let requested = i32(c_decimal(argv[1u64].as_str()));
+        ITER = if requested > 0 { u64(requested) } else { 0u64 };
+    }
+    for argument in &argv { argument.drop(); }
+    argv.drop();
+    // One heap object replaces the C static counter across all work units.
+    let count: i32& = dyn 0i32;
+    let iter: u64 = 0;
+    while iter < ITER {
+        let result: i32 = benchmark_permute(count);
+        assert result == 8660: "permute count not expected";
+        iter += 1;
+    }
+    del count;
+}

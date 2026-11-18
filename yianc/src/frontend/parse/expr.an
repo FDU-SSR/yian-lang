@@ -1,4 +1,4 @@
-from yianc.frontend.ast.node import Expr, ExprData, Block, BlockData, Argument, ArgumentData, Identifier, IdentifierData, GenericArgument, TypeSyntax, TypeData, Condition, LetConditionData, ElifBranch, ElifBranchData, MatchArm, MatchArmData, PatternLet, PatternLetData, CaptureItem, CaptureItemData, Literal, StrLiteralData, Parameter;
+from yianc.frontend.ast.node import Expr, ExprData, Block, BlockData, Argument, ArgumentData, Identifier, IdentifierData, GenericArgument, TypeSyntax, TypeData, Condition, LetConditionData, ElifBranch, ElifBranchData, MatchArm, MatchArmData, PatternLet, PatternLetData, CaptureItem, CaptureItemData, Literal, StrLiteralData, Parameter, FormatPart, FormatAlignment, FormatCount, FormatSpec;
 from yianc.frontend.ast.atoms import BuiltinKind, MatchArmOrigin;
 from yianc.frontend.ast.operator import BinaryOperator, UnaryOperator;
 from yianc.frontend.lex.token import KeywordKind, PunctuatorKind;
@@ -9,11 +9,7 @@ from yianc.frontend.parse.state import Parser;
 from yianc.frontend.parse.type import parse_generic_arg, parse_type;
 from yianc.frontend.source import Position, Span;
 from std.core.convert import From;
-from std.core.drop import Drop;
 from std.core.ops import Index;
-from std.core.option import Option;
-from std.core.string import String;
-from std.core.vec import Vec;
 
 // Consume only operators whose left binding power meets min_bp; right binding power sets the recursive boundary.
 fn expr_bp(parser: Parser&, min_bp: i32) -> Option<Expr&> {
@@ -23,6 +19,17 @@ fn expr_bp(parser: Parser&, min_bp: i32) -> Option<Expr&> {
     let lhs = prefix(parser)?;
 
     loop {
+        if parser.at_keyword(KeywordKind.Matches) {
+            if 7 < min_bp {
+                break;
+            }
+
+            parser.advance();
+            let pattern = parse_binding_pattern(parser)?;
+            lhs = parser.arena.alloc_expr(ExprData.Matches(value=lhs, pattern=pattern), lhs.span + pattern.span);
+            continue;
+        }
+
         let candidate = BinaryOperator.from_token(parser.peek());
         let lbp = match candidate { Some(op) => op.lbp(), None => 0 };
         if lbp == 0 || lbp < min_bp {
@@ -35,7 +42,6 @@ fn expr_bp(parser: Parser&, min_bp: i32) -> Option<Expr&> {
         lhs = parser.arena.alloc_expr(ExprData.Binary(op=op, left=lhs, right=rhs), lhs.span + rhs.span);
     }
 
-    parser.extent(lhs, start);
     Option<Expr&>.Some(val=lhs)
 }
 
@@ -55,14 +61,7 @@ fn prefix(parser: Parser&) -> Option<Expr&> {
     if parser.at_keyword(KeywordKind.Dyn) {
         return dyn_expr(parser);
     }
-    let problem_count = parser.problems.len();
     let expression = primary(parser)?;
-    if parser.editor && parser.problems.len() != problem_count {
-        match expression.data {
-            Array(_) | Tuple(_) | TypeItem(_, _) | ArrayRepeat(_, _) => { expression.syntax_recovered = true; },
-            _ => {},
-        }
-    }
     postfix(parser, expression)
 }
 
@@ -231,7 +230,6 @@ fn identifier_expr(parser: Parser&) -> Option<Expr&> {
     defer generics.drop();
 
     while !parser.at_punct(PunctuatorKind.RAngle) {
-        if parser.editor && (parser.at_end() || parser.at_punct(PunctuatorKind.RBrace) || parser.at_punct(PunctuatorKind.Semicolon)) { break; }
         generics.push(parse_generic_arg(parser)?);
         if !parser.at_punct(PunctuatorKind.Comma) {
             break;
@@ -268,7 +266,6 @@ fn parenthesized_expr(parser: Parser&) -> Option<Expr&> {
     members.push(first);
 
     while !parser.at_punct(PunctuatorKind.RParen) {
-        if parser.editor && (parser.at_end() || parser.at_punct(PunctuatorKind.RBrace) || parser.at_punct(PunctuatorKind.Semicolon)) { break; }
         members.push(parse_expr(parser)?);
         if !parser.at_punct(PunctuatorKind.Comma) {
             break;
@@ -309,7 +306,6 @@ fn array_expr(parser: Parser&) -> Option<Expr&> {
         parser.advance();
 
         while !parser.at_punct(PunctuatorKind.RBracket) {
-            if parser.editor && (parser.at_end() || parser.at_punct(PunctuatorKind.RBrace) || parser.at_punct(PunctuatorKind.Semicolon)) { break; }
             members.push(parse_expr(parser)?);
             if !parser.at_punct(PunctuatorKind.Comma) {
                 break;
@@ -344,18 +340,7 @@ fn arguments(parser: Parser&) -> Option<Vec<Argument&>> {
     defer args.drop();
 
     while !parser.at_punct(PunctuatorKind.RParen) {
-        if parser.editor && (parser.at_end() || parser.at_punct(PunctuatorKind.RBrace)) { break; }
-        match argument(parser) {
-            Some(value) => args.push(value),
-            None => {
-                if !parser.editor { return Option<Vec<Argument&>>.None; }
-                parser.save_problem();
-                while !parser.at_end() && !parser.at_punct(PunctuatorKind.RParen) &&
-                !parser.at_punct(PunctuatorKind.RBrace) && !parser.at_punct(PunctuatorKind.Comma) {
-                    parser.advance();
-                }
-            },
-        }
+        args.push(argument(parser)?);
         if !parser.at_punct(PunctuatorKind.Comma) {
             break;
         }
@@ -371,16 +356,7 @@ fn arguments(parser: Parser&) -> Option<Vec<Argument&>> {
 // Generic arguments after a dot require a method call; without generics or an argument list, produce field access.
 fn member_expr(parser: Parser&, receiver: Expr&) -> Option<Expr&> {
     parser.advance();
-    let name = match parser.identifier() {
-        Some(value) => value,
-        None => {
-            if !parser.editor { return Option<Expr&>.None; }
-            parser.save_problem();
-            let children = Vec<Expr&>.new();
-            children.push(receiver);
-            return Option<Expr&>.Some(parser.arena.alloc_expr(ExprData.Recovery(children, Vec<Identifier&>.new()), receiver.span));
-        },
-    };
+    let name = parser.identifier()?;
     let generics = Vec<TypeSyntax&>.new();
     defer generics.drop();
     let generic_call = parser.at_punct(PunctuatorKind.LAngle);
@@ -409,11 +385,8 @@ fn member_expr(parser: Parser&, receiver: Expr&) -> Option<Expr&> {
 
 fn postfix(parser: Parser&, initial: Expr&) -> Option<Expr&> {
     let expr = initial;
-    let start = initial.span.start;
-    parser.extent(expr, start);
 
     loop {
-        let problem_count = parser.problems.len();
         if parser.at_punct(PunctuatorKind.Question) {
             let span = expr.span + parser.take_punct(PunctuatorKind.Question);
             expr = parser.arena.alloc_expr(ExprData.TryExpr(operand=expr), span);
@@ -432,8 +405,6 @@ fn postfix(parser: Parser&, initial: Expr&) -> Option<Expr&> {
         } else {
             break;
         }
-        parser.extent(expr, start);
-        if parser.editor && parser.problems.len() != problem_count { expr.syntax_recovered = true; }
     }
 
     Option<Expr&>.Some(val=expr)
@@ -489,32 +460,7 @@ pub fn parse_block(parser: Parser&) -> Option<Block&> {
     defer stmts.drop();
 
     while !parser.at_punct(PunctuatorKind.RBrace) && !parser.at_end() {
-        if parser.declaration_boundary() { break; }
-        let mark = parser.mark();
-        let bindings = Vec<Identifier&>.new();
-        let is_binding = parser.editor && parser.at_keyword(KeywordKind.Let) && parser.peek_at(1).is_identifier();
-        if is_binding {
-            let token = parser.peek_at(1);
-            match token.kind() {
-                Identifier(name) => bindings.push(parser.arena.alloc_identifier(IdentifierData(String.from(&name.as_str()), false), token.span)),
-                _ => {},
-            }
-        }
-        let recovery = false;
-        let statement = match block_statement(parser) {
-            Some(value) => value,
-            None => {
-                if !parser.editor { return Option<Block&>.None; }
-                let span = parser.peek().span;
-                recovery = true;
-                parser.synchronize();
-                if parser.at_punct(PunctuatorKind.Semicolon) { parser.advance(); }
-                if parser.mark() == mark && !parser.at_end() && !parser.at_punct(PunctuatorKind.RBrace) { parser.advance(); }
-                parser.arena.alloc_expr(ExprData.Recovery(Vec<Expr&>.new(), bindings), span)
-            },
-        };
-        if !recovery { bindings.drop(); }
-        stmts.push(statement);
+        stmts.push(block_statement(parser)?);
     }
 
     let close = parser.take_punct(PunctuatorKind.RBrace);
@@ -739,25 +685,239 @@ fn method(parser: Parser&, receiver: Expr&, name: str) -> Expr& {
     parser.arena.alloc_expr(ExprData.MethodCall(receiver=receiver, method_name=ident, generics=Vec<TypeSyntax&>.new(), args=Vec<Argument&>.new()), receiver.span)
 }
 
+// Specification bounds are inclusive; literals outside them never reach analysis.
+const MAX_FORMAT_WIDTH: u64 = 65535;
+const MAX_FORMAT_PRECISION: u64 = 1024;
+
+fn same_position(left: Position, right: Position) -> bool {
+    return left.row == right.row && left.column == right.column;
+}
+
+// A specification is scanned in source order across the interpolation tokens:
+// [ alignment ] [ "0" ] [ count ] [ "." count ] [ "f" ]. Static spelling stays authoritative,
+// so leading zeros and undecodable numeric spellings keep their meaning.
+struct SpecCursor {
+    parser: Parser&,
+    offset: u64,
+    // Position where the next unconsumed spelling character must start; a difference is whitespace.
+    expected: Position,
+}
+
+impl SpecCursor {
+    static fn after(parser: Parser&, colon: Span) -> Self {
+        return Self(parser=parser, offset=0u64, expected=colon.end);
+    }
+
+    fn at_end() -> bool {
+        match self.parser.peek().kind() {
+            FStrExprEnd => true,
+            _ => self.offset >= self.parser.peek().raw.as_slice().len(),
+        }
+    }
+
+    fn current_span() -> Span {
+        return self.parser.peek().span;
+    }
+
+    fn char_start() -> Position {
+        let span = self.parser.peek().span;
+        return Position(row=span.start.row, column=span.start.column + self.offset);
+    }
+
+    fn peek_char() -> Option<char> {
+        if self.at_end() {
+            return Option<char>.None;
+        }
+        let raw = self.parser.peek().raw.as_slice();
+        return Option<char>.Some(char(u32(raw[self.offset])));
+    }
+
+    // Consume one spelling character; a gap between specification tokens is an invalid specification.
+    fn take_char() -> Option<char> {
+        if self.offset == 0u64 {
+            if !same_position(self.parser.peek().span.start, self.expected) {
+                self.parser.error("invalid format specification", self.parser.peek().span);
+                return Option<char>.None;
+            }
+        }
+        if self.at_end() {
+            return Option<char>.None;
+        }
+        let raw = self.parser.peek().raw.as_slice();
+        let current = char(u32(raw[self.offset]));
+        let span = self.parser.peek().span;
+        self.expected = Position(row=span.start.row, column=span.start.column + self.offset + 1u64);
+        self.offset += 1u64;
+        if self.offset >= raw.len() {
+            self.parser.advance();
+            self.offset = 0u64;
+        }
+        return Option<char>.Some(current);
+    }
+}
+
+// Consume an optional marker character; None propagates an already recorded specification error.
+fn take_format_marker(cursor: SpecCursor&, marker: char) -> Option<bool> {
+    if cursor.at_end() {
+        return Option<bool>.Some(val=false);
+    }
+    if *cursor.peek_char().unwrap() != marker {
+        return Option<bool>.Some(val=false);
+    }
+    cursor.take_char()?;
+    return Option<bool>.Some(val=true);
+}
+
+fn format_count_range_error(parser: Parser&, span: Span, label: str) -> Option<FormatCount> {
+    let message = String.from(&label);
+    defer message.drop();
+    message.push_str(" out of range");
+    parser.error(message.as_str(), span);
+    return Option<FormatCount>.None;
+}
+
+fn parse_format_count(cursor: SpecCursor&, limit: u64, label: str) -> Option<FormatCount> {
+    if cursor.at_end() {
+        return Option<FormatCount>.None;
+    }
+
+    if cursor.offset == 0u64 && cursor.parser.at_punct(PunctuatorKind.LBrace) {
+        let open = cursor.current_span();
+        if !same_position(open.start, cursor.expected) {
+            cursor.parser.error("invalid format specification", open);
+            return Option<FormatCount>.None;
+        }
+        cursor.parser.advance();
+        let expr = parse_expr(cursor.parser)?;
+        if !cursor.parser.at_punct(PunctuatorKind.RBrace) {
+            cursor.parser.error("Expected '}' after a format parameter", cursor.parser.peek().span);
+            return Option<FormatCount>.None;
+        }
+        let close = cursor.parser.peek().span;
+        cursor.parser.advance();
+        cursor.expected = close.end;
+        return Option<FormatCount>.Some(val=FormatCount.Dynamic(expr=expr, span=open + close));
+    }
+
+    let code = u32(*cursor.peek_char().unwrap());
+    if code < u32('0') || code > u32('9') {
+        return Option<FormatCount>.None;
+    }
+
+    let start = cursor.char_start();
+    let value: u64 = 0u64;
+    loop {
+        if cursor.at_end() {
+            break;
+        }
+        let next = u32(*cursor.peek_char().unwrap());
+        if next < u32('0') || next > u32('9') {
+            break;
+        }
+        let digit = u64(next - u32('0'));
+        if value > (limit - digit) / 10u64 {
+            return format_count_range_error(cursor.parser, Span(start=start, end=cursor.char_start()), label);
+        }
+        value = value * 10u64 + digit;
+        cursor.take_char()?;
+    }
+    return Option<FormatCount>.Some(val=FormatCount.Literal(value=value, span=Span(start=start, end=cursor.expected)));
+}
+
+// An absent specification keeps the default representation; None with a ready parser means "no spec".
+fn parse_format_spec(parser: Parser&, colon: Span) -> Option<FormatSpec> {
+    let cursor = SpecCursor.after(parser, colon);
+    if cursor.at_end() {
+        if same_position(parser.peek().span.start, colon.end) {
+            return Option<FormatSpec>.None;
+        }
+        parser.error("invalid format specification", parser.peek().span);
+        return Option<FormatSpec>.None;
+    }
+
+    let first = cursor.current_span();
+    if !same_position(first.start, colon.end) {
+        parser.error("invalid format specification", first);
+        return Option<FormatSpec>.None;
+    }
+
+    let alignment = FormatAlignment.Default;
+    let initial = u32(*cursor.peek_char().unwrap());
+    if initial == u32('<') {
+        cursor.take_char()?;
+        alignment = FormatAlignment.Left;
+    } elif initial == u32('>') {
+        cursor.take_char()?;
+        alignment = FormatAlignment.Right;
+    }
+
+    let zero_pad = take_format_marker(&cursor, '0')?;
+    parser.ready()?;
+    let width = parse_format_count(&cursor, MAX_FORMAT_WIDTH, "format width");
+    parser.ready()?;
+
+    let precision = Option<FormatCount>.None;
+    if take_format_marker(&cursor, '.')? {
+        let parsed = parse_format_count(&cursor, MAX_FORMAT_PRECISION, "format precision");
+        parser.ready()?;
+        if parsed.is_none() {
+            parser.error("invalid format specification", cursor.current_span());
+            return Option<FormatSpec>.None;
+        }
+        precision = parsed;
+    }
+
+    let fixed = take_format_marker(&cursor, 'f')?;
+
+    if !cursor.at_end() {
+        parser.error("invalid format specification", cursor.current_span());
+        return Option<FormatSpec>.None;
+    }
+    if !same_position(parser.peek().span.start, cursor.expected) {
+        parser.error("invalid format specification", parser.peek().span);
+        return Option<FormatSpec>.None;
+    }
+    if precision.is_some() && !fixed {
+        parser.error("invalid format specification", first);
+        return Option<FormatSpec>.None;
+    }
+
+    return Option<FormatSpec>.Some(val=FormatSpec(alignment=alignment, zero_pad=zero_pad, width=width,
+        precision=precision, fixed=fixed, span=Span(start=first.start, end=cursor.expected)));
+}
+
 fn fstring(parser: Parser&) -> Option<Expr&> {
     let span = parser.peek().span;
     parser.advance();
-    let segments = Vec<Expr&>.new();
-    defer segments.drop();
+    let parts = Vec<FormatPart>.new();
+    defer parts.drop();
 
     loop {
         let token = parser.peek();
         match token.kind() {
             FStrLiteral(_) => {
-                let literal = parser.arena.alloc_str_literal(StrLiteralData(value=String.from(&token.value()), raw=String.from(&token.value())), token.span);
-                segments.push(parser.arena.alloc_expr(ExprData.Literal(literal=Literal.StringLiteral(value=literal)), token.span));
+                // The lexer decodes escapes; the template keeps only the decoded text and source span.
+                parts.push(FormatPart.Literal(text=String.from(&token.value()), span=token.span));
                 parser.advance();
             },
             FStrExprBegin => {
                 parser.advance();
                 let value = parse_expr(parser)?;
-                parser.advance();
-                segments.push(method(parser, value, "to_string"));
+                let spec = Option<FormatSpec>.None;
+                if parser.at_punct(PunctuatorKind.Colon) {
+                    let colon = parser.peek().span;
+                    parser.advance();
+                    spec = parse_format_spec(parser, colon);
+                    parser.ready()?;
+                }
+                match parser.peek().kind() {
+                    FStrExprEnd => parser.advance(),
+                    _ => {
+                        parser.error("Expected '}' after a formatted expression", parser.peek().span);
+                        return Option<Expr&>.None;
+                    },
+                }
+                parts.push(FormatPart.Value(expr=value, span=value.span, spec=spec));
             },
             FStrEnd => {
                 parser.advance();
@@ -770,17 +930,7 @@ fn fstring(parser: Parser&) -> Option<Expr&> {
         }
     }
 
-    let name = parser.named_identifier(span, "String", false);
-    let ty = parser.arena.alloc_expr(ExprData.TypeItem(name=name, generics=Vec<GenericArgument>.new()), span);
-    let result = method(parser, ty, "new");
-    let i: u64 = 0;
-
-    while i < segments.len() {
-        result = parser.arena.alloc_expr(ExprData.Binary(op=BinaryOperator.Add, left=result, right=segments[i]), span);
-        i += 1;
-    }
-
-    Option<Expr&>.Some(val=result)
+    Option<Expr&>.Some(val=parser.arena.alloc_expr(ExprData.FormatTemplate(parts=parts.take()), span))
 }
 
 // Capture initializers use binding power above bitwise OR to avoid consuming the closing capture-list pipe.

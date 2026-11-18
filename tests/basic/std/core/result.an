@@ -2,9 +2,6 @@
 //
 // Expected output: 0
 
-from std.core.result import Result;
-from std.core.option import Option;
-
 typedef ErrorCode = u64;
 
 fn main() {

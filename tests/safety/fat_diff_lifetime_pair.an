@@ -1,0 +1,17 @@
+// Fat-pointer difference across lifetimes.
+//
+// Both pointers name the same payload after reuse but carry different lock
+// keys. Difference requires the same lifetime pair, so the run ends with S005
+// before the subtraction result is used.
+//
+// Expected runtime safety error: Exit code 1
+
+fn main() {
+    let first: i32* = dyn[4] 0i32;
+    let old: i32* = first;
+    del first;
+
+    let second: i32* = dyn[2] 0i32;
+    let distance: i64 = second - old;
+    assert distance == 0: "unreachable";
+}

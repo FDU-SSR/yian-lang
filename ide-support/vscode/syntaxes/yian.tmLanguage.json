@@ -203,7 +203,7 @@
                 },
                 {
                     "name": "keyword.control.yian",
-                    "match": "\\b(?:if|elif|else|match|for|while|loop|in|break|continue|return|defer|assert|del)\\b"
+                    "match": "\\b(?:if|elif|else|match|matches|for|while|loop|in|break|continue|return|defer|assert|del)\\b"
                 },
                 {
                     "name": "keyword.declaration.yian",

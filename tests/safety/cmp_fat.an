@@ -1,7 +1,7 @@
 // Fat-pointer comparison uses field-based semantics.
 //
 // 1. Cross-object == is ALLOWED — equality compares the (data, index) pair
-// 2. Same-object ordered comparison — compares by index after data-equal check
+// 2. Same-object ordered comparison — compares by index after data and lifetime-word checks
 // 3. Cross-object < TRAPS — data unequal fails the prerequisite
 //
 // Expected runtime safety error: Exit code 1

@@ -2,10 +2,6 @@ from yianc.frontend.source import Position, Span;
 from yianc.frontend.lex.token import IntSuffix, FloatSuffix;
 from yianc.frontend.ast.operator import BinaryOperator, UnaryOperator;
 from yianc.frontend.ast.atoms import AttrKind, BuiltinKind, MatchArmOrigin;
-from std.core.drop import Drop;
-from std.core.option import Option;
-from std.core.string import String;
-from std.core.vec import Vec;
 
 // AST nodes contain syntax data and source spans; references do not own storage, and the arena owns all nodes.
 pub struct Node<D> { pub data: D, pub span: Span }
@@ -33,16 +29,15 @@ pub typedef TypeGenericParam = Node<TypeGenericParamData>;
 pub typedef ConstGenericParam = Node<ConstGenericParamData>;
 pub typedef FieldInfo = Node<FieldInfoData>;
 pub typedef VariantInfo = Node<VariantInfoData>;
-pub struct MethodDecl { pub data: MethodDeclData, pub span: Span, pub signature_recovered: bool }
+pub struct MethodDecl { pub data: MethodDeclData, pub span: Span }
 impl Drop for MethodDecl { pub fn drop() { self.data.drop(); } }
 pub typedef MethodDef = Node<MethodDefData>;
-pub struct ExternFuncDecl { pub data: ExternFuncDeclData, pub span: Span, pub signature_recovered: bool }
+pub struct ExternFuncDecl { pub data: ExternFuncDeclData, pub span: Span }
 impl Drop for ExternFuncDecl { pub fn drop() { self.data.drop(); } }
 pub typedef ImplCondition = Node<ImplConditionData>;
 pub typedef CaptureItem = Node<CaptureItemData>;
 pub typedef FieldPattern = Node<FieldPatternData>;
-// Editor extents are independent of the spans used by compiler diagnostics.
-pub struct Expr { pub data: ExprData, pub span: Span, pub syntax_span: Option<Span>, pub syntax_recovered: bool }
+pub struct Expr { pub data: ExprData, pub span: Span }
 impl Drop for Expr { pub fn drop() { self.data.drop(); } }
 pub typedef TypeSyntax = Node<TypeData>;
 pub typedef ConstExpr = Node<ConstExprData>;
@@ -271,9 +266,47 @@ pub enum TypeSource {
     CallableReturnType,
 }
 
+// A format specification is present only for an explicit colon; counts are literal or dynamic expressions.
+pub enum FormatAlignment {
+    Default,
+    Left,
+    Right,
+}
+
+pub enum FormatCount {
+    Literal { value: u64, span: Span },
+    // Dynamic counts borrow the enclosing arena expression and include the braces in their span.
+    Dynamic { expr: Expr&, span: Span },
+}
+
+pub struct FormatSpec {
+    pub alignment: FormatAlignment,
+    pub zero_pad: bool,
+    pub width: Option<FormatCount>,
+    pub precision: Option<FormatCount>,
+    pub fixed: bool,
+    pub span: Span,
+}
+
+// Formatted template parts keep decoded literal text and borrow interpolation expressions from the arena.
+pub enum FormatPart {
+    Literal { text: String, span: Span },
+    Value { expr: Expr&, span: Span, spec: Option<FormatSpec> },
+}
+
+impl Drop for FormatPart {
+    pub fn drop() {
+        match self {
+            Literal(text, span) => {
+                text.drop();
+            },
+            Value(expr, span, spec) => {},
+        }
+    }
+}
+
 // Expression and statement syntax data; all child expressions refer to Expr nodes.
 pub enum ExprData {
-    Recovery { children: Vec<Expr&>, bindings: Vec<Identifier&> },
     Identifier { name: Identifier& },
     Literal { literal: Literal },
     Binary { op: BinaryOperator, left: Expr&, right: Expr& },
@@ -299,6 +332,7 @@ pub enum ExprData {
     While { condition: Condition, body: Block& },
     Loop { body: Block& },
     Match { expr: Expr&, arms: Vec<MatchArm&> },
+    Matches { value: Expr&, pattern: Pattern& },
     Return { expr: Option<Expr&> },
     Break { expr: Option<Expr&> },
     Continue,
@@ -308,12 +342,12 @@ pub enum ExprData {
     Semi { expr: Expr& },
     ClosureExpr { captures: Vec<CaptureItem&>, params: Vec<Parameter>, return_type: Option<TypeSyntax&>, body: Block& },
     CompileConfig { name: String },
+    FormatTemplate { parts: Vec<FormatPart> },
 }
 
 impl Drop for ExprData {
     pub fn drop() {
         match self {
-            Recovery(children, bindings) => { children.drop(); bindings.drop(); },
             Identifier(name) => {},
             Literal(literal) => {},
             Binary(op, left, right) => {},
@@ -360,6 +394,7 @@ impl Drop for ExprData {
             Match(expr, arms) => {
                 arms.drop();
             },
+            Matches(value, pattern) => {},
             Return(expr) => {},
             Break(expr) => {},
             Continue => {},
@@ -373,6 +408,12 @@ impl Drop for ExprData {
             },
             CompileConfig(name) => {
                 name.drop();
+            },
+            FormatTemplate(parts) => {
+                for part in *parts {
+                    part.drop();
+                }
+                parts.drop();
             },
         }
     }

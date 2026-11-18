@@ -1,0 +1,100 @@
+from yianc.analysis.ty.store import TypeStore, INT_LITERAL_TYPE_ID, FLOAT_LITERAL_TYPE_ID;
+from yianc.analysis.ty.model import TypeData;
+from yianc.common.ids import TypeId;
+from std.collections.hash_set import HashSet;
+
+// CFG values describe runtime storage, so semantic literal placeholders never cross this boundary.
+pub fn assert_cfg_type(types: TypeStore&, type_id: TypeId) {
+    let visited = HashSet<u64>.new();
+    defer visited.drop();
+    assert_visit(types, type_id, &visited);
+}
+
+fn assert_visit(types: TypeStore&, type_id: TypeId, visited: HashSet<u64>&) {
+    if type_id.index == INT_LITERAL_TYPE_ID || type_id.index == FLOAT_LITERAL_TYPE_ID {
+        @panic("literal type reached CFG");
+    }
+
+    if !visited.insert(type_id.index) {
+        return;
+    }
+
+    let data = match types.get(type_id) {
+        Some(value) => *value,
+        None => @panic("invalid type reached CFG"),
+    };
+
+    match &data {
+        Void | Never | Bool | Char | Str | Integer(_, _) | CScalar(_) | Float(_) | Opaque(_, _) => {},
+        IntLiteral | FloatLiteral => @panic("literal type reached CFG"),
+        Error | Generic(_) | ConstGeneric(_, _) | SelfType(_) | ConstUnary(_, _) | ConstBinary(_, _, _) | LiteralValue(_, _, _) => @panic("unresolved type reached CFG"),
+        Pointer(inner) | CPointer(inner) | Reference(inner) | Slice(inner) => assert_visit(types, *inner, visited),
+        TraitObject(trait_id) => assert_visit(types, *trait_id, visited),
+        Array(element, length) => {
+            assert_visit(types, *element, visited);
+            // An instantiated length record is compile-time data, not a runtime value type.
+            match types.get(*length) {
+                Some(value) => match value {
+                    LiteralValue(_, _, _) => {},
+                    _ => assert_visit(types, *length, visited),
+                },
+                None => @panic("invalid type reached CFG"),
+            }
+        },
+        Tuple(elements) => {
+            for element in *elements {
+                assert_visit(types, *element, visited);
+            }
+        },
+        FunctionPointer(parameters, result) => {
+            for parameter in *parameters {
+                assert_visit(types, *parameter, visited);
+            }
+
+            assert_visit(types, *result, visited);
+        },
+        Nominal(definition, arguments) => {
+            for argument in *arguments {
+                // Instantiated constant arguments are compile-time records, not runtime value types.
+                match types.get(*argument) {
+                    Some(value) => match value {
+                        LiteralValue(_, _, _) => {},
+                        _ => assert_visit(types, *argument, visited),
+                    },
+                    None => @panic("invalid type reached CFG"),
+                }
+            }
+
+            // A concrete instance is defined by its arguments; generic declaration members
+            // are not runtime types until substituted with those arguments.
+            let record = match types.definition(*definition) {
+                Some(value) => value,
+                None => @panic("invalid type reached CFG"),
+            };
+
+            if !record.is_complete() {
+                @panic("unresolved type reached CFG");
+            }
+        },
+        Closure(captures, parameters, result, _, environment, call_method) => {
+            for capture in *captures {
+                assert_visit(types, capture.type_id, visited);
+            }
+
+            for parameter in *parameters {
+                assert_visit(types, parameter.type_id, visited);
+            }
+
+            assert_visit(types, *result, visited);
+
+            match environment {
+                Some(value) => assert_visit(types, *value, visited),
+                None => {},
+            };
+            match call_method {
+                Some(value) => assert_visit(types, *value, visited),
+                None => {},
+            };
+        },
+    }
+}

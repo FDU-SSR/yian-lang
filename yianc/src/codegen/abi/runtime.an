@@ -8,6 +8,7 @@ pub const LOCK_ENTRY_BYTES: u64 = 8;
 pub const HEADER_BYTES: u64 = 8;
 pub const LOCK_MASK: u64 = 0xFFFFFFFFu64;
 pub const FRAME_KEY_LIMIT: u64 = 0xFFFFFFFEu64;
+pub const HEAP_KEY_LIMIT: u64 = 0xFFFFFFFEu64;
 pub const SENTINEL: u64 = 0xFFFFFFFFFFFFFFFFu64;
 
 pub fn failure_message(code: str) -> str {

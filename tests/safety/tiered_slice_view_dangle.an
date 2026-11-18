@@ -1,0 +1,14 @@
+// A released parent permits constructing a sub-slice; the first element access
+// fails the inherited lock check. This keeps view construction independent of
+// allocation liveness.
+//
+// Expected exit code: 1
+
+fn main() {
+    let p: i32* = dyn[3] 0i32;
+    p[0] = 1;
+    let s: i32[] = p[0u64..3u64];
+    del p;
+    let t: i32[] = s[0u64..1u64]; // construction must not check allocation liveness
+    t[0] = 99; // inherited lock is stale -> S002
+}

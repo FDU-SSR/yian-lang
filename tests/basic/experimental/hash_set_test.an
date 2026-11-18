@@ -1,6 +1,5 @@
 from std.core.hash import Hash, Murmur3Hasher, Murmur3BuildHasher;
 from std.collections.hash_set import HashSet;
-from std.core.drop import Drop;
 from std.core.ops import PartialEq;
 
 // Simple hashable value type.

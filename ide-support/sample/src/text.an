@@ -1,12 +1,9 @@
 // Standard-library containers, loops, closures, and f-strings for completion, semantic highlighting, and hover.
-from std.core.option import Option;
-from std.core.string import String;
-from std.core.vec import Vec;
 from sample.types import Meters;
 
 // Dynamic array, for loop, and indexing; del explicitly releases it.
 pub fn sum_block(size: u64) -> i64 {
-    let block: i32* = dyn[8] i32;
+    let block: i32* = dyn[size] 0i32;
     for i in 0..size {
         block[i] = i32(i);
     }

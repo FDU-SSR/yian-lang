@@ -1,0 +1,120 @@
+// bench/BG/binarytree/yian/src/workload.an: recursive binary-tree workload.
+//
+// Adapted from Benchmarks Game (shootout); upstream: Revised BSD, Copyright 2008-2012 Isaac Gouy.
+// Semantic reference: bench/BG/c/binarytree.c, the project's C implementation.
+// Scale: default N=16 (the benchmark runner may materialize another N), minDepth=4.
+//
+// Algorithm: BottomUpTree recursively constructs full binary trees with two child pointers per node;
+//       ItemCheck recursively sums children, counting empty subtrees as one; DeleteTree releases
+//       in postorder. main constructs/releases a stretch tree of maxDepth+1,
+//       retains a maxDepth longLived tree until the end, and, for depths stepping by two, constructs/releases
+//       1<<(maxDepth-depth+minDepth) temporary trees, accumulating check.
+//
+// Layout: left/right are Option<treeNode&>, using None for empty subtrees. Nodes are allocated by
+//       dyn treeNode(...); ItemCheck reads through treeNode&, and DeleteTree
+//       releases directly with del T&.
+//
+// Both pointer modes share this source; each dyn allocation holds one treeNode.
+
+struct treeNode {
+    left: Option<treeNode&>,
+    right: Option<treeNode&>,
+}
+
+fn NewTreeNode(left: Option<treeNode&>, right: Option<treeNode&>) -> Option<treeNode&> {
+    return Option<treeNode&>.Some(dyn treeNode(left, right));
+}
+
+fn BottomUpTree(depth: u32) -> Option<treeNode&> {
+    if depth > 0 {
+        let left_child: Option<treeNode&> = BottomUpTree(depth - 1);
+        let right_child: Option<treeNode&> = BottomUpTree(depth - 1);
+        return NewTreeNode(left_child, right_child);
+    }
+    return NewTreeNode(Option<treeNode&>.None, Option<treeNode&>.None);
+}
+
+fn ItemCheck(tree: treeNode&) -> i64 {
+    let res: i32 = 1;
+    let tmp: treeNode = *tree;
+    match tmp.left {
+        Some(lc) => { res = i32(i64(res) + ItemCheck(lc)); },
+        None => { },
+    }
+    match tmp.right {
+        Some(rc) => { res = i32(i64(res) + ItemCheck(rc)); },
+        None => { },
+    }
+    return i64(res);
+}
+
+fn DeleteTree(tree: Option<treeNode&>) {
+    match tree {
+        None => { return; },
+        Some(tt) => {
+            let tmp: treeNode = *tt;
+            match tmp.left {
+                Some(l) => { DeleteTree(Option<treeNode&>.Some(l)); },
+                None => { },
+            }
+            match tmp.right {
+                Some(r) => { DeleteTree(Option<treeNode&>.Some(r)); },
+                None => { },
+            }
+            // Postorder: children are already deleted; release this node without reading tt afterward.
+            del tt;
+        }
+    }
+}
+
+pub fn run(n: i32) -> i32 {
+    if n <= 0 || n > 30 { return 2; }
+
+    let N: u32 = u32(n);
+    let minDepth: u32 = 4;
+    let maxDepth: u32 = N;
+
+    if (minDepth + 2) > N {
+        maxDepth = minDepth + 2;
+    }
+
+    let stretchDepth: u32 = maxDepth + 1;
+    let stretchTree: Option<treeNode&> = BottomUpTree(stretchDepth);
+    let stretchCheck: i64 = 0;
+    match stretchTree {
+        Some(tree) => { stretchCheck = ItemCheck(tree); },
+        None => { },
+    }
+    @print(f"stretch tree of depth {stretchDepth}\t check: {stretchCheck}\n");
+    DeleteTree(stretchTree);
+
+    let longLivedTree: Option<treeNode&> = BottomUpTree(maxDepth);
+
+    let depth: u64 = u64(minDepth);
+    while depth <= u64(maxDepth) {
+        let iterations: u32 = 1u32 << (maxDepth - u32(depth) + minDepth);
+        let check: i64 = 0;
+        let i: u64 = 0;
+        while i < u64(iterations) {
+            let tempTree: Option<treeNode&> = BottomUpTree(u32(depth));
+            match tempTree {
+                Some(tt) => { check = check + ItemCheck(tt); },
+                None => { },
+            }
+            DeleteTree(tempTree);
+            i += 1;
+        };
+        @print(f"{iterations}\t trees of depth {depth}\t check: {check}\n");
+        depth += 2;
+    };
+
+    let longLivedCheck: i64 = 0;
+    match longLivedTree {
+        Some(tree) => { longLivedCheck = ItemCheck(tree); },
+        None => { },
+    }
+    @print(f"long lived tree of depth {maxDepth}\t check: {longLivedCheck}\n");
+    DeleteTree(longLivedTree);
+
+    return 0;
+}

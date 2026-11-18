@@ -1,0 +1,172 @@
+from std.core.env import args;
+
+// bench/AWFY/an/list.an: recursive linked-list tail reduction (shootout list).
+//
+// Upstream: AWFY benchmarks/Java/src/List.java; see AWFY LICENSE.md.
+// Semantic reference: bench/AWFY/c/list.c, the project's C implementation.
+// Scale: make_list 15/10/6; assert tail result length == 10.
+//
+// Algorithm: singly linked nodes (val,next). Element_make_list recursively creates nodes
+//       with decreasing length and val=length. tail(x,y,z) reduces three lists: when y is shorter than x,
+//       advance each list and recursively nest calls on (next_x,y,z)/(next_y,z,x)/(next_z,x,y);
+//       otherwise return z. The final result addresses the middle of the original z list; assert
+//       length==10. free_list releases the whole chain including its head.
+//
+// Layout: next is Option<Element&>, with None for empty/tail; match unwraps traversal positions.
+//       dyn Element(...) allocates nodes, and del T& releases them.
+//
+// Both modes share this source. Allocations use explicit full-range slices; ranges such as
+//         x[0u64..n] work in both modes and retain checks in fat mode.
+struct Element {
+    val: i32,
+    next: Option<Element&>,
+}
+
+// Get opt's next node; empty/tail yields None.
+fn opt_next(src: Option<Element&>) -> Option<Element&> {
+    return if let Some(n) = src { n.next } else { Option<Element&>.None };
+}
+
+fn Element_make_list(length: i32) -> Option<Element&> {
+    if length == 0 {
+        return Option<Element&>.None;
+    }
+    let rest_of_list: Option<Element&> = Element_make_list(length - 1);
+    return Option<Element&>.Some(dyn Element(length, rest_of_list));
+}
+
+fn Element_length_method(self: Element&) -> i32 {
+    return match self.next {
+        None => 1,
+        Some(n) => 1 + Element_length_method(n),
+    };
+}
+
+fn Element_free_method(self: Element&) {
+    let current: Option<Element&> = match self.next {
+        Some(n) => Option<Element&>.Some(n),
+        None => Option<Element&>.None,
+    };
+    loop {
+        match current {
+            None => { break; },
+            Some(cn) => {
+                let next: Option<Element&> = match cn.next {
+                    Some(n) => Option<Element&>.Some(n),
+                    None => Option<Element&>.None,
+                };
+                // Read next before releasing cn; cn is never read afterward, avoiding use-after-free.
+                del cn;
+                current = next;
+            }
+        }
+    };
+}
+
+fn Element_length(e: Option<Element&>) -> i32 {
+    return match e {
+        None => 0,
+        Some(sv) => Element_length_method(sv),
+    };
+}
+
+fn is_shorter_than(x: Option<Element&>, y: Option<Element&>) -> bool {
+    let x_tail: Option<Element&> = x;
+    let y_tail: Option<Element&> = y;
+    loop {
+        match y_tail {
+            None => { break; },
+            Some(yn) => {
+                match x_tail {
+                    None => { return true; },
+                    Some(xn) => {
+                        x_tail = match xn.next {
+                            Some(n) => Option<Element&>.Some(n),
+                            None => Option<Element&>.None,
+                        };
+                        y_tail = match yn.next {
+                            Some(n) => Option<Element&>.Some(n),
+                            None => Option<Element&>.None,
+                        };
+                    }
+                }
+            }
+        }
+    }
+    return false;
+}
+
+fn tail(x: Option<Element&>, y: Option<Element&>, z: Option<Element&>) -> Option<Element&> {
+    if is_shorter_than(y, x) {
+        let next_x: Option<Element&> = opt_next(x);
+        let next_y: Option<Element&> = opt_next(y);
+        let next_z: Option<Element&> = opt_next(z);
+        return tail(
+            tail(next_x, y, z),
+            tail(next_y, z, x),
+            tail(next_z, x, y)
+        );
+    }
+    return z;
+}
+
+fn free_list(e: Option<Element&>) {
+    match e {
+        None => { return; },
+        Some(el) => {
+            // Release successors (Element_free_method starts at el.next), then the head.
+            Element_free_method(el);
+            del el;
+        }
+    }
+}
+
+fn benchmark_list() -> i32 {
+    let x: Option<Element&> = Element_make_list(15);
+    let y: Option<Element&> = Element_make_list(10);
+    let z: Option<Element&> = Element_make_list(6);
+
+    let result: Option<Element&> = tail(x, y, z);
+    let l: i32 = Element_length(result);
+
+    free_list(x);
+    free_list(y);
+    free_list(z);
+
+    return l;
+}
+
+// Decimal prefix parsing for the C atoi/atoll workload argument.
+fn c_decimal(text: str) -> i64 {
+    let bytes = text.as_slice();
+    let i: u64 = 0;
+    while i < bytes.len() && (bytes[u64(i)] == 32 || (bytes[u64(i)] >= 9 && bytes[u64(i)] <= 13)) { i += 1; }
+    let negative: bool = false;
+    if i < bytes.len() && (bytes[u64(i)] == b'-' || bytes[u64(i)] == b'+') {
+        negative = bytes[u64(i)] == b'-';
+        i += 1;
+    }
+    let value: i64 = 0;
+    while i < bytes.len() && bytes[u64(i)] >= b'0' && bytes[u64(i)] <= b'9' {
+        value = value * 10 + i64(bytes[u64(i)] - b'0');
+        i += 1;
+    }
+    return if negative { -value } else { value };
+}
+
+fn main() {
+    let ITER: u64 = 94077; // bench-scale
+    let argv = args();
+    if argv.len() > 1u64 {
+        let requested = i32(c_decimal(argv[1u64].as_str()));
+        ITER = if requested > 0 { u64(requested) } else { 0u64 };
+    }
+    for argument in &argv { argument.drop(); }
+    argv.drop();
+    let iter: u64 = 0;
+    while iter < ITER {
+        let result: i32 = benchmark_list();
+        assert result == 10: "list: tail result length should be 10";
+        iter += 1;
+    }
+}

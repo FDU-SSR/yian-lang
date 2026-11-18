@@ -2,8 +2,6 @@
 //
 // Expected output: 0
 
-from std.core.drop import Drop;
-
 struct CallBigInt {
     value: i64,
 }

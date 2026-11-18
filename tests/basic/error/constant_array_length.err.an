@@ -1,0 +1,5 @@
+// Expected compilation error: the annotation length must match the literal
+const BAD: i32[2] = [1];
+
+fn main() {
+}

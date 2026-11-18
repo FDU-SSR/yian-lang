@@ -2,8 +2,6 @@
 //
 // Expected output: 0
 
-from std.core.io import print;
-
 struct Point {
     pub x: i32,
     pub y: i32,
@@ -73,7 +71,7 @@ fn case_aggregate_and_early_returns() {
 
 fn do_work(flag: bool) {
     if flag {
-        print("done");
+        @print("done");
         return;
     }
     @panic("should not reach here");
@@ -87,7 +85,31 @@ fn case_void_return() {
     call_void();
 }
 
+fn scope_identity<T>(value: T) -> T {
+    let return_type: i32 = 7;
+    assert return_type == 7: "user variable named return_type";
+    {
+        return value;
+    }
+}
+
+fn inherited_type<T>(value: T) -> T {
+    let run = |captured = value| () -> T {
+        let copy: T = captured;
+        copy
+    };
+    run()
+}
+
+fn case_callable_scope_contexts() {
+    assert scope_identity<i32>(3) == 3: "generic i32 return context";
+    assert scope_identity<bool>(true): "generic bool return context";
+    assert inherited_type<i32>(5) == 5: "closure inherits type parameter for i32";
+    assert inherited_type<bool>(true): "closure inherits type parameter for bool";
+}
+
 fn main() {
+    case_callable_scope_contexts();
     case_aggregate_and_early_returns();
     case_void_return();
 }

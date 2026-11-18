@@ -1,0 +1,19 @@
+{
+  "name": "queen",
+  "measurement": {"warmups": 1, "runs": 5},
+  "source": "AWFY",
+  "tags": [
+    "ptr",
+    "control"
+  ],
+  "argv": [],
+  "check": {
+    "rc": 0
+  },
+  "note": "Official work unit: 10 consecutive 8-queens solves, result true; default 276923 outer iterations",
+  "scale": {
+    "default": 276923,
+    "fast": 65000,
+    "c": "argv"
+  }
+}

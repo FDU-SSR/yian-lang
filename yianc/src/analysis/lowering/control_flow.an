@@ -5,8 +5,7 @@ from yianc.frontend.source import Span;
 from yianc.analysis.hir.node import HirKind, If;
 from yianc.diagnostics.model import AnalysisError;
 from std.core.iter import Iterator, IntoIterator;
-from std.core.result import Result;
-from std.core.option import Option;
+from yianc.analysis.ty.store import NEVER_TYPE_ID, VOID_TYPE_ID;
 
 impl ExprChecker {
     pub fn branch(span: Span, condition: HirId, yes: HirId, no: Option<HirId>) -> Result<HirId, AnalysisError> {
@@ -25,18 +24,18 @@ impl ExprChecker {
                 let else_value = self.coerce(otherwise, common)?;
                 Result<HirId, AnalysisError>.Ok(self.node(span, common, false, HirKind.If(If(condition, then_value, Option<HirId>.Some(else_value)))))
             },
-            None => Result<HirId, AnalysisError>.Ok(self.node(span, self.ctx.primitives.void, false, HirKind.If(If(condition, yes, no)))),
+            None => Result<HirId, AnalysisError>.Ok(self.node(span, TypeId(VOID_TYPE_ID), false, HirKind.If(If(condition, yes, no)))),
         }
     }
 
     pub fn loop_result(span: Span) -> Result<TypeId, AnalysisError> {
         let frame = self.loops.len() - 1;
-        let result = self.ctx.primitives.never;
+        let result = TypeId(NEVER_TYPE_ID);
 
         for id in self.loops[frame].exits() {
             let type_id = match &self.ctx.session.hir.require(*id)?.kind {
                 Break(value) => match value {
-                    Some(id) => self.type_of(*id), None => self.ctx.primitives.void
+                    Some(id) => self.type_of(*id), None => TypeId(VOID_TYPE_ID)
                 },
                 _ => return Result<TypeId, AnalysisError>.Err(AnalysisError.internal("invalid loop exit node")),
             };

@@ -1,7 +1,6 @@
 from yianc.frontend.ast.walk import TryAstVisitor, try_walk_type_source, try_walk_identifier, try_walk_int_literal, try_walk_float_literal, try_walk_char_literal, try_walk_str_literal, try_walk_bool_literal, try_walk_program, try_walk_block, try_walk_argument, try_walk_var_info, try_walk_pattern_param, try_walk_pattern_let, try_walk_let_condition, try_walk_elif_branch, try_walk_match_arm, try_walk_attr, try_walk_type_generic_param, try_walk_const_generic_param, try_walk_field_info, try_walk_variant_info, try_walk_method_decl, try_walk_method_def, try_walk_extern_func_decl, try_walk_impl_condition, try_walk_capture_item, try_walk_field_pattern, try_walk_expr, try_walk_type_syntax, try_walk_const_expr, try_walk_pattern, try_walk_item, try_walk_literal, try_walk_range_bounds, try_walk_condition, try_walk_generic_argument, try_walk_generic_param, try_walk_parameter, try_walk_trait_member, try_walk_pattern_arguments;
 from yianc.common.traversal import WalkControl;
-from std.core.result import Result;
-from yianc.frontend.ast.node import Identifier, IntLiteral, FloatLiteral, CharLiteral, StrLiteral, BoolLiteral, Program, Block, Argument, VarInfo, PatternParam, PatternLet, LetCondition, ElifBranch, MatchArm, Attr, TypeGenericParam, ConstGenericParam, FieldInfo, VariantInfo, MethodDecl, MethodDef, ExternFuncDecl, ImplCondition, CaptureItem, FieldPattern, Expr, TypeSyntax, ConstExpr, Pattern, Item, Literal, RangeBounds, Condition, GenericArgument, GenericParam, Parameter, TraitMember, PatternArguments;
+from yianc.frontend.ast.node import Identifier, IntLiteral, FloatLiteral, CharLiteral, StrLiteral, BoolLiteral, Program, Block, Argument, VarInfo, PatternParam, PatternLet, LetCondition, ElifBranch, MatchArm, Attr, TypeGenericParam, ConstGenericParam, FieldInfo, VariantInfo, MethodDecl, MethodDef, ExternFuncDecl, ImplCondition, CaptureItem, FieldPattern, Expr, TypeSyntax, ConstExpr, Pattern, Item, Literal, RangeBounds, Condition, GenericArgument, GenericParam, Parameter, TraitMember, PatternArguments, FormatPart, FormatSpec, FormatCount;
 from std.core.ops import Index;
 from yianc.frontend.ast.node import TypeSource;
 
@@ -873,6 +872,10 @@ pub fn rewrite_expr_children(node: Expr&, rewriter: AstRewriter&) {
                 }
             };
         },
+        Matches(value, pattern) => {
+            *value = rewriter.rewrite_expr(*value);
+            *pattern = rewriter.rewrite_pattern(*pattern);
+        },
         Return(expr) => {
             match &(*expr) {
                 Some(value) => {
@@ -936,19 +939,56 @@ pub fn rewrite_expr_children(node: Expr&, rewriter: AstRewriter&) {
         },
         CompileConfig(name) => {
         },
-        Recovery(children, bindings) => {
-            let index = 0u64;
-            while index < children.len() {
-                children[index] = rewriter.rewrite_expr(children[index]);
-                index += 1;
-            }
-            index = 0u64;
-            while index < bindings.len() {
-                bindings[index] = rewriter.rewrite_identifier(bindings[index]);
+        FormatTemplate(parts) => {
+            let index: u64 = 0;
+
+            while index < (*parts).len() {
+                match &(*parts)[index] {
+                    Value(expr, span, spec) => {
+                        let updated = rewriter.rewrite_expr(*expr);
+                        let rewritten = rewrite_format_spec(spec, rewriter);
+                        (*parts)[index] = FormatPart.Value(expr=updated, span=*span, spec=rewritten);
+                    },
+                    Literal(text, span) => {},
+                }
+
                 index += 1;
             }
         },
     };
+}
+
+// Rebuild a specification only when a dynamic count needs rewriting; static counts are unchanged.
+fn rewrite_format_spec(spec: Option<FormatSpec>&, rewriter: AstRewriter&) -> Option<FormatSpec> {
+    match spec {
+        Some(value) => {
+            let width = rewrite_format_count(&(*value).width, rewriter);
+            let precision = rewrite_format_count(&(*value).precision, rewriter);
+            return Option<FormatSpec>.Some(val=FormatSpec(alignment=(*value).alignment,
+                zero_pad=(*value).zero_pad, width=width, precision=precision, fixed=(*value).fixed,
+                span=(*value).span));
+        },
+        None => {},
+    }
+    return Option<FormatSpec>.None;
+}
+
+fn rewrite_format_count(count: Option<FormatCount>&, rewriter: AstRewriter&) -> Option<FormatCount> {
+    match count {
+        Some(value) => {
+            match value {
+                Literal(value, span) => {
+                    return Option<FormatCount>.Some(val=FormatCount.Literal(value=*value, span=*span));
+                },
+                Dynamic(expr, span) => {
+                    let updated = rewriter.rewrite_expr(*expr);
+                    return Option<FormatCount>.Some(val=FormatCount.Dynamic(expr=updated, span=*span));
+                },
+            }
+        },
+        None => {},
+    }
+    return Option<FormatCount>.None;
 }
 
 pub fn rewrite_type_syntax_children(node: TypeSyntax&, rewriter: AstRewriter&) {

@@ -1,0 +1,9 @@
+// Expected compilation error: a constant initializer is not a callable context
+
+const BAD: i32 = {
+    return 1;
+    0
+};
+
+fn main() {
+}

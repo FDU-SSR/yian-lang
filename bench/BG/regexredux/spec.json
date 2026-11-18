@@ -1,0 +1,22 @@
+{
+  "name": "regexredux",
+  "measurement": {"warmups": 1, "runs": 5},
+  "source": "BG",
+  "tags": [
+    "string",
+    "alloc"
+  ],
+  "argv": [],
+  "check": {
+    "rc": 0
+  },
+  "note": "Reads FASTA stdin, removes headers and newlines, counts nine PCRE2 JIT patterns, applies five ordered replacements, and reports all three byte lengths.",
+  "io": {
+    "stdin": {
+      "fasta_n": {
+        "full": 5000000,
+        "fast": 100000
+      }
+    }
+  }
+}

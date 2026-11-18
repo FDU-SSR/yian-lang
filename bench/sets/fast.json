@@ -1,7 +1,6 @@
 {
   "name": "fast",
   "scale": "fast",
-  "runs": 3,
   "include": [
     "AWFY/queen",
     "AWFY/sieve",
@@ -13,5 +12,5 @@
     "BG/spectralnorm"
   ],
   "exclude": [],
-  "note": "开发中频繁跑的代表性子集: 覆盖 ptr(queen/deltablue/richards/havlak)、alloc(storage)、numeric(sieve/spectralnorm)、string(json); queen/sieve 用缩小规模"
+  "note": "Representative subset for frequent development runs: covers ptr (queen/deltablue/richards/havlak), alloc (storage), numeric (sieve/spectralnorm), string (json); queen/sieve use reduced scale"
 }

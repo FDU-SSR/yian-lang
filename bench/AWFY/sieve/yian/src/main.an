@@ -1,0 +1,76 @@
+from std.core.env import args;
+
+// bench/AWFY/an/sieve.an: Sieve of Eratosthenes (shootout sieve).
+//
+// Reference: AWFY benchmarks/Java/src/Sieve.java; see AWFY LICENSE.md.
+// Semantic reference: bench/AWFY/c/sieve.c, the project's C implementation.
+// Scale: allocate SIEVE_SIZE=5000 flags per work unit; assert prime_count==669.
+//
+// Algorithm: initialize flags[0..SIEVE_SIZE-1] to true, with index i representing i+1;
+//        sieve() marks composites starting at i=2 and counts primes.
+//
+// flags is bool[] with block-access semantics and no index field.
+//   main binds flags directly as bool[] (an allocation followed by its full-range slice);
+//   del T[] validly releases the whole block.
+//
+// Fat and raw modes share this source.
+// Use inferred dyn types and x[0u64..n] range views for both modes, retaining fat-mode checks.
+fn sieve(flags: bool[], size: i32) -> i32 {
+    let prime_count: i32 = 0;
+    let i: u64 = 2;
+    while size >= 0 && i <= u64(size) {
+        if flags[u64(i - 1)] {
+            prime_count += 1;
+            let k: u64 = i + i;
+            while size >= 0 && k <= u64(size) {
+                flags[u64(k - 1)] = false;
+                k += i;
+            }
+        }
+        i += 1;
+    }
+    return prime_count;
+}
+
+// Decimal prefix parsing for the C atoi/atoll workload argument.
+fn c_decimal(text: str) -> i64 {
+    let bytes = text.as_slice();
+    let i: u64 = 0;
+    while i < bytes.len() && (bytes[u64(i)] == 32 || (bytes[u64(i)] >= 9 && bytes[u64(i)] <= 13)) { i += 1; }
+    let negative: bool = false;
+    if i < bytes.len() && (bytes[u64(i)] == b'-' || bytes[u64(i)] == b'+') {
+        negative = bytes[u64(i)] == b'-';
+        i += 1;
+    }
+    let value: i64 = 0;
+    while i < bytes.len() && bytes[u64(i)] >= b'0' && bytes[u64(i)] <= b'9' {
+        value = value * 10 + i64(bytes[u64(i)] - b'0');
+        i += 1;
+    }
+    return if negative { -value } else { value };
+}
+
+fn main() {
+    let SIEVE_SIZE: i32 = 5000;
+    let ITER: u64 = 268657;  // bench-scale
+    let argv = args();
+    if argv.len() > 1u64 {
+        let requested = i32(c_decimal(argv[1u64].as_str()));
+        ITER = if requested > 0 { u64(requested) } else { 0u64 };
+    }
+    for argument in &argv { argument.drop(); }
+    argv.drop();
+    let iter: u64 = 0;
+    while iter < ITER {
+        let flags: bool[] = {
+            let extent: u64 = u64(SIEVE_SIZE);
+            let allocation = dyn[extent] true;
+            allocation[0u64..u64(extent)]
+        };
+        let flags_view: bool[] = flags[0u64..u64(SIEVE_SIZE)];
+        let prime_count: i32 = sieve(flags_view, SIEVE_SIZE);
+        assert prime_count == 669: "sieve: prime_count is not correct";
+        del flags;
+        iter += 1;
+    }
+}

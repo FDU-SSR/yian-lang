@@ -18,15 +18,6 @@ from yianc.analysis.unit.unit_data import UnitData
 
 RESTRICTED_BUILTINS = frozenset(
     {
-        AST.BuiltinKind.SysRead,
-        AST.BuiltinKind.SysReadBytes,
-        AST.BuiltinKind.SysWrite,
-        AST.BuiltinKind.SysWriteBytes,
-        AST.BuiltinKind.Open,
-        AST.BuiltinKind.Close,
-        AST.BuiltinKind.Sqrt,
-        AST.BuiltinKind.Sin,
-        AST.BuiltinKind.Cos,
         AST.BuiltinKind.BitCast,
         AST.BuiltinKind.Alloc,
         AST.BuiltinKind.Realloc,
@@ -41,9 +32,7 @@ RESTRICTED_BUILTINS = frozenset(
         AST.BuiltinKind.StrGetPtr,
         AST.BuiltinKind.StrGetLen,
         AST.BuiltinKind.RuntimeFail,
-        AST.BuiltinKind.Argc,
         AST.BuiltinKind.ArgBytes,
-        AST.BuiltinKind.Exit,
     }
 )
 

@@ -1,0 +1,9 @@
+[package]
+name = "pcre2"
+kind = "lib"
+ffi = true
+
+[native.c]
+sources = ["native/shim.c"]
+include-dirs = ["include", "native"]
+archives = ["lib/libpcre2-8.a"]

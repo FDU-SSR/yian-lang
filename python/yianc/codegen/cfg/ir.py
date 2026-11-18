@@ -52,10 +52,11 @@ class FieldPtr:
 
 @dataclass
 class ElementPtr:
-    """Given ptr, get ptr + offset"""
+    """Given ptr, get ptr + offset or ptr - offset when backward."""
     result: Reg
     base: Value
     offset: Value
+    backward: bool = False
 
 
 @dataclass
@@ -249,13 +250,15 @@ class CheckRefAccess:
 
 @dataclass
 class CheckElementArith:
-    """ElementPtr arithmetic validity check: 0 <= index+n <= size.
+    """ElementPtr arithmetic validity check: 0 <= index+n <= size for p+n.
 
-    Crossing one-past-end or the lower bound reports a safety error. No-wrap is enforced
-    through u64 overflow detection (icmp uge sum,index), emitted by LLVM.
+    For p-n the check is n <= index and index-n <= size. Crossing one-past-end or the
+    lower bound reports a safety error. No-wrap is enforced through u64 overflow
+    detection (icmp uge sum,index), emitted by LLVM.
     """
     base: Value
     offset: Value
+    backward: bool = False
 
 
 @dataclass
@@ -335,10 +338,11 @@ class CheckRequest:
 
 @dataclass
 class CheckPtrDiff:
-    """PtrDiff preconditions: equal data, valid arithmetic, and no wrap.
+    """PtrDiff preconditions: equal data and lifetime word, valid arithmetic, and no wrap.
 
-    Differences between objects report a safety error. This operation does not access memory,
-    so it does not check allocation liveness; dereferencing the result performs access checks. LLVM emits it.
+    Differences between objects or lifetimes report a safety error. This operation does not access
+    memory, so it does not check allocation liveness; dereferencing the result performs access checks.
+    LLVM emits it.
     """
     lhs: Value
     rhs: Value
@@ -346,10 +350,10 @@ class CheckPtrDiff:
 
 @dataclass
 class CheckPtrCmp:
-    """Ordering precondition: equal data.
+    """Ordering precondition: equal data and lifetime word.
 
-    Cross-object ordering reports a safety error in LLVM. Equality compares (data,index)
-    without this check. Pointer comparison does not access memory and therefore
+    Cross-object or cross-lifetime ordering reports a safety error in LLVM. Equality compares
+    (data,index) without this check. Pointer comparison does not access memory and therefore
     does not check allocation liveness.
     """
     lhs: Value
@@ -479,19 +483,6 @@ class VariantConstruct:
 
 
 @dataclass
-class SysWrite:
-    fd: Value
-    buf: Value
-
-
-@dataclass
-class SysWriteBytes:
-    result: Reg
-    fd: Value
-    buf: Value
-
-
-@dataclass
 class MemCopy:
     """Byte-level memory copy — ``@memcpy(dest, src, count)``."""
     dest: Value
@@ -523,73 +514,11 @@ class FfiPtrCast:
 
 
 @dataclass
-class FfiCopy:
-    destination: Value
-    source: Value
-    count: Value
-    from_c: bool
-
-
-@dataclass
 class MemSetPattern:
     """Repeat a typed value over a freshly allocated element buffer."""
     dest: Value
     value: Value
     count: Value
-
-
-@dataclass
-class SysRead:
-    result: Reg
-    fd: Value
-    buf: Value
-
-
-@dataclass
-class SysReadBytes:
-    result: Reg
-    fd: Value
-    buf: Value
-
-
-@dataclass
-class Open:
-    result: Reg
-    path: Value
-    flags: Value
-
-
-@dataclass
-class Close:
-    result: Reg
-    fd: Value
-
-
-@dataclass
-class Sqrt:
-    """Square root of an ``f64`` value."""
-    result: Reg
-    value: Value
-
-
-@dataclass
-class Sin:
-    """Sine of an ``f64`` value."""
-    result: Reg
-    value: Value
-
-
-@dataclass
-class Cos:
-    """Cosine of an ``f64`` value."""
-    result: Reg
-    value: Value
-
-
-@dataclass
-class ArgCount:
-    """Load the process argument count."""
-    result: Reg
 
 
 @dataclass
@@ -620,8 +549,8 @@ Stmt: TypeAlias = (
     | Call | Invoke | TraitObjectConstruct | TraitObjectInvoke
     | Cast | SizeOf | Undef | Dangling | FuncPtr
     | AggregateConstruct | ArrayConstruct | VariantConstruct
-    | SysWrite | SysWriteBytes | SysRead | SysReadBytes | Open | Close | Sqrt | Sin | Cos | ArgCount | ArgBytes
-    | MemCopy | MemSetPattern | FfiAddr | FfiParts | FfiNull | FfiPtrCast | FfiCopy
+    | ArgBytes
+    | MemCopy | MemSetPattern | FfiAddr | FfiParts | FfiNull | FfiPtrCast
     | GenKey | AcquireFrameLock
     | CheckSafeAccess | CheckViewAccess | CheckInBounds | CheckSliceNonEmpty
     | CheckElementArith | CheckPtrDiff | CheckDelete
@@ -671,17 +600,11 @@ class RuntimeFail:
 
 
 @dataclass
-class ProcessExit:
-    """Terminate the process with an explicit status code."""
-    code: Value
-
-
-@dataclass
 class Unreachable:
     """A statically exhaustive match has no fallthrough value."""
 
 
-Terminator: TypeAlias = Ret | Br | CondBr | Panic | RuntimeFail | ProcessExit | Unreachable
+Terminator: TypeAlias = Ret | Br | CondBr | Panic | RuntimeFail | Unreachable
 
 # ---------------------------------------------------------------------------
 # Basic Data Structures

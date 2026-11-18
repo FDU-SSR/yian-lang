@@ -1,0 +1,5 @@
+// Independent switches for the two optional CFG passes; safety activation always runs.
+pub struct CfgPassOptions {
+    pub inline: bool,
+    pub eliminate: bool,
+}

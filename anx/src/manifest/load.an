@@ -1,17 +1,12 @@
-from std.core.drop import Drop;
-from std.core.option import Option;
 from std.core.path import Path, PathBuf;
-from std.core.result import Result;
-from std.core.string import String;
-from std.core.vec import Vec;
 from std.core.fs import metadata, read_to_string, resolve;
-from std.core.io import IoError;
+from std.core.io import File, OpenMode, Read, IoError;
 from std.core.fmt import ToString;
 from toml.parse import Document, NodeId, NodeKind, ParseError, parse, array_len;
 from toml.parse import array_child, boolean_value, integer_u64, node_kind, string_value, table_child, table_entry, table_len;
 from anx.diagnostics.model import AX_BAD_MANIFEST, AX_RESERVED_PACKAGE_NAME, Diagnostic;
 from anx.diagnostics.model import release_diagnostics;
-from anx.manifest.model import DependencySpec, Manifest, ManifestReport, NativeLLVM, PackageKind;
+from anx.manifest.model import DependencySpec, Manifest, ManifestReport, NativeC, NativeLLVM, PackageKind;
 
 const MANIFEST_NAME: str = "package.anx";
 const DEFAULT_VERSION: str = "0.1.0";
@@ -67,6 +62,21 @@ fn is_array(document: Document&, id: NodeId) -> bool {
     }
 }
 
+fn normal_archive(path: str) -> bool {
+    let file = match File.open(path, OpenMode.Read) {
+        Ok(value) => value,
+        Err(problem) => { problem.drop(); return false; },
+    };
+    defer file.drop();
+    let header: u8[8] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8];
+    match file.read_exact(header.as_slice()) {
+        Ok(_) => header[0] == b'!' && header[1] == b'<' && header[2] == b'a' &&
+            header[3] == b'r' && header[4] == b'c' && header[5] == b'h' &&
+            header[6] == b'>' && header[7] == b'\n',
+        Err(problem) => { problem.drop(); false },
+    }
+}
+
 fn read_native_llvm(document: Document&, root: NodeId, package_root: str, manifest_path: str,
     ffi_allowed: bool, diagnostics: Vec<Diagnostic>&) -> Option<NativeLLVM> {
     let native_id = match table_child(document, root, "native") {
@@ -87,10 +97,10 @@ fn read_native_llvm(document: Document&, root: NodeId, package_root: str, manife
             Some(value) => value,
             None => { index += 1u64; continue; },
         };
-        let supported = key.as_str() == "llvm";
+        let supported = key.as_str() == "llvm" || key.as_str() == "c";
         key.drop();
         if !supported {
-            diagnostic(diagnostics, AX_BAD_MANIFEST, "Only [native.llvm] is supported", manifest_path, Option<str>.None);
+            diagnostic(diagnostics, AX_BAD_MANIFEST, "Only [native.llvm] and [native.c] are supported", manifest_path, Option<str>.None);
             return Option<NativeLLVM>.None;
         }
         index += 1u64;
@@ -223,6 +233,130 @@ fn read_native_llvm(document: Document&, root: NodeId, package_root: str, manife
     }
 
     Option<NativeLLVM>.Some(NativeLLVM.new(major, components, sources))
+}
+
+fn read_native_c_paths(document: Document&, native_c_id: NodeId, key: str, package_root: str,
+    suffix: str, directory: bool, archive: bool, output: Vec<PathBuf>&) -> bool {
+    let array_id = match table_child(document, native_c_id, key) {
+        Some(id) => id,
+        None => return true,
+    };
+    if !is_array(document, array_id) { return false; }
+
+    let root = match resolve(package_root) {
+        Ok(value) => value,
+        Err(problem) => { problem.drop(); return false; },
+    };
+    defer root.drop();
+
+    let valid = true;
+    let count = array_len(document, array_id);
+    let item = 0u64;
+    while item < count {
+        let value_id = match array_child(document, array_id, item) {
+            Some(value) => value,
+            None => { valid = false; item += 1u64; continue; },
+        };
+        let value = match string_value(document, value_id) {
+            Some(value) => value,
+            None => { valid = false; item += 1u64; continue; },
+        };
+        let relative = value.as_str();
+        if relative == "" || Path.new(relative).is_absolute() || has_parent_component(relative) ||
+            (suffix != "" && !relative.ends_with(suffix)) {
+            valid = false;
+            value.drop();
+            item += 1u64;
+            continue;
+        }
+
+        let unresolved = Path.new(root.as_str()).join(relative);
+        let resolved = match resolve(unresolved.as_str()) {
+            Ok(path) => path,
+            Err(problem) => { problem.drop(); unresolved.drop(); value.drop(); valid = false; item += 1u64; continue; },
+        };
+        unresolved.drop();
+        let in_package = within_directory(root.as_str(), resolved.as_str());
+        let correct_kind = match metadata(resolved.as_str()) {
+            Ok(info) => if directory { info.is_dir() } else { info.is_file() },
+            Err(problem) => { problem.drop(); false },
+        };
+        let archive_ok = !archive || normal_archive(resolved.as_str());
+        if !in_package || !correct_kind || !archive_ok {
+            valid = false;
+            resolved.drop();
+        } else {
+            let duplicate = false;
+            let existing = 0u64;
+            while existing < output.len() {
+                if output[existing].as_str() == resolved.as_str() { duplicate = true; break; }
+                existing += 1u64;
+            }
+            if duplicate {
+                valid = false;
+                resolved.drop();
+            } else {
+                output.push(resolved);
+            }
+        }
+        value.drop();
+        item += 1u64;
+    }
+    valid
+}
+
+fn read_native_c(document: Document&, root: NodeId, package_root: str, manifest_path: str,
+    ffi_allowed: bool, diagnostics: Vec<Diagnostic>&) -> Option<NativeC> {
+    let native_id = match table_child(document, root, "native") {
+        Some(id) => id,
+        None => return Option<NativeC>.None,
+    };
+    let native_c_id = match table_child(document, native_id, "c") {
+        Some(id) => id,
+        None => return Option<NativeC>.None,
+    };
+    match node_kind(document, native_c_id) {
+        Some(NodeKind.Table) => {},
+        _ => {
+            diagnostic(diagnostics, AX_BAD_MANIFEST, "[native.c] must be a table", manifest_path, Option<str>.None);
+            return Option<NativeC>.None;
+        },
+    }
+
+    let unknown_field = false;
+    let field_index = 0u64;
+    while field_index < table_len(document, native_c_id) {
+        let(key, _) = match table_entry(document, native_c_id, field_index) {
+            Some(value) => value,
+            None => { field_index += 1u64; continue; },
+        };
+        if key.as_str() != "sources" && key.as_str() != "include-dirs" && key.as_str() != "archives" {
+            unknown_field = true;
+        }
+        key.drop();
+        field_index += 1u64;
+    }
+
+    let sources = Vec<PathBuf>.new();
+    let include_dirs = Vec<PathBuf>.new();
+    let archives = Vec<PathBuf>.new();
+    let sources_ok = read_native_c_paths(document, native_c_id, "sources", package_root, ".c", false, false, &sources);
+    let include_dirs_ok = read_native_c_paths(document, native_c_id, "include-dirs", package_root, "", true, false, &include_dirs);
+    let archives_ok = read_native_c_paths(document, native_c_id, "archives", package_root, ".a", false, true, &archives);
+    let nonempty = sources.len() > 0u64 || archives.len() > 0u64;
+    if unknown_field || !ffi_allowed || !sources_ok || !include_dirs_ok || !archives_ok || !nonempty {
+        let message = if !ffi_allowed { "[native.c] requires [package].ffi = true" }
+            elif unknown_field { "Unknown [native.c] field" }
+            elif !sources_ok || !include_dirs_ok || !archives_ok { "[native.c] paths must be unique, in-package, and have the declared file kind" }
+            elif !nonempty { "[native.c] requires at least one source or archive" }
+            else { "[native.c] paths must be unique, in-package, and have the declared file kind" };
+        diagnostic(diagnostics, AX_BAD_MANIFEST, message, manifest_path, Option<str>.None);
+        release_paths(&sources);
+        release_paths(&include_dirs);
+        release_paths(&archives);
+        return Option<NativeC>.None;
+    }
+    Option<NativeC>.Some(NativeC.new(sources, include_dirs, archives))
 }
 
 fn release_strings(values: Vec<String>&) {
@@ -413,15 +547,8 @@ fn read_failure(path: str, problem: IoError) -> ManifestReport {
 
 fn parse_failure(path: str, problem: ParseError) -> ManifestReport {
     let diagnostics = Vec<Diagnostic>.new();
-    let message = String.from(&"Could not parse manifest at line ");
-    let row = problem.row().to_string();
-    let column = problem.column().to_string();
-    defer { message.drop(); row.drop(); column.drop(); };
-    message.push_str(row.as_str());
-    message.push_str(", column ");
-    message.push_str(column.as_str());
-    message.push_str(": ");
-    message.push_str(problem.message());
+    let message = f"Could not parse manifest at line {problem.row()}, column {problem.column()}: {problem.message()}";
+    defer message.drop();
     problem.drop();
     diagnostic(&diagnostics, AX_BAD_MANIFEST, message.as_str(), path, Option<str>.None);
     ManifestReport.new(Option<Manifest>.None, diagnostics)
@@ -549,19 +676,23 @@ pub fn read_manifest(path: str) -> ManifestReport {
     };
     let native_llvm = read_native_llvm(&document, root, package_root.as_str(), path,
         ffi_allowed, &diagnostics);
+    let native_c = read_native_c(&document, root, package_root.as_str(), path,
+        ffi_allowed, &diagnostics);
 
     if !name_ok || !kind_ok {
         name.drop();
         kind_value.drop();
         version.drop();
         match entry { Some(value) => value.drop(), None => {}, }
+        match native_llvm { Some(value) => value.drop(), None => {}, }
+        match native_c { Some(value) => value.drop(), None => {}, }
         release_dependency_specs(&dependencies);
         release_dependency_specs(&dev_dependencies);
         return ManifestReport.new(Option<Manifest>.None, diagnostics);
     }
 
     let manifest = Manifest.new(name.as_str(), *kind.unwrap(), entry, version.as_str(),
-        dependencies, dev_dependencies, ffi_allowed, native_llvm);
+        dependencies, dev_dependencies, ffi_allowed, native_llvm, native_c);
     name.drop();
     kind_value.drop();
     version.drop();

@@ -1,0 +1,1 @@
+type 'Vec<NoFormat>' does not implement 'Format' because member type 'NoFormat' does not implement 'Format'

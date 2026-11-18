@@ -1,27 +1,26 @@
 from yianc.analysis.session.session import AnalysisSession;
-from yianc.analysis.session.prepare import PreparationObserver;
 from yianc.analysis.session.output import AnalysisOutput;
 from yianc.analysis.hir.node import HirNode;
 from yianc.analysis.hir.pattern import PatternNode;
 from yianc.analysis.hir.traversal import HirVisitor, walk_expr;
-from yianc.codegen.cfg.model import CfgModule;
-from yianc.codegen.cfg.ids import FunctionId, BlockId, ValueId;
+from yianc.codegen.cfg.model import CfgModule, SafetyStage, GuardKind, GuardSite;
+from yianc.codegen.cfg.ids import FunctionId, BlockId, ValueId, ScopeId;
+from yianc.codegen.representation import PointerRepresentation;
 from yianc.codegen.error import CodegenError;
 from yianc.common.ids import UnitId, HirId, PatternId;
 from yianc.common.traversal import WalkControl;
 from yianc.diagnostics.model import AnalysisError;
 from yianc.frontend.prepare import PreparationStage;
+from yianc.driver.trace import CompilerTrace;
+from yianc.driver.profile import ProfileKind;
 from yianc.frontend.observe import append_token_file;
+from yianc.frontend.session import FrontendSession, PreparationObserver;
 from yianc.frontend.ast.format import AstFormatter;
 from json.write import Writer;
-from std.core.drop import Drop;
 from std.core.fmt import ToString;
 from std.core.fs import create_dir_all, write_string;
 from std.core.iter import Iterator, IntoIterator;
-from std.core.option import Option;
 from std.core.ops import Index;
-from std.core.range import Range;
-from std.core.result import Result;
 
 fn save(output: Writer&, path: str) -> Result<(), AnalysisError> {
     let text = match output.finish() {
@@ -35,20 +34,74 @@ fn save(output: Writer&, path: str) -> Result<(), AnalysisError> {
     }
 }
 
-pub struct StageDumps { pub enabled: bool }
 
-impl PreparationObserver for StageDumps {
-    pub fn stage_complete(stage: PreparationStage, session: AnalysisSession&) -> Result<(), AnalysisError> {
-        if !self.enabled { return Result<(), AnalysisError>.Ok(()); }
-        match stage {
-            Lex => tokens_dump(session),
-            Desugar => ast_dump(session),
-            Parse => Result<(), AnalysisError>.Ok(()),
-        }
+fn stage_name(stage: SafetyStage) -> str {
+    match stage { Neutral => "neutral", Prepared => "prepared", Optimized => "optimized" }
+}
+
+fn representation_name(representation: PointerRepresentation) -> str {
+    match representation {
+        NonPointer => "non-pointer", ZeroSized => "zero-sized", RawAddress => "raw-address",
+        RawView => "raw-view", RawTraitObject => "raw-trait-object", FatPointer => "fat-pointer",
+        FatReference => "fat-reference", FatView => "fat-view", FatTraitObject => "fat-trait-object",
     }
 }
 
-fn tokens_dump(session: AnalysisSession&) -> Result<(), AnalysisError> {
+fn guard_kind_name(kind: GuardKind) -> str {
+    match kind {
+        Count => "count", AllocationSize => "allocation-size", AllocationResult => "allocation-result",
+        HeapRoot => "heap-root", PointerStep => "pointer-step", PointerDifference => "pointer-difference",
+        PointerOrder => "pointer-order", IndexOffset => "index-offset", ViewParts => "view-parts",
+        SliceRange => "slice-range", ArgumentIndex => "argument-index", ArgumentData => "argument-data",
+        PointerRemaining => "pointer-remaining", CastAccess => "cast-access", CastView => "cast-view",
+        CastNonempty => "cast-nonempty", DynamicReceiver => "dynamic-receiver",
+    }
+}
+
+fn guard_site_name(site: GuardSite) -> str {
+    match site { Before => "before", AfterAllocation => "after-allocation", BeforeRelease => "before-release", AfterArgumentLoad => "after-argument-load" }
+}
+
+pub struct StageDumps { pub enabled: bool, pub trace: Option<CompilerTrace&> }
+
+impl PreparationObserver for StageDumps {
+    pub fn begin(pass_id: str) -> u64 {
+        match self.trace {
+            Some(trace) => trace.start_pass(pass_id, "preparation", pass_id, ProfileKind.Pass),
+            None => 0u64,
+        }
+    }
+
+    pub fn finish(pass_id: str, token: u64, success: bool) {
+        match self.trace {
+            Some(trace) => if success { trace.finish(pass_id, token); } else { trace.fail(pass_id, token); },
+            None => {},
+        }
+    }
+
+    pub fn stage_complete(stage: PreparationStage, session: FrontendSession&) -> Result<(), AnalysisError> {
+        if !self.enabled { return Result<(), AnalysisError>.Ok(()); }
+        let writes_dump = match stage { Lex | Desugar => true, Parse => false };
+        if !writes_dump { return Result<(), AnalysisError>.Ok(()); }
+        let token = match self.trace {
+            Some(trace) => trace.start_pass("io.dump", "io", "stage dump", ProfileKind.Tool),
+            None => 0u64,
+        };
+        let result = match stage {
+            Lex => tokens_dump(session),
+            Desugar => ast_dump(session),
+            Parse => Result<(), AnalysisError>.Ok(()),
+        };
+        let success = match &result { Ok(_) => true, Err(_) => false };
+        match self.trace {
+            Some(trace) => if success { trace.finish("io.dump", token); } else { trace.fail("io.dump", token); },
+            None => {},
+        }
+        result
+    }
+}
+
+fn tokens_dump(session: FrontendSession&) -> Result<(), AnalysisError> {
     match create_dir_all("build") {
         Ok(_) => {},
         Err(problem) => { defer problem.drop(); return Result<(), AnalysisError>.Err(AnalysisError.internal(problem.msg())); },
@@ -65,7 +118,7 @@ fn tokens_dump(session: AnalysisSession&) -> Result<(), AnalysisError> {
     save(&tokens, "build/tokens.txt")
 }
 
-fn ast_dump(session: AnalysisSession&) -> Result<(), AnalysisError> {
+fn ast_dump(session: FrontendSession&) -> Result<(), AnalysisError> {
     let ast = Writer.with_max_depth(512u64);
     defer ast.drop();
     ast.begin_array();
@@ -196,6 +249,38 @@ pub fn cfg_dump(module: CfgModule&) -> Result<(), CodegenError> {
         output.begin_array();
         for parameter in function.parameters { output.write_u64(parameter.index); }
         output.end_array();
+        output.key("safety_stage");
+        output.write_string(stage_name(module.safety_stage));
+        output.key("scopes");
+        output.begin_array();
+        for scope_index in 0u64..function.scopes.len() {
+            let scope = function.scope(ScopeId(scope_index))?;
+            output.begin_object();
+            output.key("id");
+            output.write_u64(scope_index);
+            output.key("parent");
+            match scope.parent { Some(value) => output.write_u64(value.index), None => output.write_null(), }
+            output.key("callable");
+            output.write_u64(scope.callable.index);
+            output.key("needs_lock");
+            match &function.fat_plan {
+                Some(plan) => output.write_bool(plan.scopes[scope_index].needs_lock),
+                None => output.write_null(),
+            }
+            output.end_object();
+        }
+        output.end_array();
+        output.key("representations");
+        output.begin_array();
+        for representation in module.representations {
+            output.begin_object();
+            output.key("type");
+            output.write_u64(representation.type_id.index);
+            output.key("representation");
+            output.write_string(representation_name(representation.representation));
+            output.end_object();
+        }
+        output.end_array();
         output.key("values");
         output.begin_array();
         for index in 0u64..function.value_count() {
@@ -256,7 +341,7 @@ pub fn cfg_dump(module: CfgModule&) -> Result<(), CodegenError> {
                     output.key("kind");
                     output.write_string(check.name());
                     match check {
-                        Access(_, kind) => { output.key("code"); output.write_string(kind.code()); },
+                        Access(_, kind) | Live(_, kind) | AccessBounds(_, kind) => { output.key("code"); output.write_string(kind.code()); },
                         _ => {},
                     }
                     output.key("operands");
@@ -265,6 +350,35 @@ pub fn cfg_dump(module: CfgModule&) -> Result<(), CodegenError> {
                     defer operands.drop();
                     for operand in operands { output.write_u64(operand.index); }
                     output.end_array();
+                    output.end_object();
+                }
+                output.end_array();
+                output.key("guards");
+                output.begin_array();
+                for guard_record in instruction.guards {
+                    output.begin_object();
+                    output.key("kind");
+                    output.write_string(guard_kind_name(guard_record.kind));
+                    output.key("site");
+                    output.write_string(guard_site_name(guard_record.site));
+                    output.end_object();
+                }
+                output.end_array();
+                output.key("live_proofs");
+                output.begin_array();
+                for proof in instruction.live_proofs {
+                    output.begin_object();
+                    output.key("address");
+                    output.write_u64(proof.address.index);
+                    output.key("witness");
+                    output.begin_object();
+                    output.key("block");
+                    output.write_u64(proof.witness.block.index);
+                    output.key("instruction");
+                    output.write_u64(proof.witness.instruction);
+                    output.key("check");
+                    output.write_u64(proof.witness.check);
+                    output.end_object();
                     output.end_object();
                 }
                 output.end_array();
@@ -281,7 +395,26 @@ pub fn cfg_dump(module: CfgModule&) -> Result<(), CodegenError> {
                         output.end_array();
                     },
                     EnumConstruct(tag, _) => { output.key("tag"); output.write_u64(*tag); },
+                    EnumInitAt(_, enumeration, discriminant, _) => {
+                        output.key("enum");
+                        output.write_u64(enumeration.index);
+                        output.key("tag");
+                        output.write_u64(*discriminant);
+                    },
+                    EnumTagAt(_, enumeration) | EnumCopyAt(_, _, enumeration) => {
+                        output.key("enum");
+                        output.write_u64(enumeration.index);
+                    },
+                    EnumFieldAt(_, enumeration, discriminant, field) => {
+                        output.key("enum");
+                        output.write_u64(enumeration.index);
+                        output.key("tag");
+                        output.write_u64(*discriminant);
+                        output.key("field");
+                        output.write_u64(*field);
+                    },
                     Extract(_, field) | FieldAddress(_, _, field) => { output.key("field"); output.write_u64(*field); },
+                    ScopeEnter(scope) | ScopeExit(scope) => { output.key("scope"); output.write_u64(scope.index); },
                     _ => {},
                 }
                 output.end_object();

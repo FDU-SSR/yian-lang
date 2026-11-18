@@ -131,7 +131,7 @@ class ValueLowerer:
             self.__state.emitter.emit(IR.CheckRequest(
                 kind=IR.CHECK_REQUEST_RAW_BOUNDS, operands=[index_val], extra=expr.length,
             ))
-            _ch_block().debug(lambda: "check insert ArrayAccess(raw): index < length (裸数组越界)")
+            _ch_block().debug(lambda: "check insert ArrayAccess(raw): index < length (bare-array bounds)")
         return self.__memory.build_element_ptr(elem_base, index_val, elem_ptr_type)
 
     def resolve_slice_access_addr(self, expr: HIR.SliceAccess, *, fat: bool = False) -> IR.Value:
@@ -304,7 +304,7 @@ class ValueLowerer:
         # raw representation propagates through casts and derived addresses of decayed bare arrays.
         to_resolved = to_type
         if isinstance(self.__state.session.type_ctx[to_resolved], Type.PointerType):
-            _ch_block().debug(lambda: "cast ptr→ptr: identity (fat representation) / ptr-to-ZST 例外 = undef")
+            _ch_block().debug(lambda: "cast ptr→ptr: identity (fat representation) / ptr-to-ZST exception = undef")
         raw = self.__state.pointers.is_raw(value)
         result = IR.Reg(name=self.__state.emitter.new_name(), type_id=to_type)
         cast = self.__state.emitter.emit(IR.Cast(result=result, value=value, to_type=to_type, raw=raw)).result

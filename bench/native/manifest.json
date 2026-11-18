@@ -1,0 +1,199 @@
+{
+  "format": 1,
+  "libraries": [
+    {
+      "archives": [
+        {
+          "path": "gmp/lib/libgmp.a",
+          "sha256": "e7af54fb60c6bb6b30837d503effe0125aa56faa81f6923fd884aec8ec1e1e99"
+        }
+      ],
+      "build": {
+        "archiver_version": "Ubuntu LLVM version 22.1.8",
+        "cflags": [
+          "-O2",
+          "-fPIC",
+          "-fno-lto"
+        ],
+        "compiler": "/usr/bin/clang",
+        "compiler_sha256": "ebced28c19b0f18b7cea5c1c8b05ad2e47ec45a138cecacab9a25a85003574d1",
+        "compiler_version": "Ubuntu clang version 22.1.8 (++20260613092327+e80beda6e255-1~exp1~20260613092437.81)",
+        "configure": [
+          "--disable-shared",
+          "--enable-static",
+          "--enable-fat",
+          "--with-pic",
+          "--disable-cxx",
+          "ABI=64"
+        ],
+        "isa": "x86_64 LP64; --enable-fat runtime dispatch among bundled x86 implementations",
+        "ldflags": [],
+        "libc": "ldd (Ubuntu GLIBC 2.35-0ubuntu3.15) 2.35; Ubuntu 22.04; x86_64",
+        "linker_version": "GNU ld (GNU Binutils for Ubuntu) 2.38",
+        "lto": false,
+        "pcre2_jit": false,
+        "pic": true,
+        "required_symbols": [
+          "__ctype_b_loc",
+          "__isoc99_fscanf",
+          "__isoc99_sscanf",
+          "_obstack_newchunk",
+          "abort",
+          "ferror",
+          "fgetc",
+          "fprintf",
+          "fputc",
+          "fread",
+          "free",
+          "fwrite",
+          "getc",
+          "malloc",
+          "memcpy",
+          "memset",
+          "nl_langinfo",
+          "obstack_vprintf",
+          "printf",
+          "putc",
+          "putchar",
+          "puts",
+          "raise",
+          "realloc",
+          "snprintf",
+          "stderr",
+          "stdin",
+          "stdout",
+          "strchr",
+          "strlen",
+          "strstr",
+          "strtol",
+          "ungetc",
+          "vfprintf",
+          "vsnprintf",
+          "vsprintf"
+        ],
+        "verified_hosts": [
+          "Linux x86_64; ldd (Ubuntu GLIBC 2.35-0ubuntu3.15) 2.35; Ubuntu 22.04; x86_64"
+        ]
+      },
+      "git_commit": null,
+      "headers": [
+        {
+          "path": "gmp/include/gmp.h",
+          "sha256": "1898d81c30bf177e9094a33b84b14916145662fde326086c8954910d8b52f41b"
+        }
+      ],
+      "instrumentation": {
+        "asan": false,
+        "yian_guards": false
+      },
+      "licenses": [
+        {
+          "path": "licenses/gmp/COPYING",
+          "sha256": "8ceb4b9ee5adedde47b31e975c1d90c73ad27b6b165a1dcd80c7c545eb65b903"
+        },
+        {
+          "path": "licenses/gmp/COPYINGv2",
+          "sha256": "8177f97513213526df2cf6184d8ff986c675afb514d4e68a404010521b880643"
+        },
+        {
+          "path": "licenses/gmp/COPYINGv3",
+          "sha256": "e6037104443f9a7829b2aa7c5370d0789a7bda3ca65a0b904cdc0c2e285d9195"
+        },
+        {
+          "path": "licenses/gmp/COPYING.LESSERv3",
+          "sha256": "a853c2ffec17057872340eee242ae4d96cbf2b520ae27d903e1b2fef1a5f9d1c"
+        }
+      ],
+      "name": "gmp",
+      "source_archive": "sources/gmp-6.3.0.tar.xz",
+      "source_sha256": "a3c2b80201b89e68616f4ad30bc66aee4927c3ce50e33929ca819d5c43538898",
+      "source_url": "https://ftp.gnu.org/gnu/gmp/gmp-6.3.0.tar.xz",
+      "version": "6.3.0"
+    },
+    {
+      "archives": [
+        {
+          "path": "pcre2/lib/libpcre2-8.a",
+          "sha256": "bcb3f8414521d432dab22195d9f889575497fc7324edf4d051d8e08cab157f62"
+        }
+      ],
+      "build": {
+        "archiver_version": "Ubuntu LLVM version 22.1.8",
+        "cflags": [
+          "-O2",
+          "-fPIC",
+          "-fno-lto"
+        ],
+        "compiler": "/usr/bin/clang",
+        "compiler_sha256": "ebced28c19b0f18b7cea5c1c8b05ad2e47ec45a138cecacab9a25a85003574d1",
+        "compiler_version": "Ubuntu clang version 22.1.8 (++20260613092327+e80beda6e255-1~exp1~20260613092437.81)",
+        "configure": [
+          "--disable-shared",
+          "--enable-static",
+          "--enable-pcre2-8",
+          "--disable-pcre2-16",
+          "--disable-pcre2-32",
+          "--enable-jit"
+        ],
+        "isa": "x86_64 baseline C; PCRE2 JIT emits host code at runtime",
+        "ldflags": [],
+        "libc": "ldd (Ubuntu GLIBC 2.35-0ubuntu3.15) 2.35; Ubuntu 22.04; x86_64",
+        "linker_version": "GNU ld (GNU Binutils for Ubuntu) 2.38",
+        "lto": false,
+        "pcre2_jit": true,
+        "pic": true,
+        "required_symbols": [
+          "__ctype_b_loc",
+          "__ctype_tolower_loc",
+          "__ctype_toupper_loc",
+          "bcmp",
+          "free",
+          "madvise",
+          "malloc",
+          "memchr",
+          "memcmp",
+          "memcpy",
+          "memmove",
+          "memset",
+          "mmap",
+          "munmap",
+          "posix_madvise",
+          "pthread_mutex_lock",
+          "pthread_mutex_unlock",
+          "strlen",
+          "sysconf"
+        ],
+        "verified_hosts": [
+          "Linux x86_64; ldd (Ubuntu GLIBC 2.35-0ubuntu3.15) 2.35; Ubuntu 22.04; x86_64"
+        ]
+      },
+      "git_commit": "f454e231fe5006dd7ff8f4693fd2b8eb94333429",
+      "headers": [
+        {
+          "path": "pcre2/include/pcre2.h",
+          "sha256": "058462dc030e845ee627e19ac36347f561f5cc44d89eaf1c0010f2b363ab68d5"
+        },
+        {
+          "path": "pcre2/include/pcre2posix.h",
+          "sha256": "4e3f99d21b10f3168fa562c6345e2b387a1a83f8bd2a35784b2832f4dc4d9444"
+        }
+      ],
+      "instrumentation": {
+        "asan": false,
+        "yian_guards": false
+      },
+      "licenses": [
+        {
+          "path": "licenses/pcre2/LICENCE.md",
+          "sha256": "197d8a73ffee0d6b09adba2f9c677b5f5aede24edf89258a68e48248d010d811"
+        }
+      ],
+      "name": "pcre2-8",
+      "source_archive": "sources/pcre2-10.47.tar.gz",
+      "source_sha256": "c08ae2388ef333e8403e670ad70c0a11f1eed021fd88308d7e02f596fcd9dc16",
+      "source_url": "https://github.com/PCRE2Project/pcre2/releases/download/pcre2-10.47/pcre2-10.47.tar.gz",
+      "version": "10.47"
+    }
+  ],
+  "target": "linux-x86_64-lp64"
+}

@@ -3,7 +3,6 @@
 // stdin from tests/input/env/stdin.an.stdin:  hello from stdin
 
 from std.core.io import Stdin, BufReader;
-from std.core.drop import Drop;
 
 fn main() {
     let input = Stdin.new();

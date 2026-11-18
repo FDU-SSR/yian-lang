@@ -23,17 +23,9 @@ class IntrinsicKind(Enum):
     Malloc = auto()
     Realloc = auto()
     Free = auto()
-    Write = auto()
-    Read = auto()
-    Open = auto()
-    Close = auto()
-    ImmediateExit = auto()
     StrLen = auto()
     MemCopy = auto()
     MemSet = auto()
-    Sqrt = auto()
-    Sin = auto()
-    Cos = auto()
     SysRandom = auto()
 
 
@@ -47,10 +39,6 @@ def _pointer_type() -> ir.Type:
 
 def _void_type() -> ir.Type:
     return cast(ir.Type, ir.VoidType())
-
-
-def _double_type() -> ir.Type:
-    return cast(ir.Type, ir.DoubleType())
 
 
 @dataclass(frozen=True)
@@ -69,11 +57,6 @@ class IntrinsicManager:
         IntrinsicKind.Malloc: IntrinsicSpec(_pointer_type(), (_int_type(64),), "malloc", None),
         IntrinsicKind.Realloc: IntrinsicSpec(_pointer_type(), (_pointer_type(), _int_type(64)), "realloc", None),
         IntrinsicKind.Free: IntrinsicSpec(_void_type(), (_pointer_type(),), "free", TypeCtx.void_id),
-        IntrinsicKind.Write: IntrinsicSpec(_int_type(64), (_int_type(32), _pointer_type(), _int_type(64)), "write", TypeCtx.i64_id),
-        IntrinsicKind.Read: IntrinsicSpec(_int_type(64), (_int_type(32), _pointer_type(), _int_type(64)), "read", TypeCtx.u64_id),
-        IntrinsicKind.Open: IntrinsicSpec(_int_type(32), (_pointer_type(), _int_type(32), _int_type(32)), "open", TypeCtx.i32_id),
-        IntrinsicKind.Close: IntrinsicSpec(_int_type(32), (_int_type(32),), "close", TypeCtx.i32_id),
-        IntrinsicKind.ImmediateExit: IntrinsicSpec(_void_type(), (_int_type(32),), "_exit", TypeCtx.void_id, function_attributes=("nounwind", "noreturn")),
         IntrinsicKind.StrLen: IntrinsicSpec(_int_type(64), (_pointer_type(),), "strlen", TypeCtx.u64_id),
         # LLVM memory intrinsics take an immarg isvolatile flag, which is always false here.
         IntrinsicKind.MemCopy: IntrinsicSpec(
@@ -92,9 +75,6 @@ class IntrinsicManager:
             parameter_attributes=((3, "immarg"),),
             append_volatile_flag=True,
         ),
-        IntrinsicKind.Sqrt: IntrinsicSpec(_double_type(), (_double_type(),), "llvm.sqrt.f64", TypeCtx.f64_id),
-        IntrinsicKind.Sin: IntrinsicSpec(_double_type(), (_double_type(),), "llvm.sin.f64", TypeCtx.f64_id),
-        IntrinsicKind.Cos: IntrinsicSpec(_double_type(), (_double_type(),), "llvm.cos.f64", TypeCtx.f64_id),
         IntrinsicKind.SysRandom: IntrinsicSpec(_int_type(32), (), "rand", TypeCtx.u32_id),
     }
 

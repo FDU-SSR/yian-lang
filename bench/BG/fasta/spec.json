@@ -1,0 +1,19 @@
+{
+  "name": "fasta",
+  "measurement": {"warmups": 1, "runs": 5},
+  "source": "BG",
+  "tags": [
+    "string"
+  ],
+  "argv": [],
+  "check": {
+    "rc": 0
+  },
+  "note": "Complete official FASTA text output in ONE, TWO, THREE order with 60-column sequence lines; file comparisons remain byte-safe.",
+  "scale": {
+    "default": 25000000,
+    "fast": 100000,
+    "c": "argv"
+  },
+  "io": {}
+}

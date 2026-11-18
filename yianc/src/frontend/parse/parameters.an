@@ -3,9 +3,6 @@ from yianc.frontend.lex.token import KeywordKind, PunctuatorKind;
 from yianc.frontend.parse.pattern import parse_binding_pattern;
 from yianc.frontend.parse.state import Parser;
 from yianc.frontend.parse.type import parse_type;
-from std.core.drop import Drop;
-from std.core.option import Option;
-from std.core.vec import Vec;
 
 pub fn parse_var_info(parser: Parser&) -> Option<VarInfo&> {
     let name = parser.identifier()?;
@@ -41,14 +38,8 @@ pub fn parse_parameters(parser: Parser&) -> Option<Vec<Parameter>> {
     defer values.drop();
 
     while !parser.at_punct(PunctuatorKind.RParen) {
-        if parser.editor && (parser.at_end() || parser.declaration_boundary() || parser.at_punct(PunctuatorKind.LBrace)) { break; }
-        match parse_parameter(parser) {
-            Some(value) => values.push(value),
-            None => {
-                if !parser.editor { return Option<Vec<Parameter>>.None; }
-                parser.synchronize_list(PunctuatorKind.RParen);
-            },
-        }
+        let value = parse_parameter(parser)?;
+        values.push(value);
         if !parser.at_punct(PunctuatorKind.Comma) {
             break;
         }

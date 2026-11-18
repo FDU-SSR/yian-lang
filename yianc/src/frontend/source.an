@@ -2,14 +2,9 @@ from std.core.path import PathBuf;
 from std.collections.arena import Arena;
 from std.collections.sort import sort_by;
 from std.core.convert import From;
-from std.core.drop import Drop;
 from std.core.fs import Directory, DirEntryKind, metadata, read_to_string, canonicalize, resolve;
 from std.core.io import IoError, IoErrorKind;
 from std.core.ops import Add, AddAssign, Index;
-from std.core.result import Result;
-from std.core.string import String;
-from std.core.vec import Vec;
-from std.core.option import Option;
 from std.core.iter import Iterator, IntoIterator;
 from json.write import Writer;
 
@@ -73,11 +68,10 @@ pub struct SourceFile {
     canonical: PathBuf,
 }
 
-// An editor input owns its path and text until a preparation call copies both into its session.
+// An in-memory input owns its path and text until a preparation call copies both into its session.
 pub struct SourceDocument {
     pub path: String,
     pub text: String,
-    pub version: Option<i64>,
 }
 
 impl Drop for SourceDocument {
@@ -136,7 +130,7 @@ impl SourceManager {
         Result<u64, IoError>.Ok(val=id)
     }
 
-    // Editor buffers may refer to paths that do not exist on disk; resolve still canonicalizes their existing prefixes.
+    // In-memory buffers may refer to paths that do not exist on disk; resolve still canonicalizes their existing prefixes.
     pub fn load_text(path: str, text: str) -> Result<u64, IoError> {
         let canonical = resolve(path)?;
         let canonical_text = canonical.as_str();

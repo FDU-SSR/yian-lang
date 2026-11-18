@@ -1,8 +1,4 @@
 from yianc.common.ids import NameId;
-from yianc.analysis.constant.big_integer import BigInteger;
-from std.core.clone import Clone;
-from std.core.drop import Drop;
-from std.core.result import Result;
 
 pub enum ConstEvalError {
     Overflow,
@@ -16,7 +12,7 @@ pub enum ConstEvalError {
 impl ConstEvalError {
     pub fn message() -> str {
         match self {
-            Overflow => "untyped integer exceeds the supported magnitude",
+            Overflow => "constant integer overflow",
             DivisionByZero => "division by zero",
             NegativeShift => "negative shift",
             InvalidCast => "invalid constant conversion",
@@ -130,9 +126,6 @@ pub enum ConstValue {
     Integer {
         value: IntegerValue
     },
-    LargeInteger {
-        value: BigInteger
-    },
     Float {
         value: f64
     },
@@ -140,10 +133,17 @@ pub enum ConstValue {
         value: bool
     },
     Char {
-        value: u32
+        value: char
     },
     String {
         name: NameId
+    },
+    Array {
+        elements: Vec<ConstValue>
+    },
+    ArrayRepeat {
+        element: ConstValue&,
+        length: u64
     },
 }
 
@@ -151,17 +151,45 @@ impl Clone for ConstValue {
     pub fn clone() -> Self {
         match self {
             Integer(value) => Self.Integer(*value),
-            LargeInteger(value) => Self.LargeInteger(value.clone()),
             Float(value) => Self.Float(*value),
             Bool(value) => Self.Bool(*value),
             Char(value) => Self.Char(*value),
             String(value) => Self.String(*value),
+            Array(elements) => {
+                let copies = Vec<ConstValue>.new();
+
+                for element in *elements {
+                    copies.push(element.clone());
+                }
+
+                Self.Array(copies)
+            },
+            ArrayRepeat(element, length) => {
+                let pointer = *element;
+                let copy = pointer.clone();
+                let stored = dyn copy;
+                Self.ArrayRepeat(stored, *length)
+            },
         }
     }
 }
 
 impl Drop for ConstValue {
     pub fn drop() {
-        match self { LargeInteger(value) => value.drop(), _ => {}, }
+        match self {
+            Array(elements) => {
+                for element in *elements {
+                    element.drop();
+                }
+
+                elements.drop();
+            },
+            ArrayRepeat(element, _) => {
+                let pointer = *element;
+                pointer.drop();
+                del pointer;
+            },
+            _ => {},
+        }
     }
 }

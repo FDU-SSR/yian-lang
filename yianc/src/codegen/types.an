@@ -6,6 +6,8 @@ from yianc.analysis.ty.queries import struct_fields, enum_variants;
 from yianc.analysis.constant.evaluate import TypeSizeProvider;
 from yianc.common.ids import TypeId;
 from yianc.common.location import SourceSpan;
+from yianc.codegen.representation import PointerRepresentation, TypeRepresentation, classify_representation;
+from yianc.codegen.error import CodegenError;
 from yianc.diagnostics.model import AnalysisError, DiagnosticCode;
 from llvm.object import Module;
 from llvm.ir import IrType;
@@ -13,13 +15,8 @@ from std.collections.arena import Arena;
 from std.collections.hash_map import HashMap;
 from std.collections.hash_set import HashSet;
 from std.core.convert import From;
-from std.core.drop import Drop;
 from std.core.fmt import ToString;
 from std.core.iter import Iterator, IntoIterator;
-from std.core.option import Option;
-from std.core.result import Result;
-from std.core.string import String;
-from std.core.vec import Vec;
 
 pub struct BackendTypeId {
     pub index: u64,
@@ -77,6 +74,8 @@ pub struct BackendTypes {
     fields: QueryCache<Vec<StructField>>,
     variants: QueryCache<Vec<EnumVariant>>,
     signatures: QueryCache<CallableSignature>,
+    representations: HashMap<TypeId, PointerRepresentation>,
+    representations_bound: bool,
 }
 
 fn unavailable(message: str) -> AnalysisError {
@@ -90,7 +89,8 @@ impl BackendTypes {
         Self(store, module, raw, Arena<BackendType>.new(),
             HashMap<TypeId, BackendTypeId>.new(), HashSet<TypeId>.new(), HashMap<TypeId, TypeId>.new(), 0u64,
             HashMap<TypeId, bool>.new(), false, QueryCache<Vec<StructField>>.new(),
-            QueryCache<Vec<EnumVariant>>.new(), QueryCache<CallableSignature>.new())
+            QueryCache<Vec<EnumVariant>>.new(), QueryCache<CallableSignature>.new(),
+            HashMap<TypeId, PointerRepresentation>.new(), false)
     }
 
     pub fn semantic_store() -> TypeStore& {
@@ -112,6 +112,38 @@ impl BackendTypes {
 
     // Completed analysis fixes definition bodies and closure environments. Earlier size queries cannot cache these facts.
     pub fn finish_analysis() { self.cache_zst = true; }
+
+    // One binding fixes every representation the backend may consume. Entries copy borrowed records.
+    pub fn bind_representations(entries: Vec<TypeRepresentation>&) -> Result<(), CodegenError> {
+        if self.representations_bound {
+            return Result<(), CodegenError>.Err(CodegenError.invalid("backend representations are already bound"));
+        }
+        for entry in *entries {
+            let classified = classify_representation(self.store, entry.type_id, self.raw)?;
+            if classified != entry.representation {
+                return Result<(), CodegenError>.Err(CodegenError.invalid("representation entry disagrees with the active classifier"));
+            }
+            if self.representations.contains(&entry.type_id) {
+                return Result<(), CodegenError>.Err(CodegenError.invalid("representation entry is duplicated"));
+            }
+            self.representations.insert(entry.type_id, entry.representation);
+        }
+        self.representations_bound = true;
+        Result<(), CodegenError>.Ok(())
+    }
+
+    pub fn representation_bound() -> bool { self.representations_bound }
+
+    // Consumers query the bound table only; a missing record is an internal error, never a fallback.
+    pub fn representation(type_id: TypeId) -> Result<PointerRepresentation, CodegenError> {
+        if !self.representations_bound {
+            return Result<PointerRepresentation, CodegenError>.Err(CodegenError.invalid("backend representations are not bound"));
+        }
+        match self.representations.get(&type_id) {
+            Some(value) => Result<PointerRepresentation, CodegenError>.Ok(*value),
+            None => Result<PointerRepresentation, CodegenError>.Err(CodegenError.invalid("backend representation is missing for a CFG type")),
+        }
+    }
 
     // Definition queries reject incomplete bodies. Completed bodies are immutable; callers borrow cache-owned buffers.
     pub fn fields_of(type_id: TypeId) -> Result<Vec<StructField>&, AnalysisError> {
@@ -250,7 +282,8 @@ impl BackendTypes {
         let value = match self.store.require(type_id)? {
             Bool => self.module.int_type(1u32),
             Char => self.module.int_type(32u32),
-            Integer(bits, _) | CScalar(bits, _, _) => self.module.int_type(*bits),
+            Integer(bits, _) => self.module.int_type(*bits),
+            CScalar(kind) => self.module.int_type(kind.bits()),
             Float(bits) => match *bits {
                 16 => self.module.half_type(),
                 32 => self.module.float_type(),
@@ -504,6 +537,7 @@ impl Drop for BackendTypes {
         self.fields.drop();
         self.variants.drop();
         self.signatures.drop();
+        self.representations.drop();
         self.index.drop();
         self.records.drop();
     }

@@ -6,11 +6,8 @@ from yianc.common.location import SourceSpan;
 from yianc.frontend.ast.node import Item, Identifier, GenericParam, Attr;
 from yianc.frontend.ast.atoms import AttrKind;
 from yianc.diagnostics.model import DiagnosticCode, AnalysisError, AnalysisErrorKind, AnalysisStage;
-from std.core.drop import Drop;
 from std.core.iter import Iterator, IntoIterator;
-from std.core.option import Option;
-from std.core.result import Result;
-from std.core.vec import Vec;
+from yianc.analysis.ty.store import ERROR_TYPE_ID;
 
 pub fn has_attr(attrs: Vec<Attr&>&, kind: AttrKind) -> bool {
     for attr in *attrs {
@@ -79,7 +76,7 @@ pub fn collect_generics(ctx: ResolutionContext&, unit: UnitId, scope: ScopeId, g
         let interned = ctx.session.names.intern(name.data.name.as_str());
         let type_id = match generic {
             Type(_) => ctx.session.types.generic(interned),
-            Constant(_) => ctx.session.types.const_generic(interned, ctx.primitives.error),
+            Constant(_) => ctx.session.types.const_generic(interned, TypeId(ERROR_TYPE_ID)),
         };
         let symbol = ctx.session.symbols.add(Symbol(interned, SymbolKind.Type, type_id, unit,
             Option<SourceSpan>.Some(ctx.span(unit, name.span)), false, false, false,
@@ -133,7 +130,7 @@ fn collect_named(ctx: ResolutionContext&, unit: UnitId, item: Item&, name: Ident
         None => if external {
             ctx.session.types.opaque(name_id, ctx.span(unit, item.span))
         } else {
-            ctx.primitives.error
+            TypeId(ERROR_TYPE_ID)
         },
     };
     let symbol = ctx.session.symbols.add(Symbol(name_id, kind, type_id, unit,
@@ -161,16 +158,7 @@ pub fn collect_declarations(ctx: ResolutionContext&) -> Result<(), AnalysisError
         let root = prepared.prepared.tree.unwrap().root;
 
         for item in root.data.items {
-            match collect_item(ctx, unit, *item, &empty) {
-                Ok(_) => {},
-                Err(error) => {
-                    if !ctx.session.editor_recovery || error.kind == AnalysisErrorKind.Internal {
-                        return Result<(), AnalysisError>.Err(error);
-                    }
-                    error.diagnostic.stage = Option<AnalysisStage>.Some(AnalysisStage.Resolve);
-                    ctx.session.diagnostics.push_unique(error.diagnostic);
-                },
-            }
+            collect_item(ctx, unit, *item, &empty)?;
         }
 
         unit_index += 1;

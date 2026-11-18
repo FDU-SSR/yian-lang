@@ -1,76 +1,124 @@
-// Untyped intermediate values retain their mathematical precision until conversion.
-fn case_untyped_integer_precision() {
-    let equal = comptime if 1 == 1 && 1 != 2 { 1 } else { 0 };
-    assert equal == 1;
+// Constant integer evaluation checks every executed step against the representable range.
+fn case_untyped_integer_boundaries() {
+    let compare = comptime if 1 == 1 && 1 != 2 { 1 } else { 0 };
+    assert compare == 1;
 
-    let wide_equal = comptime if (1 << 80) == (1 << 80) &&
-    (1 << 80) != (1 << 81) && (-1 << 80) == -(1 << 80) { 1 } else { 0 };
-    assert wide_equal == 1;
+    let untyped_add = comptime if (2147483647 + 1) > 0 { 1 } else { 0 };
+    assert untyped_add == 1;
 
-    let distinct = comptime if 1 == 2 || (1 << 80) != (1 << 80) { 0 } else { 1 };
-    assert distinct == 1;
-
-    let selected = comptime if (2147483647 + 1) > 0 { 1 } else { 0 };
-    assert selected == 1;
-
-    let shifted = comptime if (1 << 64) > 0 { 1 } else { 0 };
+    let shifted = comptime if (1 << 63) > 0 { 1 } else { 0 };
     assert shifted == 1;
 
-    let recovered = comptime if ((18446744073709551615 + 1) - 18446744073709551615) > 0 &&
-    ((18446744073709551615 + 1) - 18446744073709551615) < 2 { 1 } else { 0 };
-    assert recovered == 1;
+    let negative_shifted = comptime if (-1 << 63) < 0 { 1 } else { 0 };
+    assert negative_shifted == 1;
 
-    let negative = comptime if ((-1 << 80) >> 80) < 0 && ((-1 << 80) >> 80) > -2 { 1 } else { 0 };
-    assert negative == 1;
+    let upper = comptime if 18446744073709551615 == (18446744073709551614 + 1) { 1 } else { 0 };
+    assert upper == 1;
 
-    let bitwise = comptime if ((~(1 << 80)) & (1 << 80)) >= 0 && ((~(1 << 80)) & (1 << 80)) < 1 { 1 } else { 0 };
+    let lower = comptime if (-9223372036854775807 - 1) < 0 { 1 } else { 0 };
+    assert lower == 1;
+
+    let bitwise = comptime if ((1 << 63) >> 63) == 1 &&
+    (18446744073709551615 & 1) == 1 && (18446744073709551615 | 0) == 18446744073709551615 &&
+    (18446744073709551615 ^ 18446744073709551615) == 0 { 1 } else { 0 };
     assert bitwise == 1;
 
-    let divided = comptime if ((1 << 80) / 3) * 3 + ((1 << 80) % 3) - (1 << 80) >= 0 &&
-    ((1 << 80) / 3) * 3 + ((1 << 80) % 3) - (1 << 80) < 1 { 1 } else { 0 };
+    let divided = comptime if (((1 << 63) / 3) * 3 + ((1 << 63) % 3)) == (1 << 63) { 1 } else { 0 };
     assert divided == 1;
-
-    let wrapped = comptime if (2147483647i32 + 1i32) < 0i32 { 1 } else { 0 };
-    assert wrapped == 1;
-
-    let casted = comptime if u8(1 << 80) == 0u8 { 1 } else { 0 };
-    assert casted == 1;
 }
 
-fn case_integer_conversion_boundaries() {
-    let narrowed: u8 = 256;
-    assert narrowed == 0u8;
-
-    let fixed = comptime if ((1 << 64) >> 64) == 0u64 { 1 } else { 0 };
-    assert fixed == 1;
-    let explicit = comptime if u64((1 << 64) >> 64) == 1u64 { 1 } else { 0 };
-    assert explicit == 1;
-
-    let huge_shift = comptime if (1 << 4294967296) == 0u64 { 1 } else { 0 };
-    assert huge_shift == 1;
+fn case_typed_integer_arithmetic() {
+    let i8_add = comptime if (100i8 + 27i8) == 127i8 { 1 } else { 0 };
+    let i8_mul = comptime if (12i8 * 10i8) == 120i8 { 1 } else { 0 };
+    let i8_shift = comptime if (1i8 << 6i8) == 64i8 { 1 } else { 0 };
+    let i16_add = comptime if (10000i16 + 20000i16) == 30000i16 { 1 } else { 0 };
+    let i16_mul = comptime if (300i16 * 100i16) == 30000i16 { 1 } else { 0 };
+    let i16_shift = comptime if (1i16 << 14i16) == 16384i16 { 1 } else { 0 };
+    let i16_div = comptime if (-30000i16 / 100i16) == -300i16 { 1 } else { 0 };
+    let i32_add = comptime if (2147483646i32 + 1i32) == 2147483647i32 { 1 } else { 0 };
+    let i32_mul = comptime if (100000i32 * 20000i32) == 2000000000i32 { 1 } else { 0 };
+    let i32_shift = comptime if (1i32 << 30i32) == 1073741824i32 { 1 } else { 0 };
+    let i32_div = comptime if ((2000000000i32 / 7i32) * 7i32 + (2000000000i32 % 7i32)) == 2000000000i32 { 1 } else { 0 };
+    let i64_sub = comptime if (9223372036854775806i64 - 1i64) == 9223372036854775805i64 { 1 } else { 0 };
+    let u8_add = comptime if (200u8 + 55u8) == 255u8 { 1 } else { 0 };
+    let u8_shift = comptime if (1u8 << 7u8) == 128u8 { 1 } else { 0 };
+    let u8_div = comptime if (200u8 / 3u8) == 66u8 && (200u8 % 3u8) == 2u8 { 1 } else { 0 };
+    let u16_add = comptime if (60000u16 + 5535u16) == 65535u16 { 1 } else { 0 };
+    let u32_add = comptime if (4000000000u32 + 294967295u32) == 4294967295u32 { 1 } else { 0 };
+    let u32_shift = comptime if (1u32 << 31u32) == 2147483648u32 { 1 } else { 0 };
+    let u64_add = comptime if (18446744073709551614u64 + 1u64) == 18446744073709551615u64 { 1 } else { 0 };
+    let u64_shift = comptime if (1u64 << 63u64) == 9223372036854775808u64 { 1 } else { 0 };
+    let u64_div = comptime if ((18446744073709551615u64 / 10u64) * 10u64 + (18446744073709551615u64 % 10u64)) == 18446744073709551615u64 { 1 } else { 0 };
+    assert i8_add == 1 && i8_mul == 1 && i8_shift == 1;
+    assert i16_add == 1 && i16_mul == 1 && i16_shift == 1 && i16_div == 1;
+    assert i32_add == 1 && i32_mul == 1 && i32_shift == 1 && i32_div == 1;
+    assert i64_sub == 1;
+    assert u8_add == 1 && u8_shift == 1 && u8_div == 1;
+    assert u16_add == 1;
+    assert u32_add == 1 && u32_shift == 1;
+    assert u64_add == 1 && u64_shift == 1 && u64_div == 1;
 }
 
-fn case_float_conversion_boundaries() {
-    let finite = comptime if u8(258.75f64) == 2u8 { 1 } else { 0 };
-    assert finite == 1;
-    let negative = comptime if u64(-1.75f64) == 18446744073709551615u64 { 1 } else { 0 };
-    assert negative == 1;
-    let wide = comptime if u64(18446744073709551616.0f64) == 0u64 { 1 } else { 0 };
-    assert wide == 1;
-    let huge = comptime if u8(1.0e300f64) == 0u8 { 1 } else { 0 };
-    assert huge == 1;
+fn case_checked_conversions() {
+    let narrowed = comptime if u8(42u64) == 42u8 { 1 } else { 0 };
+    assert narrowed == 1;
 
-    // Half precision rounds discarded bits upward and resolves halfway values to even.
+    let signed = comptime if i8(-42) == -42i8 { 1 } else { 0 };
+    assert signed == 1;
+
+    let truncated = comptime if u8(42.75f64) == 42u8 { 1 } else { 0 };
+    assert truncated == 1;
+
+    let truncated_negative = comptime if i8(-42.75f64) == -42i8 { 1 } else { 0 };
+    assert truncated_negative == 1;
+
+    let shortcut = comptime if false && (u8(256u64) == 0u8) { 0 } else { 1 };
+    assert shortcut == 1;
+}
+
+fn case_float_rounding() {
     let half_up = comptime if f32(1.0006f16) == 1.0009765625f32 { 1 } else { 0 };
     assert half_up == 1;
     let half_even = comptime if f32(1.00048828125f16) == 1.0f32 { 1 } else { 0 };
     assert half_even == 1;
     let half_odd = comptime if f32(1.00146484375f16) == 1.001953125f32 { 1 } else { 0 };
     assert half_odd == 1;
+    let single = comptime if (0.1f32 + 0.2f32) == 0.3f32 { 1 } else { 0 };
+    assert single == 1;
+}
+
+fn wrap_runtime(value: i32) -> i32 {
+    value + 1
+}
+
+// Runtime literals preserve their original magnitude through an explicit carrier and conversion.
+fn case_runtime_literal_carriers() {
+    let wide: u64 = 4294967296;
+    let negative: i64 = -2147483649;
+    let limit: u64 = 18446744073709551615;
+    let row: u64[2] = [4294967296, 7];
+    let repeated: u64[2] = [4294967296; 2];
+    let pair = (1, 2.0);
+    let small = 1 + 2;
+    let rounded: f32 = 0.1 + 0.2;
+    let narrowed: u8 = 256;
+    assert wide == 4294967296u64: "wide literal keeps its value";
+    assert negative == -2147483649i64: "negative literal keeps its value";
+    assert limit == 18446744073709551615u64: "u64 maximum literal keeps its value";
+    assert row[0] == 4294967296u64: "array element keeps its value";
+    assert repeated[1] == 4294967296u64: "repeat element keeps its value";
+    assert pair[0] == 1i32: "tuple integer element";
+    assert pair[1] == 2.0f64: "tuple float element";
+    assert small == 3i32: "default integer arithmetic";
+    assert rounded == 0.3f32: "float arithmetic rounds at f32";
+    assert narrowed == 0u8: "runtime narrowing wraps";
+    assert wrap_runtime(2147483647i32) == -2147483648: "runtime signed wraparound";
 }
 
 fn main() {
-    case_untyped_integer_precision();
-    case_integer_conversion_boundaries();
-    case_float_conversion_boundaries();
+    case_untyped_integer_boundaries();
+    case_typed_integer_arithmetic();
+    case_checked_conversions();
+    case_float_rounding();
+    case_runtime_literal_carriers();
 }

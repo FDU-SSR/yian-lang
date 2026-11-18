@@ -52,11 +52,14 @@ class MemoryOps:
         ).result
         return realloc
 
-    def build_element_ptr(self, base: IR.Value, offset: IR.Value, result_type: int) -> IR.Value:
-        # The insertion pass reconstructs arithmetic validity (0 <= index+n <= size) and discharges nested
-        # derivation obligations along IR.ElementPtr edges; this layer only emits nodes and records provenance.
+    def build_element_ptr(self, base: IR.Value, offset: IR.Value, result_type: int, backward: bool = False) -> IR.Value:
+        # The insertion pass reconstructs arithmetic validity (0 <= index+n <= size for p+n,
+        # n <= index and index-n <= size for p-n) and discharges nested derivation obligations
+        # along IR.ElementPtr edges; this layer only emits nodes and records provenance.
         result = IR.Reg(name=self.__state.emitter.new_name(), type_id=result_type)
-        elem_ptr = self.__state.emitter.emit(IR.ElementPtr(result=result, base=base, offset=offset)).result
+        elem_ptr = self.__state.emitter.emit(
+            IR.ElementPtr(result=result, base=base, offset=offset, backward=backward)
+        ).result
         return elem_ptr
 
     def build_field_ptr(self, base: IR.Value, field_index: int, field_type: int) -> IR.Value:
@@ -67,21 +70,22 @@ class MemoryOps:
         return field_ptr
 
     def build_ptr_diff(self, lhs: IR.Value, rhs: IR.Value) -> IR.Value:
-        # CFG preconditions: equal data, valid arithmetic, and no wrap; cross-object differences fail.
+        # CFG preconditions: equal data and lifetime word, valid arithmetic, and no wrap; cross-object
+        # and cross-lifetime differences fail.
         # As with ElementPtr arithmetic, this operation does not access memory or check allocation liveness.
         if self.__state.pointers.is_fat_pointer(lhs) and self.__state.pointers.is_fat_pointer(rhs):
             self.__state.emitter.emit(IR.CheckRequest(kind=IR.CHECK_REQUEST_PTRDIFF, operands=[lhs, rhs]))
-            _ch_block().debug(lambda: "check insert PtrDiff: data 相等 + 良构 + 无回绕")
+            _ch_block().debug(lambda: "check insert PtrDiff: equal data + equal lifetime words + well-formed + no wraparound")
         result = IR.Reg(name=self.__state.emitter.new_name(), type_id=TypeCtx.i64_id)
         return self.__state.emitter.emit(IR.PtrDiff(result=result, lhs=lhs, rhs=rhs)).result
 
     def build_ptr_cmp(self, op: BinaryOperator, lhs: IR.Value, rhs: IR.Value, type_id: int) -> IR.Value:
-        # Ordering checks equal data first; cross-object ordering fails.
+        # Ordering checks equal data and lifetime word; cross-object and cross-lifetime ordering fail.
         # Equality compares the (data,index) pair without a precondition check.
         # Like ElementPtr arithmetic, comparison does not access memory or check allocation liveness.
         if op in (BinaryOperator.Lt, BinaryOperator.Gt, BinaryOperator.Leq, BinaryOperator.Geq):
             self.__state.emitter.emit(IR.CheckRequest(kind=IR.CHECK_REQUEST_PTRCMP, operands=[lhs, rhs]))
-            _ch_block().debug(lambda: "check insert PtrCmp: data 相等")
+            _ch_block().debug(lambda: "check insert PtrCmp: equal data + equal lifetime words")
         result = IR.Reg(name=self.__state.emitter.new_name(), type_id=type_id)
         return self.__state.emitter.emit(IR.PtrCmp(result=result, op=op, lhs=lhs, rhs=rhs)).result
 

@@ -1,0 +1,124 @@
+// bench/BG/fann/yian/src/workload.an — Benchmarks Game fannkuch-redux.
+//
+// Source: bench/BG/fann/c/upstream/main.c (fannkuchredux-gcc-1; revised BSD).
+// Scale: default n=11; the runner materializes fast n=9 at this marker.
+//
+// The permutation order, prefix reversals, alternating checksum, and maximum
+// flip count follow the C routine. C uses three VLAs sized n; YIAN uses three
+// owned full-range slices of n i32 values so both raw and fat modes retain
+// bounds checks. All three slices are dropped before returning.
+
+struct FannResult {
+    checksum: i32,
+    max_flips_count: i32,
+}
+
+fn max(a: i32, b: i32) -> i32 {
+    if a > b {
+        return a;
+    }
+    return b;
+}
+
+fn fannkuchredux(n: i32) -> FannResult {
+    let extent: u64 = u64(n);
+    let perm: i32[] = {
+        let allocation = dyn[extent] 0i32;
+        allocation[0u64..extent]
+    };
+    let perm1: i32[] = {
+        let allocation = dyn[extent] 0i32;
+        allocation[0u64..extent]
+    };
+    let count: i32[] = {
+        let allocation = dyn[extent] 0i32;
+        allocation[0u64..extent]
+    };
+    let max_flips_count: i32 = 0;
+    let perm_count: i32 = 0;
+    let checksum: i32 = 0;
+    let done: i32 = 0;
+
+    let i: u64 = 0;
+    while i < extent {
+        perm1[i] = i32(i);
+        i += 1;
+    }
+    let r: u64 = extent;
+
+    while done == 0 {
+        while i32(r) != 1 {
+            count[r - 1] = i32(r);
+            r -= 1;
+        }
+
+        let j: u64 = 0;
+        while j < extent {
+            perm[j] = perm1[j];
+            j += 1;
+        }
+
+        let flips_count: i32 = 0;
+        let k: i32 = perm[0u64];
+        while k != 0 {
+            let k2: i32 = (k + 1) >> 1;
+            let m: u64 = 0;
+            while i32(m) < k2 {
+                let temp: i32 = perm[m];
+                perm[m] = perm[u64(k - i32(m))];
+                perm[u64(k - i32(m))] = temp;
+                m += 1;
+            }
+            flips_count += 1;
+            k = perm[0u64];
+        }
+
+        max_flips_count = max(max_flips_count, flips_count);
+        if perm_count % 2 == 0 {
+            checksum += flips_count;
+        } else {
+            checksum -= flips_count;
+        }
+
+        // Generate the next permutation by rotating its first r+1 elements.
+        while true {
+            if r == extent {
+                done = 1;
+                break;
+            }
+            let perm0: i32 = perm1[0u64];
+            let index: u64 = 0;
+            while index < r {
+                let next: u64 = index + 1;
+                perm1[index] = perm1[next];
+                index = next;
+            }
+            perm1[r] = perm0;
+            count[r] -= 1;
+            if count[r] > 0 {
+                break;
+            }
+            r += 1;
+        }
+
+        if done == 0 {
+            perm_count += 1;
+        }
+    }
+
+    del perm;
+    del perm1;
+    del count;
+    return FannResult(checksum=checksum, max_flips_count=max_flips_count);
+}
+
+pub fn run(n: i32) -> i32 {
+    if n <= 0 || n > 12 { return 2; }
+
+
+    let result: FannResult = fannkuchredux(n);
+    @print(f"{result.checksum}\n");
+    @print(f"Pfannkuchen({n}) = {result.max_flips_count}\n");
+
+    return 0;
+}

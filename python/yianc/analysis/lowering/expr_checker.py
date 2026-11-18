@@ -5,12 +5,14 @@ from yianc.analysis.lowering.assign_check import build_assign
 from yianc.analysis.lowering.builtin_dispatcher import BuiltinDispatcher
 from yianc.analysis.lowering.call_dispatcher import CallDispatcher
 from yianc.analysis.lowering.closure import ClosureHelper
+from yianc.analysis.lowering.format import FormatDestination, FormatLowering
 from yianc.analysis.lowering.op_builder import OpBuilder
 from yianc.analysis.lowering.pattern_checker import PatternChecker, PatternRoot
 from yianc.analysis.lowering.state import LoopFrame, DefinitionState
 from yianc.analysis.symbol.symbol import AliasSymbol, Symbol, SymbolKind
 from yianc.analysis.ty import ty as Type
 from yianc.analysis.ty.context import TypeCtx
+from yianc.builtins import BuiltinKind
 from yianc.analysis.unit import hir as HIR
 from yianc.frontend.lex import token as Tok
 from yianc.frontend.lex.position import SrcSpan
@@ -56,6 +58,7 @@ class ExprChecker:
         self.__closure_helper = ClosureHelper(ctx, self)
         self.__op_builder = OpBuilder(ctx, self, self.__call_dispatcher)
         self.__pattern_checker = PatternChecker(ctx, self, self.__op_builder)
+        self.__format_lowering = FormatLowering(ctx, self)
         self.__defer_depth = 0
 
     def value(self, expr: AST.Expr) -> HIR.Expr:
@@ -134,6 +137,9 @@ class ExprChecker:
             case AST.Call():
                 return self.__call_dispatcher.handle_call(expr)
             case AST.Builtin():
+                if expr.kind in (BuiltinKind.Append, BuiltinKind.Write, BuiltinKind.Print,
+                                 BuiltinKind.Println, BuiltinKind.Eprint, BuiltinKind.Eprintln):
+                    return self.__format_lowering.lower_builtin(expr)
                 return self.__builtin_dispatcher.handle(expr)
             case AST.MethodCall():
                 return self.__handle_method_call(expr)
@@ -154,6 +160,8 @@ class ExprChecker:
                     type_id=TypeCtx.bool_id,
                     is_place=False,
                 )
+            case AST.FormatTemplate():
+                return self.__format_lowering.lower_template(expr.span, FormatDestination.OWNED_STRING, expr.parts)
             case AST.Literal():
                 return self.__handle_literal(expr)
             case AST.Tuple():
@@ -663,6 +671,10 @@ class ExprChecker:
     def call_eq(self, lhs: HIR.Expr, rhs: HIR.Expr) -> HIR.Expr:
         rhs_ptr = HIR.Unary(span=rhs.span, op=UnaryOperator.AddrOf, operand=rhs, type_id=self.__ctx.type_ctx.alloc_pointer(rhs.type_id), is_place=False)
         return self.call_method(lhs, "eq", None, [rhs_ptr])
+
+    def check_format_pattern(self, pattern: AST.Pattern, type_id: int) -> HIR.Pattern:
+        """Check one test pattern for compiler-generated formatting matches."""
+        return self.__pattern_checker.check(pattern, type_id, root_mode=PatternRoot.TEST, by_ref=False)
 
     def assign(self, span: SrcSpan, target: HIR.Expr, value: HIR.Expr) -> HIR.Binary:
         return build_assign(self.__ctx.type_ctx, self.coerce, span, target, value)

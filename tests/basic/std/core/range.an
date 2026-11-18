@@ -2,9 +2,6 @@
 //
 // Expected output: 0
 
-from std.core.range import Range;
-from std.core.option import Option;
-
 fn main() {
     // Construction via .. syntax
     let r: Range<u64> = 0u64..5;

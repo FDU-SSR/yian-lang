@@ -66,17 +66,17 @@ def __is_fresh() -> bool:
 def __run(cmd: list[str]) -> None:
     proc = subprocess.run(cmd, capture_output=True, text=True, check=False, cwd=ROOT)
     if proc.returncode != 0:
-        raise SystemExit(f"[runtime] 命令失败: {' '.join(cmd)}\n{proc.stdout}\n{proc.stderr}")
+        raise SystemExit(f"[runtime] command failed: {' '.join(cmd)}\n{proc.stdout}\n{proc.stderr}")
 
 
 def build(force: bool = False, quiet: bool = False) -> None:
     if not force and __is_fresh():
         if not quiet:
-            print(f"[runtime] 已是最新: {LIB_ARCHIVE.relative_to(ROOT)}")
+            print(f"[runtime] up to date: {LIB_ARCHIVE.relative_to(ROOT)}")
         return
     BUILD_DIR.mkdir(parents=True, exist_ok=True)
     if not quiet:
-        print(f"[runtime] 构建 {LIB_ARCHIVE.relative_to(ROOT)}")
+        print(f"[runtime] building {LIB_ARCHIVE.relative_to(ROOT)}")
     objects: list[Path] = []
     for source in SOURCES:
         obj = BUILD_DIR / (source.stem + ".o")
@@ -93,19 +93,19 @@ def run_selftest(sanitizers: bool) -> None:
     binary = SELFTEST_ASAN_BIN if sanitizers else SELFTEST_BIN
     __run([CC, *flags, str(SELFTEST), *[str(src) for src in SOURCES], "-o", str(binary)])
     proc = subprocess.run([str(binary)], capture_output=True, text=True, check=False, cwd=ROOT)
-    label = "ASan/UBSan" if sanitizers else "普通"
+    label = "ASan/UBSan" if sanitizers else "plain"
     if proc.stdout.strip():
         print(proc.stdout.strip())
     if proc.returncode != 0:
-        raise SystemExit(f"[runtime] {label} 自测失败 (退出码 {proc.returncode})\n{proc.stderr}")
-    print(f"[runtime] {label} 自测通过")
+        raise SystemExit(f"[runtime] {label} self-test failed (exit code {proc.returncode})\n{proc.stderr}")
+    print(f"[runtime] {label} self-test passed")
 
 
 def __source_text(path: Path, label: str) -> str:
     try:
         return path.read_text(encoding="utf-8")
     except OSError as error:
-        raise SystemExit(f"[check] 无法读取 {label} {path}: {error}") from error
+        raise SystemExit(f"[check] cannot read {label} {path}: {error}") from error
 
 
 def __native_integer_expression(path: Path, name: str) -> str:
@@ -116,7 +116,7 @@ def __native_integer_expression(path: Path, name: str) -> str:
     )
     matches = list(declaration.finditer(text))
     if len(matches) != 1:
-        raise SystemExit(f"[check] native ABI 中 {name} 声明缺失或重复")
+        raise SystemExit(f"[check] missing or duplicate native ABI declaration: {name}")
 
     expression = matches[0].group("expression")
     token_pattern = re.compile(
@@ -141,7 +141,7 @@ def __native_integer_expression(path: Path, name: str) -> str:
         match = token_pattern.match(expression, offset)
         if match is None:
             raise SystemExit(
-                f"[check] native ABI {name} 使用不支持的整数表达式: {expression!r}"
+                f"[check] native ABI {name} uses an unsupported integer expression: {expression!r}"
             )
         offset = match.end()
         number = match.group("number")
@@ -160,7 +160,7 @@ def __native_integer_expression(path: Path, name: str) -> str:
             mapped = identifiers.get(identifier)
             if mapped is None:
                 raise SystemExit(
-                    f"[check] native ABI {name} 引用了不支持的常量 {identifier!r}"
+                    f"[check] native ABI {name} references an unsupported constant {identifier!r}"
                 )
             normalized.append(mapped)
             continue
@@ -168,7 +168,7 @@ def __native_integer_expression(path: Path, name: str) -> str:
 
     result = " ".join(normalized)
     if not result:
-        raise SystemExit(f"[check] native ABI {name} 的整数表达式为空")
+        raise SystemExit(f"[check] native ABI {name} has an empty integer expression")
     return result
 
 
@@ -184,7 +184,7 @@ def __decode_protocol_string(value: str, label: str) -> bytes:
             continue
         index += 1
         if index >= len(value) or value[index] not in escapes:
-            raise SystemExit(f"[check] {label} 含不支持的字符串转义")
+            raise SystemExit(f"[check] {label} contains an unsupported string escape")
         output.extend(escapes[value[index]])
         index += 1
     return bytes(output)
@@ -193,15 +193,15 @@ def __decode_protocol_string(value: str, label: str) -> bytes:
 def __native_failure_message(path: Path, code: str) -> bytes:
     text = __source_text(path, "native ABI source")
     if not re.search(r"^pub fn failure_message\(code: str\) -> str \{\s*$", text, re.MULTILINE):
-        raise SystemExit("[check] native ABI 的 failure_message 函数形状不受支持")
+        raise SystemExit("[check] unsupported native ABI failure_message function shape")
     pattern = re.compile(
         rf'^\s*"{re.escape(code)}"\s*=>\s*"((?:[^"\\]|\\.)*)"\s*,?\s*$',
         re.MULTILINE,
     )
     matches = list(pattern.finditer(text))
     if len(matches) != 1:
-        raise SystemExit(f"[check] native ABI failure_message({code}) 缺失或重复")
-    return __decode_protocol_string(matches[0].group(1), f"native ABI {code} 消息")
+        raise SystemExit(f"[check] missing or duplicate native ABI failure_message({code})")
+    return __decode_protocol_string(matches[0].group(1), f"native ABI {code} message")
 
 
 def __macro_string(path: Path, name: str) -> bytes:
@@ -212,7 +212,7 @@ def __macro_string(path: Path, name: str) -> bytes:
     )
     matches = list(pattern.finditer(text))
     if len(matches) != 1:
-        raise SystemExit(f"[check] {path.name} 中 {name} 字符串宏缺失或重复")
+        raise SystemExit(f"[check] missing or duplicate {name} string macro in {path.name}")
     return __decode_protocol_string(matches[0].group(1), f"{path.name} {name}")
 
 
@@ -224,11 +224,11 @@ def __macro_integer_list(path: Path, name: str) -> list[str]:
     )
     matches = list(pattern.finditer(text))
     if len(matches) != 1:
-        raise SystemExit(f"[check] {path.name} 中 {name} 表缺失或重复")
+        raise SystemExit(f"[check] missing or duplicate {name} table in {path.name}")
     body = matches[0].group(1).replace("\\\n", " ")
     items = [item.strip() for item in body.split(",")]
     if not items or any(re.fullmatch(r"[0-9]+[uUlL]*", item) is None for item in items):
-        raise SystemExit(f"[check] {name} 表形状不受支持: {body!r}")
+        raise SystemExit(f"[check] unsupported {name} table shape: {body!r}")
     return [re.sub(r"[uUlL]+$", "", item) for item in items]
 
 
@@ -264,7 +264,7 @@ def __check_native_c_integers(
     source = '#include "yian_rt.h"\n' + "\n".join(assertions) + "\n"
     executable = shutil.which(clang)
     if executable is None:
-        raise SystemExit(f"[check] 找不到 C 编译器 {clang!r}")
+        raise SystemExit(f"[check] C compiler not found: {clang!r}")
     process = subprocess.run(
         [executable, "-std=c11", "-Werror", "-fsyntax-only", "-x", "c", "-", "-I", str(header_path.parent)],
         input=source,
@@ -275,7 +275,7 @@ def __check_native_c_integers(
     )
     if process.returncode != 0:
         detail = process.stderr.strip() or process.stdout.strip()
-        raise SystemExit(f"[check] native/C ABI 整数断言失败:\n{detail}")
+        raise SystemExit(f"[check] native/C ABI integer assertion failed:\n{detail}")
 
 
 def check_consistency(
@@ -291,7 +291,7 @@ def check_consistency(
         declared = __macro_string(header_path, macro)
         if declared != expected:
             raise SystemExit(
-                f"[check] {macro} 与 native failure_message({code}) 不一致:\n"
+                f"[check] {macro} differs from native failure_message({code}):\n"
                 f"  C header {declared!r}\n  native {expected!r}"
             )
     __check_native_c_integers(abi_path, header_path, clang=clang)
@@ -299,16 +299,16 @@ def check_consistency(
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="构建 YIAN 运行时库并做检查与自测")
-    parser.add_argument("--force", action="store_true", help="强制重建")
-    parser.add_argument("--check", action="store_true", help="一致性断言 + 普通自测")
+    parser = argparse.ArgumentParser(description="Build the YIAN runtime library and run checks and self-tests")
+    parser.add_argument("--force", action="store_true", help="Force rebuilding")
+    parser.add_argument("--check", action="store_true", help="Consistency assertions and plain self-tests")
     parser.add_argument(
         "--check-consistency-only",
         action="store_true",
-        help="只核对 native ABI 与 C 头文件，不构建运行时库或运行自测",
+        help="Check the native ABI against C headers without building the runtime or running self-tests",
     )
-    parser.add_argument("--asan", action="store_true", help="构建并运行 ASan/UBSan 自测")
-    parser.add_argument("--quiet", action="store_true", help="只输出错误")
+    parser.add_argument("--asan", action="store_true", help="Build and run ASan/UBSan self-tests")
+    parser.add_argument("--quiet", action="store_true", help="Report errors only")
     args = parser.parse_args()
 
     if args.check_consistency_only:

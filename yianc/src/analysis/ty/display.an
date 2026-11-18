@@ -2,9 +2,7 @@ from yianc.analysis.resolution.context import ResolutionContext;
 from yianc.analysis.names import NameInterner;
 from yianc.analysis.ty.store import TypeStore;
 from yianc.common.ids import TypeId;
-from std.core.string import String;
 from std.core.iter import Iterator, IntoIterator;
-from std.core.drop import Drop;
 
 fn append(types: TypeStore&, names: NameInterner&, id: TypeId, text: String&, depth: u64) {
     if depth > 64 {
@@ -57,7 +55,8 @@ fn append(types: TypeStore&, names: NameInterner&, id: TypeId, text: String&, de
             text.push_str(") -> ");
             append(types, names, *result, text, depth + 1);
         },
-        CScalar(_, _, name) | Opaque(name, _) => text.push_str(names.text(*name)),
+        CScalar(kind) => text.push_str(kind.spelling()),
+        Opaque(name, _) => text.push_str(names.text(*name)),
         Nominal(definition, arguments) => {
             text.push_str(names.text(types.definition(*definition).unwrap().header().name));
 
@@ -143,7 +142,7 @@ pub fn type_text(ctx: ResolutionContext&, id: TypeId) -> String {
     text
 }
 
-// This overload lets editor queries render a checked type without retaining a resolution context.
+// This overload renders a stored type without requiring a resolution context.
 pub fn stored_type_text(types: TypeStore&, names: NameInterner&, id: TypeId) -> String {
     let text = String.new();
     append(types, names, id, &text, 0);

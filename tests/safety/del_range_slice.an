@@ -1,8 +1,8 @@
 // Deletion-view negative (c): range views with lo!=0 fail. del p[1u64..4] creates
-// an i32[] view of p[1..3], with data=lock_ptr+8+4,lo=1; CheckDelete's
-// is_raw data==lock_ptr+8 term fails. SliceType has no index, so offset
-// is encoded in data, causing termination with exit code 1. Only whole-block views
-// with lo=0 can be deleted; release offset views via the original whole-block T*.
+// an i32[] view of p[1..3], with data=lock_ptr+8+4,lo=1; the delete root check
+// requires data==lock_ptr+8. SliceType has no index, so the offset is encoded in
+// data, causing termination with exit code 1. Root-start views may be deleted at
+// any extent; offset views fail.
 //
 // Expected exit code: 1
 

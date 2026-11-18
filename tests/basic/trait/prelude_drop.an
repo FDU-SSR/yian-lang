@@ -1,0 +1,17 @@
+// Drop is provided by the prelude and needs no explicit import.
+struct Guard {
+    count: i32*,
+}
+
+impl Drop for Guard {
+    fn drop() {
+        *self.count += 1;
+    }
+}
+
+fn main() {
+    let count: i32 = 0;
+    let guard = Guard(&count);
+    guard.drop();
+    assert count == 1: "explicit drop runs the prelude-provided implementation";
+}

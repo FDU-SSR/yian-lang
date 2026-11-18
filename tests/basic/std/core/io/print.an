@@ -1,10 +1,12 @@
-// Test print and eprint (stdout/stderr via convenience functions)
+// Test the @print/@println/@eprint/@eprintln formatting entries.
 //
-// Expected output:
+// Expected stdout:
 // stdout ok
-
-from std.core.io import print;
+// println ok
 
 fn main() {
-    print("stdout ok\n");
+    @print("stdout ok\n");
+    @println("println ok");
+    @eprint("stderr eprint\n");
+    @eprintln("stderr eprintln");
 }

@@ -1,39 +1,72 @@
-# bench/ — 评测集
+# Benchmark projects
 
-评测集按**来源**分目录、按**侧重点**分集合、按**规模**分快速/完全两档。每个集合都跑三态
-（C / raw / fat），C 参考实现提供结果校验的参考值。分配器专项使用 fat/raw 两态。
+Projects are organized by source and selected through set manifests. Each
+three-state project has a CMake C reference and an anx YIAN package; the runner
+builds C, raw YIAN, and fat YIAN from the same project inputs. The four
+`ALLOC` projects instead compare fat YIAN with libc allocation and have no C
+reference.
 
-## 目录
+## Layout
 
 ```text
 bench/
-├── AWFY/            来源: Are We Fast Yet (smarr/are-we-fast-yet 的 Java 微基准改写)
-│   ├── an/*.an        胖态源; <name>.raw.an 为裸态覆盖源 (同目录)
-│   ├── c/*.c          C 参考实现（结果校验）
-│   └── specs/*.json   argv / 权威校验 (check) / 侧重 tag / 规模档
-├── BG/              来源: The Computer Language Benchmarks Game (Revised BSD)
-├── ALLOC/           分配器专项 (两态: fat vs libc malloc/free, 无 C 参考)
-│   ├── an/  specs/
-├── fatptr/          机制专项微基准 (表示尺寸/拷贝/追逐, 本仓库自写)
-│   ├── an/  c/  specs/
-├── sets/*.json      集合清单: 成员 + 默认规模档 + 测量次数
-├── results/         生成物: <set>.{md,csv}、alloc.{md,csv}、partial.{md,csv}
-├── bench_three_way.py 三态运行器 (C / raw / fat)
-├── bench_allocator.py 分配器运行器 (fat / raw 两态)
-├── SUITES.md        来源与许可登记
-└── README.md
+├── AWFY/<name>/       14 Are We Fast Yet projects
+├── BG/<name>/         10 official Benchmarks Game projects, source and oracle provenance
+├── fatptr/<name>/      3 representation/call/copy projects written here
+├── LIBYAML/libyaml/   1 real-project libyaml parse benchmark
+├── ALLOC/<name>/       4 allocator projects, fat/raw only
+├── native/             fixed GMP and PCRE2 packages, source, licenses, and rebuild material
+├── sets/*.json         full (27), bg (10), paper (24), real (1), fast (8), and focus selections
+├── results/            plain numeric performance CSV files
+├── projects.py         project discovery, dependency staging, build, and digest
+├── spec.py             typed parser for every spec.json (check, scale, io, measurement)
+├── execution.py        controlled file-based stdin/stdout and output identity
+├── bench_three_way.py  C / raw / fat runner
+├── bench_asan.py       C plain / C ASan / YIAN fat runner
+├── bench_allocator.py  fat / libc allocator runner
+└── SUITES.md           source and license registry
 ```
 
-当前评测来源与许可登记见 `bench/SUITES.md`。
+Each paired project contains `spec.json`, `yian/package.anx` and
+`yian/src/main.an`, plus `c/CMakeLists.txt` and C source. Optional raw-mode
+overrides live under `raw/`. The ten BG projects also contain official-source
+archives, licenses, fixture files, and `provenance.json`. CMake and anx select
+the same project-local static archive for pidigits (GMP) and regexredux
+(PCRE2); those libraries are shared by all states but are not ASan-instrumented
+or covered by YIAN guards. See [`native/README.md`](native/README.md).
 
-这些命令用于编译、运行和测量所选基准，不属于默认局部验收。执行仓库验证前应检查集合、基准数、规模和采样次数；性能测量需要明确授权。
+The suite contains 32 projects: 28 C/YIAN pairs (14 AWFY, 10 BG, 3 fatptr, and
+LIBYAML) plus 4 two-state allocator projects. `full` selects 27 of the 28 pairs;
+LIBYAML is selected by `real`, separately from the paper aggregate. `bg` selects
+the ten official BG tasks; `paper` selects all 14 AWFY and all ten BG projects;
+`fast` remains eight IDs. The paper analysis uses the 24 grouped benchmarks for
+its geomeans and reports all LIBYAML data separately from the `real` set. Set
+membership and task scales are in `sets/*.json` and each project's `spec.json`.
 
-## 集合
+The paired projects are reviewed against the
+[C → YIAN translation specification](../docs/c-to-yian.md). AWFY retains its
+documented state and output-parameter rewrites. Each BG project records the
+mapping of every upstream C function,
+source/license hashes, representation differences, and any small C portability
+patch. `call_abi` still has an -O2 inlining issue, so it is not evidence of the
+three-state cost of the call boundary.
+
+The frozen paper data records the measurements used by the manuscript.
+Updating benchmark sources does not refresh those measurements.
+
+These commands compile, run, and measure selected benchmarks and are not part of
+default local acceptance. Before running repository validation, check the set,
+benchmark count, scale, and sample count; performance measurement requires
+explicit authorization.
+
+## Sets
 
 ```bash
 python3 bench/bench_three_way.py --list-sets           # List sets, scales, and member counts.
-python3 bench/bench_three_way.py --set full            # Full scale: all 22 benchmarks, for formal records.
+python3 bench/bench_three_way.py --set full            # Full scale: 27 paired projects (LIBYAML via real).
+python3 bench/bench_three_way.py --set bg              # All ten official BG tasks.
 python3 bench/bench_three_way.py --set fast --pin 4    # Fast: representative subset at reduced scale.
+python3 bench/bench_three_way.py --set real --pin 4    # Real-project libyaml parse workload.
 python3 bench/bench_three_way.py --set ptr             # Focus: object/pointer graphs.
 python3 bench/bench_three_way.py --set numeric         # Focus: numeric calculations/loops.
 python3 bench/bench_three_way.py --set string          # Focus: strings/I/O.
@@ -43,97 +76,251 @@ python3 bench/bench_three_way.py --source AWFY --set fast
 python3 bench/bench_three_way.py --set fast --yianc "$HOME/.local/bin/yianc"
 ```
 
-| 集合 | 内容 | 默认规模档 | 用途 |
+| Set | Contents | Default scale | Purpose |
 | --- | --- | --- | --- |
-| `full` | 全部三态基准 | `full` | 正式基线与对外引用 |
-| `fast` | 8 项代表性基准 | `fast` | 代表性子集与缩小规模，耗时取决于机器 |
-| `ptr` | tag `ptr` | `full` | 指针/对象图 |
-| `numeric` | tag `numeric` | `full` | 数值/循环改动 |
-| `string` | tag `string` | `full` | 字符串/IO 改动 |
-| `alloc-heavy` | tag `alloc` + storage/json | `full` | 分配密集但仍走三态 |
-| `micro` | tag `micro`（fatptr 三项） | `full` | 表示与 ABI 的尺寸/检查读数 |
+| `full` | 27 C/YIAN pairs (LIBYAML excluded) | `full` | Complete paired-project selection; LIBYAML is reported separately |
+| `bg` | All 10 BG tasks | `full` | Official Benchmarksgame project selection |
+| `real` | libyaml parse workload | `full` | Real-project parser evaluation |
+| `fast` | 8 representative benchmarks | `fast` | Representative subset at reduced scale; duration depends on the machine |
+| `ptr` | tag `ptr` | `full` | Pointers and object graphs |
+| `numeric` | tag `numeric` | `full` | Numeric and loop changes |
+| `string` | tag `string` | `full` | String and I/O changes |
+| `alloc-heavy` | tag `alloc` + storage/json | `full` | Allocation-heavy but still three-state |
+| `micro` | tag `micro` (three fatptr benchmarks) | `full` | Representation and ABI size/check readings |
 
-AWFY 与 BG 的成员：AWFY 14 项（bounce、cd、deltablue、havlak、json、list、mand、nbody、permute、
-queen、richards、sieve、storage、towers），BG 5 项（binarytree、fann、fasta、revcomp、spectralnorm），
-fatptr 3 项（call_abi、copy_struct、chase）。
+AWFY has 14 projects (bounce, cd, deltablue, havlak, json, list, mand, nbody,
+permute, queen, richards, sieve, storage, towers). BG has 10 (binarytree, fann,
+fasta, knucleotide, mandelbrot, nbody, pidigits, regexredux, revcomp,
+spectralnorm). LIBYAML has one real-corpus parse project. `BG/nbody` and
+`AWFY/nbody` have distinct project IDs. The three fatptr projects are call_abi,
+copy_struct, and chase.
 
-集合只在 `bench/sets/` 里定义：新增集合要说明它覆盖哪个机制侧重（`ptr`/`numeric`/`string`/`alloc`/
-`control`；`control` 只有 tag，没有对应集合），避免来源与侧重的组合膨胀。
+Sets are defined only in `bench/sets/`. A new set must state which mechanism
+focus it covers (`ptr`/`numeric`/`string`/`alloc`/`control`; `control` is
+tag-only and has no set), avoiding a combinatorial expansion of sources and
+focuses.
 
-## 两档规模
+## Scales
 
-- **full**（默认，正式记录）：源内默认规模，每态 1 次 warmup + 5 次测量取最小值。
-- **fast**（开发中频繁跑）：对 `specs/<name>.json` 里声明了 `scale.fast` 的基准，把源里
-  `// bench-scale` 标记行的数字替换成 fast 值，在 `build/bench/src/fast/<SOURCE>/` 下生成构建
-  副本再编译；同一个值作为 argv 传给 C 参考，保证三态工作量一致。其余基准两档同规模。
-  fast 档不触发降次，每态 1 次 warmup + 3 次测量取最小值。
+- **full** (default, formal records): the sources' default scale and each
+  benchmark's spec-owned warmup/run counts, taking the minimum.
+- **fast** (frequent development runs): for projects that declare `scale.fast`
+  in `bench/<SOURCE>/<name>/spec.json`, stage an isolated copy under
+  `build/bench/projects/fast/<SOURCE>/<name>/<state>/` and replace the root
+  YIAN `// bench-scale` marker. Numeric BG projects receive the same selected
+  dimension once as C argv. Other projects use their declared full dimension.
+  The fast profile changes only the scale; the same per-spec
+  warmup/run counts apply.
 
-| 基准 | 标记的规模量 | full | fast |
+| Benchmark | Marked scale value | full | fast |
 | --- | --- | ---: | ---: |
-| AWFY/queen | `ITER`（每轮 10 次 8 皇后求解） | 276923 | 65000 |
-| AWFY/sieve | `ITER`（每轮执行完整筛法） | 268657 | 59000 |
+| AWFY/queen | `ITER` (10 consecutive 8-queens solves per round) | 276923 | 65000 |
+| AWFY/sieve | `ITER` (one full sieve per round) | 268657 | 59000 |
 | ALLOC/churn_single | `rounds` | 1000 | 100 |
 | ALLOC/churn_mixed | `rounds` | 20000 | 2000 |
 | ALLOC/grow_free | `cycles` | 40 | 8 |
 | ALLOC/grow_varied | `cycles` | 32 | 8 |
-| fatptr/call_abi | `CALLS`（每轮调用次数） | 4096 | 1024 |
+| fatptr/call_abi | `CALLS` (calls per round) | 4096 | 1024 |
 | fatptr/copy_struct | `ROUNDS` | 1024 | 128 |
 | fatptr/chase | `NODES` | 4000000 | 2000000 |
 
-未列出的基准两档同规模，快速档通过代表性子集和这些规模覆盖控制时长。标定一项的做法是给源加
-`// bench-scale` 标记行、在 spec 里填 `scale.fast`；fast 档的量级口径是 fat 态每项 0.2–0.5 s，
-超过 1 s 的项按 full 规模运行。缩小规模不得改变基准内部断言的语义：像 sieve 那样缩放重复次数
-最安全；若必须缩放问题规模，断言与权威值都要跟着写成规模的函数。
+Unlisted benchmarks use the same scale in both profiles; the fast profile
+controls duration through the representative subset and these scale overrides.
+To calibrate a benchmark, add a `// bench-scale` marker line to the source and set
+`scale.fast` in its spec; the fast target is 0.2–0.5 s per fat-mode benchmark, and
+items over 1 s run at full scale. Sampling counts are independent of the scale
+profile: they come from the same spec measurement block. Reducing scale must not
+change the semantics of internal assertions: scaling iteration counts as sieve
+does is safest; when the problem size must be scaled, assertions and
+authoritative values must also become functions of the scale.
 
-不同规模下的性能结论需分别解释；跨规模比较应核对工作量、缓存行为与采样条件。
+Conclusions at different scales must be interpreted separately; cross-scale
+comparisons should verify workload, cache behavior, and sampling conditions.
 
-## 三态协议
+### Sampling policy
 
-| 态 | 编译/运行 |
+Every `spec.json` declares its own fixed policy:
+
+```json
+"measurement": {"warmups": 1, "runs": 5}
+```
+
+`warmups` is per state/leg and excluded from samples; `runs` is the number of
+measured rotations. The default for benchmarks without an explicit block is
+also 1/5, but every project lists the block so the intended count is visible.
+The command-line runners reject `--runs`; set files select members and scale,
+not sampling. High-variance workloads use longer policies:
+
+| Benchmark | Warmups | Runs | Reason |
+| --- | ---: | ---: | --- |
+| `BG/revcomp` | 3 | 11 | ~250 MB stdin/stdout; page-cache and writeback sensitivity |
+| `BG/mandelbrot` | 2 | 9 | short runtime with observed fat-mode CV near 13% |
+| `AWFY/nbody` | 2 | 9 | ASan leg has occasional long outliers |
+| `BG/pidigits` | 2 | 9 | ASan C leg has occasional long outliers |
+| `AWFY/permute` | 2 | 7 | short run with marginal C-leg CV |
+| `BG/binarytree` | 2 | 7 | ASan YIAN leg has marginal CV |
+
+A longer policy reduces, but does not eliminate, I/O and host noise; it is not a
+substitute for controlling the execution environment.
+
+## Three-state protocol
+
+| State | Compile/run |
 | --- | --- |
-| C | `clang -O2 -ffp-contract=off bench/<SOURCE>/c/<name>.c -lm`（argv 见 spec） |
-| raw | `yianc -O2 --raw-pointers lib/src <src>` + libc `malloc`/`free` |
-| fat | `yianc -O2 lib/src <src>`（胖指针为默认） |
+| C | Project CMake build, `clang -O3 -ffp-contract=off`, target `bench_app` |
+| raw | anx project build with native yianc `-O3 --raw-pointers` |
+| fat | anx project build with native yianc `-O3` (fat pointers are the default) |
 
-两个 runner 都只调用 native `yianc`，按 `--yianc PATH`、非空 `YIANC`、`PATH` 的顺序选择，并拒绝
-脚本、目录、不可执行文件和非 ELF 文件。报告记录规范化 compiler 路径、SHA-256 与选择来源。
-`bench_allocator.py --compiler-root PATH` 只指定标准库和输入源码根，不选择编译器。
+The runners select native `anx` through `--anx PATH`, nonempty `ANX`, then `PATH`;
+anx selects native `yianc` through `--yianc PATH`, nonempty `YIANC`, then `PATH`.
+Both reject scripts, directories, non-executable files, and non-ELF files.
+`bench_allocator.py --compiler-root PATH` only sets the
+standard-library and input source root; it does not select the compiler.
 
-- 产物：`build/bench/{cbin,yraw,yfat}/<SOURCE>_<name>`（三态**等长路径**——分配密集型基准的
-  绝对值对 argv[0] 长度 → 进程布局敏感）。
-- 采样：每态 1 次 warmup（不计入样本）后按 C→raw→fat **逐次轮转**测量 N 次；正式指标取最小值，
-  同时记录中位数/四分位距/CV/峰值 RSS（`/usr/bin/time -v`）。
-- 降噪：`taskset -c <cpu>` 绑核；逐次轮转减轻跨时段频率/温度漂移。
-- 语义护栏：C warmup 必须通过 spec 的 `check`（`rc` / `stdout_eq` / `stdout_contains` /
-  `stdout_int_mod`）；raw 与 fat 的 warmup stdout 与退出码必须逐字节一致，且退出码为 0。
-  报告中标 `否` 即该基准的比值不可用。
-- **不设回归门槛**：性能试验只作参考，不写阈值脚本；噪声量级取决于采样环境，判断变化需结合重复测量与样本分布。
-- **算法等价需独立核对**：退出码与输出一致只能说明结果校验通过，不能证明搜索路径、读写恢复、分配或错误路径一致。
-  解释比值前须核对 C/raw/fat 的算法与工作量；未经核对的条目不能作为表示开销的证据。
-- **运行范围需先审查**：bench 命令会编译并运行所选负载，含 warmup 和多次采样；benchmark 是性能测量，不是默认局部测试。仓库任务中执行前需明确选择和测量范围并取得相应授权。
+- Artifacts: `build/bench/{cbin,yraw,yfat}/<SOURCE>_<name>` (all three states use
+  equal-length paths; absolute values for allocation-heavy benchmarks are
+  sensitive to argv[0] length and process layout).
+- Sampling: each spec owns `measurement.warmups` and `measurement.runs`; warmups
+  are excluded from samples, then the runner rotates C->raw->fat for the fixed
+  number of measured rounds. Formal metrics use each state's minimum, while
+  recording median/IQR/CV/peak RSS (`/usr/bin/time -v`). The runners do not
+  accept `--runs`; changing a benchmark's sampling requires editing its
+  `spec.json`.
+- Noise reduction: `taskset -c <cpu>` pinning; round-robin measurement reduces
+  frequency/thermal drift across time.
+- Semantic guard: every C warmup must pass the spec's `check` (`rc` /
+  `stdout_eq` / `stdout_contains` / `stdout_int_mod`); raw and fat warmup stdout
+  and exit codes must match byte for byte, and each must pass the same spec's
+  output/exit checks.
+  A failed check stops export of that measurement.
+- **No regression thresholds**: performance experiments are reference only; no
+  threshold scripts are written. Noise magnitude depends on the sampling
+  environment; judging changes requires repeated measurements and the sample
+  distribution.
+- BG input files are generated once before the consumer legs; each run opens a
+  fresh copy of the same input and writes binary output to a file. File hashing
+  and byte comparison are outside the measured interval.
+- Translation follows the
+  [C → YIAN syntax rewrite rules](../docs/c-to-yian.md); each BG README maps its
+  C functions to YIAN and records representation differences. A small oracle
+  probe and C comparison do not prove equivalence at every scale.
+- **Review the run scope first**: bench commands compile and run the selected
+  workloads, including warmup and repeated sampling; benchmarks measure
+  performance and are not default local tests. Repository tasks must define the
+  selection and measurement scope and obtain authorization before running.
 
-## 分配器专项
+## ASan cross-comparison
+
+`bench_asan.py` measures the C plain, C ASan
+(`ASAN_OPTIONS=detect_leaks=0`) and YIAN fat legs adjacently in one session;
+`binarytree` also has a `quarantine_size_mb=0` sensitivity leg. Each leg uses the
+same spec-owned warmup/run counts as the three-state runner; output includes
+medians, IQR, min–max, peak RSS,
+per-benchmark ratios for the three comparisons, and geometric means:
+
+- (i) C ASan / C plain (ASan's own overhead)
+- (ii) C ASan / YIAN fat (cross-toolchain)
+- (iii) YIAN fat / C plain (full stack versus uninstrumented C)
+
+GMP and PCRE2 are the same fixed project-local static libraries in all legs.
+They are not ASan-instrumented; allocations intercepted by ASan do not make
+library code instrumented, and library operations are outside YIAN guard coverage.
 
 ```bash
-python3 bench/bench_allocator.py --scale full --pin 4    # Full scale: seven samples per mode.
-python3 bench/bench_allocator.py --scale fast --pin 4    # Fast scale: three samples per mode at reduced scale.
+python3 bench/bench_asan.py --set paper --pin 4
+python3 bench/bench_asan.py --bench BG/fasta --pin 0
+```
+
+Results are written to `results/asan.csv` for the paper set and to
+`results/asan-<set>.csv` for other sets, including every wall-time/RSS pair,
+per-leg statistics, derived ratios and geometric means. `--set paper` selects the paper's
+24 benchmarks; LIBYAML is measured separately by `real` and written to
+`results/asan-real.csv`. LIBYAML's complete three-state and ASan data are written
+to `results/real.csv` and `results/asan-real.csv`; they are not included in
+`paper.csv` / `asan.csv` or their geomeans. `--set full` selects 27 of the 28
+paired projects (LIBYAML is selected by `real`). The semantic guard
+requires C warmup to pass the spec's `check`, ASan stdout/exit codes to match C
+plain, and the YIAN leg to pass the same spec's output/exit checks.
+
+`BG/binarytree` declares its scale in `bench/BG/binarytree/spec.json`;
+`--fast` can lower projects that declare a `scale.fast` value. ASan result files
+from previous source revisions are historical and do not cover the ten current
+BG projects as a batch.
+
+## Allocator suite
+
+```bash
+python3 bench/bench_allocator.py --scale full --pin 4    # Full scale, per-spec sampling.
+python3 bench/bench_allocator.py --scale fast --pin 4    # Reduced scale, same per-spec sampling.
 python3 bench/bench_allocator.py --scale fast --yianc "$HOME/.local/bin/yianc"
 ```
 
-`bench/ALLOC` 的四项没有 C 参考，对照态是 libc `malloc`/`free`（raw 态），因此是两态比较：
-同尺寸 churn、混合尺寸 churn、增长-释放、变尺寸增长-释放。结果写 `bench/results/alloc.{md,csv}`。
+The four `bench/ALLOC` benchmarks have no C reference; the comparison state is
+libc `malloc`/`free` (raw), so this is a two-state comparison: same-size churn,
+mixed-size churn, grow-free, and varied-size grow-free. Results are written to
+`bench/results/alloc.csv`.
 
-## 结果留档
+## CSV data format
 
-`bench/results/` 里只有完全档与分配器记录（`full.{md,csv}`、`alloc.{md,csv}`）进版本历史；
-其余集合（`ptr`/`numeric`/`string`/`alloc-heavy`/`micro`）与临时子集（`partial.*`）由 `.gitignore` 排除。
-报告中的日期、提交与环境指纹定义该次测量的范围，不能视为当前源码性能。
+CSV files contain performance data only. Each workload/state row has the
+benchmark name, state, number of samples, minimum/median/IQR/maximum time,
+coefficient of variation, peak/median RSS, and performance ratios. Individual
+observations are ordinary numbered columns: `time_ms_1`, `rss_kb_1`, and so on.
+Times use milliseconds and RSS uses KiB. Raw values retain their precision;
+derived statistics are displayed with up to six decimal places.
 
-## 新增一个基准
+`min_over_c` and `min_over_raw` compare minimum times for the three-state or
+allocator run. `median_over_c` and `median_over_yian` compare median times for
+the ASan run. Rows named `geomean` contain aggregate ratios; their sample and
+absolute-time/RSS cells are empty. Inapplicable ratios are empty cells.
 
-1. 放到对应来源目录（新来源就新建 `bench/<SOURCE>/{an,c,specs}`）；
-2. `an/<name>.an`（裸态语义不同则加 `<name>.raw.an`）、`c/<name>.c`（同算法同规模）、
-   `specs/<name>.json`（`argv`、`check`、`tags`、可选 `scale`）；
-3. 在 `bench/README.md` 登记来源与规模对齐关系；三态跑通并确认 C 权威值。
+Output files have no JSON cells, comments, source/tool/environment information,
+parameters, hashes, validation records or report archives. Runtime output checks
+remain in memory and failed measurements stop export. Temporary program output
+and generated stdin files are cleaned when each benchmark runner exits.
+The aggregate script writes no logs or backups.
 
-评测源的来源与许可见 `bench/SUITES.md`。
+`projects.py` builds projects, `execution.py` performs timed file I/O, and
+`results_io.py` writes these tables. The current paper comparison is in
+`results/paper.csv` and `results/asan.csv`; other selections write their own
+latest performance CSV when explicitly run.
+
+The entire `bench/results/` directory is Git-ignored. Results remain local to
+the machine that produced them. The paper checkout's `data/` copies are also
+Git-ignored; populate them from local measurements with `refresh_data.py`.
+
+## Paper reproduction
+
+`scripts/rerun_paper_experiments.sh` runs `scripts/run_cve.py --all` (38 YIAN
+vulnerability projects), three-state performance (`--set paper`), and the ASan
+comparison (`--set paper`) in order, with output matching the individual
+runners.
+
+CVE projects live in [`cve/`](../cve/README.md) and are independent of the
+compiler safety regressions in `tests/safety/`. C witnesses use separate CMake
+projects; the C ASan comparison must explicitly select `--language c` or `both`
+and is not counted among the paper's 38 YIAN vulnerability runs.
+
+```bash
+scripts/rerun_paper_experiments.sh                       # per-spec sampling, pin=4
+scripts/rerun_paper_experiments.sh --pin 0               # no pinning
+scripts/rerun_paper_experiments.sh --skip-cve --bench BG/fasta
+scripts/rerun_paper_experiments.sh --refresh-data        # call the parent repository's refresh_data.py at the end
+```
+
+`--bench` restricts both runners; `--skip-cve`/`--skip-perf`/`--skip-asan` skip
+the corresponding phase. `SECL_PIN` and `YIAN_PYTHON` can override the pin and
+interpreter defaults; sampling has no environment or CLI override.
+
+## Adding a benchmark
+
+1. Create `bench/<SOURCE>/<name>/` with `spec.json`, `yian/package.anx`, and
+   `yian/src/main.an`; add `raw/src/main.an` only when raw mode needs an overlay.
+2. Add `c/CMakeLists.txt` and the C reference for paired workloads. Add fixtures,
+   source/license hashes, full function mapping, and translation differences for
+   upstream workloads.
+3. Register membership in any relevant set and document source/license details
+   in `bench/SUITES.md`. Define an authorized local oracle probe before making
+   broader execution or measurement claims.
+
+The source and license registry is in `bench/SUITES.md`.

@@ -1,5 +1,4 @@
 from std.core.fmt import ToString;
-from std.core.drop import Drop;
 from std.num.f64 import from_bits, to_bits;
 
 fn parse_signed(text: str) -> f64 {

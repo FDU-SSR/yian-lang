@@ -1,10 +1,9 @@
 {
   "name": "numeric",
   "scale": "full",
-  "runs": 5,
   "include": [
     "tag:numeric"
   ],
   "exclude": [],
-  "note": "数值/循环密集"
+  "note": "Numeric/loop intensive"
 }

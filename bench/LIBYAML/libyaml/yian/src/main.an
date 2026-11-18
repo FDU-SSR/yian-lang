@@ -1,0 +1,1142 @@
+// bench/LIBYAML/libyaml/yian/src/main.an — libyaml 0.2.5 parse entry point.
+//
+// --corpus parses the pinned real Kubernetes YAML corpus with the full
+// reader/scanner/parser/loader chain and prints a 32-bit tree checksum plus the
+// visited node count.  --file parses the first document with cycle detection
+// before hashing.  --inspect emits the yaml-compat-v1 JSON Lines observation of
+// tokens, events or documents for the complete stream.
+
+from libyaml.yaml.loader import Document, NodeData, document_delete, loader_load;
+from libyaml.yaml.parser import Parser, parser_delete, parser_error, parser_new,
+    parser_parse_ref;
+from libyaml.yaml.reader import Input;
+from libyaml.yaml.scanner import Scanner, scanner_delete, scanner_error, scanner_new,
+    scanner_scan_into;
+from libyaml.yaml.types import CollectionStyle, Encoding, ErrorKind, Event, EventData,
+    EventKind, Mark, ParserError, ScalarStyle, Token, TokenData, TokenKind,
+    VersionDirective, event_delete, limits_new, token_delete;
+from std.core.env import args, exit;
+from std.core.fs import read;
+from std.core.io import IoError, Read, Stderr, Stdout, Write;
+from std.core.vec import Vec;
+
+// ---------------------------------------------------------------------------
+// Output helpers.
+// ---------------------------------------------------------------------------
+
+fn emit(out: Vec<u8>&) {
+    let stdout: Stdout = Stdout.new();
+    match stdout.write_all(out.as_slice()) {
+        Ok(_) => {},
+        Err(error) => error.drop(),
+    }
+    stdout.drop();
+}
+
+fn emit_stderr(text: str) {
+    let stderr: Stderr = Stderr.new();
+    match stderr.write_all(text.as_slice()) {
+        Ok(_) => {},
+        Err(error) => error.drop(),
+    }
+    stderr.drop();
+}
+
+fn append_u64(out: Vec<u8>&, value: u64) {
+    let digits: u8[20] = [0u8; 20];
+    let position: u64 = 20u64;
+    let remaining: u64 = value;
+    if remaining == 0u64 {
+        out.push(b'0');
+        return;
+    }
+    while remaining > 0u64 {
+        position -= 1u64;
+        digits[position] = b'0' + u8(remaining % 10u64);
+        remaining /= 10u64;
+    };
+    while position < 20u64 {
+        out.push(digits[position]);
+        position += 1u64;
+    }
+}
+
+fn append_i32(out: Vec<u8>&, value: i32) {
+    if value < 0i32 {
+        out.push(b'-');
+        append_u64(out, u64(-value));
+    } else {
+        append_u64(out, u64(value));
+    }
+}
+
+fn hex_digit(value: u8) -> u8 {
+    if value < 10u8 {
+        return b'0' + value;
+    }
+    b'a' + (value - 10u8)
+}
+
+fn append_hex(out: Vec<u8>&, bytes: u8[]) {
+    let index = 0u64;
+    while index < bytes.len() {
+        out.push(hex_digit(bytes[index] >> 4u8));
+        out.push(hex_digit(bytes[index] & 0x0Fu8));
+        index += 1u64;
+    };
+}
+
+fn append_mark(out: Vec<u8>&, mark: Mark) {
+    out.push(b'[');
+    append_u64(out, mark.index);
+    out.push(b',');
+    append_u64(out, mark.line);
+    out.push(b',');
+    append_u64(out, mark.column);
+    out.push(b']');
+}
+
+fn append_json_string(out: Vec<u8>&, text: str) {
+    out.push(b'"');
+    let bytes: u8[] = text.as_slice();
+    let index = 0u64;
+    while index < bytes.len() {
+        let byte: u8 = bytes[index];
+        if byte == 34u8 {
+            out.push(b'\\');
+            out.push(b'"');
+        } elif byte == 92u8 {
+            out.push(b'\\');
+            out.push(b'\\');
+        } elif byte == 10u8 {
+            out.push(b'\\');
+            out.push(b'n');
+        } elif byte == 13u8 {
+            out.push(b'\\');
+            out.push(b'r');
+        } elif byte == 9u8 {
+            out.push(b'\\');
+            out.push(b't');
+        } elif byte < 32u8 {
+            out.push(b'\\');
+            out.push(b'u');
+            out.push(b'0');
+            out.push(b'0');
+            out.push(hex_digit(byte >> 4u8));
+            out.push(hex_digit(byte & 0x0Fu8));
+        } else {
+            out.push(byte);
+        }
+        index += 1u64;
+    }
+    out.push(b'"');
+}
+
+// ---------------------------------------------------------------------------
+// Kind and style names shared by the JSON Lines records.
+// ---------------------------------------------------------------------------
+
+fn token_kind_name(kind: TokenKind) -> str {
+    match kind {
+        TokenKind.StreamStart => "StreamStart",
+        TokenKind.StreamEnd => "StreamEnd",
+        TokenKind.VersionDirective => "VersionDirective",
+        TokenKind.TagDirective => "TagDirective",
+        TokenKind.DocumentStart => "DocumentStart",
+        TokenKind.DocumentEnd => "DocumentEnd",
+        TokenKind.BlockSequenceStart => "BlockSequenceStart",
+        TokenKind.BlockMappingStart => "BlockMappingStart",
+        TokenKind.BlockEnd => "BlockEnd",
+        TokenKind.FlowSequenceStart => "FlowSequenceStart",
+        TokenKind.FlowSequenceEnd => "FlowSequenceEnd",
+        TokenKind.FlowMappingStart => "FlowMappingStart",
+        TokenKind.FlowMappingEnd => "FlowMappingEnd",
+        TokenKind.BlockEntry => "BlockEntry",
+        TokenKind.FlowEntry => "FlowEntry",
+        TokenKind.Key => "Key",
+        TokenKind.Value => "Value",
+        TokenKind.Alias => "Alias",
+        TokenKind.Anchor => "Anchor",
+        TokenKind.Tag => "Tag",
+        TokenKind.Scalar => "Scalar",
+    }
+}
+
+fn event_kind_name(kind: EventKind) -> str {
+    match kind {
+        EventKind.StreamStart => "StreamStart",
+        EventKind.StreamEnd => "StreamEnd",
+        EventKind.DocumentStart => "DocumentStart",
+        EventKind.DocumentEnd => "DocumentEnd",
+        EventKind.Alias => "Alias",
+        EventKind.Scalar => "Scalar",
+        EventKind.SequenceStart => "SequenceStart",
+        EventKind.SequenceEnd => "SequenceEnd",
+        EventKind.MappingStart => "MappingStart",
+        EventKind.MappingEnd => "MappingEnd",
+    }
+}
+
+fn scalar_style_name(style: ScalarStyle) -> str {
+    if style == ScalarStyle.Plain {
+        return "Plain";
+    }
+    if style == ScalarStyle.SingleQuoted {
+        return "SingleQuoted";
+    }
+    if style == ScalarStyle.DoubleQuoted {
+        return "DoubleQuoted";
+    }
+    if style == ScalarStyle.Literal {
+        return "Literal";
+    }
+    if style == ScalarStyle.Folded {
+        return "Folded";
+    }
+    "Any"
+}
+
+fn collection_style_name(style: CollectionStyle) -> str {
+    if style == CollectionStyle.Block {
+        return "Block";
+    }
+    if style == CollectionStyle.Flow {
+        return "Flow";
+    }
+    "Any"
+}
+
+fn encoding_name(encoding: Encoding) -> str {
+    if encoding == Encoding.Utf8 {
+        return "Utf8";
+    }
+    if encoding == Encoding.Utf16Le {
+        return "Utf16Le";
+    }
+    if encoding == Encoding.Utf16Be {
+        return "Utf16Be";
+    }
+    "Any"
+}
+
+fn error_kind_name(kind: ErrorKind) -> str {
+    if kind == ErrorKind.Reader {
+        return "Reader";
+    }
+    if kind == ErrorKind.Scanner {
+        return "Scanner";
+    }
+    if kind == ErrorKind.Parser {
+        return "Parser";
+    }
+    "Composer"
+}
+
+// ---------------------------------------------------------------------------
+// Record printers.
+// ---------------------------------------------------------------------------
+
+fn append_token(out: Vec<u8>&, token: Token&) {
+    out.extend_from_slice("{\"record\":\"token\",\"kind\":\"".as_slice());
+    out.extend_from_slice(token_kind_name(token.kind).as_slice());
+    out.extend_from_slice("\",\"start\":".as_slice());
+    append_mark(out, token.start);
+    out.extend_from_slice(",\"end\":".as_slice());
+    append_mark(out, token.end);
+    out.extend_from_slice(",\"data\":".as_slice());
+    match &token.data {
+        TokenData.Empty => { out.extend_from_slice("{}".as_slice()); },
+        TokenData.StreamStart(encoding) => {
+            out.extend_from_slice("{\"encoding\":\"".as_slice());
+            out.extend_from_slice(encoding_name(*encoding).as_slice());
+            out.extend_from_slice("\"}".as_slice());
+        },
+        TokenData.Alias(value) => {
+            out.extend_from_slice("{\"value\":\"".as_slice());
+            append_hex(out, value.as_slice());
+            out.extend_from_slice("\"}".as_slice());
+        },
+        TokenData.Anchor(value) => {
+            out.extend_from_slice("{\"value\":\"".as_slice());
+            append_hex(out, value.as_slice());
+            out.extend_from_slice("\"}".as_slice());
+        },
+        TokenData.Tag(handle, suffix) => {
+            out.extend_from_slice("{\"handle\":\"".as_slice());
+            append_hex(out, handle.as_slice());
+            out.extend_from_slice("\",\"suffix\":\"".as_slice());
+            append_hex(out, suffix.as_slice());
+            out.extend_from_slice("\"}".as_slice());
+        },
+        TokenData.Scalar(value, style) => {
+            out.extend_from_slice("{\"value\":\"".as_slice());
+            append_hex(out, value.as_slice());
+            out.extend_from_slice("\",\"style\":\"".as_slice());
+            out.extend_from_slice(scalar_style_name(*style).as_slice());
+            out.extend_from_slice("\"}".as_slice());
+        },
+        TokenData.VersionDirective(value) => {
+            out.extend_from_slice("{\"value\":{\"major\":".as_slice());
+            append_i32(out, value.major);
+            out.extend_from_slice(",\"minor\":".as_slice());
+            append_i32(out, value.minor);
+            out.extend_from_slice("}}".as_slice());
+        },
+        TokenData.TagDirective(value) => {
+            out.extend_from_slice("{\"value\":{\"handle\":\"".as_slice());
+            append_hex(out, value.handle.as_slice());
+            out.extend_from_slice("\",\"prefix\":\"".as_slice());
+            append_hex(out, value.prefix.as_slice());
+            out.extend_from_slice("\"}}".as_slice());
+        },
+    }
+    out.extend_from_slice("}\n".as_slice());
+}
+
+fn append_optional_hex(out: Vec<u8>&, value: Option<Vec<u8>>&) {
+    match value {
+        Some(bytes) => {
+            out.push(b'"');
+            append_hex(out, bytes.as_slice());
+            out.push(b'"');
+        },
+        None => { out.extend_from_slice("null".as_slice()); },
+    }
+}
+
+fn append_event(out: Vec<u8>&, event: Event&) {
+    out.extend_from_slice("{\"record\":\"event\",\"kind\":\"".as_slice());
+    out.extend_from_slice(event_kind_name(event.kind).as_slice());
+    out.extend_from_slice("\",\"start\":".as_slice());
+    append_mark(out, event.start);
+    out.extend_from_slice(",\"end\":".as_slice());
+    append_mark(out, event.end);
+    out.extend_from_slice(",\"data\":".as_slice());
+    match &event.data {
+        EventData.Empty => { out.extend_from_slice("{}".as_slice()); },
+        EventData.StreamStart(encoding) => {
+            out.extend_from_slice("{\"encoding\":\"".as_slice());
+            out.extend_from_slice(encoding_name(*encoding).as_slice());
+            out.extend_from_slice("\"}".as_slice());
+        },
+        EventData.DocumentStart(version, tags, implicit) => {
+            out.extend_from_slice("{\"version\":".as_slice());
+            let has_version: bool = match version { Some(_) => true, None => false };
+            if has_version {
+                out.extend_from_slice("{\"major\":".as_slice());
+                append_i32(out, version.unwrap().major);
+                out.extend_from_slice(",\"minor\":".as_slice());
+                append_i32(out, version.unwrap().minor);
+                out.push(b'}');
+            } else {
+                out.extend_from_slice("null".as_slice());
+            }
+            out.extend_from_slice(",\"tags\":[".as_slice());
+            let index = 0u64;
+            while index < tags.len() {
+                if index != 0u64 { out.push(b','); }
+                out.extend_from_slice("{\"handle\":\"".as_slice());
+                append_hex(out, tags[index].handle.as_slice());
+                out.extend_from_slice("\",\"prefix\":\"".as_slice());
+                append_hex(out, tags[index].prefix.as_slice());
+                out.extend_from_slice("\"}".as_slice());
+                index += 1u64;
+            };
+            out.extend_from_slice("],\"implicit\":".as_slice());
+            if *implicit { out.extend_from_slice("true".as_slice()); }
+            else { out.extend_from_slice("false".as_slice()); }
+            out.push(b'}');
+        },
+        EventData.DocumentEnd(implicit) => {
+            out.extend_from_slice("{\"implicit\":".as_slice());
+            if *implicit { out.extend_from_slice("true".as_slice()); }
+            else { out.extend_from_slice("false".as_slice()); }
+            out.push(b'}');
+        },
+        EventData.Alias(anchor) => {
+            out.extend_from_slice("{\"anchor\":\"".as_slice());
+            append_hex(out, anchor.as_slice());
+            out.extend_from_slice("\"}".as_slice());
+        },
+        EventData.Scalar(anchor, tag, value, plain_implicit, quoted_implicit, style) => {
+            out.extend_from_slice("{\"anchor\":".as_slice());
+            append_optional_hex(out, anchor);
+            out.extend_from_slice(",\"tag\":".as_slice());
+            append_optional_hex(out, tag);
+            out.extend_from_slice(",\"value\":\"".as_slice());
+            append_hex(out, value.as_slice());
+            out.extend_from_slice("\",\"plain_implicit\":".as_slice());
+            if *plain_implicit { out.extend_from_slice("true".as_slice()); }
+            else { out.extend_from_slice("false".as_slice()); }
+            out.extend_from_slice(",\"quoted_implicit\":".as_slice());
+            if *quoted_implicit { out.extend_from_slice("true".as_slice()); }
+            else { out.extend_from_slice("false".as_slice()); }
+            out.extend_from_slice(",\"style\":\"".as_slice());
+            out.extend_from_slice(scalar_style_name(*style).as_slice());
+            out.extend_from_slice("\"}".as_slice());
+        },
+        EventData.SequenceStart(anchor, tag, implicit, style) => {
+            out.extend_from_slice("{\"anchor\":".as_slice());
+            append_optional_hex(out, anchor);
+            out.extend_from_slice(",\"tag\":".as_slice());
+            append_optional_hex(out, tag);
+            out.extend_from_slice(",\"implicit\":".as_slice());
+            if *implicit { out.extend_from_slice("true".as_slice()); }
+            else { out.extend_from_slice("false".as_slice()); }
+            out.extend_from_slice(",\"style\":\"".as_slice());
+            out.extend_from_slice(collection_style_name(*style).as_slice());
+            out.extend_from_slice("\"}".as_slice());
+        },
+        EventData.MappingStart(anchor, tag, implicit, style) => {
+            out.extend_from_slice("{\"anchor\":".as_slice());
+            append_optional_hex(out, anchor);
+            out.extend_from_slice(",\"tag\":".as_slice());
+            append_optional_hex(out, tag);
+            out.extend_from_slice(",\"implicit\":".as_slice());
+            if *implicit { out.extend_from_slice("true".as_slice()); }
+            else { out.extend_from_slice("false".as_slice()); }
+            out.extend_from_slice(",\"style\":\"".as_slice());
+            out.extend_from_slice(collection_style_name(*style).as_slice());
+            out.extend_from_slice("\"}".as_slice());
+        },
+    }
+    out.extend_from_slice("}\n".as_slice());
+}
+
+fn append_node(out: Vec<u8>&, node: NodeData&, tag: Vec<u8>&, start: Mark, end: Mark, number: u64) {
+    out.extend_from_slice("{\"id\":".as_slice());
+    append_u64(out, number);
+    out.extend_from_slice(",\"kind\":\"".as_slice());
+    let kind: str = match node {
+        NodeData.Scalar(value, style) => "Scalar",
+        NodeData.Sequence(items, style) => "Sequence",
+        NodeData.Mapping(pairs, style) => "Mapping",
+    };
+    out.extend_from_slice(kind.as_slice());
+    out.extend_from_slice("\",\"tag\":\"".as_slice());
+    append_hex(out, tag.as_slice());
+    out.extend_from_slice("\",\"start\":".as_slice());
+    append_mark(out, start);
+    out.extend_from_slice(",\"end\":".as_slice());
+    append_mark(out, end);
+    out.extend_from_slice(",\"data\":".as_slice());
+    match node {
+        NodeData.Scalar(value, style) => {
+            out.extend_from_slice("{\"value\":\"".as_slice());
+            append_hex(out, value.as_slice());
+            out.extend_from_slice("\",\"style\":\"".as_slice());
+            out.extend_from_slice(scalar_style_name(*style).as_slice());
+            out.extend_from_slice("\"}".as_slice());
+        },
+        NodeData.Sequence(items, style) => {
+            out.extend_from_slice("{\"items\":[".as_slice());
+            let index = 0u64;
+            while index < items.len() {
+                if index != 0u64 { out.push(b','); }
+                append_i32(out, items[index]);
+                index += 1u64;
+            };
+            out.extend_from_slice("],\"style\":\"".as_slice());
+            out.extend_from_slice(collection_style_name(*style).as_slice());
+            out.extend_from_slice("\"}".as_slice());
+        },
+        NodeData.Mapping(pairs, style) => {
+            out.extend_from_slice("{\"pairs\":[".as_slice());
+            let index = 0u64;
+            while index < pairs.len() {
+                if index != 0u64 { out.push(b','); }
+                out.extend_from_slice("{\"key\":".as_slice());
+                append_i32(out, pairs[index].key);
+                out.extend_from_slice(",\"value\":".as_slice());
+                append_i32(out, pairs[index].value);
+                out.push(b'}');
+                index += 1u64;
+            };
+            out.extend_from_slice("],\"style\":\"".as_slice());
+            out.extend_from_slice(collection_style_name(*style).as_slice());
+            out.extend_from_slice("\"}".as_slice());
+        },
+    }
+    out.push(b'}');
+}
+
+fn append_document(out: Vec<u8>&, document: Document&, number: u64) {
+    out.extend_from_slice("{\"record\":\"document\",\"number\":".as_slice());
+    append_u64(out, number);
+    out.extend_from_slice(",\"version\":".as_slice());
+    let has_version: bool = match &document.version { Some(_) => true, None => false };
+    if has_version {
+        out.extend_from_slice("{\"major\":".as_slice());
+        append_i32(out, document.version.unwrap().major);
+        out.extend_from_slice(",\"minor\":".as_slice());
+        append_i32(out, document.version.unwrap().minor);
+        out.push(b'}');
+    } else {
+        out.extend_from_slice("null".as_slice());
+    }
+    out.extend_from_slice(",\"tags\":[".as_slice());
+    let index = 0u64;
+    while index < document.tags.len() {
+        if index != 0u64 { out.push(b','); }
+        out.extend_from_slice("{\"handle\":\"".as_slice());
+        append_hex(out, document.tags[index].handle.as_slice());
+        out.extend_from_slice("\",\"prefix\":\"".as_slice());
+        append_hex(out, document.tags[index].prefix.as_slice());
+        out.extend_from_slice("\"}".as_slice());
+        index += 1u64;
+    };
+    out.extend_from_slice("],\"start_implicit\":".as_slice());
+    if document.start_implicit { out.extend_from_slice("true".as_slice()); }
+    else { out.extend_from_slice("false".as_slice()); }
+    out.extend_from_slice(",\"end_implicit\":".as_slice());
+    if document.end_implicit { out.extend_from_slice("true".as_slice()); }
+    else { out.extend_from_slice("false".as_slice()); }
+    out.extend_from_slice(",\"start\":".as_slice());
+    append_mark(out, document.start);
+    out.extend_from_slice(",\"end\":".as_slice());
+    append_mark(out, document.end);
+    out.extend_from_slice(",\"root\":1,\"nodes\":[".as_slice());
+    let node_index = 0u64;
+    while node_index < document.nodes.len() {
+        if node_index != 0u64 { out.push(b','); }
+        append_node(out, &document.nodes[node_index].data,
+            (&document.nodes[node_index].tag), document.nodes[node_index].start,
+            document.nodes[node_index].end, node_index + 1u64);
+        node_index += 1u64;
+    };
+    out.extend_from_slice("]}\n".as_slice());
+}
+
+fn append_error(out: Vec<u8>&, error: ParserError&) {
+    out.extend_from_slice("{\"record\":\"error\",\"kind\":\"".as_slice());
+    out.extend_from_slice(error_kind_name(error.kind).as_slice());
+    out.extend_from_slice("\",\"problem\":".as_slice());
+    append_mark(out, error.problem);
+    out.extend_from_slice(",\"context\":".as_slice());
+    append_mark(out, error.context);
+    out.extend_from_slice(",\"problem_text\":".as_slice());
+    append_json_string(out, error.problem_text);
+    out.extend_from_slice(",\"context_text\":".as_slice());
+    append_json_string(out, error.context_text);
+    out.extend_from_slice(",\"problem_offset\":".as_slice());
+    append_u64(out, error.problem_offset);
+    out.extend_from_slice(",\"problem_value\":".as_slice());
+    append_i32(out, error.problem_value);
+    out.extend_from_slice("}\n".as_slice());
+}
+
+// ---------------------------------------------------------------------------
+// Tree checksum.
+// ---------------------------------------------------------------------------
+
+fn node_rank(data: NodeData) -> u64 {
+    match data {
+        NodeData.Mapping(pairs, style) => 1u64,
+        NodeData.Sequence(items, style) => 2u64,
+        NodeData.Scalar(value, style) => 3u64,
+    }
+}
+
+fn hash_node(document: Document&, index: u64, hash: u64&, count: u64&) {
+    let node = &document.nodes[index - 1u64];
+    *hash = (*hash * 31u64 + node_rank(node.data)) & 0xFFFFFFFFu64;
+    *count += 1u64;
+    match &node.data {
+        NodeData.Scalar(value, style) => {
+            let offset = 0u64;
+            while offset < value.len() {
+                *hash = (*hash * 31u64 + u64(value[offset])) & 0xFFFFFFFFu64;
+                offset += 1u64;
+            };
+        },
+        NodeData.Sequence(items, style) => {
+            let offset = 0u64;
+            while offset < items.len() {
+                hash_node(document, u64(items[offset]), hash, count);
+                offset += 1u64;
+            };
+        },
+        NodeData.Mapping(pairs, style) => {
+            let offset = 0u64;
+            while offset < pairs.len() {
+                hash_node(document, u64(pairs[offset].key), hash, count);
+                hash_node(document, u64(pairs[offset].value), hash, count);
+                offset += 1u64;
+            };
+        },
+    }
+}
+
+// Explicit-stack checksum: a node may be visited again after its subtree is
+// complete (shared graph), but an entry while it is still on the path is a
+// cycle.  No recursion, so a cyclic document terminates.
+fn hash_tree_checked(document: Document&, hash: u64&, count: u64&) -> bool {
+    if document.nodes.len() == 0u64 {
+        return true;
+    }
+    let on_path: Vec<u8> = Vec<u8>.with_capacity(document.nodes.len() + 1u64);
+    let fill = 0u64;
+    while fill <= document.nodes.len() {
+        on_path.push(0u8);
+        fill += 1u64;
+    };
+    let stack: Vec<i32> = Vec<i32>.new();
+    stack.push(1i32);
+    let ok: bool = true;
+    while stack.len() > 0u64 {
+        let position: u64 = stack.len() - 1u64;
+        let frame: i32 = stack[position];
+        stack.truncate(position);
+        if frame < 0i32 {
+            on_path[u64(-frame)] = 0u8;
+            continue;
+        }
+        let id: u64 = u64(frame);
+        if on_path[id] != 0u8 {
+            ok = false;
+            break;
+        }
+        on_path[id] = 1u8;
+        let node = &document.nodes[id - 1u64];
+        *hash = (*hash * 31u64 + node_rank(node.data)) & 0xFFFFFFFFu64;
+        *count += 1u64;
+        match &node.data {
+            NodeData.Scalar(value, style) => {
+                let offset = 0u64;
+                while offset < value.len() {
+                    *hash = (*hash * 31u64 + u64(value[offset])) & 0xFFFFFFFFu64;
+                    offset += 1u64;
+                };
+                on_path[id] = 0u8;
+            },
+            NodeData.Sequence(items, style) => {
+                stack.push(-frame);
+                let offset: u64 = items.len();
+                while offset > 0u64 {
+                    offset -= 1u64;
+                    stack.push(items[offset]);
+                };
+            },
+            NodeData.Mapping(pairs, style) => {
+                stack.push(-frame);
+                let offset: u64 = pairs.len();
+                while offset > 0u64 {
+                    offset -= 1u64;
+                    stack.push(pairs[offset].value);
+                    stack.push(pairs[offset].key);
+                };
+            },
+        }
+    };
+    on_path.drop();
+    stack.drop();
+    ok
+}
+
+fn write_result(hash: u64, count: u64) {
+    let output: Vec<u8> = Vec<u8>.new();
+    append_u64(&output, hash);
+    output.push(b' ');
+    append_u64(&output, count);
+    output.push(b'\n');
+    emit(&output);
+    output.drop();
+}
+
+// ---------------------------------------------------------------------------
+// Input sources.
+// ---------------------------------------------------------------------------
+
+struct FileChunk {
+    data: u8[],
+    position: u64,
+    chunk: u64,
+    fail_after: i64,
+}
+
+impl Read for FileChunk {
+    pub fn read(target: u8[]) -> Result<u64, IoError> {
+        if self.fail_after >= 0i64 && self.position >= u64(self.fail_after) {
+            return Result<u64, IoError>.Err(msg=IoError.other("injected read failure"));
+        }
+        let remaining: u64 = self.data.len() - self.position;
+        let count: u64 = target.len();
+        if self.chunk < count {
+            count = self.chunk;
+        }
+        if remaining < count {
+            count = remaining;
+        }
+        if self.fail_after >= 0i64 {
+            let allowed: u64 = u64(self.fail_after) - self.position;
+            if allowed < count {
+                count = allowed;
+            }
+        }
+        let index = 0u64;
+        while index < count {
+            target[index] = self.data[self.position + index];
+            index += 1u64;
+        };
+        self.position += count;
+        Result<u64, IoError>.Ok(val=count)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Inspect modes.
+// ---------------------------------------------------------------------------
+
+fn inspect_tokens(bytes: u8[], source: FileChunk&, chunk: u64) -> i32 {
+    let limits = limits_new();
+    let input: Input;
+    if chunk == 0u64 {
+        input = Input.Bytes(data=bytes, position=0u64);
+    } else {
+        input = Input.Stream(source=source);
+    }
+    let scanner: Scanner = scanner_new(input, Encoding.Any, &limits);
+    let out: Vec<u8> = Vec<u8>.new();
+    out.extend_from_slice("{\"schema\":\"yaml-compat-v1\",\"mode\":\"tokens\"}\n".as_slice());
+    emit(&out);
+    out.truncate(0u64);
+    let code: i32 = 0i32;
+    loop {
+        let token: Token = Token(
+            kind=TokenKind.StreamEnd,
+            start=Mark(index=0u64, line=0u64, column=0u64),
+            end=Mark(index=0u64, line=0u64, column=0u64),
+            data=TokenData.Empty,
+        );
+        let status: i32 = scanner_scan_into(&scanner, &token);
+        if status == 1i32 {
+            append_token(&out, &token);
+            emit(&out);
+            out.truncate(0u64);
+            let done: bool = token.kind == TokenKind.StreamEnd;
+            token_delete(&token);
+            if done {
+                break;
+            }
+        } elif status == 0i32 {
+            break;
+        } else {
+            let error: ParserError = scanner_error(&scanner);
+            append_error(&out, &error);
+            emit(&out);
+            out.truncate(0u64);
+            code = 1i32;
+            break;
+        }
+    };
+    if code == 0i32 {
+        out.extend_from_slice("{\"record\":\"end\"}\n".as_slice());
+        emit(&out);
+    }
+    out.drop();
+    scanner_delete(&scanner);
+    code
+}
+
+fn inspect_events(bytes: u8[], source: FileChunk&, chunk: u64) -> i32 {
+    let limits = limits_new();
+    let input: Input;
+    if chunk == 0u64 {
+        input = Input.Bytes(data=bytes, position=0u64);
+    } else {
+        input = Input.Stream(source=source);
+    }
+    let parser: Parser = parser_new(input, Encoding.Any, &limits);
+    let out: Vec<u8> = Vec<u8>.new();
+    out.extend_from_slice("{\"schema\":\"yaml-compat-v1\",\"mode\":\"events\"}\n".as_slice());
+    emit(&out);
+    out.truncate(0u64);
+    let code: i32 = 0i32;
+    loop {
+        match parser_parse_ref(&parser) {
+            Ok(value) => {
+                match value {
+                    Some(event) => {
+                        append_event(&out, event);
+                        emit(&out);
+                        out.truncate(0u64);
+                        let done: bool = event.kind == EventKind.StreamEnd;
+                        event_delete(event);
+                        if done {
+                            break;
+                        }
+                    },
+                    None => { break; },
+                }
+            },
+            Err(_) => {
+                let error: ParserError = parser_error(&parser);
+                append_error(&out, &error);
+                emit(&out);
+                out.truncate(0u64);
+                code = 1i32;
+                break;
+            },
+        }
+    };
+    if code == 0i32 {
+        out.extend_from_slice("{\"record\":\"end\"}\n".as_slice());
+        emit(&out);
+    }
+    out.drop();
+    parser_delete(&parser);
+    code
+}
+
+fn inspect_documents(bytes: u8[], source: FileChunk&, chunk: u64) -> i32 {
+    let limits = limits_new();
+    let input: Input;
+    if chunk == 0u64 {
+        input = Input.Bytes(data=bytes, position=0u64);
+    } else {
+        input = Input.Stream(source=source);
+    }
+    let parser: Parser = parser_new(input, Encoding.Any, &limits);
+    let out: Vec<u8> = Vec<u8>.new();
+    out.extend_from_slice("{\"schema\":\"yaml-compat-v1\",\"mode\":\"documents\"}\n".as_slice());
+    emit(&out);
+    out.truncate(0u64);
+    let code: i32 = 0i32;
+    let number: u64 = 0u64;
+    loop {
+        match loader_load(&parser) {
+            Ok(value) => {
+                match value {
+                    Some(document) => {
+                        number += 1u64;
+                        append_document(&out, &document, number);
+                        emit(&out);
+                        out.truncate(0u64);
+                        document_delete(&document);
+                    },
+                    None => { break; },
+                }
+            },
+            Err(error) => {
+                append_error(&out, &error);
+                emit(&out);
+                out.truncate(0u64);
+                code = 1i32;
+                break;
+            },
+        }
+    };
+    if code == 0i32 {
+        out.extend_from_slice("{\"record\":\"end\"}\n".as_slice());
+        emit(&out);
+    }
+    out.drop();
+    parser_delete(&parser);
+    code
+}
+
+fn parse_u64(text: str) -> Option<u64> {
+    let bytes: u8[] = text.as_slice();
+    if bytes.len() == 0u64 {
+        return Option<u64>.None;
+    }
+    let value: u64 = 0u64;
+    let index = 0u64;
+    while index < bytes.len() {
+        let byte: u8 = bytes[index];
+        if byte < 48u8 || byte > 57u8 {
+            return Option<u64>.None;
+        }
+        value = value * 10u64 + u64(byte - 48u8);
+        index += 1u64;
+    };
+    Option<u64>.Some(value)
+}
+
+fn parse_i64(text: str) -> Option<i64> {
+    let bytes: u8[] = text.as_slice();
+    if bytes.len() == 0u64 {
+        return Option<i64>.None;
+    }
+    let negative: bool = bytes[0u64] == 45u8;
+    let start: u64 = if negative { 1u64 } else { 0u64 };
+    if start >= bytes.len() {
+        return Option<i64>.None;
+    }
+    let value: u64 = 0u64;
+    let index = start;
+    while index < bytes.len() {
+        let byte: u8 = bytes[index];
+        if byte < 48u8 || byte > 57u8 {
+            return Option<i64>.None;
+        }
+        value = value * 10u64 + u64(byte - 48u8);
+        index += 1u64;
+    };
+    if negative {
+        return Option<i64>.Some(-i64(value));
+    }
+    Option<i64>.Some(i64(value))
+}
+
+fn run_inspect(argv: Vec<String>&) -> i32 {
+    if argv.len() < 3u64 {
+        emit_stderr("inspect: --inspect requires tokens, events or documents\n");
+        return 2i32;
+    }
+    let mode: str = argv[2u64].as_str();
+    if mode != "tokens" && mode != "events" && mode != "documents" {
+        emit_stderr("inspect: unsupported mode\n");
+        return 2i32;
+    }
+    let path: Option<str> = Option<str>.None;
+    let chunk: u64 = 0u64;
+    let fail_after: i64 = -1i64;
+    let index = 3u64;
+    while index < argv.len() {
+        let option: str = argv[index].as_str();
+        if option == "--file" {
+            if index + 1u64 >= argv.len() {
+                emit_stderr("inspect: --file requires a path\n");
+                return 2i32;
+            }
+            path = Option<str>.Some(argv[index + 1u64].as_str());
+            index += 2u64;
+        } elif option == "--chunk-size" {
+            if index + 1u64 >= argv.len() {
+                emit_stderr("inspect: --chunk-size requires a non-negative integer\n");
+                return 2i32;
+            }
+            match parse_u64(argv[index + 1u64].as_str()) {
+                Some(value) => { chunk = value; },
+                None => {
+                    emit_stderr("inspect: --chunk-size requires a non-negative integer\n");
+                    return 2i32;
+                },
+            }
+            index += 2u64;
+        } elif option == "--fail-after" {
+            if index + 1u64 >= argv.len() {
+                emit_stderr("inspect: --fail-after requires -1 or a non-negative integer\n");
+                return 2i32;
+            }
+            match parse_i64(argv[index + 1u64].as_str()) {
+                Some(value) => { fail_after = value; },
+                None => {
+                    emit_stderr("inspect: --fail-after requires -1 or a non-negative integer\n");
+                    return 2i32;
+                },
+            }
+            index += 2u64;
+        } else {
+            emit_stderr("inspect: unknown argument\n");
+            return 2i32;
+        }
+    };
+    if fail_after < -1i64 {
+        emit_stderr("inspect: --fail-after requires -1 or a non-negative integer\n");
+        return 2i32;
+    }
+    if fail_after >= 0i64 && chunk == 0u64 {
+        emit_stderr("inspect: --fail-after requires a positive --chunk-size\n");
+        return 2i32;
+    }
+    let selected: str;
+    match path {
+        Some(value) => { selected = value; },
+        None => {
+            emit_stderr("inspect: --file PATH is required\n");
+            return 2i32;
+        },
+    }
+    let bytes = match read(selected) {
+        Ok(value) => value,
+        Err(error) => {
+            error.drop();
+            emit_stderr("inspect: cannot open file\n");
+            return 2i32;
+        },
+    };
+    let source = FileChunk(data=bytes.as_slice(), position=0u64, chunk=chunk, fail_after=fail_after);
+    let code: i32;
+    if mode == "tokens" {
+        code = inspect_tokens(bytes.as_slice(), &source, chunk);
+    } elif mode == "events" {
+        code = inspect_events(bytes.as_slice(), &source, chunk);
+    } else {
+        code = inspect_documents(bytes.as_slice(), &source, chunk);
+    }
+    bytes.drop();
+    code
+}
+
+// ---------------------------------------------------------------------------
+// First-document checksum and generated corpus.
+// ---------------------------------------------------------------------------
+
+fn run_file_checksum(path: str) -> i32 {
+    let text = match read(path) {
+        Ok(value) => value,
+        Err(error) => {
+            error.drop();
+            emit_stderr("cannot open input file\n");
+            return 1i32;
+        },
+    };
+    let limits = limits_new();
+    let parser: Parser = parser_new(
+        Input.Bytes(data=text.as_slice(), position=0u64), Encoding.Any, &limits);
+    let loaded = loader_load(&parser);
+    parser_delete(&parser);
+    let code: i32 = 0i32;
+    match loaded {
+        Ok(value) => {
+            match value {
+                Some(document) => {
+                    let hash: u64 = 0u64;
+                    let count: u64 = 0u64;
+                    if hash_tree_checked(&document, &hash, &count) {
+                        write_result(hash, count);
+                    } else {
+                        emit_stderr("cannot compute tree checksum for cyclic document\n");
+                        code = 3i32;
+                    }
+                    document_delete(&document);
+                },
+                None => {
+                    write_result(0u64, 0u64);
+                    code = 1i32;
+                },
+            }
+        },
+        Err(error) => {
+            write_result(0u64, 0u64);
+            code = 1i32;
+        },
+    }
+    text.drop();
+    code
+}
+
+fn drop_files(files: Vec<Vec<u8>>&) {
+    let index = 0u64;
+    while index < files.len() {
+        files[index].drop();
+        index += 1u64;
+    };
+    files.drop();
+}
+
+fn run_corpus(files: Vec<Vec<u8>>&, iterations: u64) -> i32 {
+    let limits = limits_new();
+    let hash: u64 = 0u64;
+    let count: u64 = 0u64;
+    let failed: bool = false;
+    let iteration: u64 = 0u64;
+    while iteration < iterations {
+        let file_index: u64 = 0u64;
+        while file_index < files.len() {
+            let parser: Parser = parser_new(
+                Input.Bytes(data=files[file_index].as_slice(), position=0u64),
+                Encoding.Any, &limits);
+            match loader_load(&parser) {
+                Ok(value) => {
+                    match value {
+                        Some(document) => {
+                            hash_node(&document, 1u64, &hash, &count);
+                            document_delete(&document);
+                        },
+                        None => { failed = true; },
+                    }
+                },
+                Err(error) => { failed = true; },
+            }
+            parser_delete(&parser);
+            if failed {
+                break;
+            }
+            file_index += 1u64;
+        }
+        if failed {
+            break;
+        }
+        iteration += 1u64;
+    };
+    if !failed {
+        write_result(hash, count);
+    }
+    if failed {
+        1i32
+    } else {
+        0i32
+    }
+}
+
+fn run_corpus_args(argv: Vec<String>&) -> i32 {
+    let ITER: u64 = 64; // bench-scale
+    let path_count: u64 = argv.len() - 2u64;
+    let iterations: u64 = ITER;
+    if path_count > 0u64 {
+        match parse_u64(argv[argv.len() - 1u64].as_str()) {
+            Some(value) => {
+                iterations = value;
+                path_count -= 1u64;
+            },
+            None => {},
+        }
+    }
+    if path_count == 0u64 {
+        emit_stderr("corpus: at least one YAML file is required\n");
+        return 2i32;
+    }
+    let files: Vec<Vec<u8>> = Vec<Vec<u8>>.new();
+    let loaded: u64 = 0u64;
+    let index: u64 = 0u64;
+    while index < path_count {
+        match read(argv[2u64 + index].as_str()) {
+            Ok(data) => {
+                files.push(data);
+                loaded += 1u64;
+            },
+            Err(error) => {
+                error.drop();
+                emit_stderr("corpus: cannot read input file\n");
+                break;
+            },
+        }
+        index += 1u64;
+    };
+    let code: i32 = 1i32;
+    if loaded == path_count {
+        code = run_corpus(&files, iterations);
+    }
+    drop_files(&files);
+    code
+}
+
+fn main() {
+    let argv = args();
+    let code: i32 = 0i32;
+    if argv.len() >= 2u64 && argv[1u64].as_str() == "--inspect" {
+        code = run_inspect(&argv);
+    } elif argv.len() >= 2u64 && argv[1u64].as_str() == "--file" {
+        if argv.len() < 3u64 {
+            emit_stderr("--file requires a path\n");
+            code = 2i32;
+        } else {
+            code = run_file_checksum(argv[2u64].as_str());
+        }
+    } elif argv.len() >= 3u64 && argv[1u64].as_str() == "--corpus" {
+        code = run_corpus_args(&argv);
+    } else {
+        emit_stderr("usage: --inspect MODE --file PATH | --file PATH | --corpus PATH [PATH ...] [ITERATIONS]\n");
+        code = 2i32;
+    }
+    for argument in &argv {
+        argument.drop();
+    }
+    argv.drop();
+    if code != 0i32 {
+        exit(code);
+    }
+}

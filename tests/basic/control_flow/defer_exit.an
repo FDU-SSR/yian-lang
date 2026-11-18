@@ -1,4 +1,3 @@
-from std.core.env import exit;
 from std.core.io import Stderr;
 
 fn main() {

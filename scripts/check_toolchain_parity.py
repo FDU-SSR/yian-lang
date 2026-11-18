@@ -45,13 +45,13 @@ DEFAULT_CASES: dict[str, Case] = {
         "compiler/analysis/unicode-range",
         "analyze",
         "tests/compiler_parity/unicode_error.an",
-        ("--analyze", "--json"),
+        ("--check",),
     ),
     "compiler/analysis/restricted-bitcast": Case(
         "compiler/analysis/restricted-bitcast",
         "analyze",
         "tests/basic/error/restricted_bitcast.err.an",
-        ("--analyze", "--json"),
+        ("--check",),
     ),
     "compiler/native/array-access": Case(
         "compiler/native/array-access",
@@ -108,9 +108,12 @@ def _read_marker(path: Path) -> dict[str, str]:
         if not separator or not name or not value or name in values:
             raise IdentityError(f"malformed or duplicate install marker field in {path}: {line!r}")
         values[name] = value
-    for name in ("yianc", "anx", "resources", "build_info_sha256"):
+    for name in ("yianc", "anx", "yian-fmt", "resources", "build_info_sha256"):
         if name not in values:
             raise IdentityError(f"native install marker is missing {name}: {path}")
+    for name in ("yianc_build_mode", "anx_build_mode", "fmt_build_mode"):
+        if values.get(name) != "raw":
+            raise IdentityError(f"native install marker is missing {name}=raw: {path}")
     return values
 
 
@@ -124,18 +127,20 @@ def validate_install(prefix: Path) -> dict[str, Json]:
     data_root = resolved / "share" / "yian"
     yianc = bin_root / "yianc"
     anx = bin_root / "anx"
+    formatter = bin_root / "yian-fmt"
     info_path = data_root / ".build-info"
     marker_path = data_root / ".native-install"
 
     for path in (bin_root, resolved / "share", data_root):
         if path.is_symlink():
             raise IdentityError(f"installed toolchain path contains a symlink: {path}")
-    for path in (yianc, anx, info_path, marker_path):
+    for path in (yianc, anx, formatter, info_path, marker_path):
         if path.is_symlink() or not path.is_file():
             raise IdentityError(f"required installed tool or identity file is missing or unsafe: {path}")
     try:
         yianc = resolve_native(str(yianc))
         anx = resolve_native(str(anx))
+        formatter = resolve_native(str(formatter))
     except NativeToolError as error:
         raise IdentityError(str(error)) from error
 
@@ -151,7 +156,11 @@ def validate_install(prefix: Path) -> dict[str, Json]:
             raise IdentityError(f"installed resources contain a symlink: {path}")
 
     marker = _read_marker(marker_path)
-    artifacts = {"yianc": file_sha256(yianc), "anx": file_sha256(anx)}
+    artifacts = {
+        "yianc": file_sha256(yianc),
+        "anx": file_sha256(anx),
+        "yian-fmt": file_sha256(formatter),
+    }
     for name, digest in artifacts.items():
         if marker[name] != digest:
             raise IdentityError(f"installed {name} digest does not match its marker")
@@ -195,8 +204,11 @@ def validate_install(prefix: Path) -> dict[str, Json]:
         "anx": str(anx),
         "yianc_sha256": artifacts["yianc"],
         "anx_sha256": artifacts["anx"],
+        "formatter": str(formatter),
+        "formatter_sha256": artifacts["yian-fmt"],
         "yianc_source_sha256": cast(dict[str, Json], components["yianc"])["source_sha256"],
         "anx_source_sha256": cast(dict[str, Json], components["anx"])["source_sha256"],
+        "formatter_source_sha256": cast(dict[str, Json], components["yian-fmt"])["source_sha256"],
         "resources_sha256": installed_resource_hash,
     }
 
@@ -227,8 +239,9 @@ def _preview(
                 commands.append({
                     "case": case_id,
                     "pointer_mode": mode,
-                    "command": [native, *case.arguments, *raw, "--compiler-root", str(ROOT),
-                                str(ROOT / "lib/src"), target],
+                    "command": [native, *case.arguments, *raw, "--compiler-root",
+                                str(prefix.expanduser().resolve() / "share/yian"),
+                                str(prefix.expanduser().resolve() / "share/yian/lib/src"), target],
                     "run": ["<temp>/result"] if case.run_program else None,
                 })
     direct_calls = sum(case.kind != "package" for _, case in selections) * len(modes)
@@ -304,7 +317,7 @@ def _observe(
     source = directory / "input.an"
     source.parent.mkdir(parents=True, exist_ok=True)
     source.write_bytes((ROOT / case.source).read_bytes())
-    command = [str(yianc), *case.arguments, *raw, "--compiler-root", str(ROOT),
+    command = [str(yianc), *case.arguments, *raw, "--compiler-root", str(prefix / "share/yian"),
                str(prefix / "share/yian/lib/src"), str(source)]
     if case.kind == "compile":
         command.extend(())
@@ -336,38 +349,21 @@ def _observe(
 
 def oracle_passes(case_id: str, observation: dict[str, Json]) -> bool:
     if case_id == "compiler/analysis/unicode-range":
-        result = observation.get("stdout")
-        if not isinstance(result, dict) or result.get("ok") is not False:
-            return False
-        diagnostics = result.get("diagnostics")
-        if not isinstance(diagnostics, list):
-            return False
-        errors = [item for item in diagnostics if isinstance(item, dict) and item.get("severity") == "error"]
+        stderr = observation.get("stderr")
         return (
             observation.get("status") == 1
-            and len(errors) == 1
-            and errors[0].get("code") == "E301"
-            and errors[0].get("message") == "Unknown identifier 'missing'"
-            and errors[0].get("range") == {
-                "start": {"line": 0, "character": 31},
-                "end": {"line": 0, "character": 38},
-            }
+            and isinstance(stderr, str)
+            and "error[E301]: Unknown identifier 'missing'" in stderr
+            and "input.an:1:31" in stderr
+            and observation.get("stdout") == ""
         )
     if case_id == "compiler/analysis/restricted-bitcast":
-        result = observation.get("stdout")
-        diagnostics = result.get("diagnostics") if isinstance(result, dict) else None
-        errors = [
-            item for item in diagnostics
-            if isinstance(item, dict) and item.get("severity") == "error"
-        ] if isinstance(diagnostics, list) else []
+        stderr = observation.get("stderr")
         return (
             observation.get("status") == 1
-            and isinstance(result, dict)
-            and result.get("ok") is False
-            and result.get("format") == 1
-            and len(errors) == 1
-            and errors[0].get("code") == "E501"
-            and errors[0].get("message") == "restricted operation '@bitcast' is only allowed in the standard library"
+            and isinstance(stderr, str)
+            and "error[E501]: restricted operation '@bitcast' is only allowed in the standard library" in stderr
+            and observation.get("stdout") == ""
         )
     if case_id == "compiler/native/array-access":
         run = observation.get("run")

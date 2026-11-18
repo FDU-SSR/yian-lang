@@ -1,11 +1,12 @@
 from yianc.codegen.llvm.module import FunctionLowering;
+from yianc.codegen.cfg.model import GuardKind, GuardSite;
 from yianc.codegen.llvm.scalar import cast;
 from yianc.codegen.error import CodegenError;
 from yianc.codegen.abi.runtime import ENV_WORD, LITERAL_WORD;
 from yianc.common.ids import TypeId;
 from yianc.analysis.ty.model import TypeData;
+from yianc.codegen.representation import PointerRepresentation;
 from llvm.ir import IrValue, BinaryOp, CastOp, IntCompare;
-from std.core.result import Result;
 
 impl FunctionLowering {
     pub fn integer(value: u64) -> IrValue {
@@ -13,13 +14,10 @@ impl FunctionLowering {
     }
 
     pub fn fat(type_id: TypeId) -> Result<bool, CodegenError> {
-        if self.owner.types.raw_pointers() || self.owner.types.is_zst(type_id)? {
-            return Result<bool, CodegenError>.Ok(false);
-        }
-        Result<bool, CodegenError>.Ok(match self.owner.session.types.require(type_id)? {
-                Pointer(_) | Reference(_) | Slice(_) | Str | TraitObject(_) => true,
-                _ => false,
-            })
+        Result<bool, CodegenError>.Ok(match self.owner.types.representation(type_id)? {
+            FatPointer | FatReference | FatView | FatTraitObject => true,
+            _ => false,
+        })
     }
 
     pub fn view_length(value: IrValue) -> IrValue {
@@ -121,8 +119,8 @@ impl FunctionLowering {
         match source_type {
             Pointer(element) | Reference(element) => match store.require(*element)? {
                 Array(inner, count) => {
-                    let matches = match target_type { Pointer(target_element) | Reference(target_element) => *inner == *target_element, _ => false, };
-                    if matches {
+                    let is_match = match target_type { Pointer(target_element) | Reference(target_element) => *inner == *target_element, _ => false, };
+                    if is_match {
                         let bits = match store.require(*count)? {
                             LiteralValue(bits, false, _) => *bits,
                             _ => return Result<IrValue, CodegenError>.Err(CodegenError.invalid("array pointer conversion has no length")),
@@ -145,18 +143,25 @@ impl FunctionLowering {
         }
 
         if !self.owner.types.raw_pointers() {
-            if array { self.check_count(length)?; }
+            if array {
+                self.require_guard(GuardKind.Count, GuardSite.Before)?;
+                self.check_count(length)?;
+            }
             match (source_type, target_type) {
                 (Pointer(_), Pointer(_)) => {
                     if !array { return Result<IrValue, CodegenError>.Ok(value); }
+                    self.require_guard(GuardKind.CastAccess, GuardSite.Before)?;
                     self.check_access(source, value)?;
                 },
                 (Pointer(_), Reference(_)) | (Slice(_), Reference(_)) => {},
                 (TypeData.Str, Reference(_)) => {
+                    self.require_guard(GuardKind.CastNonempty, GuardSite.Before)?;
                     self.checked(self.builder.icmp(IntCompare.Ne, self.view_length(value), self.integer(0u64), ""), "S007")?;
+                    self.require_guard(GuardKind.CastView, GuardSite.Before)?;
                     self.check_view(source, value)?;
                 },
                 (Pointer(_), Slice(_)) => {
+                    self.require_guard(GuardKind.PointerRemaining, GuardSite.Before)?;
                     let index = self.pointer_index(value);
                     let size = self.pointer_size(value);
                     self.checked(self.builder.icmp(IntCompare.Ule, index, size, ""), "S004")?;

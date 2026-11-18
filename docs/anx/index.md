@@ -3,7 +3,7 @@
 `anx` 是 YIAN 的项目与包管理工具：创建项目、按包名解析导入、构建/运行/检查、跑项目测试、
 格式化源码、输出依赖图。
 
-`anx` 是以 YIAN 编写的原生包管理器，源码位于 `anx/`。日常 v2 package map 消费方是 native compiler；
+`anx` 是以 YIAN 编写的原生包管理器，源码位于 `anx/`。日常 v2/v3 package map 消费方是 native compiler；
 Python 恢复编译器只在显式冷启动中消费其固定配方需要的包图。安装方式见[安装与环境](06.install.md)。
 
 - 语言语法与模块系统见[语言参考](../grammar/index.md)（其中 `13.modules.md` 讲 `import` 语法）
@@ -22,17 +22,19 @@ Python 恢复编译器只在显式冷启动中消费其固定配方需要的包�
 | [03](03.cli.md) | 命令行 | 七个子命令、选项、退出码、构建产物 |
 | [04](04.testing.md) | 项目测试 | `tests/` 布局、期望文件、用例怎么编译 |
 | [05](05.diagnostics.md) | 诊断目录 | 当前 anx `AX` 码与 compiler `E` 码的边界 |
-| [06](06.install.md) | 安装与环境 | 原生 `yianc`/`anx` 工具链、独立 LSP 安装与共享资源 |
+| [06](06.install.md) | 安装与环境 | 原生 `yianc`/`anx`/`yian-fmt` 工具链、独立 LSP 安装与共享资源 |
 
 ## 快速上手
 
 ```bash
-scripts/bootstrap_toolchain.sh # Build native yianc/anx and install shared resources.
+scripts/bootstrap_toolchain.sh # Build native yianc/anx/yian-fmt and install shared resources.
 
 anx new demo              # Create a bin project skeleton.
 cd demo
 
 anx run                   # Build build/app and execute it.
+anx build profile         # Save compiler pass timings under build/profile/<run-id>/.
+anx run profile           # Run with function and call-path statistics.
 anx test                  # Run project tests; the skeleton includes a passing case.
 anx graph                 # Inspect dependencies and file ownership.
 ```
@@ -62,7 +64,9 @@ demo/
 | 构建并运行（转发参数与 stdin） | `anx run -- alpha beta` |
 | 分析项目、不生成可执行文件或 LLVM 目标 | `anx check` |
 | 跑项目自己的测试 | `anx test` |
-| 格式化根包源码 | `anx fmt` / `anx fmt --check` |
+| 保存编译耗时报告 | `anx build profile` |
+| 运行并保存逐函数统计 | `anx run profile` |
+| 格式化根包源码 | `anx fmt` / `anx fmt --check`，格式化由独立 `yian-fmt` 子进程执行 |
 | 打印依赖图 | `anx graph` / `anx graph --json` |
 | 提高优化级别 | `anx build --release` 或 `anx build -O 3` |
 
@@ -84,12 +88,12 @@ mathlib = { path = "vendor/mathlib" }
 
 ```yian
 // demo/src/greet.an
-from std.core.io import print;
-
 pub fn greet() {
-    print("hello from demo\n");
+    @print("hello from demo\n");
 }
 ```
+
+`@print` 是语言内建的输出入口，不需要导入；native 编译器对显式导入 prelude 符号给出 `W502` 警告（不阻止编译），错误和警告都使用多行源码片段。
 
 ```yian
 // demo/src/main.an

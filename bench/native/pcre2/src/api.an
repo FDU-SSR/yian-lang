@@ -1,0 +1,106 @@
+from std.core.option import Option;
+
+opaque type PcreMatcherHandle;
+opaque type PcrePatternHandle;
+
+pub struct Matcher {
+    handle: cptr<PcreMatcherHandle>,
+}
+
+pub struct Pattern {
+    handle: cptr<PcrePatternHandle>,
+}
+
+extern "C" {
+    fn bg_pcre_create_matcher() -> cptr<PcreMatcherHandle>;
+    fn bg_pcre_compile(pattern: cptr<u8>, length: u64) -> cptr<PcrePatternHandle>;
+    fn bg_pcre_find(
+        matcher: cptr<PcreMatcherHandle>,
+        pattern: cptr<PcrePatternHandle>,
+        subject: cptr<u8>,
+        length: u64,
+        offset: u64,
+        start: cptr<u64>,
+        end: cptr<u64>
+    ) -> i32;
+    fn bg_pcre_destroy_pattern(pattern: cptr<PcrePatternHandle>);
+    fn bg_pcre_destroy_matcher(matcher: cptr<PcreMatcherHandle>);
+}
+
+ffi fn require_matcher(value: Matcher&) {
+    if value.handle == @ffi_null<PcreMatcherHandle>() {
+        @panic("pcre2: operation on a closed matcher");
+    }
+}
+
+ffi fn require_pattern(value: Pattern&) {
+    if value.handle == @ffi_null<PcrePatternHandle>() {
+        @panic("pcre2: operation on a closed pattern");
+    }
+}
+
+pub ffi fn create_matcher() -> Option<Matcher> {
+    let handle = bg_pcre_create_matcher();
+    if handle == @ffi_null<PcreMatcherHandle>() {
+        return Option<Matcher>.None;
+    }
+    Option<Matcher>.Some(Matcher(handle=handle))
+}
+
+pub ffi fn compile(pattern: str) -> Option<Pattern> {
+    let bytes = pattern.as_slice();
+    let (data, length) = @ffi_parts(bytes);
+    let handle = bg_pcre_compile(data, length);
+    if handle == @ffi_null<PcrePatternHandle>() {
+        return Option<Pattern>.None;
+    }
+    Option<Pattern>.Some(Pattern(handle=handle))
+}
+
+pub ffi fn find(
+    matcher: Matcher&,
+    pattern: Pattern&,
+    subject: u8[],
+    offset: u64,
+    start: u64&,
+    end: u64&
+) -> i32 {
+    require_matcher(matcher);
+    require_pattern(pattern);
+    let (data, length) = @ffi_parts(subject);
+    if offset > length {
+        return -1;
+    }
+    let match_start: u64 = 0u64;
+    let match_end: u64 = 0u64;
+    let status = bg_pcre_find(
+        matcher.handle,
+        pattern.handle,
+        data,
+        length,
+        offset,
+        @ffi_addr(&match_start),
+        @ffi_addr(&match_end)
+    );
+    if status == 1 {
+        *start = match_start;
+        *end = match_end;
+    }
+    status
+}
+
+pub ffi fn destroy_pattern(pattern: Pattern&) {
+    if pattern.handle == @ffi_null<PcrePatternHandle>() {
+        return;
+    }
+    bg_pcre_destroy_pattern(pattern.handle);
+    pattern.handle = @ffi_null<PcrePatternHandle>();
+}
+
+pub ffi fn destroy_matcher(matcher: Matcher&) {
+    if matcher.handle == @ffi_null<PcreMatcherHandle>() {
+        return;
+    }
+    bg_pcre_destroy_matcher(matcher.handle);
+    matcher.handle = @ffi_null<PcreMatcherHandle>();
+}

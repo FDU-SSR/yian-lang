@@ -81,7 +81,7 @@ pub struct MatchEntry { pub name: String, pub value: Option<ArgValue>, pub suppl
 impl Drop for MatchEntry {
     pub fn drop() { self.name.drop(); match self.value.take() { Some(value) => value.drop(), None => {}, } }
 }
-// Returned references, string views, and slices borrow the matches and become invalid when the matches are dropped.
+// Returned references, string views, and slices borrow the arg_matches value and become invalid when it is dropped.
 pub struct ArgMatches { pub entries: Vec<MatchEntry> }
 impl ArgMatches {
     fn entry(name: str) -> Option<MatchEntry&> {
@@ -152,5 +152,5 @@ impl Drop for ArgMatches {
     }
 }
 // The result owns matched values or help text; callers explicitly call drop to release them.
-pub enum ParseOutcome { Parsed { matches: ArgMatches }, Help { text: String } }
+pub enum ParseOutcome { Parsed { arg_matches: ArgMatches }, Help { text: String } }
 impl Drop for ParseOutcome { pub fn drop() { match self { Parsed(value) => value.drop(), Help(text) => text.drop(), } } }

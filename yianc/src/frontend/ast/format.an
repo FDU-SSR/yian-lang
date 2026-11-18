@@ -1,8 +1,7 @@
-from yianc.frontend.ast.node import Identifier, IntLiteral, FloatLiteral, CharLiteral, StrLiteral, BoolLiteral, Program, Block, Argument, VarInfo, PatternParam, PatternLet, LetCondition, ElifBranch, MatchArm, Attr, TypeGenericParam, ConstGenericParam, FieldInfo, VariantInfo, MethodDecl, MethodDef, ExternFuncDecl, ImplCondition, CaptureItem, FieldPattern, Expr, TypeSyntax, ConstExpr, Pattern, Item, Literal, RangeBounds, Condition, GenericArgument, GenericParam, Parameter, TraitMember, PatternArguments;
+from yianc.frontend.ast.node import Identifier, IntLiteral, FloatLiteral, CharLiteral, StrLiteral, BoolLiteral, Program, Block, Argument, VarInfo, PatternParam, PatternLet, LetCondition, ElifBranch, MatchArm, Attr, TypeGenericParam, ConstGenericParam, FieldInfo, VariantInfo, MethodDecl, MethodDef, ExternFuncDecl, ImplCondition, CaptureItem, FieldPattern, Expr, TypeSyntax, ConstExpr, Pattern, Item, Literal, RangeBounds, Condition, GenericArgument, GenericParam, Parameter, TraitMember, PatternArguments, FormatPart, FormatSpec, FormatCount, FormatAlignment;
 from yianc.frontend.source import Span;
 from std.num.f64 import to_bits;
 from json.write import Writer;
-from std.core.drop import Drop;
 from std.core.fmt import ToString;
 from std.core.ops import Index;
 from yianc.frontend.ast.node import TypeSource;
@@ -937,6 +936,17 @@ impl AstFormatter {
 
                 self.node_end();
             },
+            Matches(value, pattern) => {
+                self.node_start("Matches", node.span);
+
+                self.field("value");
+                self.append_expr(*value);
+
+                self.field("pattern");
+                self.append_pattern(*pattern);
+
+                self.node_end();
+            },
             Return(expr) => {
                 self.node_start("Return", node.span);
 
@@ -1056,18 +1066,104 @@ impl AstFormatter {
 
                 self.node_end();
             },
-            Recovery(children, bindings) => {
-                self.node_start("Recovery", node.span);
-                self.field("children");
+            FormatTemplate(parts) => {
+                self.node_start("FormatTemplate", node.span);
+
+                self.field("parts");
                 self.output.begin_array();
-                for child in *children { self.append_expr(*child); }
+                let index: u64 = 0;
+
+                while index < (*parts).len() {
+                    self.append_format_part(&((*parts)[index]));
+                    index += 1;
+                }
                 self.output.end_array();
-                self.field("bindings");
-                self.output.begin_array();
-                for binding in *bindings { self.append_identifier(*binding); }
-                self.output.end_array();
+
                 self.node_end();
             },
+        }
+    }
+
+    fn append_format_part(part: FormatPart&) {
+        match part {
+            Literal(text, span) => {
+                self.node_start("FormatLiteralPart", *span);
+
+                self.field("text");
+                self.output.write_string((*text).as_str());
+
+                self.node_end();
+            },
+            Value(expr, span, spec) => {
+                self.node_start("FormatValuePart", *span);
+
+                self.field("expr");
+                self.append_expr(*expr);
+
+                match spec {
+                    Some(value) => {
+                        self.field("spec");
+                        self.append_format_spec(value);
+                    },
+                    None => {},
+                }
+
+                self.node_end();
+            },
+        }
+    }
+
+    // Specification nodes appear only when the interpolation has an explicit nonempty specification.
+    fn append_format_spec(spec: FormatSpec&) {
+        self.node_start("FormatSpec", (*spec).span);
+
+        self.field("alignment");
+        self.output.write_string(match (*spec).alignment {
+            Default => "Default",
+            Left => "Left",
+            Right => "Right",
+        });
+
+        self.field("zero_pad");
+        self.output.write_bool((*spec).zero_pad);
+
+        self.field("fixed");
+        self.output.write_bool((*spec).fixed);
+
+        self.field("width");
+        self.append_format_count(&((*spec).width));
+
+        self.field("precision");
+        self.append_format_count(&((*spec).precision));
+
+        self.node_end();
+    }
+
+    fn append_format_count(count: Option<FormatCount>&) {
+        match count {
+            Some(value) => {
+                match value {
+                    Literal(value, span) => {
+                        self.node_start("FormatCountLiteral", *span);
+
+                        self.field("value");
+                        let text = (*value).to_string();
+                        defer text.drop();
+                        self.output.write_string(text.as_str());
+
+                        self.node_end();
+                    },
+                    Dynamic(expr, span) => {
+                        self.node_start("FormatCountDynamic", *span);
+
+                        self.field("expr");
+                        self.append_expr(*expr);
+
+                        self.node_end();
+                    },
+                }
+            },
+            None => self.output.write_null(),
         }
     }
 

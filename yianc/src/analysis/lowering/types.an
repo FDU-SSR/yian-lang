@@ -7,7 +7,6 @@ from yianc.common.ids import TypeId;
 from yianc.frontend.ast.node import TypeSyntax;
 from yianc.diagnostics.model import AnalysisError;
 from std.core.iter import Iterator, IntoIterator;
-from std.core.result import Result;
 
 impl ExprChecker {
     // Concrete generic bindings retain the permissions of their declaration.

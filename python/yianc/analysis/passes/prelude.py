@@ -29,6 +29,8 @@ PRELUDE_IMPORTS: list[tuple[list[str], str]] = [
     (["std", "core", "builtin_types"], "Slice"),
     (["std", "core", "builtin_types"], "Array"),
     (["std", "core", "builtin_types"], "Never"),
+    (["std", "core", "drop"], "Drop"),
+    (["std", "core", "env"], "exit"),
 ]
 
 

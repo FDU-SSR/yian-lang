@@ -1,0 +1,1 @@
+pub fn leaf_binding_marker() -> i32 { 0 }

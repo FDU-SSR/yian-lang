@@ -1,0 +1,15 @@
+// Byte copies across the C ABI. Both helpers check the YIAN view length before copying.
+
+from std.ffi.libc import memcpy as c_memcpy;
+
+pub(ffi) ffi fn copy_from(destination: u8[], source: cptr<u8>, count: u64) {
+    let (pointer, length) = @ffi_parts(destination);
+    if count > length { @runtime_fail("S001"); }
+    if count != 0u64 { c_memcpy(pointer, source, c_size(count)); }
+}
+
+pub(ffi) ffi fn copy_to(destination: cptr<u8>, source: u8[], count: u64) {
+    let (pointer, length) = @ffi_parts(source);
+    if count > length { @runtime_fail("S001"); }
+    if count != 0u64 { c_memcpy(destination, pointer, c_size(count)); }
+}

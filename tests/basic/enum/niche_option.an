@@ -1,8 +1,5 @@
 // Niche-compatible and tagged enum layout cases, organized by named behavior.
 
-from std.core.option import Option;
-from std.core.vec import Vec;
-
 fn add_one(value: i32) -> i32 {
     value + 1
 }

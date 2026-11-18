@@ -1,4 +1,3 @@
-from std.core.drop import Drop;
 from toml.parse import parse, table_child, string_value, integer_decimal,
 integer_u64, array_len, array_child;
 

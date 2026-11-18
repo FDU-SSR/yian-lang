@@ -1,6 +1,5 @@
 from yianc.analysis.constant.value import IntegerValue, IntegerWidth, ConstEvalError;
 from yianc.frontend.ast.operator import BinaryOperator, UnaryOperator;
-from std.core.result import Result;
 
 pub fn normalized(bits: u64, width: IntegerWidth, signed: bool) -> IntegerValue {
     IntegerValue.fixed(bits, width, signed)
@@ -47,6 +46,7 @@ pub fn integer_fits(value: IntegerValue, bits: u32, signed: bool) -> bool {
     magnitude(value) <= limit
 }
 
+// Runtime and already-checked conversions may normalize bit patterns directly.
 pub fn cast_integer(value: IntegerValue, width: IntegerWidth, signed: bool) -> IntegerValue {
     let bits = magnitude(value);
 
@@ -55,6 +55,24 @@ pub fn cast_integer(value: IntegerValue, width: IntegerWidth, signed: bool) -> I
     }
 
     normalized(bits, width, signed)
+}
+
+// Untyped constants may range from -2^63 to 2^64-1 and are rejected before normalization.
+pub fn checked_untyped(absolute: u64, negative: bool) -> Result<IntegerValue, ConstEvalError> {
+    if negative && absolute > 0x8000000000000000u64 {
+        return Result<IntegerValue, ConstEvalError>.Err(ConstEvalError.Overflow);
+    }
+
+    Result<IntegerValue, ConstEvalError>.Ok(IntegerValue.untyped(absolute, negative))
+}
+
+// Integer target conversions reject values outside the destination range instead of truncating.
+pub fn checked_cast_integer(value: IntegerValue, width: IntegerWidth, signed: bool) -> Result<IntegerValue, ConstEvalError> {
+    if !integer_fits(value, width.bits(), signed) {
+        return Result<IntegerValue, ConstEvalError>.Err(ConstEvalError.Overflow);
+    }
+
+    Result<IntegerValue, ConstEvalError>.Ok(cast_integer(value, width, signed))
 }
 
 pub fn compare(left: IntegerValue, right: IntegerValue) -> i32 {
@@ -89,34 +107,41 @@ pub fn compare(left: IntegerValue, right: IntegerValue) -> i32 {
     }
 }
 
-fn finish(absolute: u64, negative: bool, shape: IntegerValue) -> IntegerValue {
+// Every produced value is range-checked against its type before representation.
+fn finish(absolute: u64, negative: bool, shape: IntegerValue) -> Result<IntegerValue, ConstEvalError> {
     if shape.is_untyped() {
-        return IntegerValue.untyped(absolute, negative);
+        return checked_untyped(absolute, negative);
     }
 
-    normalized(if negative {
+    let width = shape.storage_width();
+    let signed = shape.is_signed();
+
+    if !integer_fits(IntegerValue.untyped(absolute, negative), width.bits(), signed) {
+        return Result<IntegerValue, ConstEvalError>.Err(ConstEvalError.Overflow);
+    }
+
+    return Result<IntegerValue, ConstEvalError>.Ok(normalized(if negative {
             0u64 - absolute
         } else {
             absolute
-        }, shape.storage_width(), shape.is_signed())
+        }, width, signed));
 }
 
 pub fn integer_unary(op: UnaryOperator, value: IntegerValue) -> Result<IntegerValue, ConstEvalError> {
     match op {
-        Neg => Result<IntegerValue, ConstEvalError>.Ok(finish(magnitude(value), !is_negative(value), value)),
+        Neg => finish(magnitude(value), !is_negative(value), value),
         BitNot => {
             if value.is_untyped() {
                 // Infinite two's-complement identity: ~x == -x-1.
-
                 if is_negative(value) {
-                    return Result<IntegerValue, ConstEvalError>.Ok(finish(value.raw_bits() - 1, false, value));
+                    return finish(value.raw_bits() - 1, false, value);
                 }
 
                 if value.raw_bits() == 0xFFFFFFFFFFFFFFFFu64 {
                     return Result<IntegerValue, ConstEvalError>.Err(ConstEvalError.Overflow);
                 }
 
-                return Result<IntegerValue, ConstEvalError>.Ok(finish(value.raw_bits() + 1, true, value));
+                return finish(value.raw_bits() + 1, true, value);
             }
 
             Result<IntegerValue, ConstEvalError>.Ok(normalized(~value.raw_bits(), value.storage_width(), value.is_signed()))
@@ -126,27 +151,32 @@ pub fn integer_unary(op: UnaryOperator, value: IntegerValue) -> Result<IntegerVa
 }
 
 pub fn integer_binary(op: BinaryOperator, left: IntegerValue, right: IntegerValue) -> Result<IntegerValue, ConstEvalError> {
+    let right_value = if left.is_untyped() {
+        right
+    } else {
+        match checked_cast_integer(right, left.storage_width(), left.is_signed()) {
+            Ok(value) => value,
+            Err(error) => return Result<IntegerValue, ConstEvalError>.Err(error),
+        }
+    };
+
     if op == BinaryOperator.Div || op == BinaryOperator.Mod {
-        return divide(op, left, right);
+        return divide(op, left, right_value);
     }
 
     if op == BinaryOperator.Shl || op == BinaryOperator.Shr {
-        return shift(op, left, right);
-    }
-
-    if !left.is_untyped() {
-        return fixed_binary(op, left, right);
+        return shift(op, left, right_value);
     }
 
     if op == BinaryOperator.Add || op == BinaryOperator.Sub {
-        return add_magnitudes(op, left, right);
+        return add_magnitudes(op, left, right_value);
     }
 
     if op == BinaryOperator.Mul {
-        return multiply(left, right);
+        return multiply(left, right_value);
     }
 
-    bitwise(op, left, right)
+    bitwise(op, left, right_value)
 }
 
 fn divide(op: BinaryOperator, left: IntegerValue, right: IntegerValue) -> Result<IntegerValue, ConstEvalError> {
@@ -159,12 +189,12 @@ fn divide(op: BinaryOperator, left: IntegerValue, right: IntegerValue) -> Result
         return Result<IntegerValue, ConstEvalError>.Err(ConstEvalError.DivisionByZero);
     }
 
-    // Unsigned magnitudes also represent abs(i64::MIN), avoiding signed division overflow.
-    return Result<IntegerValue, ConstEvalError>.Ok(if op == BinaryOperator.Div {
-            finish(a / b, ln != rn, left)
-        } else {
-            finish(a % b, ln, left)
-        });
+    // Unsigned magnitudes avoid signed division overflow; the result is range-checked by finish.
+    if op == BinaryOperator.Div {
+        return finish(a / b, ln != rn, left);
+    }
+
+    return finish(a % b, ln, left);
 }
 
 fn shift(op: BinaryOperator, left: IntegerValue, right: IntegerValue) -> Result<IntegerValue, ConstEvalError> {
@@ -183,34 +213,34 @@ fn shift(op: BinaryOperator, left: IntegerValue, right: IntegerValue) -> Result<
         u64(left.storage_width().bits())
     };
 
-    if b >= width {
-        if op == BinaryOperator.Shl && left.is_untyped() && a != 0 {
+    if op == BinaryOperator.Shl {
+        if a == 0 {
+            return finish(0, false, left);
+        }
+
+        if b >= width || a > (0xFFFFFFFFFFFFFFFFu64 >> b) {
             return Result<IntegerValue, ConstEvalError>.Err(ConstEvalError.Overflow);
         }
 
-        let bits = if op == BinaryOperator.Shr && ln {
+        return finish(a << b, ln, left);
+    }
+
+    if b >= width {
+        if left.is_untyped() {
+            return finish(if ln {
+                    1u64
+                } else {
+                    0u64
+                }, ln, left);
+        }
+
+        let bits = if ln {
             left.storage_width().mask()
         } else {
             0u64
         };
 
-        return Result<IntegerValue, ConstEvalError>.Ok(if left.is_untyped() {
-                finish(if ln && op == BinaryOperator.Shr {
-                    1u64
-                } else {
-                    0u64
-                }, ln && op == BinaryOperator.Shr, left)
-            } else {
-                normalized(bits, left.storage_width(), left.is_signed())
-            });
-    }
-
-    if op == BinaryOperator.Shl {
-        if left.is_untyped() && a > (0xFFFFFFFFFFFFFFFFu64 >> b) {
-            return Result<IntegerValue, ConstEvalError>.Err(ConstEvalError.Overflow);
-        }
-
-        return Result<IntegerValue, ConstEvalError>.Ok(finish(a << b, ln, left));
+        return Result<IntegerValue, ConstEvalError>.Ok(normalized(bits, left.storage_width(), left.is_signed()));
     }
 
     if left.is_untyped() {
@@ -220,7 +250,7 @@ fn shift(op: BinaryOperator, left: IntegerValue, right: IntegerValue) -> Result<
             rounded += 1;
         }
 
-        return Result<IntegerValue, ConstEvalError>.Ok(finish(rounded, ln, left));
+        return finish(rounded, ln, left);
     }
 
     let bits = left.raw_bits() >> b;
@@ -228,22 +258,6 @@ fn shift(op: BinaryOperator, left: IntegerValue, right: IntegerValue) -> Result<
     if ln && b != 0 {
         bits |= left.storage_width().mask() ^ (left.storage_width().mask() >> b);
     }
-
-    return Result<IntegerValue, ConstEvalError>.Ok(normalized(bits, left.storage_width(), left.is_signed()));
-}
-
-fn fixed_binary(op: BinaryOperator, left: IntegerValue, right: IntegerValue) -> Result<IntegerValue, ConstEvalError> {
-    let l = left.raw_bits();
-    let r = cast_integer(right, left.storage_width(), left.is_signed()).raw_bits();
-    let bits = match op {
-        Add => l + r,
-        Sub => l - r,
-        Mul => l * r,
-        BitAnd => l & r,
-        BitOr => l | r,
-        BitXor => l ^ r,
-        _ => return Result<IntegerValue, ConstEvalError>.Err(ConstEvalError.InvalidOperator)
-    };
 
     return Result<IntegerValue, ConstEvalError>.Ok(normalized(bits, left.storage_width(), left.is_signed()));
 }
@@ -264,14 +278,14 @@ fn add_magnitudes(op: BinaryOperator, left: IntegerValue, right: IntegerValue) -
             return Result<IntegerValue, ConstEvalError>.Err(ConstEvalError.Overflow);
         }
 
-        return Result<IntegerValue, ConstEvalError>.Ok(finish(a + b, ln, left));
+        return finish(a + b, ln, left);
     }
 
-    return Result<IntegerValue, ConstEvalError>.Ok(if a >= b {
-            finish(a - b, ln, left)
-        } else {
-            finish(b - a, negative, left)
-        });
+    if a >= b {
+        return finish(a - b, ln, left);
+    }
+
+    return finish(b - a, negative, left);
 }
 
 fn multiply(left: IntegerValue, right: IntegerValue) -> Result<IntegerValue, ConstEvalError> {
@@ -284,7 +298,7 @@ fn multiply(left: IntegerValue, right: IntegerValue) -> Result<IntegerValue, Con
         return Result<IntegerValue, ConstEvalError>.Err(ConstEvalError.Overflow);
     }
 
-    return Result<IntegerValue, ConstEvalError>.Ok(finish(a * b, ln != rn, left));
+    return finish(a * b, ln != rn, left);
 }
 
 fn bitwise(op: BinaryOperator, left: IntegerValue, right: IntegerValue) -> Result<IntegerValue, ConstEvalError> {
@@ -320,13 +334,9 @@ fn bitwise(op: BinaryOperator, left: IntegerValue, right: IntegerValue) -> Resul
         _ => false
     };
 
-    if negative && bits == 0 {
-        return Result<IntegerValue, ConstEvalError>.Err(ConstEvalError.Overflow);
-    }
-
-    Result<IntegerValue, ConstEvalError>.Ok(finish(if negative {
+    return finish(if negative {
             0u64 - bits
         } else {
             bits
-        }, negative, left))
+        }, negative, left);
 }

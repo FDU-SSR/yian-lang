@@ -1,7 +1,6 @@
 from json.write import Writer;
 from json.error import WriteError;
 from json.parse import parse;
-from std.core.drop import Drop;
 from std.num.f64 import from_bits;
 
 fn main() {

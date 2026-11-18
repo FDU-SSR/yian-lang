@@ -1,0 +1,18 @@
+{
+  "name": "call_abi",
+  "measurement": {"warmups": 1, "runs": 5},
+  "source": "fatptr",
+  "tags": [
+    "micro"
+  ],
+  "argv": [],
+  "check": {
+    "rc": 0
+  },
+  "note": "rc==0 (internal assertion: two-callee checksum == ROUNDS·(193·Σn + 3744·CALLS)); current native -O2 inlines both YIAN callees while C's noinline remains effective, so this is not yet evidence of the real three-state call cost; mix_in passes one 24 B fat argument, mix_wide passes two",
+  "scale": {
+    "default": 4096,
+    "fast": 1024,
+    "c": "argv"
+  }
+}

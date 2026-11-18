@@ -1,0 +1,241 @@
+// bench/BG/knucleotide/yian/src/workload.an — Benchmarks Game k-nucleotide.
+// Source: bench/BG/knucleotide/c/upstream/main.c (knucleotide-gcc-1; revised BSD).
+// Both ports use the same klib/khash u64 -> u32 table: flags layout, custom
+// hash, quadratic probing, 0.77 load factor, and power-of-two growth.
+
+from knucleotide.khash import KhashU64U32, KhashPut;
+from std.core.io import BufWriter, Read, Stdin, Stdout, Write;
+from std.core.vec import Vec;
+
+struct KmerCount {
+    key: u64,
+    count: u32,
+}
+
+fn nucleotide_code(nucleotide: u8) -> u64 {
+    if nucleotide == b'A' || nucleotide == b'a' { return 0u64; }
+    if nucleotide == b'C' || nucleotide == b'c' { return 1u64; }
+    if nucleotide == b'G' || nucleotide == b'g' { return 2u64; }
+    if nucleotide == b'T' || nucleotide == b't' { return 3u64; }
+    @panic("knucleotide: expected A, C, G, or T in THREE");
+}
+
+fn read_three(input: u8[]) -> Vec<u8> {
+    let sequence: Vec<u8> = Vec<u8>.new();
+    let line_start: u64 = 0u64;
+    let in_three: bool = false;
+    let found_three: bool = false;
+
+    while line_start < input.len() {
+        let line_end: u64 = line_start;
+        while line_end < input.len() && input[line_end] != b'\n' {
+            line_end += 1u64;
+        }
+
+        if line_start < line_end && input[line_start] == b'>' {
+            if in_three {
+                break;
+            }
+            if line_end - line_start >= 6u64
+                && input[line_start + 0u64] == b'>'
+                && input[line_start + 1u64] == b'T'
+                && input[line_start + 2u64] == b'H'
+                && input[line_start + 3u64] == b'R'
+                && input[line_start + 4u64] == b'E'
+                && input[line_start + 5u64] == b'E'
+            {
+                in_three = true;
+                found_three = true;
+            }
+        } elif in_three {
+            let index: u64 = line_start;
+            while index < line_end {
+                sequence.push(u8(nucleotide_code(input[index])));
+                index += 1u64;
+            }
+        }
+
+        if line_end == input.len() {
+            break;
+        }
+        line_start = line_end + 1u64;
+    }
+
+    if !found_three {
+        @panic("knucleotide: missing THREE record");
+    }
+    sequence
+}
+
+fn increment_count(counts: KhashU64U32&, key: u64) {
+    let put: KhashPut = counts.put(key);
+    if put.state != 0u32 {
+        counts.set_value(put.index, 1u32);
+    } else {
+        counts.set_value(put.index, counts.value_at(put.index) + 1u32);
+    }
+}
+
+fn count_oligonucleotides(sequence: u8[], k: u64) -> KhashU64U32 {
+    let counts: KhashU64U32 = KhashU64U32.new();
+    let mask: u64 = (1u64 << (2u64 * k)) - 1u64;
+    let key: u64 = 0u64;
+    let index: u64 = 0u64;
+    while index < sequence.len() {
+        key = ((key << 2u64) & mask) | u64(sequence[index]);
+        if index + 1u64 >= k {
+            increment_count(&counts, key);
+        }
+        index += 1u64;
+    }
+    counts
+}
+
+fn comes_before(left: KmerCount, right: KmerCount) -> bool {
+    if left.count > right.count { return true; }
+    if left.count < right.count { return false; }
+    left.key < right.key
+}
+
+fn sort_counts(values: KmerCount[]) {
+    let index: u64 = 1u64;
+    while index < values.len() {
+        let cursor: u64 = index;
+        while cursor > 0u64 && comes_before(values[cursor], values[cursor - 1u64]) {
+            let saved: KmerCount = values[cursor - 1u64];
+            values[cursor - 1u64] = values[cursor];
+            values[cursor] = saved;
+            cursor -= 1u64;
+        }
+        index += 1u64;
+    }
+}
+
+fn sorted_counts(counts: KhashU64U32&) -> Vec<KmerCount> {
+    let values: Vec<KmerCount> = Vec<KmerCount>.with_capacity(u64(counts.len()));
+    let index: u32 = 0u32;
+    while index < counts.end() {
+        if counts.exists(index) {
+            values.push(KmerCount(counts.key_at(index), counts.value_at(index)));
+        }
+        index += 1u32;
+    }
+    sort_counts(values.as_slice());
+    values
+}
+
+fn append_unsigned(output: Vec<u8>&, value: u64) {
+    let digits: u8[20] = [0u8; 20];
+    let position: u64 = 20u64;
+    let remaining: u64 = value;
+    if remaining == 0u64 {
+        output.push(b'0');
+        return;
+    }
+    while remaining > 0u64 {
+        position -= 1u64;
+        digits[position] = b'0' + u8(remaining % 10u64);
+        remaining /= 10u64;
+    }
+    while position < 20u64 {
+        output.push(digits[position]);
+        position += 1u64;
+    }
+}
+
+fn append_key(output: Vec<u8>&, key: u64, k: u64) {
+    let position: u64 = 0u64;
+    while position < k {
+        let shift: u64 = 2u64 * (k - position - 1u64);
+        let nucleotide: u64 = (key >> shift) & 3u64;
+        if nucleotide == 0u64 { output.push(b'A'); }
+        elif nucleotide == 1u64 { output.push(b'C'); }
+        elif nucleotide == 2u64 { output.push(b'G'); }
+        else { output.push(b'T'); }
+        position += 1u64;
+    }
+}
+
+// C evaluates 100.0f * count / window_count as binary32 and printf then
+// rounds that exact binary32 value to three decimal places. The library widens
+// the binary32 value exactly before selecting three fractional digits.
+fn append_percentage(output: Vec<u8>&, count: u32, window_count: u64) {
+    let percentage: f32 = 100.0f32 * f32(count) / f32(window_count);
+    let text = f"{percentage:.3f}";
+    output.extend_from_slice(text.as_str().as_slice());
+    text.drop();
+}
+
+fn append_frequencies(output: Vec<u8>&, sequence: u8[], k: u64) {
+    let counts: KhashU64U32 = count_oligonucleotides(sequence, k);
+    let sorted: Vec<KmerCount> = sorted_counts(&counts);
+    let window_count: u64 = sequence.len() - k + 1u64;
+    let index: u64 = 0u64;
+    while index < sorted.len() {
+        append_key(output, sorted[index].key, k);
+        output.push(b' ');
+        append_percentage(output, sorted[index].count, window_count);
+        output.push(b'\n');
+        index += 1u64;
+    }
+    output.push(b'\n');
+    sorted.drop();
+    counts.drop();
+}
+
+fn append_query(output: Vec<u8>&, sequence: u8[], query: str) {
+    let query_bytes: u8[] = query.as_slice();
+    let k: u64 = query_bytes.len();
+    let counts: KhashU64U32 = count_oligonucleotides(sequence, k);
+    let key: u64 = 0u64;
+    let index: u64 = 0u64;
+    while index < k {
+        key = (key << 2u64) | nucleotide_code(query_bytes[index]);
+        index += 1u64;
+    }
+    let lookup: u32 = counts.get(key);
+    let count: u32 = 0u32;
+    if lookup != counts.end() {
+        count = counts.value_at(lookup);
+    }
+    append_unsigned(output, u64(count));
+    output.push(b'\t');
+    output.extend_from_slice(query_bytes);
+    output.push(b'\n');
+    counts.drop();
+}
+
+pub fn run() -> i32 {
+
+    let input: Vec<u8> = Vec<u8>.new();
+    let read_buffer: u8[8192] = [0u8; 8192];
+    let stdin: Stdin = Stdin.new();
+    loop {
+        let amount: u64 = *stdin.read(read_buffer.as_slice()).unwrap();
+        if amount == 0u64 { break; }
+        input.extend_from_slice(read_buffer[0u64..amount]);
+    }
+    stdin.drop();
+
+    let sequence: Vec<u8> = read_three(input.as_slice());
+    input.drop();
+    let output_bytes: Vec<u8> = Vec<u8>.new();
+    append_frequencies(&output_bytes, sequence.as_slice(), 1u64);
+    append_frequencies(&output_bytes, sequence.as_slice(), 2u64);
+    append_query(&output_bytes, sequence.as_slice(), "GGT");
+    append_query(&output_bytes, sequence.as_slice(), "GGTA");
+    append_query(&output_bytes, sequence.as_slice(), "GGTATT");
+    append_query(&output_bytes, sequence.as_slice(), "GGTATTTTAATT");
+    append_query(&output_bytes, sequence.as_slice(), "GGTATTTTAATTTATAGT");
+
+    let stdout: Stdout = Stdout.new();
+    let buffered: BufWriter<Stdout> = BufWriter<Stdout>.new(&stdout);
+    buffered.write_all(output_bytes.as_slice()).unwrap();
+    buffered.finish().unwrap();
+    buffered.drop();
+    stdout.drop();
+    output_bytes.drop();
+    sequence.drop();
+
+    return 0;
+}

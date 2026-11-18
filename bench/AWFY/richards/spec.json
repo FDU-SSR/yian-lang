@@ -1,0 +1,17 @@
+{
+  "name": "richards",
+  "measurement": {"warmups": 1, "runs": 5},
+  "source": "AWFY",
+  "tags": [
+    "ptr"
+  ],
+  "argv": [],
+  "check": {
+    "rc": 0
+  },
+  "note": "Official work unit: queuePacketCount=23246, holdCount=9297; default 3303 outer iterations",
+  "scale": {
+    "default": 3303,
+    "c": "argv"
+  }
+}

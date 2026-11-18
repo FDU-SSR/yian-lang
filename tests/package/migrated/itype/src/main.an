@@ -2,8 +2,6 @@
 //
 // Expected output: Person is walking.
 
-from std.core.io import print;
-
 from typetest.person import Person;
 
 fn main() {

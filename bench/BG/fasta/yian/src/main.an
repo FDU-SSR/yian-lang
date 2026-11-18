@@ -1,0 +1,44 @@
+from fasta.workload import run;
+from std.core.env import args, exit;
+from std.core.string import String;
+from std.core.vec import Vec;
+
+fn c_decimal(text: str) -> i64 {
+    let bytes = text.as_slice();
+    let index: u64 = 0u64;
+    while index < bytes.len() && (bytes[index] == 32u8 || (bytes[index] >= 9u8 && bytes[index] <= 13u8)) {
+        index += 1u64;
+    }
+    let negative: bool = false;
+    if index < bytes.len() && (bytes[index] == b'-' || bytes[index] == b'+') {
+        negative = bytes[index] == b'-';
+        index += 1u64;
+    }
+    let value: i64 = 0i64;
+    while index < bytes.len() && bytes[index] >= b'0' && bytes[index] <= b'9' {
+        value = value * 10i64 + i64(bytes[index] - b'0');
+        index += 1u64;
+    }
+    return if negative { -value } else { value };
+}
+
+fn main() {
+    let arguments: Vec<String> = args();
+    let scale: i32 = 25000000; // bench-scale
+    if arguments.len() > 1u64 {
+        scale = i32(c_decimal(arguments[1u64].as_str()));
+    }
+    let index: u64 = 0u64;
+    while index < arguments.len() {
+        arguments[index].drop();
+        index += 1u64;
+    }
+    arguments.drop();
+    if scale <= 0 || scale > 25000000 {
+        exit(2);
+    }
+    let status: i32 = run(scale);
+    if status != 0 {
+        exit(status);
+    }
+}

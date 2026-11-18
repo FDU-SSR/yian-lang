@@ -4,7 +4,6 @@ from yianc.common.ids import TypeId;
 from yianc.frontend.ast.operator import BinaryOperator, UnaryOperator;
 from llvm.object import Module, Builder;
 from llvm.ir import IrValue, BinaryOp, IntCompare, RealCompare, CastOp;
-from std.core.result import Result;
 
 pub enum ScalarKind {
     Integer { bits: u32, signed: bool },
@@ -16,7 +15,8 @@ pub fn scalar(types: BackendTypes&, type_id: TypeId) -> Result<ScalarKind, Codeg
     match types.semantic_store().require(type_id)? {
         Bool => Result<ScalarKind, CodegenError>.Ok(ScalarKind.Integer(1u32, false)),
         Char => Result<ScalarKind, CodegenError>.Ok(ScalarKind.Integer(32u32, false)),
-        Integer(bits, signed) | CScalar(bits, signed, _) => Result<ScalarKind, CodegenError>.Ok(ScalarKind.Integer(*bits, *signed)),
+        Integer(bits, signed) => Result<ScalarKind, CodegenError>.Ok(ScalarKind.Integer(*bits, *signed)),
+        CScalar(kind) => Result<ScalarKind, CodegenError>.Ok(ScalarKind.Integer(kind.bits(), kind.is_signed())),
         Float(bits) => Result<ScalarKind, CodegenError>.Ok(ScalarKind.Float(*bits)),
         Pointer(_) | Reference(_) | CPointer(_) | FunctionPointer(_, _) | Nominal(_, _) => Result<ScalarKind, CodegenError>.Ok(ScalarKind.Pointer),
         _ => Result<ScalarKind, CodegenError>.Err(CodegenError.invalid("type has no scalar LLVM operation")),

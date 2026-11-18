@@ -1,0 +1,89 @@
+{
+  "format": 2,
+  "task": "knucleotide",
+  "description_url": "https://benchmarksgame-team.pages.debian.net/benchmarksgame/description/knucleotide.html",
+  "source": {
+    "url": "https://benchmarksgame-team.pages.debian.net/benchmarksgame/program/knucleotide-gcc-1.html",
+    "retrieved_at": "2026-10-31T10:42:07Z",
+    "extracted_sha256": "fe7a12f17707b148d28773924ee5a8a3246592414ac50f1edad821a0ac8ade65",
+    "extraction": "First HTML pre block; remove HTML tags, HTML-unescape once, UTF-8 encode; preserve leading and trailing whitespace.",
+    "archive_path": "c/upstream/main.c"
+  },
+  "files": [
+    {
+      "path": "c/upstream/main.c",
+      "sha256": "fe7a12f17707b148d28773924ee5a8a3246592414ac50f1edad821a0ac8ade65",
+      "license_id": "BSD-3-Clause"
+    },
+    {
+      "path": "c/src/main.c",
+      "sha256": "fe7a12f17707b148d28773924ee5a8a3246592414ac50f1edad821a0ac8ade65",
+      "license_id": "BSD-3-Clause"
+    },
+    {
+      "path": "c/include/khash.h",
+      "sha256": "4582c7fd4b98f61339ce677bb1daa7a45a53075b112a494a335525c4bda72074",
+      "license_id": "MIT"
+    },
+    {
+      "path": "LICENSE-BenchmarksGame.txt",
+      "sha256": "32ef9bf57891917e5a636ebccf3ff6d14536a3a794075ef0887b412cdebfd89e",
+      "license_id": "BSD-3-Clause"
+    }
+  ],
+  "patches": [],
+  "fixtures": [
+    {
+      "input_url": "https://benchmarksgame-team.pages.debian.net/benchmarksgame/download/knucleotide-input.txt",
+      "input_path": "fixtures/fasta-n1000-input.fasta",
+      "input_sha256": "62d1e8d0df7938d2aefda9a37887e0389231ea72c099c29a51afb6edca1bdc73",
+      "output_url": "https://benchmarksgame-team.pages.debian.net/benchmarksgame/download/knucleotide-output.txt",
+      "output_path": "fixtures/official-output.txt",
+      "output_sha256": "baa63c46addb89c63e68ea0055952847fbccf450e89997b2b62234c90e66f500",
+      "argv": []
+    }
+  ],
+  "translation": [
+    {
+      "c_symbol": "element_Compare",
+      "yian_symbol": "comes_before / sort_counts",
+      "differences": [
+        "Both order count descending and encoded key ascending. YIAN insertion sort is used only for the at-most-16 one/two-base frequency rows; query outputs are not sorted."
+      ]
+    },
+    {
+      "c_symbol": "generate_Frequencies_For_Desired_Length_Oligonucleotides",
+      "yian_symbol": "count_oligonucleotides / sorted_counts / append_frequencies",
+      "differences": [
+        "Both roll two-bit keys for every complete window and update an actual hash table, materialize entries, sort, and emit the same nucleotide labels and three-decimal percentage through the standard library's `:.3f` specification. YIAN uses HashMap<u64,u32>; C uses khash with a custom XOR/shift hash."
+      ]
+    },
+    {
+      "c_symbol": "generate_Count_For_Oligonucleotide",
+      "yian_symbol": "count_oligonucleotides / append_query",
+      "differences": [
+        "Both build a map for each query length, encode the requested sequence, and perform a key lookup. YIAN constructs the encoded sequence in a growing Vec and outputs in the official query order."
+      ]
+    },
+    {
+      "c_symbol": "main",
+      "yian_symbol": "read_three / main",
+      "differences": [
+        "C reads lines and grows a raw byte buffer; YIAN reads stdin in 8192-byte chunks and extracts the THREE sequence into encoded u8 values. Both stop at the next record and process lengths 1,2,3,4,6,12,18.",
+        "The official OpenMP pragmas are left in C source but are inactive because the task build does not use -fopenmp; YIAN executes serially. C and YIAN differ in map hashing/layout, bucket growth, allocation strategy, and materialization/sort implementation."
+      ]
+    }
+  ],
+  "dependencies": [
+    {
+      "name": "klib khash.h",
+      "url": "https://github.com/attractivechaos/klib/blob/97a0fcb790b43b9e5da8994f4671021fec036f19/khash.h",
+      "commit": "97a0fcb790b43b9e5da8994f4671021fec036f19",
+      "path": "c/include/khash.h",
+      "sha256": "4582c7fd4b98f61339ce677bb1daa7a45a53075b112a494a335525c4bda72074",
+      "license_id": "MIT",
+      "retrieved_at": "2026-10-31T11:17:36Z",
+      "note": "Header-only dependency; original MIT notice retained; no binary library."
+    }
+  ]
+}

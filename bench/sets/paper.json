@@ -1,0 +1,10 @@
+{
+  "name": "paper",
+  "scale": "full",
+  "include": [
+    "AWFY/*",
+    "BG/*"
+  ],
+  "exclude": [],
+  "note": "The paper's 24 grouped AWFY/BG benchmarks; LIBYAML is measured and reported separately by the real set"
+}

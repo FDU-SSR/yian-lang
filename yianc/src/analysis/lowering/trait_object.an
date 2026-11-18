@@ -7,14 +7,8 @@ from yianc.analysis.hir.node import HirKind, TraitObjectCoerce, TraitObjectMetho
 from yianc.common.ids import TypeId, HirId, NameId;
 from yianc.common.location import SourceSpan;
 from yianc.frontend.source import Span;
-from yianc.frontend.ast.operator import UnaryOperator;
 from yianc.diagnostics.model import AnalysisError, DiagnosticCode;
-from std.core.drop import Drop;
 from std.core.iter import Iterator, IntoIterator;
-from std.core.option import Option;
-from std.core.result import Result;
-from std.core.vec import Vec;
-from std.core.string import String;
 
 impl ExprChecker {
     pub fn make_trait_object(id: HirId, expected: TypeId, trait_id: TypeId) -> Result<HirId, AnalysisError> {
@@ -24,15 +18,6 @@ impl ExprChecker {
             Reference(inner) => *inner,
             _ => return Result<HirId, AnalysisError>.Err(self.error(node.span.span, "trait object requires a concrete pointer or reference")),
         };
-
-        match &node.kind {
-            Unary(value) => {
-                if value.op == UnaryOperator.AddrOf && !self.ctx.session.hir.require(value.operand)?.is_place {
-                    return Result<HirId, AnalysisError>.Err(self.error(node.span.span, "cannot create a trait object from a temporary value"));
-                }
-            },
-            _ => {},
-        }
 
         let required = object_methods(self.ctx, trait_id)?;
         defer required.drop();
@@ -79,7 +64,7 @@ impl ExprChecker {
         Result<HirId, AnalysisError>.Ok(self.node(node.span.span, expected, false, HirKind.TraitObjectCoerce(TraitObjectCoerce(id, concrete, trait_id, implementations))))
     }
 
-    pub fn dynamic_method(span: Span, receiver: HirId, trait_id: TypeId, name: NameId, values: Vec<HirId>&) -> Result<HirId, AnalysisError> {
+    pub fn dynamic_method(span: Span, name_span: Option<Span>, receiver: HirId, trait_id: TypeId, name: NameId, values: Vec<HirId>&) -> Result<HirId, AnalysisError> {
         let methods = object_methods(self.ctx, trait_id)?;
         defer methods.drop();
         let slot = 0u64;
@@ -112,7 +97,7 @@ impl ExprChecker {
                 }
 
                 accepted = true;
-                return Result<HirId, AnalysisError>.Ok(self.node(span, callable.result, false, HirKind.TraitObjectMethodCall(TraitObjectMethodCall(receiver, trait_id, *method, slot, args))));
+                return Result<HirId, AnalysisError>.Ok(self.node(span, callable.result, false, HirKind.TraitObjectMethodCall(TraitObjectMethodCall(receiver, trait_id, *method, slot, args, match name_span { Some(value) => Option<SourceSpan>.Some(self.ctx.span(self.unit, value)), None => Option<SourceSpan>.None }))));
             }
 
             slot += 1;

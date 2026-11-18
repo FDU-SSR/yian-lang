@@ -2,10 +2,8 @@ from yianc.frontend.lex.token import Token;
 from yianc.frontend.lex.token import KeywordKind;
 from std.num.f64 import to_bits;
 from json.write import Writer;
-from std.core.drop import Drop;
 from std.core.fmt import ToString;
 from std.core.ops import Index;
-from std.core.vec import Vec;
 
 fn token_kind(token: Token&) -> str {
     match token.kind() {
@@ -21,6 +19,7 @@ fn token_kind(token: Token&) -> str {
         FStrExprBegin => "FStrExprBegin",
         FStrExprEnd => "FStrExprEnd",
         FStrEnd => "FStrEnd",
+        FStrFormatText(_) => "FStrFormatText",
         EndOfFile => "EndOfFile",
     }
 }

@@ -1,5 +1,5 @@
-from yianc.codegen.cfg.ids import FunctionId, BlockId, ValueId, LocalId;
-from yianc.codegen.cfg.model import CfgModule, CfgFunction, Operation, ValueKind, Terminator, Instruction;
+from yianc.codegen.cfg.ids import FunctionId, BlockId, ValueId, LocalId, ScopeId;
+from yianc.codegen.cfg.model import CfgModule, CfgFunction, Operation, ValueKind, Terminator, Instruction, OperationGuard, GuardKind, GuardSite;
 from yianc.codegen.error import CodegenError;
 from yianc.codegen.types import BackendTypes;
 from yianc.codegen.llvm.scalar import binary, unary, cast;
@@ -15,15 +15,9 @@ from yianc.frontend.ast.atoms import BuiltinKind;
 from std.collections.hash_map import HashMap;
 from std.collections.hash_set import HashSet;
 from std.core.convert import From;
-from std.core.drop import Drop;
 from std.core.fmt import ToString;
 from std.core.iter import Iterator, IntoIterator;
 from std.core.ops import Index;
-from std.core.range import Range;
-from std.core.option import Option;
-from std.core.result import Result;
-from std.core.string import String;
-from std.core.vec import Vec;
 
 // All handles are non-owning. The driver closes the module after this view is released.
 pub struct LlvmLowering {
@@ -36,11 +30,19 @@ pub struct LlvmLowering {
     globals: HashMap<str, Global>,
     thunks: HashMap<ThunkKey, Function>,
     entry: Option<TypeId>,
+    pub profile_dir: Option<String>,
+    pub program: String,
+    profile_ids: HashMap<TypeId, u64>,
+    profile_enter: Option<Function>,
+    profile_leave: Option<Function>,
 }
 
 impl LlvmLowering {
-    static pub fn new(session: AnalysisSession&, types: BackendTypes&, module: Module&, entry: Option<TypeId>) -> Self {
-        Self(session, types, module, HashMap<TypeId, Function>.new(), HashMap<NameId, TypeId>.new(), HashMap<str, Function>.new(), HashMap<str, Global>.new(), HashMap<ThunkKey, Function>.new(), entry)
+    static pub fn new(session: AnalysisSession&, types: BackendTypes&, module: Module&, entry: Option<TypeId>,
+        program: str, profile_dir: Option<str>) -> Self {
+        Self(session, types, module, HashMap<TypeId, Function>.new(), HashMap<NameId, TypeId>.new(), HashMap<str, Function>.new(), HashMap<str, Global>.new(), HashMap<ThunkKey, Function>.new(), entry,
+            match profile_dir { Some(value) => Option<String>.Some(String.from(&value)), None => Option<String>.None },
+            String.from(&program), HashMap<TypeId, u64>.new(), Option<Function>.None, Option<Function>.None)
     }
 
     // Runtime names are static text; language externs and runtime declarations share LLVM symbols.
@@ -74,12 +76,15 @@ impl LlvmLowering {
             Nominal(definition, _) => *self.session.types.definition(*definition).unwrap(),
             _ => return Result<Function, CodegenError>.Err(CodegenError.invalid("LLVM declaration is not a nominal callable")),
         };
-        let external = match record.body()? {
-            Function(value) | Method(value) => value.is_extern,
+        let external = false;
+        let header = false;
+        match record.body()? {
+            Function(value) | Method(value) => { external = value.is_extern; header = value.is_header; },
             _ => return Result<Function, CodegenError>.Err(CodegenError.invalid("LLVM declaration is not a function")),
-        };
+        }
         let name = String.new();
         defer name.drop();
+        let is_entry = match self.entry { Some(value) => value == type_id, None => false, };
         if external {
             match self.externs.get(&record.header().name) {
                 Some(existing) => {
@@ -93,7 +98,6 @@ impl LlvmLowering {
             name.push_str(self.session.names.text(record.header().name));
             self.externs.insert(record.header().name, type_id);
         } else {
-            let is_entry = match self.entry { Some(value) => value == type_id, None => false, };
             if is_entry {
                 name.push_str("__yian_main");
             } else {
@@ -107,6 +111,10 @@ impl LlvmLowering {
             Ok(value) => value,
             Err(message) => return Result<Function, CodegenError>.Err(CodegenError.llvm_error(message)),
         };
+        // Generated functions stay in one module, so their symbols need no external linkage.
+        // Extern declarations, header declarations without a body, and the runtime entry
+        // keep names that a separate object or the runtime must resolve.
+        if !external && !header && !is_entry { function.set_internal_linkage(); }
         self.functions.insert(type_id, function);
         Result<Function, CodegenError>.Ok(function)
     }
@@ -149,6 +157,7 @@ impl LlvmLowering {
                 }
             }
         }
+        self.prepare_profile(cfg)?;
         for index in 0u64..cfg.len() {
             let function = *cfg.function(FunctionId(index)).unwrap();
             let body = FunctionLowering.new(self, function)?;
@@ -169,6 +178,9 @@ impl Drop for LlvmLowering {
         self.runtime.drop();
         self.globals.drop();
         self.thunks.drop();
+        match &self.profile_dir { Some(value) => value.drop(), None => {}, }
+        self.program.drop();
+        self.profile_ids.drop();
     }
 }
 
@@ -183,14 +195,16 @@ pub struct FunctionLowering {
     locals: Vec<IrValue>,
     enum_slots: HashMap<ValueId, IrValue>,
     array_slots: HashMap<ValueId, IrValue>,
-    frame_state: Option<IrValue>,
+    frames: Vec<Option<IrValue>>,
+    guards: Vec<OperationGuard>,
+    guard_position: u64,
 }
 
 impl FunctionLowering {
     static fn new(owner: LlvmLowering&, cfg: CfgFunction&) -> Result<Self, CodegenError> {
         let body = Self(owner, cfg, owner.module.builder(), owner.declare(cfg.callable)?,
             Vec<IrBlock>.new(), Vec<IrBlock>.new(), Vec<Option<IrValue>>.new(), Vec<IrValue>.new(), HashMap<ValueId, IrValue>.new(), HashMap<ValueId, IrValue>.new(),
-            Option<IrValue>.None);
+            Vec<Option<IrValue>>.new(), Vec<OperationGuard>.new(), 0u64);
         let accepted = false;
         defer { if !accepted { body.drop(); } };
         for index in 0u64..cfg.block_count() {
@@ -236,20 +250,43 @@ impl FunctionLowering {
                 }
             }
         }
-        let owns_addresses = false;
-        for index in 0u64..cfg.block_count() {
-            for instruction in cfg.block(BlockId(index))?.instructions {
-                match &instruction.operation {
-                    Address(local) => { if !owner.types.is_zst(cfg.local(*local)?.type_id)? { owns_addresses = true; } },
-                    _ => {},
+        // Each locking scope has one private word slot; scope entry resets it at run time.
+        let locked = Vec<bool>.new();
+        defer locked.drop();
+        for index in 0u64..cfg.scopes.len() { locked.push(false); }
+        match &cfg.fat_plan {
+            Some(plan) => {
+                if plan.scopes.len() != cfg.scopes.len() {
+                    return Result<Self, CodegenError>.Err(CodegenError.invalid("fat plan scope count is inconsistent"));
                 }
-            }
+                for index in 0u64..plan.scopes.len() { locked[index] = plan.scopes[index].needs_lock; }
+            },
+            None => {
+                if !owner.types.raw_pointers() {
+                    for index in 0u64..cfg.block_count() {
+                        for instruction in cfg.block(BlockId(index))?.instructions {
+                            match &instruction.operation {
+                                Address(local) => {
+                                    if !owner.types.is_zst(cfg.local(*local)?.type_id)? {
+                                        let scope = cfg.local(*local)?.scope;
+                                        cfg.scope(scope)?;
+                                        locked[scope.index] = true;
+                                    }
+                                },
+                                _ => {},
+                            }
+                        }
+                    }
+                }
+            },
         }
-        // The private word slot exists at entry, but a lock is acquired only on an executed address operation.
-        if owns_addresses && !owner.types.raw_pointers() {
+        for index in 0u64..locked.len() {
+            if !locked[index] {
+                body.frames.push(Option<IrValue>.None);
+                continue;
+            }
             let state = body.builder.alloca(owner.module.int_type(64u32), "frame.word");
-            body.builder.store(body.integer(0u64), state);
-            body.frame_state = Option<IrValue>.Some(state);
+            body.frames.push(Option<IrValue>.Some(state));
         }
 
         let parameters = Vec<IrValue>.new();
@@ -296,6 +333,34 @@ impl FunctionLowering {
         Result<Self, CodegenError>.Ok(body)
     }
 
+    // Templates consume the CFG-selected guard sequence in order; no policy is decided here.
+    fn begin_guards(records: Vec<OperationGuard>&) {
+        self.guards.clear();
+        self.guard_position = 0u64;
+        for record in *records { self.guards.push(OperationGuard(record.kind, record.site)); }
+    }
+
+    fn take_guard(kind: GuardKind, site: GuardSite) -> bool {
+        if self.guard_position >= self.guards.len() { return false; }
+        let record = self.guards[self.guard_position];
+        if record.kind != kind || record.site != site { return false; }
+        self.guard_position += 1u64;
+        true
+    }
+
+    fn require_guard(kind: GuardKind, site: GuardSite) -> Result<(), CodegenError> {
+        if self.take_guard(kind, site) { return Result<(), CodegenError>.Ok(()); }
+        Result<(), CodegenError>.Err(CodegenError.invalid("LLVM template is missing a CFG operation guard"))
+    }
+
+    fn finish_guards() -> Result<(), CodegenError> {
+        if self.guard_position != self.guards.len() {
+            return Result<(), CodegenError>.Err(CodegenError.invalid("LLVM template did not consume every CFG operation guard"));
+        }
+        self.guards.clear();
+        Result<(), CodegenError>.Ok(())
+    }
+
     fn get(id: ValueId) -> Result<IrValue, CodegenError> {
         match self.values[id.index] {
             Some(value) => Result<IrValue, CodegenError>.Ok(value),
@@ -314,6 +379,7 @@ impl FunctionLowering {
     }
 
     fn instruction(instruction: Instruction&) -> Result<(), CodegenError> {
+        self.begin_guards(&instruction.guards);
         for check in instruction.checks { self.safety_check(check)?; }
         let result = match instruction.result {
             Some(id) => Option<TypeId>.Some(self.cfg.value(id)?.type_id),
@@ -342,7 +408,27 @@ impl FunctionLowering {
                 self.fill(*destination, *element, *count)?;
                 Option<IrValue>.None
             },
-            Phi(_) => return Result<(), CodegenError>.Ok(()),
+            EnumInitAt(address, enumeration, discriminant, fields) => {
+                self.enum_init_at(*address, *enumeration, *discriminant, fields)?;
+                Option<IrValue>.None
+            },
+            EnumCopyAt(destination, source, enumeration) => {
+                self.enum_copy_at(*destination, *source, *enumeration)?;
+                Option<IrValue>.None
+            },
+            ScopeEnter(scope) => {
+                self.enter_frame(*scope)?;
+                Option<IrValue>.None
+            },
+            ScopeExit(scope) => {
+                self.end_frame(*scope)?;
+                Option<IrValue>.None
+            },
+            SafetyPoint => Option<IrValue>.None,
+            Phi(_) => {
+                self.finish_guards()?;
+                return Result<(), CodegenError>.Ok(());
+            },
             _ => {
                 let type_id = *result.unwrap();
                 let native = types.value_type(type_id)?;
@@ -350,7 +436,7 @@ impl FunctionLowering {
                 let generated = match &instruction.operation {
                     Load(local) => if zst { module.const_null(native) } else { self.builder.load(native, self.locals[local.index], "") },
                     Address(local) => if zst { module.const_null(native) } else {
-                        let word = self.frame_lock()?;
+                        let word = self.frame_lock(self.cfg.local(*local)?.scope)?;
                         self.make_pointer(type_id, self.locals[local.index], word, self.integer(0u64), self.integer(1u64))?
                     },
                     Read(address) => if zst { module.const_null(native) } else {
@@ -419,6 +505,8 @@ impl FunctionLowering {
                         let pointer = self.enum_address(*enumeration, base)?;
                         self.make_pointer(type_id, pointer, self.pointer_word(source, self.get(*address)?)?, self.integer(0u64), self.integer(1u64))?
                     },
+                    EnumTagAt(address, enumeration) => self.enum_tag_at(*address, *enumeration)?,
+                    EnumFieldAt(address, enumeration, discriminant, field) => self.enum_field_at(*instruction.result.unwrap(), *address, *enumeration, *discriminant, *field)?,
                     PointerOffset(pointer, index, subtract) => self.pointer_offset(*pointer, *index, *subtract)?,
                     PointerDifference(left, right) => self.pointer_difference(*left, *right)?,
                     IndexAddress(address, element, index, bounds) => self.index_address(type_id, *address, *element, *index, bounds)?,
@@ -435,6 +523,7 @@ impl FunctionLowering {
             Some(id) => { self.values[id.index] = value; },
             None => {},
         }
+        self.finish_guards()?;
         Result<(), CodegenError>.Ok(())
     }
 
@@ -451,6 +540,7 @@ impl FunctionLowering {
                 if !visited.insert(id) { continue; }
                 let block = self.cfg.block(id)?;
                 self.builder.position_at_end(self.blocks[id.index]);
+                if id.index == 0u64 { self.call_profile_enter()?; }
                 for instruction in block.instructions {
                     match self.instruction(instruction) {
                         Ok(_) => {},
@@ -460,7 +550,7 @@ impl FunctionLowering {
                 self.exits[id.index] = self.builder.insertion_block();
                 match &*block.terminator.unwrap() {
                     Return(value) => {
-                        self.end_frame();
+                        self.call_profile_leave()?;
                         match value {
                             Some(id) => { self.builder.ret(self.get(*id)?); },
                             None => { self.builder.ret_void(); },
@@ -509,5 +599,7 @@ impl Drop for FunctionLowering {
         self.locals.drop();
         self.enum_slots.drop();
         self.array_slots.drop();
+        self.frames.drop();
+        self.guards.drop();
     }
 }

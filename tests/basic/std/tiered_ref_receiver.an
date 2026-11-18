@@ -8,8 +8,6 @@
 //
 // Expected output: 0
 
-from std.core.option import Option;
-
 struct Point {
     x: i32,
     y: i32,

@@ -9,11 +9,8 @@ from yianc.frontend.ast.node import Expr;
 from yianc.frontend.ast.operator import BinaryOperator, UnaryOperator;
 from yianc.frontend.source import Span;
 from yianc.diagnostics.model import AnalysisError;
-from std.core.drop import Drop;
-from std.core.clone import Clone;
 from std.core.iter import Iterator, IntoIterator;
-from std.core.result import Result;
-from std.core.vec import Vec;
+from yianc.analysis.ty.store import BOOL_TYPE_ID, CHAR_TYPE_ID, VOID_TYPE_ID;
 
 fn assignment_operator(op: BinaryOperator) -> bool {
     match &op {
@@ -48,8 +45,8 @@ impl ExprChecker {
         let type_id = self.type_of(value);
         let result = match &op {
             LogicalNot => {
-                self.coerce(value, self.ctx.primitives.boolean)?;
-                self.ctx.primitives.boolean
+                self.coerce(value, TypeId(BOOL_TYPE_ID))?;
+                TypeId(BOOL_TYPE_ID)
             },
             Neg => {
                 if !is_numeric(self.ctx, type_id) {
@@ -59,7 +56,7 @@ impl ExprChecker {
                 type_id
             },
             BitNot => {
-                if !is_integer(self.ctx, type_id) && type_id != self.ctx.primitives.boolean {
+                if !is_integer(self.ctx, type_id) && type_id != TypeId(BOOL_TYPE_ID) {
                     return self.overloaded_unary(span, op, value);
                 }
 
@@ -125,7 +122,7 @@ impl ExprChecker {
             }
 
             let result = if assignment {
-                self.ctx.primitives.void
+                TypeId(VOID_TYPE_ID)
             } else {
                 lhs_type
             };
@@ -137,14 +134,14 @@ impl ExprChecker {
                 return Result<HirId, AnalysisError>.Err(self.error(span, "assignment target must be an l-value"));
             }
 
-            let boolean_bit = lhs_type == self.ctx.primitives.boolean && (op == BinaryOperator.BitAndAssign || op == BinaryOperator.BitOrAssign || op == BinaryOperator.BitXorAssign);
+            let boolean_bit = lhs_type == TypeId(BOOL_TYPE_ID) && (op == BinaryOperator.BitAndAssign || op == BinaryOperator.BitOrAssign || op == BinaryOperator.BitXorAssign);
             if op != BinaryOperator.Assign && !is_numeric(self.ctx, lhs_type) && !boolean_bit {
                 return self.overloaded_binary(span, op, lhs, rhs);
             }
 
             let converted = self.coerce(rhs, lhs_type)?;
 
-            return Result<HirId, AnalysisError>.Ok(self.node(span, self.ctx.primitives.void, false, HirKind.Binary(HirBinary(op, lhs, converted))));
+            return Result<HirId, AnalysisError>.Ok(self.node(span, TypeId(VOID_TYPE_ID), false, HirKind.Binary(HirBinary(op, lhs, converted))));
         }
 
         if op == BinaryOperator.Index {
@@ -152,9 +149,9 @@ impl ExprChecker {
         }
 
         if op == BinaryOperator.LogicalAnd || op == BinaryOperator.LogicalOr {
-            let lhs = self.coerce(lhs, self.ctx.primitives.boolean)?;
-            let rhs = self.coerce(rhs, self.ctx.primitives.boolean)?;
-            return Result<HirId, AnalysisError>.Ok(self.node(span, self.ctx.primitives.boolean, false, HirKind.Binary(HirBinary(op, lhs, rhs))));
+            let lhs = self.coerce(lhs, TypeId(BOOL_TYPE_ID))?;
+            let rhs = self.coerce(rhs, TypeId(BOOL_TYPE_ID))?;
+            return Result<HirId, AnalysisError>.Ok(self.node(span, TypeId(BOOL_TYPE_ID), false, HirKind.Binary(HirBinary(op, lhs, rhs))));
         }
 
         // Overloaded operands can have different types, such as String + str.
@@ -166,13 +163,13 @@ impl ExprChecker {
             values.push(lhs);
             values.push(rhs);
             let truth = op == BinaryOperator.Eq || op == BinaryOperator.Leq || op == BinaryOperator.Geq;
-            values.push(self.node(span, self.ctx.primitives.boolean, false, HirKind.BoolLiteral(truth)));
-            return Result<HirId, AnalysisError>.Ok(self.node(span, self.ctx.primitives.boolean, false, HirKind.Block(HirBlock(values))));
+            values.push(self.node(span, TypeId(BOOL_TYPE_ID), false, HirKind.BoolLiteral(truth)));
+            return Result<HirId, AnalysisError>.Ok(self.node(span, TypeId(BOOL_TYPE_ID), false, HirKind.Block(HirBlock(values))));
         }
 
         let builtin_non_numeric = lhs_type == rhs_type &&
-        ((comparison && (lhs_type == self.ctx.primitives.boolean || lhs_type == self.ctx.primitives.character)) ||
-            ((op == BinaryOperator.BitAnd || op == BinaryOperator.BitOr || op == BinaryOperator.BitXor) && lhs_type == self.ctx.primitives.boolean));
+        ((comparison && (lhs_type == TypeId(BOOL_TYPE_ID) || lhs_type == TypeId(CHAR_TYPE_ID))) ||
+            ((op == BinaryOperator.BitAnd || op == BinaryOperator.BitOr || op == BinaryOperator.BitXor) && lhs_type == TypeId(BOOL_TYPE_ID)));
 
         if (!is_numeric(self.ctx, lhs_type) || !is_numeric(self.ctx, rhs_type)) && !builtin_non_numeric {
             return self.overloaded_binary(span, op, lhs, rhs);
@@ -187,9 +184,9 @@ impl ExprChecker {
         } else {
             return Result<HirId, AnalysisError>.Err(self.error(span, "binary operands have incompatible types"));
         };
-        let boolean_bit = (op == BinaryOperator.BitAnd || op == BinaryOperator.BitOr || op == BinaryOperator.BitXor) && common == self.ctx.primitives.boolean;
+        let boolean_bit = (op == BinaryOperator.BitAnd || op == BinaryOperator.BitOr || op == BinaryOperator.BitXor) && common == TypeId(BOOL_TYPE_ID);
 
-        if !is_numeric(self.ctx, common) && !boolean_bit && !(comparison && (common == self.ctx.primitives.boolean || common == self.ctx.primitives.character)) {
+        if !is_numeric(self.ctx, common) && !boolean_bit && !(comparison && (common == TypeId(BOOL_TYPE_ID) || common == TypeId(CHAR_TYPE_ID))) {
             return self.overloaded_binary(span, op, lhs, rhs);
         }
 
@@ -204,7 +201,7 @@ impl ExprChecker {
         lhs = self.coerce(lhs, common)?;
         rhs = self.coerce(rhs, common)?;
         let result = if comparison {
-            self.ctx.primitives.boolean
+            TypeId(BOOL_TYPE_ID)
         } else {
             common
         };

@@ -28,9 +28,7 @@ impl u64 {
         let base: u64 = 10u64;
         let start: u64 = 0u64;
         if length >= 2u64 && bytes[0u64] == b'0' {
-            if bytes[1u64] == b'b' || bytes[1u64] == b'B' { base = 2u64; start = 2u64; }
-            elif bytes[1u64] == b'o' || bytes[1u64] == b'O' { base = 8u64; start = 2u64; }
-            elif bytes[1u64] == b'x' || bytes[1u64] == b'X' { base = 16u64; start = 2u64; }
+            if bytes[1u64] == b'b' || bytes[1u64] == b'B' { base = 2u64; start = 2u64; } elif bytes[1u64] == b'o' || bytes[1u64] == b'O' { base = 8u64; start = 2u64; } elif bytes[1u64] == b'x' || bytes[1u64] == b'X' { base = 16u64; start = 2u64; }
         }
         if start == length {
             return Result<u64, ParseNumberError>.Err(msg=ParseNumberError.MissingDigits);

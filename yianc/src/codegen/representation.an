@@ -1,0 +1,39 @@
+from yianc.analysis.ty.model import TypeData;
+from yianc.analysis.ty.properties import store_is_zst;
+from yianc.analysis.ty.store import TypeStore;
+from yianc.common.ids import TypeId;
+from yianc.diagnostics.model import AnalysisError;
+
+// A representation fixes the native shape of one semantic type for the active pointer mode.
+// Classification is read-only and independent of CFG storage so early size queries can share it.
+pub enum PointerRepresentation {
+    NonPointer,
+    ZeroSized,
+    RawAddress,
+    RawView,
+    RawTraitObject,
+    FatPointer,
+    FatReference,
+    FatView,
+    FatTraitObject,
+}
+
+pub struct TypeRepresentation {
+    pub type_id: TypeId,
+    pub representation: PointerRepresentation,
+}
+
+pub fn classify_representation(store: TypeStore&, type_id: TypeId, raw: bool)
+-> Result<PointerRepresentation, AnalysisError> {
+    if store_is_zst(store, type_id)? {
+        return Result<PointerRepresentation, AnalysisError>.Ok(PointerRepresentation.ZeroSized);
+    }
+    let result = match store.require(type_id)? {
+        Pointer(_) => if raw { PointerRepresentation.RawAddress } else { PointerRepresentation.FatPointer },
+        Reference(_) => if raw { PointerRepresentation.RawAddress } else { PointerRepresentation.FatReference },
+        Slice(_) | Str => if raw { PointerRepresentation.RawView } else { PointerRepresentation.FatView },
+        TraitObject(_) => if raw { PointerRepresentation.RawTraitObject } else { PointerRepresentation.FatTraitObject },
+        _ => PointerRepresentation.NonPointer,
+    };
+    Result<PointerRepresentation, AnalysisError>.Ok(result)
+}

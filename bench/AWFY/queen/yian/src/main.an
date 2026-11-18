@@ -1,0 +1,149 @@
+from std.core.env import args;
+
+// bench/AWFY/an/queen.an: N-queens backtracking (shootout queens).
+//
+// Reference: AWFY benchmarks/Java/src/Queens.java; see AWFY LICENSE.md.
+// Semantic reference: bench/AWFY/c/queen.c, the project's C implementation.
+// Scale: ten consecutive eight-queens solves per work unit; outer repetitions repeat that unit.
+//
+// Algorithm: classic N-queens backtracking. free_rows[r] records row availability;
+//       free_maxs[r+c] and free_mins[c-r+7] record the two diagonals,
+//       with offset 7 keeping indices nonnegative. place_queen places columns and restores
+//       board state on backtracking. solve_queens_once recreates four arrays and solves once.
+//
+// Array parameters in is_safe/update_board_state/place_queen use
+//   bool[]/i32[] block-access semantics, 24 B fat representations without index fields.
+//   solve_queens_once binds bool[]/i32[] directly (an inferred allocation and an explicit full-range view);
+//   del T[] releases the whole block without an explicit view of the original pointer.
+//
+// Fat and raw modes share this source.
+// Use inferred dyn types and x[0u64..n] range views for both modes, retaining fat-mode checks.
+fn is_safe(r: u64, c: u64, free_rows: bool[], free_maxs: bool[], free_mins: bool[]) -> bool {
+    if !free_rows[u64(r)] {
+        return false;
+    }
+    if !free_maxs[u64(r + c)] {
+        return false;
+    }
+    if !free_mins[u64(c - r + 7)] {
+        return false;
+    }
+    return true;
+}
+
+fn update_board_state(r: u64, c: u64, value: bool, free_rows: bool[], free_maxs: bool[], free_mins: bool[]) {
+    free_rows[u64(r)] = value;
+    free_maxs[u64(c + r)] = value;
+    free_mins[u64(c - r + 7)] = value;
+}
+
+fn place_queen(c: u64, free_rows: bool[], free_maxs: bool[], free_mins: bool[], queen_rows: i32[]) -> bool {
+    let r: u64 = 0;
+    while r < 8 {
+        if is_safe(r, c, free_rows, free_maxs, free_mins) {
+            queen_rows[u64(r)] = i32(c);
+            update_board_state(r, c, false, free_rows, free_maxs, free_mins);
+            if c == 7 {
+                return true;
+            }
+            if place_queen(c + 1, free_rows, free_maxs, free_mins, queen_rows) {
+                return true;
+            }
+            update_board_state(r, c, true, free_rows, free_maxs, free_mins);
+        }
+        r += 1;
+    }
+    return false;
+}
+
+fn solve_queens_once() -> bool {
+    let free_rows: bool[] = {
+        let extent: u64 = u64(8);
+        let allocation = dyn[extent] false;
+        allocation[0u64..u64(extent)]
+    };
+    let free_maxs: bool[] = {
+        let extent: u64 = u64(16);
+        let allocation = dyn[extent] false;
+        allocation[0u64..u64(extent)]
+    };
+    let free_mins: bool[] = {
+        let extent: u64 = u64(16);
+        let allocation = dyn[extent] false;
+        allocation[0u64..u64(extent)]
+    };
+    let queen_rows: i32[] = {
+        let extent: u64 = u64(8);
+        let allocation = dyn[extent] 0i32;
+        allocation[0u64..u64(extent)]
+    };
+
+    let i: u64 = 0;
+    while i < 8 {
+        free_rows[u64(i)] = true;
+        queen_rows[u64(i)] = -1;
+        i += 1;
+    }
+    let j: u64 = 0;
+    while j < 16 {
+        free_maxs[u64(j)] = true;
+        free_mins[u64(j)] = true;
+        j += 1;
+    }
+
+    let fr: bool[] = free_rows[0u64..8u64];
+    let fm: bool[] = free_maxs[0u64..16u64];
+    let fmi: bool[] = free_mins[0u64..16u64];
+    let qr: i32[] = queen_rows[0u64..8u64];
+    let ok: bool = place_queen(0, fr, fm, fmi, qr);
+
+    del free_rows;
+    del free_maxs;
+    del free_mins;
+    del queen_rows;
+    return ok;
+}
+
+fn benchmark_queens() -> bool {
+    let result: bool = true;
+    let i: u64 = 0;
+    while i < 10 {
+        result = result && solve_queens_once();
+        i += 1;
+    }
+    return result;
+}
+
+// Decimal prefix parsing for the C atoi/atoll workload argument.
+fn c_decimal(text: str) -> i64 {
+    let bytes = text.as_slice();
+    let i: u64 = 0;
+    while i < bytes.len() && (bytes[u64(i)] == 32 || (bytes[u64(i)] >= 9 && bytes[u64(i)] <= 13)) { i += 1; }
+    let negative: bool = false;
+    if i < bytes.len() && (bytes[u64(i)] == b'-' || bytes[u64(i)] == b'+') {
+        negative = bytes[u64(i)] == b'-';
+        i += 1;
+    }
+    let value: i64 = 0;
+    while i < bytes.len() && bytes[u64(i)] >= b'0' && bytes[u64(i)] <= b'9' {
+        value = value * 10 + i64(bytes[u64(i)] - b'0');
+        i += 1;
+    }
+    return if negative { -value } else { value };
+}
+
+fn main() {
+    let ITER: u64 = 276923;  // bench-scale
+    let argv = args();
+    if argv.len() > 1u64 {
+        let requested = i32(c_decimal(argv[1u64].as_str()));
+        ITER = if requested > 0 { u64(requested) } else { 0u64 };
+    }
+    for argument in &argv { argument.drop(); }
+    argv.drop();
+    let iter: u64 = 0;
+    while iter < ITER {
+        assert benchmark_queens(): "queens Error";
+        iter += 1;
+    }
+}

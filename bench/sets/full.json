@@ -1,10 +1,11 @@
 {
   "name": "full",
   "scale": "full",
-  "runs": 5,
   "include": [
     "*"
   ],
-  "exclude": [],
-  "note": "全部三态基准、源内默认规模; 正式记录与对外引用只用这一档"
+  "exclude": [
+    "LIBYAML/*"
+  ],
+  "note": "All three-state benchmarks at source default scale except LIBYAML, which is selected only by the real set and reported independently; formal records and external references use only this profile"
 }

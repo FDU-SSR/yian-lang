@@ -1,6 +1,5 @@
 // References, pointers, Drop, defer, and comptime examples for navigation, hover, and completion.
 from sample.types import Meters as Scalars;
-from std.core.drop import Drop;
 
 // Reference parameter: dereference in arithmetic.
 pub fn scaled(value: Scalars&, factor: Scalars) -> Scalars {

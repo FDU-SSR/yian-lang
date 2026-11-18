@@ -1,0 +1,101 @@
+from yianc.analysis.resolution.context import ResolutionContext;
+from yianc.analysis.session.output import AnalysisOutput;
+from yianc.analysis.hir.node import HirNode, HirKind;
+from yianc.analysis.hir.pattern import PatternNode;
+from yianc.analysis.hir.traversal import HirVisitor, walk_expr;
+from yianc.analysis.constant.value import IntegerValue, IntegerWidth;
+from yianc.analysis.constant.integer import cast_integer;
+from yianc.analysis.constant.floating import round_float;
+from yianc.common.ids import HirId, PatternId, SymbolId, TypeId;
+from yianc.common.traversal import WalkControl;
+from yianc.diagnostics.model import AnalysisError;
+from yianc.analysis.ty.store import INT_LITERAL_TYPE_ID, FLOAT_LITERAL_TYPE_ID, I32_TYPE_ID, F64_TYPE_ID;
+
+// Context-free literals use the language defaults only after all contextual typing has run.
+fn concrete(type_id: TypeId) -> TypeId {
+    if type_id.index == INT_LITERAL_TYPE_ID {
+        return TypeId(I32_TYPE_ID);
+    }
+
+    if type_id.index == FLOAT_LITERAL_TYPE_ID {
+        return TypeId(F64_TYPE_ID);
+    }
+
+    type_id
+}
+
+fn finalize_symbol(ctx: ResolutionContext&, symbol: SymbolId) {
+    match ctx.session.symbols.get(symbol) {
+        Some(value) => { value.type_id = concrete(value.type_id); },
+        None => {},
+    }
+}
+
+// The exported procedure graph must name concrete types; literal placeholders stay in the semantic pool.
+struct TypeFinalizer {
+    ctx: ResolutionContext&,
+}
+
+impl HirVisitor for TypeFinalizer {
+    pub fn leave_expr(id: HirId, node: HirNode&) -> Result<(), AnalysisError> {
+        let integer_literal = match &node.kind {
+            IntLiteral(_) => true,
+            _ => false,
+        };
+        let float_literal = match &node.kind {
+            FloatLiteral(_) => true,
+            _ => false,
+        };
+
+        if integer_literal && node.type_id.index == INT_LITERAL_TYPE_ID {
+            let value = match &node.kind {
+                IntLiteral(inner) => *inner,
+                _ => IntegerValue.untyped(0, false),
+            };
+            node.type_id = TypeId(I32_TYPE_ID);
+            node.kind = HirKind.IntLiteral(cast_integer(value, IntegerWidth.W32, true));
+        } elif float_literal && node.type_id.index == FLOAT_LITERAL_TYPE_ID {
+            let value = match &node.kind {
+                FloatLiteral(inner) => *inner,
+                _ => 0.0,
+            };
+            node.type_id = TypeId(F64_TYPE_ID);
+            node.kind = HirKind.FloatLiteral(round_float(value, 64));
+        } else {
+            node.type_id = concrete(node.type_id);
+        }
+
+        match &node.kind {
+            Var(symbol) => finalize_symbol(self.ctx, *symbol),
+            Let(value) => match value.symbol_id {
+                Some(symbol) => finalize_symbol(self.ctx, symbol),
+                None => {},
+            },
+            _ => {},
+        }
+        Result<(), AnalysisError>.Ok(())
+    }
+
+    pub fn leave_pattern(id: PatternId, node: PatternNode&) -> Result<(), AnalysisError> {
+        node.type_id = concrete(node.type_id);
+        Result<(), AnalysisError>.Ok(())
+    }
+}
+
+// Runs on every successfully checked output, independently of optional HIR verification.
+pub fn finalize_hir_types(ctx: ResolutionContext&, output: AnalysisOutput&) -> Result<(), AnalysisError> {
+    for procedure in output.procedures {
+        for index in 0u64..procedure.parameters.len() {
+            finalize_symbol(ctx, procedure.parameters[index]);
+        }
+
+        for capture in procedure.captures {
+            finalize_symbol(ctx, capture[1]);
+        }
+
+        let finalizer = TypeFinalizer(ctx);
+        walk_expr(&ctx.session.hir, procedure.root, &finalizer)?;
+    }
+
+    Result<(), AnalysisError>.Ok(())
+}

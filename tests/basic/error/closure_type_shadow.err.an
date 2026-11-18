@@ -1,0 +1,14 @@
+// Expected compilation error: a variable shadowing a type parameter hides it from closures
+
+fn blocked<T>(value: T) -> i32 {
+    let T: i32 = 1;
+    let run = || () -> i32 {
+        let item: T;
+        0
+    };
+    run()
+}
+
+fn main() {
+    blocked<i32>(1);
+}

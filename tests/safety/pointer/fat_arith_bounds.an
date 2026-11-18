@@ -29,6 +29,14 @@ fn main() {
     assert r == p: "p+0 keeps index";
     assert *r == 10: "*(p+0) == arr[0]";
 
+    // p-n from an offset pointer: n <= index keeps the result in bounds
+    let end: i32* = p + 4;
+    let back: i32* = end - 2;
+    assert back == p + 2: "end - 2 == p + 2";
+    assert *back == 30: "end - 2 reads arr[2]";
+    let start: i32* = end - 4;
+    assert start == p: "end - 4 == p";
+
     // writing through a derived pointer is visible at the base
     *(p + 2) = 99;
     assert arr[2] == 99: "write through p+2 visible at arr[2]";

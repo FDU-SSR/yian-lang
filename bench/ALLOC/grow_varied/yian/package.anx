@@ -1,0 +1,5 @@
+[package]
+name = "grow_varied"
+kind = "bin"
+version = "0.1.0"
+entry = "src/main.an"

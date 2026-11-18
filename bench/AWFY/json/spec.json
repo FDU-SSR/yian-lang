@@ -1,0 +1,17 @@
+{
+  "name": "json",
+  "measurement": {"warmups": 1, "runs": 5},
+  "source": "AWFY",
+  "tags": [
+    "string"
+  ],
+  "argv": [],
+  "check": {
+    "rc": 0
+  },
+  "note": "Official work unit: root and head are objects, 156 operations; default 14286 outer iterations",
+  "scale": {
+    "default": 14286,
+    "c": "argv"
+  }
+}

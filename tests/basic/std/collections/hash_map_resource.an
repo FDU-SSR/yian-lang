@@ -1,7 +1,6 @@
 // HashMap storage operations never drop keys or values.  Resource cleanup is
 // explicit and must happen while an element is still reachable.
 from std.collections.hash_map import HashMap;
-from std.core.drop import Drop;
 from std.core.hash import Hash, Murmur3Hasher;
 from std.core.ops import PartialEq;
 

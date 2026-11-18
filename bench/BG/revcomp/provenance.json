@@ -1,0 +1,66 @@
+{
+  "format": 2,
+  "task": "revcomp",
+  "description_url": "https://benchmarksgame-team.pages.debian.net/benchmarksgame/description/revcomp.html",
+  "source": {
+    "url": "https://benchmarksgame-team.pages.debian.net/benchmarksgame/program/revcomp-gcc-5.html",
+    "retrieved_at": "2026-10-31T10:42:07Z",
+    "extracted_sha256": "5abcd2f8f2cd17120164d1cac46951d5851f43ee6c2b978bf8ff9d7fe5623380",
+    "extraction": "First HTML pre block; remove HTML tags, HTML-unescape once, UTF-8 encode; preserve leading and trailing whitespace.",
+    "archive_path": "c/upstream/main.c"
+  },
+  "files": [
+    {
+      "path": "c/upstream/main.c",
+      "sha256": "5abcd2f8f2cd17120164d1cac46951d5851f43ee6c2b978bf8ff9d7fe5623380",
+      "license_id": "BSD-3-Clause"
+    },
+    {
+      "path": "c/src/main.c",
+      "sha256": "ac65d224a8a4129d915cb6bb89c83bc3992075150909c14352db89a11ece2d73",
+      "license_id": "BSD-3-Clause"
+    },
+    {
+      "path": "LICENSE-BenchmarksGame.txt",
+      "sha256": "32ef9bf57891917e5a636ebccf3ff6d14536a3a794075ef0887b412cdebfd89e",
+      "license_id": "BSD-3-Clause"
+    }
+  ],
+  "patches": [
+    {
+      "path": "c/src/main.c",
+      "reason": "Make read errors signed and distinct from EOF, retry interrupted reads/writes and complete partial writes, check allocation failures, index the complement table with unsigned bytes, and stop before forming the upstream before-base cursor. These changes preserve output for valid FASTA input.",
+      "diff": "--- c/upstream/main.c\n+++ c/src/main.c\n@@ -8,6 +8,7 @@\n \n #define _GNU_SOURCE\n #include <sched.h>\n+#include <errno.h>\n #include <stdio.h>\n #include <stdlib.h>\n #include <ctype.h>\n@@ -15,7 +16,7 @@\n #include <string.h>\n \n char *pairs = \"ATCGGCTAUAMKRYWWSSYRKMVBHDDHBVNN\\n\\n\";\n-char tbl[128];\n+char tbl[256];\n \n void process(char *from, char *to) {\n    while (*from++ != '\\n');\n@@ -33,7 +34,7 @@\n \n    char c;\n    for (to--; from <= to; from++, to--)\n-      c = tbl[(int)*from], *from = tbl[(int)*to], *to = c;\n+      c = tbl[(unsigned char)*from], *from = tbl[(unsigned char)*to], *to = c;\n }\n \n int main() {\n@@ -47,15 +48,37 @@\n    const size_t _1M = 1024 * 1024;\n    size_t buflen = 8 * 1024, len, end = 0;\n    char *buf = malloc(buflen);\n+   if (buf == NULL) {\n+      perror(\"malloc\");\n+      return EXIT_FAILURE;\n+   }\n \n    int in = fileno(stdin);\n-   while ((len = read(in, buf + end, buflen - 256 - end))) {\n-      if (len < 0) break;\n+   while (1) {\n+      ssize_t amount = read(in, buf + end, buflen - 256 - end);\n+      if (amount < 0) {\n+         if (errno == EINTR) continue;\n+         perror(\"read\");\n+         free(buf);\n+         return EXIT_FAILURE;\n+      }\n+      if (amount == 0) break;\n+      len = (size_t)amount;\n       end += len;\n       if (end >= buflen - 256) {\n          buflen = (buflen >= _1M) ? buflen + _1M : buflen * 2;\n-         buf = realloc(buf, buflen);\n+         char *grown = realloc(buf, buflen);\n+         if (grown == NULL) {\n+            perror(\"realloc\");\n+            free(buf);\n+            return EXIT_FAILURE;\n+         }\n+         buf = grown;\n       }\n+   }\n+   if (end == 0) {\n+      free(buf);\n+      return 0;\n    }\n    buf[end] = '>';\n \n@@ -65,13 +88,28 @@\n \n       process(from, to);\n \n+      if (from == buf) break;\n       to = from - 1;\n-      if (to < buf) break;\n    }\n \n-   write(fileno(stdout), buf, end);\n+   size_t written = 0;\n+   while (written < end) {\n+      ssize_t amount = write(fileno(stdout), buf + written, end - written);\n+      if (amount < 0) {\n+         if (errno == EINTR) continue;\n+         perror(\"write\");\n+         free(buf);\n+         return EXIT_FAILURE;\n+      }\n+      if (amount == 0) {\n+         fputs(\"write made no progress\\n\", stderr);\n+         free(buf);\n+         return EXIT_FAILURE;\n+      }\n+      written += (size_t)amount;\n+   }\n    free(buf);\n \n    return 0;\n }\n-    +    \n"
+    }
+  ],
+  "fixtures": [
+    {
+      "input_url": "https://benchmarksgame-team.pages.debian.net/benchmarksgame/download/revcomp-input.txt",
+      "input_path": "fixtures/fasta-n1000-input.fasta",
+      "input_sha256": "62d1e8d0df7938d2aefda9a37887e0389231ea72c099c29a51afb6edca1bdc73",
+      "output_url": "https://benchmarksgame-team.pages.debian.net/benchmarksgame/download/revcomp-output.txt",
+      "output_path": "fixtures/official-output.fasta",
+      "output_sha256": "549dcdcc7df2685145e6cbdfd682469bd9c12ff1beec93c270f8ba447acd4855",
+      "argv": []
+    }
+  ],
+  "translation": [
+    {
+      "c_symbol": "process",
+      "yian_symbol": "process",
+      "differences": [
+        "C rewrites each record in place with pointers and inserts line breaks before reversing; YIAN receives record/header/sequence offsets into an owned u8 slice, walks sequence bytes backward, complements them and emits new 60-byte lines through a buffered writer.",
+        "Both retain headers, record order and the same IUPAC complement mapping; YIAN never forms a pointer before the input allocation."
+      ]
+    },
+    {
+      "c_symbol": "main",
+      "yian_symbol": "main",
+      "differences": [
+        "C reads with read/realloc into a contiguous buffer; YIAN reads stdin in 8192-byte chunks and extends a Vec<u8>, preserving all input bytes before processing records.",
+        "C locates records backward through raw pointers; YIAN scans record headers forward and passes validated u64 offsets to process.",
+        "Both emit the full reverse-complement FASTA and return status 0 for the official input."
+      ]
+    }
+  ]
+}

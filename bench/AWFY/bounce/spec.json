@@ -1,0 +1,17 @@
+{
+  "name": "bounce",
+  "measurement": {"warmups": 1, "runs": 5},
+  "source": "AWFY",
+  "tags": [
+    "numeric"
+  ],
+  "argv": [],
+  "check": {
+    "rc": 0
+  },
+  "note": "Official work unit: 100 balls, 50 rounds, boundary 500, result 1331; default 300000 outer iterations",
+  "scale": {
+    "default": 300000,
+    "c": "argv"
+  }
+}

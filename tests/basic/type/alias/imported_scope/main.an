@@ -1,4 +1,4 @@
-from types import Array as Buffer, Count, Value, Node;
+from types import Array as Buffer, Count, Value, Node, COUNTS;
 
 typedef Scalar = u64;
 struct Wrapped<const N: Count> { pub data: Buffer<Value, N> }
@@ -8,4 +8,5 @@ fn main() {
     assert wrapped.data[2] == 3i32;
     let node = Node(4i32, Option<Node*>.None);
     assert node.value == 4i32;
+    assert COUNTS[1] == 3u64;
 }

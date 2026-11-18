@@ -8,11 +8,7 @@ from yianc.common.ids import TypeId, HirId;
 from yianc.frontend.ast.node import Expr, TypeSource, Argument;
 from yianc.frontend.source import Span;
 from yianc.diagnostics.model import AnalysisError;
-from std.core.drop import Drop;
 from std.core.iter import Iterator, IntoIterator;
-from std.core.option import Option;
-from std.core.result import Result;
-from std.core.vec import Vec;
 
 impl ExprChecker {
     fn source_type(span: Span, source: TypeSource&, args: Vec<HirId>&) -> Result<TypeId, AnalysisError> {
@@ -25,11 +21,11 @@ impl ExprChecker {
 
                 Result<TypeId, AnalysisError>.Ok(default_type(self.ctx, self.type_of(args[*index])))
             },
-            CallableReturnType => Result<TypeId, AnalysisError>.Ok(self.return_type),
+            CallableReturnType => self.required_return_type(span),
         }
     }
 
-    pub fn trait_call(span: Span, trait_expr: Expr&, self_source: TypeSource&, trait_sources: Vec<Option<TypeSource>>&, method_name: str, args: Vec<Argument&>&) -> Result<HirId, AnalysisError> {
+    pub fn trait_call(span: Span, trait_expr: Expr&, self_source: TypeSource&, trait_sources: Vec<Option<TypeSource>>&, name_span: Option<Span>, method_name: str, args: Vec<Argument&>&) -> Result<HirId, AnalysisError> {
         let trait_value = self.expression(trait_expr)?;
         let trait_id = self.type_of(trait_value);
         let definition = match self.ctx.session.types.require(trait_id)? {
@@ -97,6 +93,6 @@ impl ExprChecker {
             return Result<HirId, AnalysisError>.Err(self.error(span, "qualified trait call requires a static method"));
         }
 
-        self.call_values(span, method, &values, Option<HirId>.None)
+        self.call_values(span, method, &values, Option<HirId>.None, name_span)
     }
 }

@@ -1,4 +1,3 @@
-from std.core.drop import Drop;
 from llvm.core import llvm_version, identity_module_ir, identity_module_object;
 from llvm.object import Module;
 

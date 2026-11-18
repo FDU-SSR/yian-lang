@@ -1,7 +1,6 @@
 from yianc.common.traversal import WalkControl;
-from yianc.frontend.ast.node import Identifier, IntLiteral, FloatLiteral, CharLiteral, StrLiteral, BoolLiteral, Program, Block, Argument, VarInfo, PatternParam, PatternLet, LetCondition, ElifBranch, MatchArm, Attr, TypeGenericParam, ConstGenericParam, FieldInfo, VariantInfo, MethodDecl, MethodDef, ExternFuncDecl, ImplCondition, CaptureItem, FieldPattern, Expr, TypeSyntax, ConstExpr, Pattern, Item, Literal, RangeBounds, Condition, GenericArgument, GenericParam, Parameter, TraitMember, PatternArguments, TypeSource;
+from yianc.frontend.ast.node import Identifier, IntLiteral, FloatLiteral, CharLiteral, StrLiteral, BoolLiteral, Program, Block, Argument, VarInfo, PatternParam, PatternLet, LetCondition, ElifBranch, MatchArm, Attr, TypeGenericParam, ConstGenericParam, FieldInfo, VariantInfo, MethodDecl, MethodDef, ExternFuncDecl, ImplCondition, CaptureItem, FieldPattern, Expr, TypeSyntax, ConstExpr, Pattern, Item, Literal, RangeBounds, Condition, GenericArgument, GenericParam, Parameter, TraitMember, PatternArguments, TypeSource, FormatPart, FormatSpec, FormatCount;
 from std.core.ops import Index;
-from std.core.result import Result;
 
 // Each callback and child edge propagates failure before visiting later children.
 pub trait TryAstVisitor<E> {
@@ -866,6 +865,10 @@ pub fn try_walk_expr<E>(node: Expr&, visitor: TryAstVisitor<E>&) -> Result<(), E
                 }
             };
         },
+        Matches(value, pattern) => {
+            try_walk_expr(*value, visitor)?;
+            try_walk_pattern(*pattern, visitor)?;
+        },
         Return(expr) => {
             match &(*expr) {
                 Some(value) => {
@@ -931,13 +934,51 @@ pub fn try_walk_expr<E>(node: Expr&, visitor: TryAstVisitor<E>&) -> Result<(), E
             try_walk_block(*body, visitor)?;
         },
         CompileConfig(name) => {},
-        Recovery(children, bindings) => {
-            for child in *children { try_walk_expr(*child, visitor)?; }
-            for name in *bindings { try_walk_identifier(*name, visitor)?; }
+        FormatTemplate(parts) => {
+            let index: u64 = 0;
+
+            while index < (*parts).len() {
+                match &(*parts)[index] {
+                    Value(expr, span, spec) => {
+                        try_walk_expr(*expr, visitor)?;
+                        try_walk_format_spec(spec, visitor)?;
+                    },
+                    Literal(text, span) => {},
+                }
+
+                index += 1;
+            }
         },
     };
 
     visitor.leave_expr(node)?;
+    Result<(), E>.Ok(())
+}
+
+// Dynamic counts are the only specification children; static counts carry no expressions.
+pub fn try_walk_format_spec<E>(spec: Option<FormatSpec>&, visitor: TryAstVisitor<E>&) -> Result<(), E> {
+    match spec {
+        Some(value) => {
+            try_walk_format_count(&(*value).width, visitor)?;
+            try_walk_format_count(&(*value).precision, visitor)?;
+        },
+        None => {},
+    }
+    Result<(), E>.Ok(())
+}
+
+fn try_walk_format_count<E>(count: Option<FormatCount>&, visitor: TryAstVisitor<E>&) -> Result<(), E> {
+    match count {
+        Some(value) => {
+            match value {
+                Literal(value, span) => {},
+                Dynamic(expr, span) => {
+                    try_walk_expr(*expr, visitor)?;
+                },
+            }
+        },
+        None => {},
+    }
     Result<(), E>.Ok(())
 }
 

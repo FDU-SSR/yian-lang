@@ -1,0 +1,19 @@
+{
+  "name": "nbody",
+  "measurement": {"warmups": 1, "runs": 5},
+  "source": "BG",
+  "tags": [
+    "numeric"
+  ],
+  "argv": [],
+  "check": {
+    "rc": 0
+  },
+  "note": "Official five-body n-body task; C receives the step count as argv and YIAN selects it through the build-time scale marker.",
+  "scale": {
+    "default": 5000000,
+    "fast": 100000,
+    "c": "argv"
+  },
+  "io": {}
+}

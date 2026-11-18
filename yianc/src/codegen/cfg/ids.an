@@ -50,6 +50,22 @@ impl Hash<Murmur3Hasher> for ValueId {
     }
 }
 
+pub struct ScopeId {
+    pub index: u64,
+}
+
+impl PartialEq<ScopeId> for ScopeId {
+    pub fn eq(other: ScopeId&) -> bool {
+        self.index == other.index
+    }
+}
+
+impl Hash<Murmur3Hasher> for ScopeId {
+    pub fn hash(hasher: Murmur3Hasher&) {
+        self.index.hash(hasher);
+    }
+}
+
 pub struct LocalId {
     pub index: u64,
 }

@@ -1,7 +1,5 @@
 // Array indexing, mutation, multidimensional access, and inline GEP cases.
 
-from std.core.io import print;
-
 fn case_array_access() {
     let arr: i32[4] = [0, 0, 0, 0];
     arr[0] = 3;
@@ -67,11 +65,64 @@ fn case_inline_index() {
     assert sub[0] == 99: "range slice first element failed";
     assert sub[1] == 55: "range slice second element failed";
 
-    print("inline-index pass\n");
+    @print("inline-index pass\n");
+}
+
+const TABLE: i32[2] = [10, 20];
+const MATRIX: i32[2][2] = [[1, 2], [3, 4]];
+
+fn mutate_first_copy() -> i32 {
+    let a = TABLE;
+    a[0] = 100;
+    a[0] + a[1]
+}
+
+fn mutate_second_copy() -> i32 {
+    let a = TABLE;
+    a[1] = 200;
+    a[0] + a[1]
+}
+
+fn dereference(pointer: i32*) -> i32 {
+    *pointer
+}
+
+fn case_constant_temporaries() {
+    let first = TABLE;
+    first[0] = 99;
+    assert first[0] == 99: "local copy is writable";
+    assert TABLE[0] == 10: "constant is unchanged by a local copy";
+    let second = TABLE;
+    second[1] = 77;
+    assert second[1] == 77 && TABLE[1] == 20: "uses copy independently";
+    assert mutate_first_copy() == 120: "first function copy";
+    assert mutate_second_copy() == 210: "second function copy";
+    assert TABLE[0] == 10 && TABLE[1] == 20: "functions do not share the constant";
+
+    let element: i32& = &TABLE[0];
+    *element = 99;
+    assert TABLE[0] == 10: "element reference uses a local temporary";
+
+    let row: i32[2]& = &MATRIX[1];
+    row[0] = 50;
+    assert MATRIX[1][0] == 3: "sub-array reference uses a local temporary";
+
+    let whole: i32[2]& = &TABLE;
+    assert whole[1] == 20: "whole array borrow reads the value";
+
+    let range = 0u64..2;
+    let view: i32[] = TABLE[range];
+    view[0] = 9;
+    assert TABLE[0] == 10: "slice borrow uses a local temporary";
+
+    assert dereference(&TABLE[1]) == 20: "element address through the array decay";
+    let base: i32* = &MATRIX[0][1];
+    assert *base == 2: "nested element address through the array decay";
 }
 
 fn main() {
     case_array_access();
     case_multidimensional_access();
     case_inline_index();
+    case_constant_temporaries();
 }

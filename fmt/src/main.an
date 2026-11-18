@@ -1,0 +1,6 @@
+from fmt.cli import run;
+
+fn main() {
+    let status = run();
+    if status != 0i32 { exit(status); }
+}

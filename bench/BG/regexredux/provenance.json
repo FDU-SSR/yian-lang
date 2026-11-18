@@ -1,0 +1,72 @@
+{
+  "format": 2,
+  "task": "regexredux",
+  "description_url": "https://benchmarksgame-team.pages.debian.net/benchmarksgame/description/regexredux.html",
+  "source": {
+    "url": "https://benchmarksgame-team.pages.debian.net/benchmarksgame/program/regexredux-gcc-5.html",
+    "retrieved_at": "2026-10-31T10:42:07Z",
+    "extracted_sha256": "9d153e7ef427123a2cb2b417f3164fe704d80a9bbd5e2158a7652cb78e95c6f1",
+    "extraction": "First HTML pre block; remove HTML tags, HTML-unescape once, UTF-8 encode; preserve leading and trailing whitespace.",
+    "archive_path": "c/upstream/main.c"
+  },
+  "files": [
+    {
+      "path": "c/upstream/main.c",
+      "sha256": "9d153e7ef427123a2cb2b417f3164fe704d80a9bbd5e2158a7652cb78e95c6f1",
+      "license_id": "BSD-3-Clause"
+    },
+    {
+      "path": "c/src/main.c",
+      "sha256": "9d153e7ef427123a2cb2b417f3164fe704d80a9bbd5e2158a7652cb78e95c6f1",
+      "license_id": "BSD-3-Clause"
+    },
+    {
+      "path": "LICENSE-BenchmarksGame.txt",
+      "sha256": "32ef9bf57891917e5a636ebccf3ff6d14536a3a794075ef0887b412cdebfd89e",
+      "license_id": "BSD-3-Clause"
+    }
+  ],
+  "patches": [],
+  "fixtures": [
+    {
+      "input_url": "https://benchmarksgame-team.pages.debian.net/benchmarksgame/download/regexredux-input.txt",
+      "input_path": "fixtures/fasta-n1000-input.fasta",
+      "input_sha256": "62d1e8d0df7938d2aefda9a37887e0389231ea72c099c29a51afb6edca1bdc73",
+      "output_url": "https://benchmarksgame-team.pages.debian.net/benchmarksgame/download/regexredux-output.txt",
+      "output_path": "fixtures/official-output.txt",
+      "output_sha256": "9f417691b946e86f2a86df4340c17f8b5c7bd5f977df525072c66c89b8a656f1",
+      "argv": []
+    }
+  ],
+  "translation": [
+    {
+      "c_symbol": "replace",
+      "yian_symbol": "replace_into",
+      "differences": [
+        "Both search from the previous match end, append the unmatched source segment and replacement bytes, then append the final suffix. YIAN owns two Vec buffers and swaps their allocations with Vec.take between passes; C grows the source/destination string structs with realloc.",
+        "Each pattern is compiled with options 0, JIT-compiled with PCRE2_JIT_COMPLETE, matched synchronously, and freed. YIAN receives explicit start/end offsets; the shim retains neither pattern text nor subject pointers after the call."
+      ]
+    },
+    {
+      "c_symbol": "main",
+      "yian_symbol": "read_input / process / count_pattern / count_matches / replacement_pattern / replacement_text / append_unsigned / run / main",
+      "differences": [
+        "Both read the complete stdin byte stream and remove headers/newlines with >.*\\n|\\n. C grows its initial 16 KiB string; YIAN reads 16 KiB chunks into Vec<u8>.",
+        "Both count all non-overlapping matches for the same nine patterns in order and then apply the same five replacements in order. YIAN owns scanning loops, count values, buffer appends/swaps, and output formatting.",
+        "C OpenMP pragmas are inactive because the project build does not pass -fopenmp, so both selected references execute serially. Both print the original, cleaned, and replaced byte lengths; YIAN explicitly frees each pattern and matcher handle."
+      ]
+    }
+  ],
+  "dependencies": [
+    {
+      "name": "PCRE2 10.47 8-bit project-local static archive",
+      "url": "https://github.com/PCRE2Project/pcre2/releases/download/pcre2-10.47/pcre2-10.47.tar.gz",
+      "commit": "f454e231fe5006dd7ff8f4693fd2b8eb94333429",
+      "path": "../../native/pcre2/lib/libpcre2-8.a",
+      "sha256": "bcb3f8414521d432dab22195d9f889575497fc7324edf4d051d8e08cab157f62",
+      "license_id": "PCRE2 licence; see bench/native/manifest.json",
+      "retrieved_at": "2026-10-31T10:21:50Z",
+      "note": "C and YIAN link this same archive. Matching pcre2.h SHA-256 is 058462dc030e845ee627e19ac36347f561f5cc44d89eaf1c0010f2b363ab68d5; pcre2posix.h is also packaged. The authoritative source/header/archive/license/build/JIT records are in bench/native/manifest.json."
+    }
+  ]
+}

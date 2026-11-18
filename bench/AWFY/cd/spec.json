@@ -1,0 +1,18 @@
+{
+  "name": "cd",
+  "measurement": {"warmups": 1, "runs": 5},
+  "source": "AWFY",
+  "tags": [
+    "control",
+    "numeric"
+  ],
+  "argv": [],
+  "check": {
+    "rc": 0
+  },
+  "note": "Official work unit: 250 aircraft, 200 frames, result 10830; default 49 outer iterations",
+  "scale": {
+    "default": 49,
+    "c": "argv"
+  }
+}

@@ -1,0 +1,15 @@
+pub enum OperationKind {
+    VerifyBeforeOptimization,
+    Optimize,
+    VerifyAfterOptimization,
+    EmitNative,
+    SerializeIr,
+    SerializeBitcode,
+}
+
+// This synchronous observer does not retain LLVM values or introduce a
+// dependency from the LLVM support package back to yianc.
+pub trait OperationObserver {
+    fn begin(operation: OperationKind) -> u64;
+    fn end(operation: OperationKind, token: u64, success: bool);
+}

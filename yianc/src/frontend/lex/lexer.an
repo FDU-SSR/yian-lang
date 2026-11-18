@@ -2,14 +2,9 @@ from yianc.frontend.lex.token import Token, TokenPayload, KeywordKind, Punctuato
 from yianc.frontend.source import Position, Span;
 from yianc.frontend.text import SourceText;
 from std.core.convert import From;
-from std.core.drop import Drop;
 from std.core.iter import Iterator, IteratorExt, Peekable;
 from std.core.ops import Index;
-from std.core.option import Option;
-from std.core.result import Result;
 from std.core.str import CharIter;
-from std.core.string import String;
-from std.core.vec import Vec;
 from std.num.parse_error import ParseNumberError;
 
 pub struct LexError {
@@ -449,7 +444,7 @@ impl Lexer {
             }
 
             let current = self.peek();
-            let next = self.one(skipped)?;
+            let next = self.one(skipped, true)?;
             if current == u32('{') {
                 depth += 1u64;
             }
@@ -555,17 +550,20 @@ impl Lexer {
         }
     }
 
-    fn parse_number<T>(body: str, start: Position) -> Result<T, LexError> {
-        return match T.parse(body) {
-            Ok(value) => Result<T, LexError>.Ok(value),
-            Err(error) => Result<T, LexError>.Err(self.fail(number_error_message(error), start)),
-        };
+    fn format_text_token(start: Position, raw: String) -> Token {
+        return self.token(TokenPayload.FStrFormatText(value=raw), start);
     }
 
-    fn number(start: Position, code: u32) -> Result<Token, LexError> {
+    // Interpolation context keeps an undecodable number spelling for the parser instead of rejecting the source.
+    fn number(start: Position, code: u32, interpolation: bool) -> Result<Token, LexError> {
         // Collect the full spelling before handling its numeric body and type suffix separately.
         let raw = String.new();
-        defer raw.drop();
+        let transferred = false;
+        defer {
+            if !transferred {
+                raw.drop();
+            }
+        };
         raw.push(char(code));
 
         while !self.at_end() && number_part(self.peek()) {
@@ -584,25 +582,50 @@ impl Lexer {
         if is_float_literal(raw.as_str()) {
             let suffix = float_suffix(raw.as_str());
             let body = numeric_body(raw.as_str(), suffix.spelling());
-            let value = self.parse_number<f64>(body, start)?;
-            return Result<Token, LexError>.Ok(self.float_token(start, value, suffix));
+            match f64.parse(body) {
+                Ok(value) => {
+                    transferred = true;
+                    return Result<Token, LexError>.Ok(self.float_token(start, value, suffix));
+                },
+                Err(error) => {
+                    if interpolation {
+                        transferred = true;
+                        return Result<Token, LexError>.Ok(self.format_text_token(start, raw));
+                    }
+                    return Result<Token, LexError>.Err(self.fail(number_error_message(error), start));
+                },
+            }
         }
 
         let suffix = integer_suffix(raw.as_str());
         let body = numeric_body(raw.as_str(), suffix.spelling());
-        let value = self.parse_number<u64>(body, start)?;
-        if value > suffix_max(suffix) {
-            let message = String.from(&"Integer literal ");
-            defer message.drop();
-            let digits = value.to_string_radix(10);
-            defer digits.drop();
-            message.push_str(digits.as_str());
-            message.push_str(" exceeds maximum value for type ");
-            message.push_str(suffix.spelling());
-            return Result<Token, LexError>.Err(self.fail(message.as_str(), start));
+        match u64.parse(body) {
+            Ok(value) => {
+                if value > suffix_max(suffix) {
+                    if interpolation {
+                        transferred = true;
+                        return Result<Token, LexError>.Ok(self.format_text_token(start, raw));
+                    }
+                    let message = String.from(&"Integer literal ");
+                    defer message.drop();
+                    let digits = value.to_string_radix(10);
+                    defer digits.drop();
+                    message.push_str(digits.as_str());
+                    message.push_str(" exceeds maximum value for type ");
+                    message.push_str(suffix.spelling());
+                    return Result<Token, LexError>.Err(self.fail(message.as_str(), start));
+                }
+                transferred = true;
+                return Result<Token, LexError>.Ok(self.integer_token(start, value, suffix));
+            },
+            Err(error) => {
+                if interpolation {
+                    transferred = true;
+                    return Result<Token, LexError>.Ok(self.format_text_token(start, raw));
+                }
+                return Result<Token, LexError>.Err(self.fail(number_error_message(error), start));
+            },
         }
-
-        return Result<Token, LexError>.Ok(self.integer_token(start, value, suffix));
     }
 
     fn punctuator(start: Position, code: u32, previous_whitespace: bool) -> Result<Token, LexError> {
@@ -633,7 +656,7 @@ impl Lexer {
         return Result<Token, LexError>.Ok(val=self.token(TokenPayload.Punctuator(value=kind), start));
     }
 
-    fn one(previous_whitespace: bool) -> Result<Token, LexError> {
+    fn one(previous_whitespace: bool, interpolation: bool) -> Result<Token, LexError> {
         let start = self.position();
         if self.at_end() {
             return Result<Token, LexError>.Ok(self.token(TokenPayload.EndOfFile, start));
@@ -654,7 +677,7 @@ impl Lexer {
         }
 
         if decimal_digit(code) {
-            return self.number(start, code);
+            return self.number(start, code, interpolation);
         }
 
         return self.punctuator(start, code, previous_whitespace);
@@ -666,37 +689,6 @@ impl Lexer {
         self.scan()
     }
 
-    // Preserve only complete preceding tokens; the damaged lexical suffix stays unavailable.
-    pub fn run_editor() -> EditorLexResult {
-        defer self.drop();
-        match self.scan() {
-            Ok(tokens) => EditorLexResult(tokens, Option<LexError>.None),
-            Err(error) => {
-                let tokens = self.tokens;
-                self.tokens = Vec<Token>.new();
-                // Discard an unfinished format string as one lexical region, including
-                // interpolation markers; its partial contents are never normal code.
-                let pending = Vec<u64>.new();
-                defer pending.drop();
-                let index = 0u64;
-                while index < tokens.len() {
-                    match tokens[index].kind() {
-                        FStrStart => pending.push(index),
-                        FStrEnd if pending.len() != 0 => { pending.pop(); },
-                        _ => {},
-                    }
-                    index += 1;
-                }
-                if pending.len() != 0 {
-                    while tokens.len() > pending[0] { tokens.pop().unwrap().drop(); }
-                }
-                let end = error.span().start;
-                tokens.push(Token.new(TokenPayload.EndOfFile, Span(end, end)));
-                EditorLexResult(tokens, Option<LexError>.Some(error))
-            },
-        }
-    }
-
     fn scan() -> Result<Vec<Token>, LexError> {
 
         loop {
@@ -706,7 +698,7 @@ impl Lexer {
                 continue;
             }
 
-            let next = self.one(skipped)?;
+            let next = self.one(skipped, false)?;
             let done = next.is_eof();
             self.tokens.push(next);
             if done {
@@ -731,26 +723,6 @@ impl Lexer {
     }
 }
 
-pub struct EditorLexResult {
-    pub tokens: Vec<Token>,
-    pub error: Option<LexError>,
-}
-
-impl EditorLexResult {
-    pub fn take_tokens() -> Vec<Token> {
-        let tokens = self.tokens;
-        self.tokens = Vec<Token>.new();
-        tokens
-    }
-}
-
-impl Drop for EditorLexResult {
-    pub fn drop() {
-        for token in self.tokens { token.drop(); }
-        self.tokens.drop();
-        match &self.error { Some(error) => error.drop(), None => {}, }
-    }
-}
 
 impl Drop for Lexer {
     pub fn drop() {

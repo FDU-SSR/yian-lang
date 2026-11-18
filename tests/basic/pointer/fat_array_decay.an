@@ -1,9 +1,5 @@
 // Consolidated basic pointer and allocation scenarios.
 
-from std.core.vec import Vec;
-
-
-
 // Test for pointer usage with arrays
 //
 

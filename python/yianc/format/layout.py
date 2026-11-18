@@ -42,7 +42,7 @@ _CONDITION_KEYWORDS = frozenset({"if", "elif", "while", "for", "return", "assert
 #: Keywords that expect an operand to follow, so a ``-``/``*``/``&`` after them is
 #: a prefix operator rather than a binary one.
 _OPERAND_KEYWORDS = frozenset(
-    {"return", "let", "in", "assert", "defer", "if", "elif", "while", "else", "match"}
+    {"return", "let", "in", "assert", "defer", "if", "elif", "while", "else", "match", "matches"}
 )
 
 #: The same set for "has an operand ended here?" questions: `dyn` starts an
@@ -178,7 +178,7 @@ def _word_like(token: Token) -> bool:
 def _spaces_before_paren(token: Token) -> bool:
     """True for the keywords that keep a space before their `(`."""
     return isinstance(token, Tok.Keyword) and token.kind.value in (
-        _CONDITION_KEYWORDS | {"match", "else"}
+        _CONDITION_KEYWORDS | {"match", "matches", "else"}
     )
 
 
@@ -439,7 +439,15 @@ class _Layout:
     def __fstring(self, index: int) -> int:
         """Emit a whole f-string verbatim; return the index after it."""
         stop = index
-        while stop < len(self.__tokens) and not isinstance(self.__tokens[stop], Tok.FStrEnd):
+        open_templates = 0
+        while stop < len(self.__tokens):
+            token = self.__tokens[stop]
+            if isinstance(token, Tok.FStrStart):
+                open_templates += 1
+            elif isinstance(token, Tok.FStrEnd):
+                open_templates -= 1
+                if open_templates == 0:
+                    break
             stop += 1
         after = stop + 1 if stop < len(self.__tokens) else stop
         start = self.__tokens[index].span.start

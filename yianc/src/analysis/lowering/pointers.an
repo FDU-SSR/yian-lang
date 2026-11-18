@@ -1,15 +1,16 @@
 from yianc.analysis.lowering.checker import ExprChecker;
-from yianc.analysis.ty.relations import is_integer;
+from yianc.analysis.ty.relations import is_integer, is_u64_range;
 from yianc.analysis.ty.validation import c_abi_type;
 from yianc.analysis.ty.model import TypeData;
-from yianc.analysis.hir.node import HirKind, Binary, Unary, TupleAccess, ArrayAccess, SliceAccess;
+from yianc.analysis.hir.node import HirKind, Binary, Unary, TupleAccess, ArrayAccess, SliceAccess, Builtin;
 from yianc.analysis.constant.integer import magnitude;
 from yianc.common.ids import HirId;
 from yianc.frontend.ast.operator import BinaryOperator, UnaryOperator;
+from yianc.frontend.ast.atoms import BuiltinKind;
 from yianc.frontend.source import Span;
 from yianc.diagnostics.model import AnalysisError;
-from std.core.option import Option;
-from std.core.result import Result;
+from yianc.analysis.ty.store import BOOL_TYPE_ID, U64_TYPE_ID, VOID_TYPE_ID;
+from yianc.common.ids import TypeId;
 
 impl ExprChecker {
     // Pointer operations preserve the declared pointee; references have identity equality only.
@@ -32,7 +33,7 @@ impl ExprChecker {
         };
 
         if same && comparable {
-            return Result<Option<HirId>, AnalysisError>.Ok(Option<HirId>.Some(self.node(span, self.ctx.primitives.boolean, false, HirKind.Binary(Binary(op, left, right)))));
+            return Result<Option<HirId>, AnalysisError>.Ok(Option<HirId>.Some(self.node(span, TypeId(BOOL_TYPE_ID), false, HirKind.Binary(Binary(op, left, right)))));
         }
 
         if same && op == BinaryOperator.Sub {
@@ -61,9 +62,9 @@ impl ExprChecker {
                 return Result<Option<HirId>, AnalysisError>.Err(self.error(span, "pointer assignment requires a place"));
             }
 
-            let offset = self.coerce(right, self.ctx.primitives.unsigned)?;
+            let offset = self.coerce(right, TypeId(U64_TYPE_ID))?;
             let result = if compound {
-                self.ctx.primitives.void
+                TypeId(VOID_TYPE_ID)
             } else {
                 left_type
             };
@@ -120,7 +121,7 @@ impl ExprChecker {
                 if is_integer(self.ctx, self.type_of(index)) {
                     match self.ctx.session.types.require(*count)? {
                         LiteralValue(length, _, _) => {
-                            let offset = self.coerce(index, self.ctx.primitives.unsigned)?;
+                            let offset = self.coerce(index, TypeId(U64_TYPE_ID))?;
                             return Result<HirId, AnalysisError>.Ok(self.node(span, *element, place, HirKind.ArrayAccess(ArrayAccess(object, offset, *element, *length))));
                         },
                         _ => {},
@@ -129,8 +130,38 @@ impl ExprChecker {
             },
             Slice(element) => {
                 if is_integer(self.ctx, self.type_of(index)) {
-                    let offset = self.coerce(index, self.ctx.primitives.unsigned)?;
+                    let offset = self.coerce(index, TypeId(U64_TYPE_ID))?;
                     return Result<HirId, AnalysisError>.Ok(self.node(span, *element, true, HirKind.SliceAccess(SliceAccess(object, offset, *element))));
+                }
+                // Built-in slice range: construct the view directly instead of
+                // calling Index<Range>, which would add a Range& temporary and a
+                // full view check.
+                if is_u64_range(self.ctx, self.type_of(index)) {
+                    let types = Vec<TypeId>.new();
+                    let arguments = Vec<HirId>.new();
+                    arguments.push(object);
+                    arguments.push(index);
+                    return Result<HirId, AnalysisError>.Ok(self.node(span, self.ctx.session.types.slice(*element), false,
+                        HirKind.Builtin(Builtin(BuiltinKind.SliceRange, types, arguments))));
+                }
+            },
+            Pointer(element) => {
+                // T* indexing has the same observable behavior as the standard
+                // Index<u64, T*> implementation: pointer arithmetic followed by
+                // a dereference. Lower it directly so the generic trait call and
+                // its reference arguments stay out of the hot path.
+                let index_type = self.type_of(index);
+                let valid_index = match self.ctx.session.types.require(index_type)? {
+                    TypeData.Integer(bits, signed) => *bits == 64u32 && !*signed,
+                    TypeData.IntLiteral => true,
+                    _ => false,
+                };
+                if valid_index {
+                    let offset = self.coerce(index, TypeId(U64_TYPE_ID))?;
+                    let address = self.node(span, self.ctx.session.types.pointer(*element), false,
+                        HirKind.Binary(Binary(BinaryOperator.Add, object, offset)));
+                    return Result<HirId, AnalysisError>.Ok(self.node(span, *element, true,
+                        HirKind.Unary(Unary(UnaryOperator.Deref, address))));
                 }
             },
             _ => {},

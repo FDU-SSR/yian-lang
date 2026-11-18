@@ -1,0 +1,11 @@
+// A released allocation invalidates every cached live fact.  The access after
+// `del` must still perform its own live check and report S003.
+
+fn main() {
+    let p: i32* = dyn[4] 0i32;
+    let r: i32& = &p[0];
+    let first: i32 = *r;
+    del p;
+    let second: i32 = *r;
+    assert first + second == 0: "unreachable";
+}

@@ -1,6 +1,5 @@
 from std.core.path import Path, PathBuf;
 from std.core.fs import resolve;
-from std.core.drop import Drop;
 
 fn main() {
     assert Path.new("/").parent().is_none(): "root has no parent";

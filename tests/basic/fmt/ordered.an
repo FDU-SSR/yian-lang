@@ -1,0 +1,235 @@
+from std.core.fmt import Format, Formatter, FormatSpec;
+from std.core.io import Write, IoError, IoErrorKind;
+
+struct Tracker {
+    first_calls: u64,
+    first_formats: u64,
+    second_calls: u64,
+    second_formats: u64,
+    after: bool,
+}
+
+struct Item { tracker: Tracker&, first: bool }
+
+impl Format for Item {
+    fn fmt(out: Formatter&, spec: FormatSpec&) -> Result<(), IoError> {
+        spec.require_default()?;
+        if self.first { self.tracker.first_formats += 1; } else { self.tracker.second_formats += 1; }
+        out.write_str("M")
+    }
+}
+
+impl Tracker {
+    static fn new() -> Self {
+        Self(first_calls=0, first_formats=0, second_calls=0, second_formats=0, after=false)
+    }
+
+    fn first() -> Item {
+        self.first_calls += 1;
+        Item(tracker=self, first=true)
+    }
+
+    fn second() -> Item {
+        self.second_calls += 1;
+        self.after = true;
+        Item(tracker=self, first=false)
+    }
+}
+
+struct Sink {
+    data: String,
+    limit: u64,
+    fail_after: u64,
+    flushed: u64,
+}
+impl Sink {
+    static fn new(limit: u64, fail_after: u64) -> Self {
+        Self(data=String.new(), limit=limit, fail_after=fail_after, flushed=0)
+    }
+}
+impl Write for Sink {
+    fn write(data: u8[]) -> Result<u64, IoError> {
+        if self.data.len() >= self.fail_after {
+            return Result<u64, IoError>.Err(msg=IoError.new(IoErrorKind.BrokenPipe, "boom"));
+        }
+        let count = if self.limit < data.len() { self.limit } else { data.len() };
+        self.data.push_str(str.from_slice_unchecked(data[0u64..count]));
+        Result<u64, IoError>.Ok(val=count)
+    }
+    fn flush() -> Result<(), IoError> {
+        self.flushed += 1;
+        Result<(), IoError>.Ok(val=())
+    }
+}
+
+// Parameters are validated immediately in source order; a failing count stops later work.
+struct Parameters {
+    width_value: i64,
+    precision_value: i64,
+    width_calls: u64,
+    precision_calls: u64,
+}
+
+impl Parameters {
+    static fn new(width_value: i64, precision_value: i64) -> Self {
+        Self(width_value=width_value, precision_value=precision_value, width_calls=0u64, precision_calls=0u64)
+    }
+
+    fn width() -> i64 {
+        self.width_calls += 1u64;
+        self.width_value
+    }
+
+    fn precision() -> i64 {
+        self.precision_calls += 1u64;
+        self.precision_value
+    }
+}
+
+fn case_parameter_limits() {
+    let value = 1.25;
+
+    // A negative width is rejected before precision is evaluated and writes no field bytes.
+    let negative = Parameters.new(-1i64, 2i64);
+    let sink = Sink.new(64u64, 1000u64);
+    let result = @write(&sink, f"pre{value:{negative.width()}.{negative.precision()}f}post");
+    match result {
+        Ok(_) => @panic("expected invalid width"),
+        Err(error) => {
+            defer error.drop();
+            assert error.kind() == IoErrorKind.InvalidInput: "width failure kind";
+            assert error.msg() == "format width out of range": "width failure message";
+        },
+    }
+    assert sink.data.as_str() == "pre": "prefix retained";
+    assert negative.width_calls == 1u64: "width evaluated once";
+    assert negative.precision_calls == 0u64: "precision skipped";
+    sink.data.drop();
+
+    // The maximum unsigned width is one past the limit and fails the same way.
+    let wide: u64 = 18446744073709551615u64;
+    let wide_sink = Sink.new(64u64, 1000u64);
+    let wide_result = @write(&wide_sink, f"A{value:{wide}}B");
+    match wide_result {
+        Ok(_) => @panic("expected invalid width"),
+        Err(error) => {
+            defer error.drop();
+            assert error.kind() == IoErrorKind.InvalidInput: "unsigned width kind";
+            assert error.msg() == "format width out of range": "unsigned width message";
+        },
+    }
+    assert wide_sink.data.as_str() == "A": "unsigned width keeps prefix";
+    wide_sink.data.drop();
+
+    // A valid width is applied before the precision check rejects the field.
+    let late = Parameters.new(8i64, 1025i64);
+    let late_sink = Sink.new(64u64, 1000u64);
+    let late_result = @write(&late_sink, f"pre{value:{late.width()}.{late.precision()}f}post");
+    match late_result {
+        Ok(_) => @panic("expected invalid precision"),
+        Err(error) => {
+            defer error.drop();
+            assert error.kind() == IoErrorKind.InvalidInput: "precision failure kind";
+            assert error.msg() == "format precision out of range": "precision failure message";
+        },
+    }
+    assert late_sink.data.as_str() == "pre": "precision failure retains prefix";
+    assert late.width_calls == 1u64: "late width evaluated once";
+    assert late.precision_calls == 1u64: "late precision evaluated once";
+    late_sink.data.drop();
+
+    // A successful field writes its padding and text between the surrounding literals.
+    let ok = Parameters.new(8i64, 2i64);
+    let ok_sink = Sink.new(64u64, 1000u64);
+    let ok_result = @write(&ok_sink, f"pre{value:{ok.width()}.{ok.precision()}f}post");
+    assert ok_result.is_ok(): "parameter success";
+    assert ok_sink.data.as_str() == "pre    1.25post": "field bytes";
+    ok_sink.data.drop();
+}
+
+fn case_specification_failures() {
+    let value = 1.25;
+
+    // Zero padding cannot combine with explicit left alignment.
+    let sink = Sink.new(64u64, 1000u64);
+    let result = @write(&sink, f"A{value:<08}B");
+    match result {
+        Ok(_) => @panic("expected invalid specification"),
+        Err(error) => {
+            defer error.drop();
+            assert error.kind() == IoErrorKind.InvalidInput: "alignment conflict kind";
+        },
+    }
+    assert sink.data.as_str() == "A": "alignment conflict writes prefix only";
+    sink.data.drop();
+
+    // Text refuses zero padding and precision.
+    let text = "ab";
+    let text_sink = Sink.new(64u64, 1000u64);
+    let text_result = @write(&text_sink, f"A{text:04}B");
+    match text_result {
+        Ok(_) => @panic("expected text zero padding failure"),
+        Err(error) => {
+            defer error.drop();
+            assert error.kind() == IoErrorKind.InvalidInput: "text zero padding kind";
+            assert error.msg() == "zero padding is not supported for text": "text zero padding message";
+        },
+    }
+    assert text_sink.data.as_str() == "A": "text failure keeps prefix";
+    text_sink.data.drop();
+
+    // An integer accepts a width and applies zero fill to the complete decimal value.
+    let count = 7;
+    let count_sink = Sink.new(64u64, 1000u64);
+    let count_result = @write(&count_sink, f"A{count:05}B");
+    assert count_result.is_ok(): "integer width accepted";
+    assert count_sink.data.as_str() == "A00007B": "integer zero fill";
+    count_sink.data.drop();
+
+    // A broken pipe during a specified field stops later fields and flushes nothing.
+    let pipe_sink = Sink.new(2u64, 1u64);
+    let pipe_result = @write(&pipe_sink, f"A{value:8.2f}B");
+    match pipe_result {
+        Ok(_) => @panic("expected broken pipe"),
+        Err(error) => {
+            defer error.drop();
+            assert error.kind() == IoErrorKind.BrokenPipe: "broken pipe kind";
+            assert error.msg() == "boom": "broken pipe message";
+        },
+    }
+    assert pipe_sink.data.as_str() == "A": "broken pipe keeps prefix";
+    assert pipe_sink.flushed == 0u64: "no implicit flush";
+    pipe_sink.data.drop();
+}
+
+fn main() {
+    let tracker = Tracker.new();
+    let sink = Sink.new(2, 1);
+    let result = @write(&sink, f"A{tracker.first()}B{tracker.second()}");
+    match result {
+        Ok(_) => @panic("expected failure"),
+        Err(error) => {
+            defer error.drop();
+            assert error.kind() == IoErrorKind.BrokenPipe: "error kind";
+            assert error.msg() == "boom": "error message";
+        },
+    }
+    assert sink.data.as_str() == "A": "written prefix";
+    assert tracker.first_calls == 1: "first evaluated once";
+    assert tracker.first_formats == 1: "first formatted once";
+    assert tracker.second_calls == 0: "second not evaluated";
+    assert tracker.second_formats == 0: "second not formatted";
+    assert !tracker.after: "later expression skipped";
+    assert sink.flushed == 0: "no implicit flush";
+
+    // A successful write keeps its exact value and flush count.
+    let ok_sink = Sink.new(2, 100);
+    let ok = @write(&ok_sink, f"A{tracker.first()}B");
+    assert ok.is_ok(): "write success";
+    assert ok_sink.data.as_str() == "AMB": "partial writes complete";
+    assert ok_sink.flushed == 0: "success does not flush";
+
+    case_parameter_limits();
+    case_specification_failures();
+    @println("ordered ok");
+}

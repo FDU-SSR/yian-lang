@@ -1,0 +1,17 @@
+{
+  "name": "havlak",
+  "measurement": {"warmups": 1, "runs": 5},
+  "source": "AWFY",
+  "tags": [
+    "ptr"
+  ],
+  "argv": [],
+  "check": {
+    "rc": 0
+  },
+  "note": "Official work unit: input=1500, loops=6102, nodes=5213; default 47 outer iterations",
+  "scale": {
+    "default": 47,
+    "c": "argv"
+  }
+}

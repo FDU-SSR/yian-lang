@@ -1,0 +1,17 @@
+{
+  "name": "permute",
+  "measurement": {"warmups": 2, "runs": 7},
+  "source": "AWFY",
+  "tags": [
+    "control"
+  ],
+  "argv": [],
+  "check": {
+    "rc": 0
+  },
+  "note": "Official work unit: zero-initialized array of length 6, result 8660; default 70866 outer iterations",
+  "scale": {
+    "default": 70866,
+    "c": "argv"
+  }
+}

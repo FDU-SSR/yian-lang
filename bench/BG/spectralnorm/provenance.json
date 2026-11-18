@@ -1,0 +1,95 @@
+{
+  "format": 2,
+  "task": "spectralnorm",
+  "description_url": "https://benchmarksgame-team.pages.debian.net/benchmarksgame/description/spectralnorm.html",
+  "source": {
+    "url": "https://benchmarksgame-team.pages.debian.net/benchmarksgame/program/spectralnorm-gcc-3.html",
+    "retrieved_at": "2026-10-31T10:42:07Z",
+    "extracted_sha256": "8c7403ce787e4369df48cdda3001780d3a153dba853f4ec340a4cd037e2d17cd",
+    "extraction": "First HTML pre block; remove HTML tags, HTML-unescape once, UTF-8 encode; preserve leading and trailing whitespace.",
+    "archive_path": "c/upstream/main.c"
+  },
+  "files": [
+    {
+      "path": "c/upstream/main.c",
+      "sha256": "8c7403ce787e4369df48cdda3001780d3a153dba853f4ec340a4cd037e2d17cd",
+      "license_id": "BSD-3-Clause"
+    },
+    {
+      "path": "c/src/main.c",
+      "sha256": "0f93acbd55ac4abdf45b301de53c041119ae0911861d02833d23c39379550209",
+      "license_id": "BSD-3-Clause"
+    },
+    {
+      "path": "LICENSE-BenchmarksGame.txt",
+      "sha256": "32ef9bf57891917e5a636ebccf3ff6d14536a3a794075ef0887b412cdebfd89e",
+      "license_id": "BSD-3-Clause"
+    }
+  ],
+  "patches": [
+    {
+      "path": "c/src/main.c",
+      "reason": "Give the C11 translation unit a local definition of A for reliable linking; this changes no matrix values or loop order.",
+      "diff": "-inline int A(int i, int j) {\n+static inline int A(int i, int j) {"
+    }
+  ],
+  "fixtures": [
+    {
+      "input_url": null,
+      "input_path": null,
+      "input_sha256": null,
+      "output_url": "https://benchmarksgame-team.pages.debian.net/benchmarksgame/download/spectralnorm-output.txt",
+      "output_path": "fixtures/official-output.txt",
+      "output_sha256": "a95e11fa07f7b196ef488e73f67afbbbc16cf6a2c6de5f8d54ea49821fe604e6",
+      "argv": [
+        "100"
+      ]
+    }
+  ],
+  "translation": [
+    {
+      "c_symbol": "A",
+      "yian_symbol": "A",
+      "differences": [
+        "Both compute the same triangular matrix element; YIAN uses u64 indices and converts the bounded result to i32."
+      ]
+    },
+    {
+      "c_symbol": "dot",
+      "yian_symbol": "dot",
+      "differences": [
+        "C receives double pointers and YIAN receives checked f64 slices; both sum products in the same increasing-index order."
+      ]
+    },
+    {
+      "c_symbol": "mult_Av",
+      "yian_symbol": "mult_Av",
+      "differences": [
+        "C uses pointer parameters and YIAN uses f64 slices; both retain the serial i-then-j accumulation order."
+      ]
+    },
+    {
+      "c_symbol": "mult_Atv",
+      "yian_symbol": "mult_Atv",
+      "differences": [
+        "C uses pointer parameters and YIAN uses f64 slices; both retain the serial i-then-j accumulation order and transposed A(j,i) access."
+      ]
+    },
+    {
+      "c_symbol": "mult_AtAv",
+      "yian_symbol": "mult_AtAv",
+      "differences": [
+        "C reads the temporary array through global tmp; YIAN passes the same owned temporary slice explicitly."
+      ]
+    },
+    {
+      "c_symbol": "main",
+      "yian_symbol": "main",
+      "differences": [
+        "C parses n from argv; YIAN compiles n through the bench-scale marker, with full/fast values 8000/1000.",
+        "C leaves its three malloc arrays allocated until process exit; YIAN owns and drops the three n-element slices after printing.",
+        "C uses printf with nine fractional digits; YIAN emits the same fixed nine digits through the standard library's `:.9f` specification."
+      ]
+    }
+  ]
+}

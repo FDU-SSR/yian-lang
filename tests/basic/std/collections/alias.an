@@ -4,7 +4,6 @@
 // the same freed buffers and must not be cleaned separately.
 from std.collections.hash_map import HashMap;
 from std.collections.hash_set import HashSet;
-from std.core.drop import Drop;
 
 fn main() {
     // HashMap: with_capacity(16) leaves growth_left 12, so the inserts below

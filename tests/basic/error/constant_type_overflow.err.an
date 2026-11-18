@@ -1,0 +1,5 @@
+// Expected compilation error: type-level constant arithmetic is checked too
+typedef BAD = u8[18446744073709551615 + 1];
+
+fn main() {
+}

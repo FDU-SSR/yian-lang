@@ -1,0 +1,589 @@
+from yianc.codegen.cfg.ids import FunctionId, BlockId, ValueId, LocalId, ScopeId;
+from yianc.codegen.cfg.model import CfgModule, CfgFunction, Operation, ValueKind, Terminator, Instruction,
+    IndexBounds, SafetyCheck, OperationGuard, LiveProof, SafetyStage;
+from yianc.codegen.cfg.passes.options import CfgPassOptions;
+from yianc.codegen.types import BackendTypes;
+from yianc.codegen.error import CodegenError;
+from yianc.common.ids import TypeId;
+from yianc.common.location import SourceSpan;
+from std.collections.hash_map import HashMap;
+from std.collections.hash_set import HashSet;
+from std.core.iter import Iterator, IntoIterator;
+from std.core.ops import Index;
+
+const INSTRUCTION_LIMIT: u64 = 32u64;
+const BLOCK_LIMIT: u64 = 5u64;
+const DEPTH_LIMIT: u64 = 3u64;
+const CALLER_GROWTH_LIMIT: u64 = 512u64;
+const TARGET_LIMIT: u64 = 16u64;
+
+fn instruction_count(function: CfgFunction&) -> u64 {
+    let total = 0u64;
+    for block_index in 0u64..function.block_count() {
+        total += function.block(BlockId(block_index)).unwrap().instructions.len();
+    }
+    total
+}
+
+fn scope_depth(function: CfgFunction&, scope: ScopeId) -> Result<u64, CodegenError> {
+    let depth = 0u64;
+    let current = scope;
+    while true {
+        let record = function.scope(current)?;
+        match record.parent {
+            Some(parent) => { depth += 1u64; current = parent; },
+            None => return Result<u64, CodegenError>.Ok(depth),
+        }
+        if depth > DEPTH_LIMIT { return Result<u64, CodegenError>.Ok(depth); }
+    }
+    Result<u64, CodegenError>.Ok(depth)
+}
+
+fn remap_value(values: HashMap<ValueId, ValueId>&, id: ValueId) -> Result<ValueId, CodegenError> {
+    match values.get(&id) {
+        Some(value) => Result<ValueId, CodegenError>.Ok(*value),
+        None => Result<ValueId, CodegenError>.Err(CodegenError.invalid("inlined operand has no remapped value")),
+    }
+}
+
+fn remap_local(locals: HashMap<LocalId, LocalId>&, id: LocalId) -> Result<LocalId, CodegenError> {
+    match locals.get(&id) {
+        Some(value) => Result<LocalId, CodegenError>.Ok(*value),
+        None => Result<LocalId, CodegenError>.Err(CodegenError.invalid("inlined operand has no remapped local")),
+    }
+}
+
+fn remap_bounds(bounds: IndexBounds&, values: HashMap<ValueId, ValueId>&) -> Result<IndexBounds, CodegenError> {
+    match bounds {
+        Array(limit) => Result<IndexBounds, CodegenError>.Ok(IndexBounds.Array(remap_value(values, *limit)?)),
+        Slice(limit) => Result<IndexBounds, CodegenError>.Ok(IndexBounds.Slice(remap_value(values, *limit)?)),
+    }
+}
+
+fn remap_values(ids: Vec<ValueId>&, values: HashMap<ValueId, ValueId>&, result: Vec<ValueId>&)
+-> Result<(), CodegenError> {
+    for id in *ids { result.push(remap_value(values, *id)?); }
+    Result<(), CodegenError>.Ok(())
+}
+
+// Every nested buffer is rebuilt; source spans and type identities stay with the cloned operation.
+fn clone_operation(operation: Operation&, values: HashMap<ValueId, ValueId>&, blocks: Vec<BlockId>&,
+    locals: HashMap<LocalId, LocalId>&, scopes: Vec<ScopeId>&) -> Result<Operation, CodegenError> {
+    let cloned = match operation {
+        Load(local) => Operation.Load(remap_local(locals, *local)?),
+        Store(local, value) => Operation.Store(remap_local(locals, *local)?, remap_value(values, *value)?),
+        Binary(op, left, right) => Operation.Binary(*op, remap_value(values, *left)?, remap_value(values, *right)?),
+        Unary(op, value) => Operation.Unary(*op, remap_value(values, *value)?),
+        Cast(value) => Operation.Cast(remap_value(values, *value)?),
+        Call(callable, args) => {
+            let cloned_args = Vec<ValueId>.new();
+            remap_values(args, values, &cloned_args)?;
+            Operation.Call(*callable, cloned_args)
+        },
+        Phi(incoming) => {
+            let cloned_incoming = Vec<(ValueId, BlockId)>.new();
+            for edge in *incoming {
+                let destination = match blocks.as_slice().get(edge[1].index) {
+                    Some(value) => *value,
+                    None => return Result<Operation, CodegenError>.Err(CodegenError.invalid("inlined Phi successor is outside the callee")),
+                };
+                cloned_incoming.push((remap_value(values, edge[0])?, destination));
+            }
+            Operation.Phi(cloned_incoming)
+        },
+        Address(local) => Operation.Address(remap_local(locals, *local)?),
+        Read(address) => Operation.Read(remap_value(values, *address)?),
+        Write(address, value) => Operation.Write(remap_value(values, *address)?, remap_value(values, *value)?),
+        Aggregate(fields) => {
+            let cloned_fields = Vec<ValueId>.new();
+            remap_values(fields, values, &cloned_fields)?;
+            Operation.Aggregate(cloned_fields)
+        },
+        Extract(aggregate, field) => Operation.Extract(remap_value(values, *aggregate)?, *field),
+        FieldAddress(address, aggregate, field) =>
+            Operation.FieldAddress(remap_value(values, *address)?, *aggregate, *field),
+        Builtin(kind, type_args, args) => {
+            let cloned_types = Vec<TypeId>.new();
+            for type_id in *type_args { cloned_types.push(*type_id); }
+            let cloned_args = Vec<ValueId>.new();
+            remap_values(args, values, &cloned_args)?;
+            Operation.Builtin(*kind, cloned_types, cloned_args)
+        },
+        EnumConstruct(discriminant, payload) => {
+            let cloned_payload = match payload { Some(value) => Option<ValueId>.Some(remap_value(values, *value)?), None => Option<ValueId>.None };
+            Operation.EnumConstruct(*discriminant, cloned_payload)
+        },
+        EnumTag(value) => Operation.EnumTag(remap_value(values, *value)?),
+        EnumPayload(value) => Operation.EnumPayload(remap_value(values, *value)?),
+        EnumPayloadAddress(address, enumeration) => Operation.EnumPayloadAddress(remap_value(values, *address)?, *enumeration),
+        EnumInitAt(address, enumeration, discriminant, fields) => {
+            let cloned_fields = Vec<ValueId>.new();
+            remap_values(fields, values, &cloned_fields)?;
+            Operation.EnumInitAt(remap_value(values, *address)?, *enumeration, *discriminant, cloned_fields)
+        },
+        EnumTagAt(address, enumeration) => Operation.EnumTagAt(remap_value(values, *address)?, *enumeration),
+        EnumFieldAt(address, enumeration, discriminant, field) =>
+            Operation.EnumFieldAt(remap_value(values, *address)?, *enumeration, *discriminant, *field),
+        EnumCopyAt(destination, source, enumeration) =>
+            Operation.EnumCopyAt(remap_value(values, *destination)?, remap_value(values, *source)?, *enumeration),
+        Delete(value) => Operation.Delete(remap_value(values, *value)?),
+        PointerOffset(pointer, index, subtract) =>
+            Operation.PointerOffset(remap_value(values, *pointer)?, remap_value(values, *index)?, *subtract),
+        PointerDifference(left, right) =>
+            Operation.PointerDifference(remap_value(values, *left)?, remap_value(values, *right)?),
+        IndexAddress(address, element, index, bounds) =>
+            Operation.IndexAddress(remap_value(values, *address)?, *element, remap_value(values, *index)?,
+                remap_bounds(bounds, values)?),
+        Repeat(element, count) => Operation.Repeat(remap_value(values, *element)?, *count),
+        Invoke(callable, args) => {
+            let cloned_args = Vec<ValueId>.new();
+            remap_values(args, values, &cloned_args)?;
+            Operation.Invoke(remap_value(values, *callable)?, cloned_args)
+        },
+        Fill(destination, element, count) =>
+            Operation.Fill(remap_value(values, *destination)?, remap_value(values, *element)?, remap_value(values, *count)?),
+        TraitObject(source, methods) => {
+            let cloned_methods = Vec<TypeId>.new();
+            for method in *methods { cloned_methods.push(*method); }
+            Operation.TraitObject(remap_value(values, *source)?, cloned_methods)
+        },
+        DynamicCall(receiver, method, slot, args) => {
+            let cloned_args = Vec<ValueId>.new();
+            remap_values(args, values, &cloned_args)?;
+            Operation.DynamicCall(remap_value(values, *receiver)?, *method, *slot, cloned_args)
+        },
+        ScopeEnter(scope) => {
+            match scopes.as_slice().get(scope.index) {
+                Some(value) => Operation.ScopeEnter(*value),
+                None => return Result<Operation, CodegenError>.Err(CodegenError.invalid("inlined scope is outside the callee")),
+            }
+        },
+        ScopeExit(scope) => {
+            match scopes.as_slice().get(scope.index) {
+                Some(value) => Operation.ScopeExit(*value),
+                None => return Result<Operation, CodegenError>.Err(CodegenError.invalid("inlined scope is outside the callee")),
+            }
+        },
+        SafetyPoint => Operation.SafetyPoint,
+    };
+    Result<Operation, CodegenError>.Ok(cloned)
+}
+
+// A known Invoke target is one Function value reached through casts or same-target Phis only.
+fn resolve_invoke(function: CfgFunction&, id: ValueId, depth: u64) -> Option<TypeId> {
+    if depth > TARGET_LIMIT { return Option<TypeId>.None; }
+    let value = match function.value(id) {
+        Ok(value) => value,
+        Err(_) => return Option<TypeId>.None,
+    };
+    match &value.kind {
+        Function(callable) => Option<TypeId>.Some(*callable),
+        Temporary(block, position) => {
+            let operation = match function.block(*block) {
+                Ok(target) => match target.instructions.as_slice().get(*position) {
+                    Some(instruction) => &instruction.operation,
+                    None => return Option<TypeId>.None,
+                },
+                Err(_) => return Option<TypeId>.None,
+            };
+            match &*operation {
+                Cast(inner) => resolve_invoke(function, *inner, depth + 1u64),
+                Phi(incoming) => {
+                    if incoming.is_empty() { return Option<TypeId>.None; }
+                    let first = match resolve_invoke(function, incoming[0][0], depth + 1u64) {
+                        Some(value) => value,
+                        None => return Option<TypeId>.None,
+                    };
+                    for edge in *incoming {
+                        match resolve_invoke(function, edge[0], depth + 1u64) {
+                            Some(value) => { if value != first { return Option<TypeId>.None; } },
+                            None => return Option<TypeId>.None,
+                        }
+                    }
+                    Option<TypeId>.Some(first)
+                },
+                _ => Option<TypeId>.None,
+            }
+        },
+        _ => Option<TypeId>.None,
+    }
+}
+
+fn call_targets(function: CfgFunction&) -> Result<Vec<TypeId>, CodegenError> {
+    let targets = Vec<TypeId>.new();
+    for block_index in 0u64..function.block_count() {
+        for instruction in function.block(BlockId(block_index))?.instructions {
+            match &instruction.operation {
+                Call(callable, _) => targets.push(*callable),
+                Invoke(callable, _) => {
+                    match resolve_invoke(function, *callable, 0u64) {
+                        Some(target) => targets.push(target),
+                        None => {},
+                    }
+                },
+                _ => {},
+            }
+        }
+    }
+    Result<Vec<TypeId>, CodegenError>.Ok(targets)
+}
+
+fn reachable_from(module: CfgModule&, start: TypeId, target: TypeId) -> Result<bool, CodegenError> {
+    let pending = Vec<TypeId>.new();
+    defer pending.drop();
+    let seen = HashSet<TypeId>.new();
+    defer seen.drop();
+    pending.push(start);
+    while !pending.is_empty() {
+        let current = *pending.pop().unwrap();
+        if current == target { return Result<bool, CodegenError>.Ok(true); }
+        if !seen.insert(current) { continue; }
+        match module.find(current) {
+            Some(function) => {
+                let edges = call_targets(function)?;
+                defer edges.drop();
+                for edge in edges { pending.push(*edge); }
+            },
+            None => {},
+        }
+    }
+    Result<bool, CodegenError>.Ok(false)
+}
+
+// Splitting moves the outgoing edges to the continuation; successor Phis must follow that edge.
+fn retarget_successor_phis(function: CfgFunction&, from: BlockId, to: BlockId) -> Result<(), CodegenError> {
+    for block_index in 0u64..function.block_count() {
+        for instruction in function.block(BlockId(block_index))?.instructions {
+            match &instruction.operation {
+                Phi(incoming) => {
+                    for edge_index in 0u64..incoming.len() {
+                        if incoming[edge_index][1] == from {
+                            incoming[edge_index][1] = to;
+                        }
+                    }
+                },
+                _ => {},
+            }
+        }
+    }
+    Result<(), CodegenError>.Ok(())
+}
+
+fn copy_value_kind(kind: ValueKind&) -> ValueKind {
+    match kind {
+        Integer(bits) => ValueKind.Integer(*bits),
+        Float(value) => ValueKind.Float(*value),
+        Zero => ValueKind.Zero,
+        Undef => ValueKind.Undef,
+        Bytes(name) => ValueKind.Bytes(*name),
+        Parameter(index) => ValueKind.Parameter(*index),
+        Function(callable) => ValueKind.Function(*callable),
+        Temporary(_, _) => ValueKind.Undef,
+    }
+}
+
+fn eligible_callee(module: CfgModule&, types: BackendTypes&, caller: CfgFunction&, callable: TypeId,
+    args: Vec<ValueId>&, invoke: bool) -> Result<bool, CodegenError> {
+    if callable == caller.callable { return Result<bool, CodegenError>.Ok(false); }
+    match &module.entry { Some(value) => { if *value == callable { return Result<bool, CodegenError>.Ok(false); } }, None => {}, }
+    let callee = match module.find(callable) {
+        Some(value) => value,
+        None => return Result<bool, CodegenError>.Ok(false),
+    };
+    if callee.scopes.len() != 1u64 { return Result<bool, CodegenError>.Ok(false); }
+    if callee.block_count() > BLOCK_LIMIT || instruction_count(callee) > INSTRUCTION_LIMIT {
+        return Result<bool, CodegenError>.Ok(false);
+    }
+    if callee.parameters.len() != args.len() { return Result<bool, CodegenError>.Ok(false); }
+    for index in 0u64..args.len() {
+        if caller.value(args[index])?.type_id != callee.parameters[index] {
+            return Result<bool, CodegenError>.Ok(false);
+        }
+    }
+    if invoke {
+        let signature = types.signature(callable)?;
+        if !signature.is_static || signature.parameters.len() != args.len() { return Result<bool, CodegenError>.Ok(false); }
+        if types.closure_environment(callable).is_some() { return Result<bool, CodegenError>.Ok(false); }
+    }
+    let returns = 0u64;
+    for block_index in 0u64..callee.block_count() {
+        match &callee.block(BlockId(block_index))?.terminator {
+            Some(terminator) => match terminator {
+                Return(value) => {
+                    returns += 1u64;
+                    if !types.is_zst(callee.result_type)? && value.is_none() {
+                        return Result<bool, CodegenError>.Ok(false);
+                    }
+                },
+                _ => {},
+            },
+            None => return Result<bool, CodegenError>.Ok(false),
+        }
+    }
+    if returns == 0u64 { return Result<bool, CodegenError>.Ok(false); }
+    if reachable_from(module, callable, caller.callable)? { return Result<bool, CodegenError>.Ok(false); }
+    Result<bool, CodegenError>.Ok(true)
+}
+
+// The call site becomes prefix + cloned callee + continuation; every identity is remapped.
+fn inline_call(module: CfgModule&, types: BackendTypes&, function: CfgFunction&, block_id: BlockId,
+    call_index: u64, call_span: SourceSpan, callable: TypeId, args: Vec<ValueId>&, call_result: Option<ValueId>,
+    invoke: bool, block_scopes: Vec<ScopeId>&, caller_base: u64, caller_added: u64, module_base: u64,
+    module_added: u64) -> Result<Option<u64>, CodegenError> {
+    let callee = match module.find(callable) {
+        Some(value) => value,
+        None => return Result<Option<u64>, CodegenError>.Ok(Option<u64>.None),
+    };
+    let cost = instruction_count(callee) + 1u64;
+    if caller_added + cost > CALLER_GROWTH_LIMIT || (caller_added + cost) * 2u64 > caller_base {
+        return Result<Option<u64>, CodegenError>.Ok(Option<u64>.None);
+    }
+    if (module_added + cost) * 4u64 > module_base {
+        return Result<Option<u64>, CodegenError>.Ok(Option<u64>.None);
+    }
+    let parent_scope = match block_scopes.as_slice().get(block_id.index) {
+        Some(value) => *value,
+        None => return Result<Option<u64>, CodegenError>.Err(CodegenError.invalid("inline block has no logical scope")),
+    };
+    if scope_depth(function, parent_scope)? >= DEPTH_LIMIT {
+        return Result<Option<u64>, CodegenError>.Ok(Option<u64>.None);
+    }
+    let result_type = function.value(*call_result.unwrap())?.type_id;
+    if result_type != callee.result_type {
+        return Result<Option<u64>, CodegenError>.Err(CodegenError.invalid("inline call result type disagrees with the callee"));
+    }
+    let returns = 0u64;
+    for block_index in 0u64..callee.block_count() {
+        match &callee.block(BlockId(block_index))?.terminator {
+            Some(Return(_)) => { returns += 1u64; },
+            Some(_) => {},
+            None => return Result<Option<u64>, CodegenError>.Err(CodegenError.invalid("inline callee block has no terminator")),
+        }
+    }
+    if returns == 0u64 { return Result<Option<u64>, CodegenError>.Ok(Option<u64>.None); }
+
+    // Scopes: the callee root becomes a child of the call site's logical scope.
+    let new_root = function.add_scope(Option<ScopeId>.Some(parent_scope), callee.callable)?;
+    let scope_map = Vec<ScopeId>.new();
+    defer scope_map.drop();
+    scope_map.push(new_root);
+    for index in 1u64..callee.scopes.len() {
+        let record = callee.scope(ScopeId(index))?;
+        let parent = match record.parent {
+            Some(value) => match scope_map.as_slice().get(value.index) {
+                Some(mapped) => Option<ScopeId>.Some(*mapped),
+                None => return Result<Option<u64>, CodegenError>.Err(CodegenError.invalid("inline callee scope parent is invalid")),
+            },
+            None => Option<ScopeId>.Some(new_root),
+        };
+        let mapped = function.add_scope(parent, record.callable)?;
+        scope_map.push(mapped);
+    }
+
+    let block_map = Vec<BlockId>.new();
+    defer block_map.drop();
+    for index in 0u64..callee.block_count() {
+        let mapped = function.add_block();
+        block_scopes.push(new_root);
+        block_map.push(mapped);
+    }
+
+    let local_map = HashMap<LocalId, LocalId>.new();
+    defer local_map.drop();
+    for index in 0u64..callee.local_count() {
+        let record = callee.local(LocalId(index))?;
+        let scope = match scope_map.as_slice().get(record.scope.index) {
+            Some(value) => *value,
+            None => return Result<Option<u64>, CodegenError>.Err(CodegenError.invalid("inline local scope is invalid")),
+        };
+        local_map.insert(LocalId(index), function.add_scoped_local(record.type_id, scope)?);
+    }
+
+    // Values exist before any instruction so forward Phi edges can be remapped.
+    let value_map = HashMap<ValueId, ValueId>.new();
+    defer value_map.drop();
+    for index in 0u64..callee.value_count() {
+        let record = callee.value(ValueId(index))?;
+        match &record.kind {
+            Parameter(argument) => {
+                if *argument >= args.len() {
+                    return Result<Option<u64>, CodegenError>.Err(CodegenError.invalid("inline parameter index is outside the call arguments"));
+                }
+                value_map.insert(ValueId(index), args[*argument]);
+            },
+            _ => {
+                let kind = copy_value_kind(&record.kind);
+                value_map.insert(ValueId(index), function.add_value(record.type_id, kind));
+            },
+        }
+    }
+
+    let continuation = function.add_block();
+    block_scopes.push(parent_scope);
+    let phi_count = if types.is_zst(callee.result_type)? { 0u64 } else { 1u64 };
+    let return_values = Vec<(ValueId, BlockId)>.new();
+    for index in 0u64..callee.block_count() {
+        let callee_block = callee.block(BlockId(index))?;
+        let mapped_block = block_map[index];
+        for instruction in callee_block.instructions {
+            if !instruction.checks.is_empty() || !instruction.guards.is_empty() || !instruction.live_proofs.is_empty() {
+                return Result<Option<u64>, CodegenError>.Err(CodegenError.invalid("inline callee is not a neutral CFG"));
+            }
+            let operation = clone_operation(&instruction.operation, &value_map, &block_map, &local_map, &scope_map)?;
+            let result = match instruction.result {
+                Some(value) => Option<ValueId>.Some(remap_value(&value_map, value)?),
+                None => Option<ValueId>.None,
+            };
+            let position = function.block(mapped_block)?.instructions.len();
+            if function.block(mapped_block)?.terminator.is_some() {
+                return Result<Option<u64>, CodegenError>.Err(CodegenError.invalid("inline callee block already has a terminator"));
+            }
+            function.block(mapped_block)?.instructions.push(Instruction(instruction.span, result, operation,
+                Vec<SafetyCheck>.new(), Vec<OperationGuard>.new(), Vec<LiveProof>.new()));
+            match result {
+                Some(value) => { function.value(value)?.kind = ValueKind.Temporary(mapped_block, position); },
+                None => {},
+            }
+        }
+        match &*callee_block.terminator.unwrap() {
+            Return(value) => {
+                match value {
+                    Some(id) => return_values.push((remap_value(&value_map, *id)?, mapped_block)),
+                    None => {},
+                }
+                function.terminate(mapped_block, Terminator.Jump(continuation))?;
+            },
+            Jump(destination) => { function.terminate(mapped_block, Terminator.Jump(block_map[destination.index]))?; },
+            Branch(condition, yes, no) => {
+                function.terminate(mapped_block,
+                    Terminator.Branch(remap_value(&value_map, *condition)?, block_map[yes.index], block_map[no.index]))?;
+            },
+            Unreachable => { function.terminate(mapped_block, Terminator.Unreachable)?; },
+        }
+    }
+
+    // The original block keeps its prefix, drops the call, and jumps into the cloned body.
+    let terminator = match &function.block(block_id)?.terminator {
+        Some(value) => *value,
+        None => return Result<Option<u64>, CodegenError>.Err(CodegenError.invalid("inline call block has no terminator")),
+    };
+    let call_instruction = function.block(block_id)?.instructions.remove(call_index);
+    call_instruction.drop();
+    function.block(block_id)?.terminator = Option<Terminator>.None;
+    function.terminate(block_id, Terminator.Jump(block_map[0u64]))?;
+
+    // The continuation owns the original suffix; reserved index zero holds the merged return value.
+    let moved = 0u64;
+    while call_index < function.block(block_id)?.instructions.len() {
+        let instruction = function.block(block_id)?.instructions.remove(call_index);
+        let position = phi_count + moved;
+        match instruction.result {
+            Some(value) => { function.value(value)?.kind = ValueKind.Temporary(continuation, position); },
+            None => {},
+        }
+        function.block(continuation)?.instructions.push(instruction);
+        moved += 1u64;
+    }
+    function.terminate(continuation, terminator)?;
+    retarget_successor_phis(function, block_id, continuation)?;
+
+    match call_result {
+        Some(value) => {
+            if phi_count == 1u64 {
+                if return_values.is_empty() {
+                    return Result<Option<u64>, CodegenError>.Err(CodegenError.invalid("inline callee has no return value"));
+                }
+                function.block(continuation)?.instructions.insert(0u64,
+                    Instruction(call_span, Option<ValueId>.Some(value), Operation.Phi(return_values),
+                        Vec<SafetyCheck>.new(), Vec<OperationGuard>.new(), Vec<LiveProof>.new()));
+                function.value(value)?.kind = ValueKind.Temporary(continuation, 0u64);
+            } else {
+                function.value(value)?.kind = ValueKind.Undef;
+                return_values.drop();
+            }
+        },
+        None => {
+            if phi_count == 1u64 {
+                return Result<Option<u64>, CodegenError>.Err(CodegenError.invalid("inline non-ZST call has no result"));
+            }
+            return_values.drop();
+        },
+    }
+    Result<Option<u64>, CodegenError>.Ok(Option<u64>.Some(cost))
+}
+
+// Inlining runs before activation, so no safety plan, check, or guard exists yet.
+pub fn inline_cfg(module: CfgModule&, types: BackendTypes&, options: CfgPassOptions) -> Result<(), CodegenError> {
+    if module.safety_stage != SafetyStage.Neutral {
+        return Result<(), CodegenError>.Err(CodegenError.invalid("CFG inlining requires a neutral graph"));
+    }
+    if !options.inline { return Result<(), CodegenError>.Ok(()); }
+    // Raw-pointer mode keeps the original function boundaries; inlining only
+    // changes fat safety exposure and must not regress raw performance.
+    if types.raw_pointers() { return Result<(), CodegenError>.Ok(()); }
+
+    let base = Vec<u64>.new();
+    defer base.drop();
+    let added = Vec<u64>.new();
+    defer added.drop();
+    let module_base = 0u64;
+    for index in 0u64..module.len() {
+        let function = *module.function(FunctionId(index)).unwrap();
+        base.push(instruction_count(function));
+        added.push(0u64);
+        module_base += base[index];
+    }
+    let module_added = 0u64;
+
+    for function_index in 0u64..module.len() {
+        let function = *module.function(FunctionId(function_index)).unwrap();
+        let block_scopes = Vec<ScopeId>.new();
+        defer block_scopes.drop();
+        for index in 0u64..function.block_count() { block_scopes.push(ScopeId(0u64)); }
+        let block_index = 0u64;
+        while block_index < function.block_count() {
+            let instruction_index = 0u64;
+            let inlined = false;
+            while instruction_index < function.block(BlockId(block_index))?.instructions.len() {
+                let callable = TypeId(0u64);
+                let matched = false;
+                let invoke = false;
+                let call_span = function.block(BlockId(block_index))?.instructions[instruction_index].span;
+                let args = Vec<ValueId>.new();
+                match &function.block(BlockId(block_index))?.instructions[instruction_index].operation {
+                    Call(target, values) => {
+                        callable = *target;
+                        invoke = false;
+                        matched = true;
+                        for value in *values { args.push(*value); }
+                    },
+                    Invoke(target, values) => {
+                        match resolve_invoke(function, *target, 0u64) {
+                            Some(resolved) => { callable = resolved; invoke = true; matched = true; },
+                            None => {},
+                        }
+                        if matched { for value in *values { args.push(*value); } }
+                    },
+                    _ => {},
+                }
+                defer args.drop();
+                if !matched { instruction_index += 1u64; continue; }
+                if !eligible_callee(module, types, function, callable, &args, invoke)? {
+                    instruction_index += 1u64;
+                    continue;
+                }
+                let call_result = function.block(BlockId(block_index))?.instructions[instruction_index].result;
+                let outcome = inline_call(module, types, function, BlockId(block_index), instruction_index,
+                    call_span, callable, &args, call_result, invoke, &block_scopes, base[function_index],
+                    added[function_index], module_base, module_added)?;
+                match outcome {
+                    Some(cost) => { added[function_index] += cost; module_added += cost; inlined = true; },
+                    None => {},
+                }
+                break;
+            }
+            block_index += 1u64;
+        }
+    }
+    Result<(), CodegenError>.Ok(())
+}

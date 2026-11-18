@@ -13,15 +13,10 @@ from yianc.common.traversal import WalkControl;
 from yianc.frontend.ast.atoms import MatchArmOrigin;
 from yianc.diagnostics.model import AnalysisError, AnalysisErrorKind, DiagnosticCode, Diagnostic, Severity;
 from std.collections.sort import sort_by;
-from std.core.clone import Clone;
-from std.core.drop import Drop;
 from std.core.iter import Iterator, IntoIterator;
-from std.core.option import Option;
-from std.core.result import Result;
-from std.core.vec import Vec;
-from std.core.string import String;
 from std.collections.hash_set import HashSet;
 from yianc.frontend.text import is_printable;
+from yianc.analysis.ty.store import CHAR_TYPE_ID;
 
 typedef Cell = Option<PatternId>;
 
@@ -287,10 +282,10 @@ impl CoverageChecker {
                 let key = match &value.value {
                     Integer(integer) => match self.ctx.session.types.require(node.type_id)? {
                         Integer(bits, signed) => scalar_key(integer.raw_bits(), *bits, *signed),
-                        CScalar(bits, signed, _) => scalar_key(integer.raw_bits(), *bits, *signed),
+                        CScalar(kind) => scalar_key(integer.raw_bits(), kind.bits(), kind.is_signed()),
                         _ => return Result<Option<Interval>, AnalysisError>.Err(AnalysisError.internal("integer pattern has non-integer type")),
                     },
-                    Char(value) => u64(*value),
+                    Char(value) => u64(u32(*value)),
                     _ => return Result<Option<Interval>, AnalysisError>.Ok(Option<Interval>.None),
                 };
                 let low = Boundary.Finite(key);
@@ -394,7 +389,7 @@ impl CoverageChecker {
             Integer(_, _) => {
                 self.scalar_constructors(type_id, matrix, query, &result)?;
             },
-            CScalar(_, _, _) => {
+            CScalar(_) => {
                 self.scalar_constructors(type_id, matrix, query, &result)?;
             },
             Char => {
@@ -494,13 +489,13 @@ impl CoverageChecker {
     fn scalar_constructors(type_id: TypeId, matrix: Vec<Row>&, query: Cell, result: Vec<Constructor>&) -> Result<(), AnalysisError> {
         let domain = match self.ctx.session.types.require(type_id)? {
             Integer(bits, _) => scalar_domain(*bits),
-            CScalar(bits, _, _) => scalar_domain(*bits),
+            CScalar(kind) => scalar_domain(kind.bits()),
             Char => Interval(Boundary.Finite(0), Boundary.Finite(0x110000)),
             _ => return Result<(), AnalysisError>.Err(AnalysisError.internal("invalid scalar coverage domain")),
         };
         let cuts = Vec<Boundary>.new();
         defer cuts.drop();
-        let character = type_id == self.ctx.primitives.character;
+        let character = type_id == TypeId(CHAR_TYPE_ID);
 
         if character {
             cuts.push(Boundary.Finite(0xD800));
@@ -559,7 +554,7 @@ impl CoverageChecker {
         }
 
         let pattern = self.ctx.session.hir.require_pattern(*cell.unwrap())?;
-        let matches = match &pattern.kind {
+        let is_match = match &pattern.kind {
             EnumPattern(value) => match &constructor.kind {
                 Variant(index) => {
                     if *index != value.variant.discriminant {
@@ -652,7 +647,7 @@ impl CoverageChecker {
             _ => return Result<Option<Row>, AnalysisError>.Err(AnalysisError.internal("coverage specialization requires a normalized pattern")),
         };
 
-        if !matches {
+        if !is_match {
             return Result<Option<Row>, AnalysisError>.Ok(Option<Row>.None);
         }
 
@@ -945,7 +940,7 @@ impl CoverageChecker {
             },
             Scalar(interval) => {
                 let key = match interval.low { Finite(value) => value, _ => return Result<String, AnalysisError>.Err(AnalysisError.internal("scalar witness has no finite lower bound")), };
-                if type_id == self.ctx.primitives.character {
+                if type_id == TypeId(CHAR_TYPE_ID) {
                     transferred = true;
                     label.drop();
                     return Result<String, AnalysisError>.Ok(character_label(key));
@@ -953,7 +948,8 @@ impl CoverageChecker {
                 let bits = 64u32;
                 let signed = false;
                 match self.ctx.session.types.require(type_id)? {
-                    Integer(width, sign) | CScalar(width, sign, _) => { bits = *width; signed = *sign; },
+                    Integer(width, sign) => { bits = *width; signed = *sign; },
+                    CScalar(kind) => { bits = kind.bits(); signed = kind.is_signed(); },
                     _ => {},
                 }
                 let negative = signed && key < (1u64 << (bits - 1));
@@ -1004,7 +1000,6 @@ fn character_label(code: u64) -> String {
 
 fn equal_constant(left: ConstValue&, right: ConstValue&) -> bool {
     match left {
-        LargeInteger(value) => match right { LargeInteger(other) => value.compare(other) == 0, _ => false, },
         Integer(value) => match right {
             Integer(other) => value.raw_bits() == other.raw_bits() && value.is_negative() == other.is_negative(), _ => false
         },
@@ -1014,6 +1009,8 @@ fn equal_constant(left: ConstValue&, right: ConstValue&) -> bool {
         Char(value) => match right {
             Char(other) => *value == *other, _ => false
         },
+        Array(_) => false,
+        ArrayRepeat(_, _) => false,
         Float(value) => match right {
             Float(other) => *value == *other, _ => false
         },

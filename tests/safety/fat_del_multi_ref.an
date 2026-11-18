@@ -1,5 +1,7 @@
-// A reference to the first element of a multi-element allocation is not a
-// complete allocation and cannot be used as a delete target.
+// A reference to the first element of a heap allocation is a root view and may
+// release the whole allocation.
+//
+// Expected output: 0
 
 fn main() {
     let p: i32* = dyn[4] 0i32;

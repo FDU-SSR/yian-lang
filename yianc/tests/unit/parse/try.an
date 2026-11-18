@@ -4,7 +4,6 @@ from yianc.frontend.parse.state import Parser;
 from yianc.frontend.parse.items import parse_program;
 from yianc.frontend.ast.node import Expr;
 from yianc.frontend.ast.operator import UnaryOperator, BinaryOperator;
-from std.core.drop import Drop;
 from std.core.ops import Index;
 
 fn inner(node: Expr&) -> Expr& {

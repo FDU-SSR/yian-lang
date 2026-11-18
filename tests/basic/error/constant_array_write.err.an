@@ -1,0 +1,6 @@
+// Expected compilation error: a constant value is not a writable place
+const TABLE: i32[1] = [1];
+
+fn main() {
+    TABLE[0] = 2;
+}

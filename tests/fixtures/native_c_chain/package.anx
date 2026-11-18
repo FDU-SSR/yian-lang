@@ -1,0 +1,14 @@
+[package]
+name = "native_c_app"
+kind = "bin"
+ffi = true
+
+[dependencies]
+mid = { path = "vendor/mid" }
+
+[dev-dependencies]
+testkit = { path = "vendor/testkit" }
+
+[native.c]
+sources = ["native/root.c"]
+include-dirs = ["include"]

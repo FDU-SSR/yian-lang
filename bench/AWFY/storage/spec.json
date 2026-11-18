@@ -1,0 +1,17 @@
+{
+  "name": "storage",
+  "measurement": {"warmups": 1, "runs": 5},
+  "source": "AWFY",
+  "tags": [
+    "alloc"
+  ],
+  "argv": [],
+  "check": {
+    "rc": 0
+  },
+  "note": "Official work unit: depth 7, branching 4, result 5461; default 9885 outer iterations",
+  "scale": {
+    "default": 9885,
+    "c": "argv"
+  }
+}

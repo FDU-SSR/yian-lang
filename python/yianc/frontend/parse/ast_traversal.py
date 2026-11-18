@@ -100,6 +100,9 @@ class AstVisitor:
                     if arm.guard is not None:
                         self.visit_expr(arm.guard)
                     self.visit_expr(arm.body)
+            case AST.Matches():
+                self.visit_expr(expr.value)
+                self.visit_pattern(expr.pattern)
             case AST.Defer():
                 self.visit_expr(expr.action)
             case AST.Assert():
@@ -148,6 +151,11 @@ class AstVisitor:
             case AST.ArrayRepeat():
                 self.visit_expr(expr.element)
                 self.visit_expr(expr.count)
+            case AST.FormatTemplate():
+                for part in expr.parts:
+                    if isinstance(part, AST.FormatValuePart):
+                        self.visit_expr(part.expr)
+                        self.__visit_spec(part.spec)
             case AST.Recovery():
                 for child in expr.children:
                     self.visit_expr(child)
@@ -165,6 +173,14 @@ class AstVisitor:
             self.visit_expr(condition.value)
         else:
             self.visit_expr(condition)
+
+    def __visit_spec(self, spec: AST.FormatSpec | None) -> None:
+        """Visit dynamic counts in source order: value, width, precision."""
+        if spec is None:
+            return
+        for count in (spec.width, spec.precision):
+            if isinstance(count, AST.FormatCountDynamic):
+                self.visit_expr(count.expr)
 
     def visit_pattern(self, pattern: AST.Pattern) -> None:
         if not self.enter_pattern(pattern):
@@ -244,6 +260,9 @@ class AstRewriter:
                 for arm in stmt.arms:
                     if arm.guard is not None:
                         arm.guard = self.rewrite_expr(arm.guard)
+            case AST.Matches():
+                stmt.value = self.rewrite_expr(stmt.value)
+                stmt.pattern = self.rewrite_pattern(stmt.pattern)
             case AST.Delete():
                 stmt.target = self.rewrite_expr(stmt.target)
             case AST.For():
@@ -335,6 +354,9 @@ class AstRewriter:
                     if arm.guard is not None:
                         arm.guard = self.rewrite_expr(arm.guard)
                     arm.body = self.rewrite_block(arm.body)
+            case AST.Matches():
+                expr.value = self.rewrite_expr(expr.value)
+                expr.pattern = self.rewrite_pattern(expr.pattern)
             case AST.Defer():
                 expr.action = self.rewrite_expr(expr.action)
             case AST.Assert():
@@ -382,6 +404,13 @@ class AstRewriter:
             case AST.ArrayRepeat():
                 expr.element = self.rewrite_expr(expr.element)
                 expr.count = self.rewrite_expr(expr.count)
+            case AST.FormatTemplate():
+                expr.parts = [
+                    AST.FormatValuePart(span=part.span, expr=self.rewrite_expr(part.expr),
+                                        spec=self.__rewrite_spec(part.spec))
+                    if isinstance(part, AST.FormatValuePart) else part
+                    for part in expr.parts
+                ]
             case AST.Recovery():
                 expr.children = [self.rewrite_expr(child) for child in expr.children]
                 for name in expr.bindings:
@@ -390,6 +419,20 @@ class AstRewriter:
                 pass
             case _:
                 assert_never(expr)
+
+    def __rewrite_spec(self, spec: AST.FormatSpec | None) -> AST.FormatSpec | None:
+        """Rebuild a specification; static counts keep their source position."""
+        if spec is None:
+            return None
+        width = self.__rewrite_count(spec.width)
+        precision = self.__rewrite_count(spec.precision)
+        return AST.FormatSpec(alignment=spec.alignment, zero_pad=spec.zero_pad, width=width,
+                              precision=precision, fixed=spec.fixed, span=spec.span)
+
+    def __rewrite_count(self, count: AST.FormatCount | None) -> AST.FormatCount | None:
+        if isinstance(count, AST.FormatCountDynamic):
+            return AST.FormatCountDynamic(expr=self.rewrite_expr(count.expr), span=count.span)
+        return count
 
     def rewrite_pattern(self, pattern: AST.Pattern) -> AST.Pattern:
         self.rewrite_pattern_children(pattern)

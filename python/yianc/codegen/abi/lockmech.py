@@ -51,6 +51,9 @@ KEY_MASK = 0xFFFF_FFFF
 FRAME_KEY_LIMIT = KEY_MASK - 1
 """Frame-key limit; reserve 0xFFFFFFFF for the exit SENTINEL and never wrap to reuse old identities."""
 
+HEAP_KEY_LIMIT = KEY_MASK - 1
+"""Heap-key limit; allocation and release trap when an entry's key reaches it instead of wrapping."""
+
 SENTINEL = 0xFFFF_FFFF_FFFF_FFFF
 """Sentinel value: an all-ones word.
 

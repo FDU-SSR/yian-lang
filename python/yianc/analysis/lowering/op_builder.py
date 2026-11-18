@@ -467,8 +467,8 @@ class OpBuilder:
         left_ty = self.__type_ctx[left_hir.type_id]
 
         # Auto-deref follows field-access rules: `r[i]` indexes the referenced object, using ArrayAccess for arrays,
-        # SliceAccess for slices, and T*'s Index implementation for pointers. The pointer itself is not
-        # dereferenced here: `p[i]` uses T*'s Index implementation and the subsequent lvalue dereference.
+        # SliceAccess for slices, and pointer arithmetic plus a dereference for T*. The pointer itself is not
+        # dereferenced here: `p[i]` uses built-in pointer indexing and the subsequent lvalue dereference.
         while isinstance(left_ty, Type.RefType):
             left_hir = HIR.Unary(span, UnaryOperator.Deref, left_hir, left_ty.pointee_type, is_place=True)
             left_ty = self.__type_ctx[left_ty.pointee_type]
@@ -510,6 +510,30 @@ class OpBuilder:
                 element_type=left_ty.element_type,
                 type_id=left_ty.element_type,
                 is_place=left_hir.is_place,
+            )
+
+        # Pointer indexing mirrors native lowering: u64 and integer literals
+        # become pointer arithmetic plus a dereference, avoiding the generic
+        # Index<u64, T*> method path. Other integer types keep the trait path so
+        # their diagnostics remain unchanged.
+        if isinstance(left_ty, Type.PointerType) and (
+            right_hir.type_id == TypeCtx.u64_id or isinstance(right_hir, HIR.IntLiteral)
+        ):
+            offset_value = self.__evaluator.coerce(right_hir, TypeCtx.u64_id)
+            address = HIR.Binary(
+                span=span,
+                op=BinaryOperator.Add,
+                left=left_hir,
+                right=offset_value,
+                type_id=left_hir.type_id,
+                is_place=False,
+            )
+            return HIR.Unary(
+                span=span,
+                op=UnaryOperator.Deref,
+                operand=address,
+                type_id=left_ty.pointee_type,
+                is_place=True,
             )
 
         # 4) Index overload via trait

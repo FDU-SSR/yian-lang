@@ -3,7 +3,6 @@
 // The 5000-byte input spans multiple 4096-byte reads; the assertions verify
 // that read_to_string preserves data across the chunk boundary.
 from std.core.io import Stdin;
-from std.core.string import String;
 
 fn main() {
     let content: String = *Stdin.new().read_to_string().unwrap();

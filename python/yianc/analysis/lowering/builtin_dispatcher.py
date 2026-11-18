@@ -50,24 +50,11 @@ class BuiltinDispatcher:
             BuiltinKind.StrFromParts: _BuiltinSpec(0, 2, self.__lower_str_from_parts),
             BuiltinKind.StrGetPtr: _BuiltinSpec(0, 1, self.__lower_str_get_ptr),
             BuiltinKind.StrGetLen: _BuiltinSpec(0, 1, self.__lower_str_get_len),
-            BuiltinKind.SysRead: _BuiltinSpec(0, 2, self.__lower_sys_read),
-            BuiltinKind.SysReadBytes: _BuiltinSpec(0, 2, self.__lower_sys_read_bytes),
-            BuiltinKind.SysWrite: _BuiltinSpec(0, 2, self.__lower_sys_write),
-            BuiltinKind.SysWriteBytes: _BuiltinSpec(0, 2, self.__lower_sys_write_bytes),
-            BuiltinKind.Open: _BuiltinSpec(0, 2, self.__lower_open),
-            BuiltinKind.Close: _BuiltinSpec(0, 1, self.__lower_close),
-            BuiltinKind.Sqrt: _BuiltinSpec(0, 1, self.__lower_sqrt),
-            BuiltinKind.Sin: _BuiltinSpec(0, 1, self.__lower_sin),
-            BuiltinKind.Cos: _BuiltinSpec(0, 1, self.__lower_cos),
-            BuiltinKind.Argc: _BuiltinSpec(0, 0, self.__lower_argc),
             BuiltinKind.ArgBytes: _BuiltinSpec(0, 1, self.__lower_arg_bytes),
-            BuiltinKind.Exit: _BuiltinSpec(0, 1, self.__lower_exit),
             BuiltinKind.FfiAddr: _BuiltinSpec(0, 1, self.__lower_ffi_addr),
             BuiltinKind.FfiParts: _BuiltinSpec(0, 1, self.__lower_ffi_parts),
             BuiltinKind.FfiNull: _BuiltinSpec(1, 0, self.__lower_ffi_null),
             BuiltinKind.FfiPtrCast: _BuiltinSpec(1, 1, self.__lower_ffi_ptr_cast),
-            BuiltinKind.FfiCopyFrom: _BuiltinSpec(0, 3, self.__lower_ffi_copy_from),
-            BuiltinKind.FfiCopyTo: _BuiltinSpec(0, 3, self.__lower_ffi_copy_to),
         }
 
     def handle(self, node: AST.Builtin) -> HIR.Builtin:
@@ -76,7 +63,7 @@ class BuiltinDispatcher:
         if spec is None:
             raise CompilerError(f"Unregistered builtin instruction '{node.kind.spelling}'")
         if node.kind in (BuiltinKind.FfiAddr, BuiltinKind.FfiParts, BuiltinKind.FfiNull,
-                         BuiltinKind.FfiPtrCast, BuiltinKind.FfiCopyFrom, BuiltinKind.FfiCopyTo):
+                         BuiltinKind.FfiPtrCast):
             if not self.__ctx.ffi_allowed:
                 raise AnalysisError(f"'{node.kind.spelling}' requires an ffi fn", node.span)
         if len(node.type_args) != spec.type_arg_count:
@@ -148,18 +135,6 @@ class BuiltinDispatcher:
             raise AnalysisError("@ffi_ptr_cast expects cptr<T>", node.span)
         self.__ffi_element(types[0], node.span, incomplete=True)
         return self.__builtin(node, types, [value], self.__ctx.type_ctx.alloc_cptr(types[0]))
-
-    def __lower_ffi_copy_from(self, node: AST.Builtin, types: list[int]) -> HIR.Builtin:
-        target = self.__coerced_arg(node, 0, self.__ctx.type_ctx.alloc_slice(self.__ctx.type_ctx.u8_id))
-        source = self.__coerced_arg(node, 1, self.__ctx.type_ctx.alloc_cptr(self.__ctx.type_ctx.u8_id))
-        length = self.__coerced_arg(node, 2, self.__ctx.type_ctx.u64_id)
-        return self.__builtin(node, types, [target, source, length], self.__ctx.type_ctx.void_id)
-
-    def __lower_ffi_copy_to(self, node: AST.Builtin, types: list[int]) -> HIR.Builtin:
-        target = self.__coerced_arg(node, 0, self.__ctx.type_ctx.alloc_cptr(self.__ctx.type_ctx.u8_id))
-        source = self.__coerced_arg(node, 1, self.__ctx.type_ctx.alloc_slice(self.__ctx.type_ctx.u8_id))
-        length = self.__coerced_arg(node, 2, self.__ctx.type_ctx.u64_id)
-        return self.__builtin(node, types, [target, source, length], self.__ctx.type_ctx.void_id)
 
     def __lower_size_of(self, node: AST.Builtin, types: list[int]) -> HIR.Builtin:
         return self.__builtin(node, types, [], self.__ctx.type_ctx.u64_id)
@@ -260,55 +235,9 @@ class BuiltinDispatcher:
             raise AnalysisError(f"'@str_get_len' expects a 'str' argument, got '{self.__ctx.type_ctx.get_name(value.type_id)}'", node.span)
         return self.__builtin(node, types, [value], self.__ctx.type_ctx.u64_id)
 
-    def __lower_sys_read(self, node: AST.Builtin, types: list[int]) -> HIR.Builtin:
-        fd = self.__coerced_arg(node, 0, self.__ctx.type_ctx.i32_id)
-        buf = self.__arg(node, 1)
-        return self.__builtin(node, types, [fd, buf], self.__ctx.type_ctx.str_id)
-
-    def __lower_sys_read_bytes(self, node: AST.Builtin, types: list[int]) -> HIR.Builtin:
-        fd = self.__coerced_arg(node, 0, self.__ctx.type_ctx.i32_id)
-        buf = self.__coerced_arg(node, 1, self.__ctx.type_ctx.alloc_slice(self.__ctx.type_ctx.u8_id))
-        return self.__builtin(node, types, [fd, buf], self.__ctx.type_ctx.i64_id)
-
-    def __lower_sys_write(self, node: AST.Builtin, types: list[int]) -> HIR.Builtin:
-        fd = self.__coerced_arg(node, 0, self.__ctx.type_ctx.i32_id)
-        buf = self.__coerced_arg(node, 1, self.__ctx.type_ctx.str_id)
-        return self.__builtin(node, types, [fd, buf], self.__ctx.type_ctx.void_id)
-
-    def __lower_sys_write_bytes(self, node: AST.Builtin, types: list[int]) -> HIR.Builtin:
-        fd = self.__coerced_arg(node, 0, self.__ctx.type_ctx.i32_id)
-        buf = self.__coerced_arg(node, 1, self.__ctx.type_ctx.alloc_slice(self.__ctx.type_ctx.u8_id))
-        return self.__builtin(node, types, [fd, buf], self.__ctx.type_ctx.i64_id)
-
-    def __lower_open(self, node: AST.Builtin, types: list[int]) -> HIR.Builtin:
-        path = self.__coerced_arg(node, 0, self.__ctx.type_ctx.str_id)
-        flags = self.__coerced_arg(node, 1, self.__ctx.type_ctx.i32_id)
-        return self.__builtin(node, types, [path, flags], self.__ctx.type_ctx.i32_id)
-
-    def __lower_close(self, node: AST.Builtin, types: list[int]) -> HIR.Builtin:
-        fd = self.__coerced_arg(node, 0, self.__ctx.type_ctx.i32_id)
-        return self.__builtin(node, types, [fd], self.__ctx.type_ctx.i32_id)
-
-    def __lower_sqrt(self, node: AST.Builtin, types: list[int]) -> HIR.Builtin:
-        value = self.__coerced_arg(node, 0, self.__ctx.type_ctx.f64_id)
-        return self.__builtin(node, types, [value], self.__ctx.type_ctx.f64_id)
-
-    def __lower_sin(self, node: AST.Builtin, types: list[int]) -> HIR.Builtin:
-        return self.__lower_sqrt(node, types)
-
-    def __lower_cos(self, node: AST.Builtin, types: list[int]) -> HIR.Builtin:
-        return self.__lower_sqrt(node, types)
-
-    def __lower_argc(self, node: AST.Builtin, types: list[int]) -> HIR.Builtin:
-        return self.__builtin(node, types, [], self.__ctx.type_ctx.u64_id)
-
     def __lower_arg_bytes(self, node: AST.Builtin, types: list[int]) -> HIR.Builtin:
         index = self.__coerced_arg(node, 0, self.__ctx.type_ctx.u64_id)
         return self.__builtin(node, types, [index], self.__ctx.type_ctx.alloc_slice(self.__ctx.type_ctx.u8_id))
-
-    def __lower_exit(self, node: AST.Builtin, types: list[int]) -> HIR.Builtin:
-        code = self.__coerced_arg(node, 0, self.__ctx.type_ctx.i32_id)
-        return self.__builtin(node, types, [code], self.__ctx.type_ctx.never_id)
 
     def __has_named_arg(self, args: list[AST.Arg]) -> bool:
         return any(arg.name is not None for arg in args)

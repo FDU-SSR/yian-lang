@@ -1,0 +1,105 @@
+from std.core.env import args;
+
+// bench/fatptr/an/call_abi.an: argument-passing microbenchmark.
+//
+// The source-level hot loop invokes two functions with different parameter combinations:
+//       mix_in takes one 24 B checked slice and one scalar;
+//       mix_wide takes two checked slices and one scalar, and additionally reads p[n].
+//       Each body performs eight iterations with four accesses. Current native -O2
+//       inlines both YIAN functions, so it is not call-cost evidence.
+//       Call counts and arguments derive from argc, unknown to the compiler, preventing constant folding.
+// Scale: CALLS per round at the // bench-scale marker; ROUNDS is fixed.
+// C reference: bench/fatptr/c/call_abi.c, same algorithm/scale with 8 B raw pointer fields.
+//
+// Both modes share this source; raw Node[] uses 16 B slices; checked slices occupy 24 B.
+
+struct Node {
+    value: i64,
+}
+
+fn mix_in(p: Node[], n: u64) -> i64 {
+    let acc: i64 = 0;
+    let k: u64 = 0;
+    while k < 8 {
+        let a: i64 = p[u64(n + k)].value;
+        let b: i64 = p[u64(n + k + 8u64)].value;
+        let c: i64 = p[u64(n + k + 16u64)].value;
+        let d: i64 = p[u64(n + k + 24u64)].value;
+        acc = acc + a * 3 + b * 5 - c * 7 + d * 11;
+        k += 1;
+    }
+    return acc;
+}
+
+fn mix_wide(p: Node[], view: Node[], n: u64) -> i64 {
+    let acc: i64 = 0;
+    let k: u64 = 0;
+    while k < 8 {
+        let a: i64 = view[u64(n + k)].value;
+        let b: i64 = view[u64(n + k + 8u64)].value;
+        let c: i64 = view[u64(n + k + 16u64)].value;
+        let d: i64 = view[u64(n + k + 24u64)].value;
+        acc = acc + a * 3 + b * 5 - c * 7 + d * 11;
+        k += 1;
+    }
+    return acc + p[u64(n)].value;
+}
+
+// Decimal prefix parsing for the C atoi/atoll workload argument.
+fn c_decimal(text: str) -> i64 {
+    let bytes = text.as_slice();
+    let i: u64 = 0;
+    while i < bytes.len() && (bytes[u64(i)] == 32 || (bytes[u64(i)] >= 9 && bytes[u64(i)] <= 13)) { i += 1; }
+    let negative: bool = false;
+    if i < bytes.len() && (bytes[u64(i)] == b'-' || bytes[u64(i)] == b'+') {
+        negative = bytes[u64(i)] == b'-';
+        i += 1;
+    }
+    let value: i64 = 0;
+    while i < bytes.len() && bytes[u64(i)] >= b'0' && bytes[u64(i)] <= b'9' {
+        value = value * 10 + i64(bytes[u64(i)] - b'0');
+        i += 1;
+    }
+    return if negative { -value } else { value };
+}
+
+fn main() {
+    let CALLS: u64 = 4096;  // bench-scale
+    let argv = args();
+    if argv.len() > 1u64 { CALLS = u64(c_decimal(argv[1u64].as_str())); }
+    let ROUNDS: u64 = 64;
+    let base: u64 = 32 + argv.len();
+    for argument in &argv { argument.drop(); }
+    argv.drop();
+    let size: u64 = base + CALLS + 32;
+    let p: Node[] = {
+        let extent: u64 = u64(size);
+        let allocation = dyn[extent] Node(0);
+        allocation[0u64..u64(extent)]
+    };
+    let i: u64 = 0;
+    while i < size {
+        p[u64(i)] = Node(i64(i));
+        i += 1;
+    }
+    let view: Node[] = p[0u64..u64(size)];
+    let acc: i64 = 0;
+    let round: u64 = 0;
+    while round < ROUNDS {
+        i = 0;
+        while i < CALLS {
+            let n: u64 = base + i;
+            acc = acc + mix_in(p, n) + mix_wide(p, view, n);
+            i += 1;
+        }
+        round += 1;
+    }
+    // Per call = sum_{k<8}(3(n+k)+5(n+k+8)-7(n+k+16)+11(n+k+24))+p[n] = 97n+1872.
+    let calls: i64 = i64(CALLS);
+    let b: i64 = i64(base);
+    let sum_n: i64 = calls * b + calls * (calls - 1) / 2;
+    let per_round: i64 = 193 * sum_n + 3744 * calls;
+    assert acc == i64(ROUNDS) * per_round: "call_abi checksum";
+    @print("call_abi pass\n");
+    del p;
+}

@@ -1,0 +1,22 @@
+{
+  "name": "knucleotide",
+  "measurement": {"warmups": 1, "runs": 5},
+  "source": "BG",
+  "tags": [
+    "string",
+    "alloc"
+  ],
+  "argv": [],
+  "check": {
+    "rc": 0
+  },
+  "note": "Reads FASTA stdin through the THREE record, counts rolling nucleotide keys with actual hash tables, and emits the complete sorted frequency and query output.",
+  "io": {
+    "stdin": {
+      "fasta_n": {
+        "full": 5000000,
+        "fast": 100000
+      }
+    }
+  }
+}

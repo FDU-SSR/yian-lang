@@ -1,0 +1,5 @@
+// Expected compilation error: a truncated float must still fit the target integer
+const BAD: u8 = u8(258.75);
+
+fn main() {
+}

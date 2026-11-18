@@ -1,0 +1,17 @@
+{
+  "name": "mand",
+  "measurement": {"warmups": 1, "runs": 5},
+  "source": "AWFY",
+  "tags": [
+    "numeric"
+  ],
+  "argv": [],
+  "check": {
+    "rc": 0
+  },
+  "note": "Official work unit: image size 500, result 191; default 69 outer iterations",
+  "scale": {
+    "default": 69,
+    "c": "argv"
+  }
+}

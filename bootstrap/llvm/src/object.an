@@ -1,8 +1,7 @@
-from std.core.result import Result;
-from std.core.vec import Vec;
+from llvm.observation import OperationObserver;
 from llvm.ir import IrSession, IrType, IrValue, IrBlock;
 from llvm.ir import IntCompare, RealCompare, BinaryOp, CastOp;
-from llvm.ir import new_session, try_new_session, close_session, session_target, abi_size_of, abi_alignment_of;
+from llvm.ir import new_session, try_new_session, close_session, session_target, session_data_layout, abi_size_of, abi_alignment_of;
 from llvm.ir import void_type, int_type, half_type, float_type, double_type, pointer_type;
 from llvm.ir import array_type, struct_type, named_struct_type, set_struct_body, function_type;
 from llvm.ir import const_int, const_signed_int, const_int_words, const_real, const_null;
@@ -10,13 +9,15 @@ from llvm.ir import undef_value, const_bytes, const_array, const_struct;
 from llvm.ir import add_function, declare_function, function_param, append_block, add_global;
 from llvm.ir import set_initializer, set_global_constant, set_internal_linkage, set_private_linkage;
 from llvm.ir import set_alignment, set_volatile, add_function_attribute, add_parameter_attribute;
+from llvm.ir import add_string_attribute, set_merge_functions, const_bitcast, session_optimization_level;
 from llvm.ir import position_at_end, insertion_block, build_ret, build_ret_void, build_br, build_cond_br;
 from llvm.ir import build_switch, add_switch_case, build_unreachable, build_phi, add_incoming;
 from llvm.ir import build_call, build_select, build_alloca, build_load, build_store;
-from llvm.ir import build_memset, build_memcpy, build_gep, build_extract_value, build_insert_value;
+from llvm.ir import build_memset, build_memcpy, build_memmove, build_gep, build_extract_value, build_insert_value;
 from llvm.ir import build_binary, build_neg, build_fneg, build_not, build_icmp, build_fcmp, build_cast;
 from llvm.ir import verify_module, module_ir, module_bitcode, module_object, module_assembly, optimize_session;
-from llvm.ir import try_module_ir, try_module_bitcode;
+from llvm.ir import try_module_ir, try_module_bitcode, try_module_ir_observed, try_module_bitcode_observed;
+from llvm.ir import module_object_observed, module_assembly_observed, optimize_session_observed;
 
 // Module exclusively owns LLVM resource cleanup. Shallow copies do not duplicate resources; the caller closes them once.
 pub struct Module {
@@ -41,8 +42,14 @@ pub struct Global {
 
 impl Module {
     pub ffi fn try_ir() -> Result<Vec<u8>, Vec<u8>> { try_module_ir(&self.session) }
+    pub ffi fn try_ir_observed(observer: Option<OperationObserver&>) -> Result<Vec<u8>, Vec<u8>> {
+        try_module_ir_observed(&self.session, observer)
+    }
 
     pub ffi fn try_bitcode() -> Result<Vec<u8>, Vec<u8>> { try_module_bitcode(&self.session) }
+    pub ffi fn try_bitcode_observed(observer: Option<OperationObserver&>) -> Result<Vec<u8>, Vec<u8>> {
+        try_module_bitcode_observed(&self.session, observer)
+    }
 
     static pub ffi fn new(name: str, optimization_level: u8) -> Self {
         return Self(session=new_session(name, optimization_level));
@@ -64,6 +71,8 @@ impl Module {
     }
 
     pub ffi fn target_triple() -> Vec<u8> { session_target(&self.session) }
+
+    pub ffi fn data_layout() -> Vec<u8> { session_data_layout(&self.session) }
 
     pub ffi fn abi_size(ty: IrType) -> u64 {
         return abi_size_of(&self.session, ty);
@@ -149,6 +158,18 @@ impl Module {
         return const_array(&self.session, element, values);
     }
 
+    pub ffi fn const_bitcast(value: IrValue, ty: IrType) -> IrValue {
+        return const_bitcast(&self.session, value, ty);
+    }
+
+    pub ffi fn set_merge_functions(enabled: bool) {
+        set_merge_functions(&self.session, enabled);
+    }
+
+    pub ffi fn optimization_level() -> u8 {
+        session_optimization_level(&self.session)
+    }
+
     pub ffi fn const_struct(values: IrValue[], packed: bool) -> IrValue {
         return const_struct(&self.session, values, packed);
     }
@@ -184,12 +205,24 @@ impl Module {
         return module_object(&self.session);
     }
 
+    pub ffi fn object_observed(observer: Option<OperationObserver&>) -> Result<Vec<u8>, Vec<u8>> {
+        module_object_observed(&self.session, observer)
+    }
+
     pub ffi fn assembly() -> Result<Vec<u8>, Vec<u8>> {
         module_assembly(&self.session)
     }
 
+    pub ffi fn assembly_observed(observer: Option<OperationObserver&>) -> Result<Vec<u8>, Vec<u8>> {
+        module_assembly_observed(&self.session, observer)
+    }
+
     pub ffi fn optimize() -> Result<bool, Vec<u8>> {
         optimize_session(&self.session)
+    }
+
+    pub ffi fn optimize_observed(observer: Option<OperationObserver&>) -> Result<bool, Vec<u8>> {
+        optimize_session_observed(&self.session, observer)
     }
 }
 
@@ -208,6 +241,10 @@ impl Function {
 
     pub ffi fn add_attribute(name: str) {
         add_function_attribute(&self.session, self.value, name);
+    }
+
+    pub ffi fn add_string_attribute(key: str, value: str) {
+        add_string_attribute(&self.session, self.value, key, value);
     }
 
     pub ffi fn add_parameter_attribute(parameter: u32, name: str) {
@@ -314,6 +351,10 @@ impl Builder {
 
     pub ffi fn memcpy(target: IrValue, target_alignment: u32, source: IrValue, source_alignment: u32, length: IrValue) -> IrValue {
         return build_memcpy(&self.session, target, target_alignment, source, source_alignment, length);
+    }
+
+    pub ffi fn memmove(target: IrValue, target_alignment: u32, source: IrValue, source_alignment: u32, length: IrValue) -> IrValue {
+        return build_memmove(&self.session, target, target_alignment, source, source_alignment, length);
     }
 
     pub ffi fn gep(ty: IrType, pointer: IrValue, indices: IrValue[], in_bounds: bool, name: str) -> IrValue {

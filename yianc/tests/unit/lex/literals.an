@@ -1,7 +1,6 @@
 from yianc.frontend.lex.lexer import Lexer;
 from yianc.frontend.lex.token import IntSuffix, FloatSuffix, drop_tokens;
 from std.core.ops import Index;
-from std.core.drop import Drop;
 
 fn rejected(text: str) {
     match Lexer.new(text).run() {

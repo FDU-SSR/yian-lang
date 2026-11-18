@@ -1,9 +1,6 @@
 from yianc.frontend.ast.arena import AstArena, AstTree;
 from yianc.frontend.ast.node import Expr, Block, Pattern, PatternLetData, Parameter, VarInfoData, Item, MethodDef;
 from yianc.frontend.ast.traversal import AstVisitor, walk_program;
-from std.core.option import Option;
-from std.core.string import String;
-from std.core.vec import Vec;
 from yianc.frontend.desugar.build import identifier, name_expr;
 
 struct ParameterNormalizer { arena: AstArena& }

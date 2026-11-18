@@ -1,8 +1,6 @@
 // A released block may be reused, but the old view must still fail its
 // lock/key check at the public print boundary.
 
-from std.core.io import print;
-
 fn main() {
     let old: u8* = dyn[4] 0u8;
     old[0] = 65u8;
@@ -14,5 +12,5 @@ fn main() {
 
     let replacement: u8* = dyn[4] 0u8;
     replacement[0] = 88u8;
-    print(stale);
+    @print(f"{stale}");
 }

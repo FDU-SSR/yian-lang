@@ -1,4 +1,5 @@
 from yianc.codegen.llvm.module import LlvmLowering, FunctionLowering;
+from yianc.codegen.cfg.model import GuardKind, GuardSite;
 from yianc.codegen.cfg.ids import ValueId;
 from yianc.codegen.error import CodegenError;
 from yianc.analysis.ty.callable import store_signature;
@@ -8,15 +9,10 @@ from yianc.codegen.abi.runtime import ENV_WORD;
 from llvm.object import Function;
 from llvm.ir import IrValue;
 from std.core.convert import From;
-from std.core.drop import Drop;
 from std.core.hash import Hash, Murmur3Hasher;
 from std.core.fmt import ToString;
 from std.core.iter import Iterator, IntoIterator;
 from std.core.ops import Index, PartialEq;
-from std.core.option import Option;
-from std.core.result import Result;
-from std.core.string import String;
-from std.core.vec import Vec;
 
 pub struct ThunkKey {
     pub implementation: TypeId,
@@ -128,6 +124,7 @@ impl FunctionLowering {
         }
         let object = self.get(receiver)?;
         if !self.owner.types.raw_pointers() {
+            self.require_guard(GuardKind.DynamicReceiver, GuardSite.Before)?;
             self.checked(self.live(self.builder.extract_value(object, 1u32, ""), "S003")?, "S003")?;
         }
         let table = self.builder.extract_value(object, if self.owner.types.raw_pointers() { 1u32 } else { 2u32 }, "");

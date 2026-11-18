@@ -6,8 +6,6 @@ from yianc.frontend.ast.node import Expr;
 from yianc.frontend.ast.atoms import BuiltinKind;
 from yianc.frontend.ast.walk import TryAstVisitor, try_walk_program;
 from yianc.diagnostics.model import DiagnosticCode, AnalysisError, AnalysisErrorKind, AnalysisStage;
-from std.core.option import Option;
-from std.core.result import Result;
 
 struct RestrictedVisitor {
     source: SourceId,
@@ -24,8 +22,12 @@ impl TryAstVisitor<AnalysisError> for RestrictedVisitor {
                     FfiParts => false,
                     FfiNull => false,
                     FfiPtrCast => false,
-                    FfiCopyFrom => false,
-                    FfiCopyTo => false,
+                    Append => false,
+                    Write => false,
+                    Print => false,
+                    Println => false,
+                    Eprint => false,
+                    Eprintln => false,
                     _ => true,
                 };
 
@@ -51,12 +53,7 @@ pub fn check_restricted(session: AnalysisSession&) -> Result<(), AnalysisError> 
             let visitor = RestrictedVisitor(unit.source);
             match try_walk_program<AnalysisError>(unit.prepared.tree.unwrap().root, &visitor) {
                 Ok(_) => {},
-                Err(error) => {
-                    if !session.editor_recovery || error.kind == AnalysisErrorKind.Internal {
-                        return Result<(), AnalysisError>.Err(error);
-                    }
-                    session.diagnostics.push_unique(error.with_stage(AnalysisStage.Restricted).diagnostic);
-                },
+                Err(error) => return Result<(), AnalysisError>.Err(error.with_stage(AnalysisStage.Restricted)),
             }
         }
 

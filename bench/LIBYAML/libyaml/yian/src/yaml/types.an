@@ -1,0 +1,344 @@
+from std.core.ops import PartialEq;
+from std.core.vec import Vec;
+
+// Shared libyaml model: positions, token and event payloads, parser states and
+// the error record that every layer reports to its caller.
+//
+// Marks count decoded characters (zero based); the reader keeps its own raw
+// byte offset for input errors.  Token and event payloads own their byte
+// buffers and are released by token_delete/event_delete.  ParserError holds
+// only borrowed static text and marks, so it is safe to copy and needs no
+// cleanup.
+
+pub struct Mark {
+    pub index: u64,
+    pub line: u64,
+    pub column: u64,
+}
+
+pub fn mark_new(index: u64, line: u64, column: u64) -> Mark {
+    Mark(index=index, line=line, column=column)
+}
+
+pub enum TokenKind {
+    StreamStart,
+    StreamEnd,
+    VersionDirective,
+    TagDirective,
+    DocumentStart,
+    DocumentEnd,
+    BlockSequenceStart,
+    BlockMappingStart,
+    BlockEnd,
+    FlowSequenceStart,
+    FlowSequenceEnd,
+    FlowMappingStart,
+    FlowMappingEnd,
+    BlockEntry,
+    FlowEntry,
+    Key,
+    Value,
+    Alias,
+    Anchor,
+    Tag,
+    Scalar,
+}
+
+pub enum EventKind {
+    StreamStart,
+    StreamEnd,
+    DocumentStart,
+    DocumentEnd,
+    Alias,
+    Scalar,
+    SequenceStart,
+    SequenceEnd,
+    MappingStart,
+    MappingEnd,
+}
+
+pub enum ScalarStyle {
+    Any,
+    Plain,
+    SingleQuoted,
+    DoubleQuoted,
+    Literal,
+    Folded,
+}
+
+pub enum CollectionStyle {
+    Any,
+    Block,
+    Flow,
+}
+
+pub enum Encoding {
+    Any,
+    Utf8,
+    Utf16Le,
+    Utf16Be,
+}
+
+pub enum ErrorKind {
+    Reader,
+    Scanner,
+    Parser,
+    Composer,
+}
+
+pub struct VersionDirective {
+    pub major: i32,
+    pub minor: i32,
+}
+
+pub struct TagDirective {
+    pub handle: Vec<u8>,
+    pub prefix: Vec<u8>,
+}
+
+// Shared nesting limit.  The driver allocates one object and every scanner and
+// parser borrows it for the lifetime of the parse.
+pub struct Limits {
+    max_nesting: i32,
+}
+
+pub fn limits_new() -> Limits {
+    Limits(max_nesting=1000i32)
+}
+
+pub fn limits_get(limits: Limits&) -> i32 {
+    limits.max_nesting
+}
+
+pub fn limits_set(limits: Limits&, max_nesting: i32) {
+    limits.max_nesting = max_nesting;
+}
+
+pub struct ParserError {
+    pub kind: ErrorKind,
+    pub problem: Mark,
+    pub context: Mark,
+    pub problem_text: str,
+    pub context_text: str,
+    pub problem_offset: u64,
+    pub problem_value: i32,
+}
+
+pub enum TokenData {
+    Empty,
+    StreamStart {
+        encoding: Encoding,
+    },
+    Alias {
+        value: Vec<u8>,
+    },
+    Anchor {
+        value: Vec<u8>,
+    },
+    Tag {
+        handle: Vec<u8>,
+        suffix: Vec<u8>,
+    },
+    Scalar {
+        value: Vec<u8>,
+        style: ScalarStyle,
+    },
+    VersionDirective {
+        value: VersionDirective,
+    },
+    TagDirective {
+        value: TagDirective,
+    },
+}
+
+pub struct Token {
+    pub kind: TokenKind,
+    pub start: Mark,
+    pub end: Mark,
+    pub data: TokenData,
+}
+
+pub enum EventData {
+    Empty,
+    StreamStart {
+        encoding: Encoding,
+    },
+    DocumentStart {
+        version: Option<VersionDirective>,
+        tags: Vec<TagDirective>,
+        implicit: bool,
+    },
+    DocumentEnd {
+        implicit: bool,
+    },
+    Alias {
+        anchor: Vec<u8>,
+    },
+    Scalar {
+        anchor: Option<Vec<u8>>,
+        tag: Option<Vec<u8>>,
+        value: Vec<u8>,
+        plain_implicit: bool,
+        quoted_implicit: bool,
+        style: ScalarStyle,
+    },
+    SequenceStart {
+        anchor: Option<Vec<u8>>,
+        tag: Option<Vec<u8>>,
+        implicit: bool,
+        style: CollectionStyle,
+    },
+    MappingStart {
+        anchor: Option<Vec<u8>>,
+        tag: Option<Vec<u8>>,
+        implicit: bool,
+        style: CollectionStyle,
+    },
+}
+
+pub struct Event {
+    pub kind: EventKind,
+    pub start: Mark,
+    pub end: Mark,
+    pub data: EventData,
+}
+
+pub enum ParserState {
+    StreamStart,
+    ImplicitDocumentStart,
+    DocumentStart,
+    DocumentContent,
+    DocumentEnd,
+    BlockNode,
+    BlockNodeOrIndentlessSequence,
+    FlowNode,
+    BlockSequenceFirstEntry,
+    BlockSequenceEntry,
+    IndentlessSequenceEntry,
+    BlockMappingFirstKey,
+    BlockMappingKey,
+    BlockMappingValue,
+    FlowSequenceFirstEntry,
+    FlowSequenceEntry,
+    FlowSequenceEntryMappingKey,
+    FlowSequenceEntryMappingValue,
+    FlowSequenceEntryMappingEnd,
+    FlowMappingFirstKey,
+    FlowMappingKey,
+    FlowMappingValue,
+    FlowMappingEmptyValue,
+    End,
+}
+
+pub fn tag_directive_delete(directive: TagDirective&) {
+    directive.handle.drop();
+    directive.prefix.drop();
+}
+
+fn option_bytes_delete(value: Option<Vec<u8>>&) {
+    match value.take() {
+        Some(bytes) => bytes.drop(),
+        None => {},
+    }
+}
+
+pub fn token_delete(token: Token&) {
+    match &token.data {
+        TokenData.Empty => {},
+        TokenData.StreamStart(encoding) => {},
+        TokenData.Alias(value) => value.drop(),
+        TokenData.Anchor(value) => value.drop(),
+        TokenData.Tag(handle, suffix) => {
+            handle.drop();
+            suffix.drop();
+        },
+        TokenData.Scalar(value, style) => value.drop(),
+        TokenData.VersionDirective(value) => {},
+        TokenData.TagDirective(value) => tag_directive_delete(value),
+    }
+    token.data = TokenData.Empty;
+}
+
+pub fn event_delete(event: Event&) {
+    match &event.data {
+        EventData.Empty => {},
+        EventData.StreamStart(encoding) => {},
+        EventData.DocumentStart(version, tags, implicit) => {
+            match version.take() {
+                Some(_) => {},
+                None => {},
+            }
+            for directive in tags { tag_directive_delete(directive); }
+            tags.drop();
+        },
+        EventData.DocumentEnd(implicit) => {},
+        EventData.Alias(anchor) => anchor.drop(),
+        EventData.Scalar(anchor, tag, value, plain_implicit, quoted_implicit, style) => {
+            option_bytes_delete(anchor);
+            option_bytes_delete(tag);
+            value.drop();
+        },
+        EventData.SequenceStart(anchor, tag, implicit, style) => {
+            option_bytes_delete(anchor);
+            option_bytes_delete(tag);
+        },
+        EventData.MappingStart(anchor, tag, implicit, style) => {
+            option_bytes_delete(anchor);
+            option_bytes_delete(tag);
+        },
+    }
+    event.data = EventData.Empty;
+}
+
+pub fn token_rank(kind: TokenKind) -> u8 {
+    match kind {
+        TokenKind.StreamStart => 0u8,
+        TokenKind.StreamEnd => 1u8,
+        TokenKind.VersionDirective => 2u8,
+        TokenKind.TagDirective => 3u8,
+        TokenKind.DocumentStart => 4u8,
+        TokenKind.DocumentEnd => 5u8,
+        TokenKind.BlockSequenceStart => 6u8,
+        TokenKind.BlockMappingStart => 7u8,
+        TokenKind.BlockEnd => 8u8,
+        TokenKind.FlowSequenceStart => 9u8,
+        TokenKind.FlowSequenceEnd => 10u8,
+        TokenKind.FlowMappingStart => 11u8,
+        TokenKind.FlowMappingEnd => 12u8,
+        TokenKind.BlockEntry => 13u8,
+        TokenKind.FlowEntry => 14u8,
+        TokenKind.Key => 15u8,
+        TokenKind.Value => 16u8,
+        TokenKind.Alias => 17u8,
+        TokenKind.Anchor => 18u8,
+        TokenKind.Tag => 19u8,
+        TokenKind.Scalar => 20u8,
+    }
+}
+
+impl PartialEq<TokenKind> for TokenKind {
+    pub fn eq(rhs: TokenKind&) -> bool {
+        token_rank(*self) == token_rank(*rhs)
+    }
+}
+
+pub fn event_rank(kind: EventKind) -> u8 {
+    match kind {
+        EventKind.StreamStart => 0u8,
+        EventKind.StreamEnd => 1u8,
+        EventKind.DocumentStart => 2u8,
+        EventKind.DocumentEnd => 3u8,
+        EventKind.Alias => 4u8,
+        EventKind.Scalar => 5u8,
+        EventKind.SequenceStart => 6u8,
+        EventKind.SequenceEnd => 7u8,
+        EventKind.MappingStart => 8u8,
+        EventKind.MappingEnd => 9u8,
+    }
+}
+
+impl PartialEq<EventKind> for EventKind {
+    pub fn eq(rhs: EventKind&) -> bool {
+        event_rank(*self) == event_rank(*rhs)
+    }
+}

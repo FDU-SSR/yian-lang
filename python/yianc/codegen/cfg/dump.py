@@ -53,10 +53,11 @@ def __dump_stmt(stmt: IR.Stmt) -> str:
         case IR.FieldPtr(result=result, base=base, field_index=idx):
             return f"%{result.name} = fieldptr {__dump_value(base)}[{idx}]"
 
-        case IR.ElementPtr(result=result, base=base, offset=offset):
+        case IR.ElementPtr(result=result, base=base, offset=offset, backward=backward):
+            op = "-" if backward else "+"
             return (
                 f"%{result.name} = elementptr"
-                f" {__dump_value(base)}, {__dump_value(offset)}"
+                f" {__dump_value(base)} {op} {__dump_value(offset)}"
                 f"  [{__type_str(result.type_id)}]"
             )
 
@@ -139,11 +140,11 @@ def __dump_stmt(stmt: IR.Stmt) -> str:
             return f"%{result.name} = acquire_frame_lock {__dump_value(key)}"
 
         case IR.CheckSafeAccess(ptr=ptr, live=live):
-            item = "live ∧ in_bounds" if live else "in_bounds(live 恒真)"
+            item = "live ∧ in_bounds" if live else "in_bounds(live always true)"
             return f"check_safe_access {__dump_value(ptr)}  ({item})"
 
         case IR.CheckViewAccess(view=view, live=live):
-            item = "live ∧ span" if live else "span(live 恒真)"
+            item = "live ∧ span" if live else "span(live always true)"
             return f"check_view_access {__dump_value(view)}  ({item})"
 
         case IR.CheckInBounds(ptr=ptr):
@@ -153,32 +154,33 @@ def __dump_stmt(stmt: IR.Stmt) -> str:
             return f"check_slice_nonempty {__dump_value(ptr)}  (T[] -> T&)"
 
         case IR.CheckRefAccess(ptr=ptr):
-            return f"check_ref_access {__dump_value(ptr)}  (仅 live,免 in_bounds, tiered-pointers)"
+            return f"check_ref_access {__dump_value(ptr)}  (live only, no in_bounds, tiered-pointers)"
 
-        case IR.CheckElementArith(base=base, offset=offset):
-            return f"check_element_arith {__dump_value(base)}, {__dump_value(offset)}  (0 ≤ index+n ≤ size)"
+        case IR.CheckElementArith(base=base, offset=offset, backward=backward):
+            rule = "n ≤ index and index-n ≤ size" if backward else "0 ≤ index+n ≤ size"
+            return f"check_element_arith {__dump_value(base)}, {__dump_value(offset)}  ({rule})"
 
         case IR.CheckElementAccess(base=base, offset=offset, ptr=ptr):
             return (
                 f"check_element_access {__dump_value(base)}, {__dump_value(offset)}"
-                f" on {__dump_value(ptr)}  (良构 ∧ in_bounds ∧ live 合取, 检查合并)"
+                f" on {__dump_value(ptr)}  (well-formed ∧ in_bounds ∧ live, combined checks)"
             )
 
         case IR.CheckRawBounds(index=index, length=length):
-            return f"check_raw_bounds {__dump_value(index)}, {length}  (裸数组 index < length, todo1)"
+            return f"check_raw_bounds {__dump_value(index)}, {length}  (bare array index < length)"
 
         case IR.LiveKnownBegin(root=root):
-            return f"live_known_begin {__dump_value(root)}  (刚分配窗口开始)"
+            return f"live_known_begin {__dump_value(root)}  (fresh-allocation window begins)"
         case IR.LiveKnownEnd(root=root):
-            return f"live_known_end {__dump_value(root)}  (刚分配窗口结束)"
+            return f"live_known_end {__dump_value(root)}  (fresh-allocation window ends)"
         case IR.CheckRequest(kind=kind, operands=operands):
             args = ", ".join(__dump_value(v) for v in operands)
-            return f"check_request {kind} {args}  (标记, 待插入 pass 物化)"
+            return f"check_request {kind} {args}  (marker, materialized by the check-insertion pass)"
         case IR.CheckPtrDiff(lhs=lhs, rhs=rhs):
-            return f"check_ptrdiff {__dump_value(lhs)}, {__dump_value(rhs)}  (data 相等 + 良构 + 无回绕)"
+            return f"check_ptrdiff {__dump_value(lhs)}, {__dump_value(rhs)}  (equal data + equal lifetime words + well-formed + no wraparound)"
 
         case IR.CheckPtrCmp(lhs=lhs, rhs=rhs):
-            return f"check_ptrcmp {__dump_value(lhs)}, {__dump_value(rhs)}  (data 相等)"
+            return f"check_ptrcmp {__dump_value(lhs)}, {__dump_value(rhs)}  (equal data + equal lifetime words)"
 
         case IR.PtrCmp(result=result, op=op, lhs=lhs, rhs=rhs):
             return (
@@ -270,15 +272,6 @@ def __dump_stmt(stmt: IR.Stmt) -> str:
                 return f"%{result.name} = variant {variant.name} {{{pl}}}"
             return f"%{result.name} = variant {variant.name}"
 
-        case IR.SysWrite(
-            fd=fd,
-            buf=buf,
-        ):
-            return f"sys_write {__dump_value(fd)} {__dump_value(buf)}"
-
-        case IR.SysWriteBytes(result=result, fd=fd, buf=buf):
-            return f"%{result.name} = sys_write_bytes {__dump_value(fd)} {__dump_value(buf)}"
-
         case IR.MemCopy(
             dest=dest,
             src=src,
@@ -297,45 +290,6 @@ def __dump_stmt(stmt: IR.Stmt) -> str:
             return f"%{result.name} = ffi_null"
         case IR.FfiPtrCast(result=result, pointer=pointer):
             return f"%{result.name} = ffi_ptr_cast {__dump_value(pointer)}"
-        case IR.FfiCopy(destination=destination, source=source, count=count, from_c=from_c):
-            direction = "from" if from_c else "to"
-            return f"ffi_copy_{direction} {__dump_value(destination)}, {__dump_value(source)}, {__dump_value(count)}"
-
-        case IR.SysRead(
-            result=result,
-            fd=fd,
-            buf=buf,
-        ):
-            return (
-                f"%{result.name} = sys_read"
-                f" {__dump_value(fd)}, {__dump_value(buf)}"
-                f"  [{__type_str(result.type_id)}]"
-            )
-
-        case IR.SysReadBytes(result=result, fd=fd, buf=buf):
-            return f"%{result.name} = sys_read_bytes {__dump_value(fd)}, {__dump_value(buf)}"
-
-        case IR.Open(result=result, path=path, flags=flags):
-            return (
-                f"%{result.name} = open {__dump_value(path)}, {__dump_value(flags)}"
-                f"  [{__type_str(result.type_id)}]"
-            )
-
-        case IR.Close(result=result, fd=fd):
-            return f"%{result.name} = close {__dump_value(fd)}  [{__type_str(result.type_id)}]"
-
-        case IR.Sqrt(result=result, value=value):
-            return f"%{result.name} = sqrt {__dump_value(value)}  [{__type_str(result.type_id)}]"
-
-        case IR.Sin(result=result, value=value):
-            return f"%{result.name} = sin {__dump_value(value)}  [{__type_str(result.type_id)}]"
-
-        case IR.Cos(result=result, value=value):
-            return f"%{result.name} = cos {__dump_value(value)}  [{__type_str(result.type_id)}]"
-
-        case IR.ArgCount(result=result):
-            return f"%{result.name} = arg_count  [{__type_str(result.type_id)}]"
-
         case IR.ArgBytes(result=result, index=index):
             return (
                 f"%{result.name} = arg_bytes {__dump_value(index)}"
@@ -378,9 +332,6 @@ def __dump_terminator(term: IR.Terminator) -> str:
 
         case IR.RuntimeFail(code=code):
             return f"runtime_fail {code.name}"
-
-        case IR.ProcessExit(code=code):
-            return f"process_exit {__dump_value(code)}"
 
         case IR.Unreachable():
             return "unreachable"

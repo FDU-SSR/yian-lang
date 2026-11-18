@@ -5,7 +5,6 @@ from std.core.ops import PartialEq, Add, AddAssign, Deref, Index;
 from std.core.convert import From;
 from std.core.option import Option;
 from std.core.range import Range;
-from std.core.fmt import ToString;
 from std.core.drop import Drop;
 
 // A growable UTF-8 string stored as a Vec<u8>.
@@ -282,16 +281,6 @@ impl From<str> for String {
 impl Index<Range<u64>, str> for String {
     pub fn index(range: Range<u64>&) -> str {
         self.as_str()[*range]
-    }
-}
-
-// =============================================================================
-// ToString
-// =============================================================================
-
-impl ToString for String {
-    pub fn to_string() -> String {
-        (*self).clone()
     }
 }
 

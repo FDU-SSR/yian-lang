@@ -1,13 +1,10 @@
 from yianc.codegen.cfg.ids import FunctionId, BlockId, ValueId;
-from yianc.codegen.cfg.model import CfgModule, CfgFunction, Instruction, SafetyCheck, AccessKind;
+from yianc.codegen.cfg.model import CfgModule, CfgFunction, Instruction, SafetyCheck, AccessKind, IndexBounds, SafetyStage;
 from yianc.codegen.types import BackendTypes;
 from yianc.codegen.error import CodegenError;
 from yianc.frontend.ast.atoms import BuiltinKind;
 from std.core.iter import Iterator, IntoIterator;
-from std.core.range import Range;
 from std.core.ops import Index;
-from std.core.option import Option;
-from std.core.result import Result;
 
 // Derived place addresses preserve pointer access diagnostics until a language reference is stored or passed.
 fn access_kind(function: CfgFunction&, types: BackendTypes&, address: ValueId) -> Result<AccessKind, CodegenError> {
@@ -34,79 +31,131 @@ fn access_kind(function: CfgFunction&, types: BackendTypes&, address: ValueId) -
     Result<AccessKind, CodegenError>.Err(CodegenError.invalid("cyclic CFG address provenance"))
 }
 
-fn access(function: CfgFunction&, types: BackendTypes&, address: ValueId) -> Result<SafetyCheck, CodegenError> {
-    Result<SafetyCheck, CodegenError>.Ok(SafetyCheck.Access(address, access_kind(function, types, address)?))
+// Fat accesses are canonical live and bounds obligations; references never carry bounds.
+// Raw mode keeps the generic access form and its existing non-fat checks.
+fn push_access(function: CfgFunction&, types: BackendTypes&, address: ValueId, checks: Vec<SafetyCheck>&)
+-> Result<(), CodegenError> {
+    let kind = access_kind(function, types, address)?;
+    if types.raw_pointers() {
+        checks.push(SafetyCheck.Access(address, kind));
+        return Result<(), CodegenError>.Ok(());
+    }
+    checks.push(SafetyCheck.Live(address, kind));
+    if kind == AccessKind.Pointer {
+        checks.push(SafetyCheck.AccessBounds(address, kind));
+    }
+    Result<(), CodegenError>.Ok(())
 }
 
-fn checks_for(function: CfgFunction&, types: BackendTypes&, instruction: Instruction&) -> Result<(), CodegenError> {
-    instruction.checks.clear();
+pub fn same_bounds(left: IndexBounds&, right: IndexBounds&) -> bool {
+    match (left, right) {
+        (Array(a), Array(b)) => *a == *b,
+        (Slice(a), Slice(b)) => *a == *b,
+        _ => false,
+    }
+}
+
+// Expected checks are produced for one instruction without touching its stored list.
+pub fn same_check(left: SafetyCheck&, right: SafetyCheck&) -> bool {
+    match (left, right) {
+        (Access(address, kind), Access(other, other_kind)) => *address == *other && *kind == *other_kind,
+        (InBounds(pointer), InBounds(other)) => *pointer == *other,
+        (View(value), View(other)) => *value == *other,
+        (Index(index, bounds), Index(other, other_bounds)) => *index == *other && same_bounds(bounds, other_bounds),
+        (Nonempty(view), Nonempty(other)) => *view == *other,
+        (Copy(destination, source, count), Copy(other_destination, other_source, other_count)) =>
+            *destination == *other_destination && *source == *other_source && *count == *other_count,
+        (Live(address, kind), Live(other, other_kind)) => *address == *other && *kind == *other_kind,
+        (AccessBounds(address, kind), AccessBounds(other, other_kind)) => *address == *other && *kind == *other_kind,
+        _ => false,
+    }
+}
+
+pub fn expected_checks(function: CfgFunction&, types: BackendTypes&, instruction: Instruction&)
+-> Result<Vec<SafetyCheck>, CodegenError> {
+    let checks = Vec<SafetyCheck>.new();
+    let accepted = false;
+    defer { if !accepted { checks.drop(); } };
     let live = match instruction.result {
         Some(value) => !types.is_zst(function.value(value)?.type_id)?,
         None => true,
     };
     match &instruction.operation {
         Read(address) => {
-            if live { instruction.checks.push(access(function, types, *address)?); }
+            if live { push_access(function, types, *address, &checks)?; }
         },
         Write(address, value) => {
-            if !types.is_zst(function.value(*value)?.type_id)? { instruction.checks.push(access(function, types, *address)?); }
+            if !types.is_zst(function.value(*value)?.type_id)? { push_access(function, types, *address, &checks)?; }
         },
         FieldAddress(address, _, _) | EnumPayloadAddress(address, _) => {
             if live {
                 match types.semantic_store().require(function.value(*address)?.type_id)? {
-                    Pointer(_) => instruction.checks.push(SafetyCheck.InBounds(*address)),
-                    _ => instruction.checks.push(access(function, types, *address)?),
+                    Pointer(_) => checks.push(SafetyCheck.InBounds(*address)),
+                    _ => { push_access(function, types, *address, &checks)?; },
                 }
             }
         },
+        EnumInitAt(address, _, _, _) => { push_access(function, types, *address, &checks)?; },
+        EnumTagAt(address, _) | EnumFieldAt(address, _, _, _) => {
+            if live { push_access(function, types, *address, &checks)?; }
+        },
+        EnumCopyAt(destination, source, _) => {
+            push_access(function, types, *destination, &checks)?;
+            push_access(function, types, *source, &checks)?;
+        },
         IndexAddress(address, _, offset, bounds) => {
-            instruction.checks.push(SafetyCheck.Index(*offset, *bounds));
-            if live { instruction.checks.push(access(function, types, *address)?); }
+            checks.push(SafetyCheck.Index(*offset, *bounds));
+            if live { push_access(function, types, *address, &checks)?; }
         },
         Cast(value) => {
             if !types.raw_pointers() && live {
                 let source = types.semantic_store().require(function.value(*value)?.type_id)?;
                 let target = types.semantic_store().require(function.value(*instruction.result.unwrap())?.type_id)?;
                 match (source, target) {
-                    (Pointer(_), Reference(_)) => instruction.checks.push(SafetyCheck.InBounds(*value)),
+                    (Pointer(_), Reference(_)) => checks.push(SafetyCheck.InBounds(*value)),
                     (Slice(_), Reference(_)) => {
-                        instruction.checks.push(SafetyCheck.Nonempty(*value));
-                        instruction.checks.push(SafetyCheck.View(*value));
+                        checks.push(SafetyCheck.Nonempty(*value));
+                        checks.push(SafetyCheck.View(*value));
                     },
                     _ => {},
                 }
             }
         },
         TraitObject(source, _) => {
-            if !types.is_zst(function.value(*source)?.type_id)? { instruction.checks.push(access(function, types, *source)?); }
+            if !types.is_zst(function.value(*source)?.type_id)? { push_access(function, types, *source, &checks)?; }
         },
         Builtin(kind, _, args) => match kind {
-            FfiAddr => instruction.checks.push(access(function, types, args[0])?),
-            Panic | Open | FfiParts => instruction.checks.push(SafetyCheck.View(args[0])),
-            SysRead | SysReadBytes | SysWrite | SysWriteBytes => instruction.checks.push(SafetyCheck.View(args[1])),
-            FfiCopyFrom | FfiCopyTo => instruction.checks.push(SafetyCheck.View(args[if *kind == BuiltinKind.FfiCopyFrom { 0u64 } else { 1u64 }])),
+            FfiAddr => { push_access(function, types, args[0], &checks)?; },
+            Panic | FfiParts => checks.push(SafetyCheck.View(args[0])),
             MemCopy => {
                 if !types.is_zst(function.value(args[0])?.type_id)? && !types.is_zst(function.value(args[1])?.type_id)? {
-                    instruction.checks.push(SafetyCheck.Copy(args[0], args[1], args[2]));
+                    checks.push(SafetyCheck.Copy(args[0], args[1], args[2]));
                 }
             },
             _ => {},
         },
         _ => {},
     }
-    Result<(), CodegenError>.Ok(())
+    accepted = true;
+    Result<Vec<SafetyCheck>, CodegenError>.Ok(checks)
 }
 
 // Each access receives its own checks. Calls, releases and joins never share a cached live fact.
 pub fn insert_checks(module: CfgModule&, types: BackendTypes&) -> Result<(), CodegenError> {
+    if module.safety_stage != SafetyStage.Neutral {
+        return Result<(), CodegenError>.Err(CodegenError.invalid("check insertion requires a neutral graph"));
+    }
     for function_index in 0u64..module.len() {
         let function = *module.function(FunctionId(function_index)).unwrap();
         for block_index in 0u64..function.block_count() {
             for instruction in function.block(BlockId(block_index))?.instructions {
-                match checks_for(function, types, instruction) {
-                    Ok(_) => {},
+                let expected = match expected_checks(function, types, instruction) {
+                    Ok(value) => value,
                     Err(problem) => return Result<(), CodegenError>.Err(problem.with_location(instruction.span)),
-                }
+                };
+                defer expected.drop();
+                instruction.checks.clear();
+                for check_index in 0u64..expected.len() { instruction.checks.push(expected[check_index]); }
             }
         }
     }

@@ -1,0 +1,8 @@
+[package]
+name = "pidigits"
+kind = "bin"
+version = "0.1.0"
+entry = "src/main.an"
+
+[dependencies]
+gmp = { path = "../../../native/gmp" }

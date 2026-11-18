@@ -1,0 +1,13 @@
+// A reference derived from a constant array is still a temporary.
+
+const TABLE: i32[2] = [10, 20];
+
+fn make() -> i32& {
+    &TABLE[1]
+}
+
+fn main() {
+    let r: i32& = make();
+    let x: i32 = *r;
+    assert x == 20: "constant element reference should not escape";
+}

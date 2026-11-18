@@ -1,6 +1,5 @@
 from json.parse import parse;
 from json.write import stringify;
-from std.core.drop import Drop;
 from std.num.f64 import to_bits;
 
 fn unsigned(text: str, expected: u64) {

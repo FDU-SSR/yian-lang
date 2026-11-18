@@ -5,6 +5,7 @@ yian_component_root() {
     case "$1" in
         yianc) printf '%s\n' 'yianc' ;;
         anx) printf '%s\n' 'anx' ;;
+        yian-fmt) printf '%s\n' 'fmt' ;;
         yian-lsp) printf '%s\n' 'lsp' ;;
         *) printf 'unknown toolchain component: %s\n' "$1" >&2; return 1 ;;
     esac
@@ -113,6 +114,8 @@ yian_resource_sha256() {
         [[ -d "$root/$relative" ]] || { printf 'resource source is missing: %s/%s\n' "$root" "$relative" >&2; rm -f -- "$list_file"; return 1; }
         find "$root/$relative" -type f -print0 >>"$list_file"
     done
+    [[ -f "$root/lib/package.anx" ]] || { printf 'resource source is missing: %s/lib/package.anx\n' "$root" >&2; rm -f -- "$list_file"; return 1; }
+    printf '%s\0' "$root/lib/package.anx" >>"$list_file"
     local -a files=()
     while IFS= read -r -d '' path; do files+=("$path"); done <"$list_file"
     rm -f -- "$list_file"

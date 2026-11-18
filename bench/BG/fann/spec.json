@@ -1,0 +1,19 @@
+{
+  "name": "fann",
+  "measurement": {"warmups": 1, "runs": 5},
+  "source": "BG",
+  "tags": [
+    "numeric"
+  ],
+  "argv": [],
+  "check": {
+    "rc": 0
+  },
+  "note": "Official fannkuch-redux checksum and maximum-flips output; C receives n as argv and YIAN selects n through the build-time scale marker.",
+  "scale": {
+    "default": 11,
+    "fast": 9,
+    "c": "argv"
+  },
+  "io": {}
+}

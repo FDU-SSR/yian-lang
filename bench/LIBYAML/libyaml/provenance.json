@@ -1,0 +1,12 @@
+{
+  "project": "libyaml",
+  "upstream": "https://github.com/yaml/libyaml",
+  "version": "0.2.5",
+  "commit": "90a56d4500aa1a1798514c5cb55c3ad4cb095f94",
+  "license": "MIT",
+  "vendored": [
+    "c/third_party/include/yaml.h",
+    "c/third_party/src",
+    "c/third_party/License"
+  ]
+}

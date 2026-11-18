@@ -1,0 +1,2242 @@
+from libyaml.yaml.reader import Input, Reader, reader_delete, reader_new, reader_skip,
+    reader_skip_line, reader_update_buffer;
+from libyaml.yaml.types import CollectionStyle, Encoding, ErrorKind, Limits, Mark,
+    ParserError, ScalarStyle, TagDirective, Token, TokenData, TokenKind, VersionDirective,
+    limits_get, mark_new, token_delete;
+from std.core.vec import Vec;
+
+// Incremental scanner derived from libyaml 0.2.5 scanner.c.
+//
+// The scanner owns the reader, the pending token queue, the indentation stack
+// and one potential-simple-key entry per flow level.  scan() transfers one
+// owned token per call; peek() borrows the queued head token and must not be
+// mixed with consumption of the same instance.  The first scanner error is
+// sticky.
+
+pub struct SimpleKey {
+    pub possible: bool,
+    pub required: bool,
+    pub token_number: u64,
+    pub mark: Mark,
+}
+
+pub struct Scanner {
+    pub reader: Reader,
+    pub limits: Limits&,
+    pub stream_start_produced: bool,
+    pub stream_end_produced: bool,
+    pub flow_level: i32,
+    pub tokens: Vec<Token>,
+    pub head: u64,
+    pub tokens_parsed: u64,
+    pub token_available: bool,
+    pub indents: Vec<i32>,
+    pub indent: i32,
+    pub simple_key_allowed: bool,
+    pub simple_keys: Vec<SimpleKey>,
+    pub error: Option<ParserError>,
+}
+
+const INITIAL_QUEUE_SIZE: u64 = 16u64;
+const INITIAL_STACK_SIZE: u64 = 16u64;
+const INITIAL_STRING_SIZE: u64 = 16u64;
+const MAX_NUMBER_LENGTH: u64 = 9u64;
+
+fn zero_mark() -> Mark {
+    mark_new(0u64, 0u64, 0u64)
+}
+// Internal error propagation follows the C scanner: failures return a status
+// flag and the first ParserError stays in scanner.error.
+fn fail_unit(_error: ParserError) -> Result<(), i32> {
+    Result<(), i32>.Err(msg=1i32)
+}
+
+fn fail_token(_error: ParserError) -> Result<Token, i32> {
+    Result<Token, i32>.Err(msg=1i32)
+}
+
+fn fail_bytes(_error: ParserError) -> Result<Vec<u8>, i32> {
+    Result<Vec<u8>, i32>.Err(msg=1i32)
+}
+
+fn fail_i32(_error: ParserError) -> Result<i32, i32> {
+    Result<i32, i32>.Err(msg=1i32)
+}
+
+fn take_error(scanner: Scanner&) -> ParserError {
+    let error: ParserError = ParserError(
+        kind=ErrorKind.Scanner,
+        problem=zero_mark(),
+        context=zero_mark(),
+        problem_text="internal scanner error",
+        context_text="",
+        problem_offset=0u64,
+        problem_value=0i32,
+    );
+    match &scanner.error {
+        Some(value) => { error = *value; },
+        None => {},
+    }
+    error
+}
+
+
+
+fn empty_token(kind: TokenKind, start: Mark, end: Mark) -> Token {
+    Token(kind=kind, start=start, end=end, data=TokenData.Empty)
+}
+
+fn ok_token(token: Token&, value: Token) -> Result<(), i32> {
+    *token = value;
+    Result<(), i32>.Ok(val=())
+}
+
+fn set_scanner_error(scanner: Scanner&, context: str, context_mark: Mark, problem: str) -> ParserError {
+    let error = ParserError(
+        kind=ErrorKind.Scanner,
+        problem=scanner.reader.mark,
+        context=context_mark,
+        problem_text=problem,
+        context_text=context,
+        problem_offset=0u64,
+        problem_value=0i32,
+    );
+    scanner.error = Option<ParserError>.Some(error);
+    error
+}
+
+fn sticky_error(scanner: Scanner&) -> Option<ParserError> {
+    match &scanner.error {
+        Some(error) => Option<ParserError>.Some(*error),
+        None => Option<ParserError>.None,
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Queue helpers.  The queue keeps consumed slots untouched until a compaction
+// or an empty-queue reset; token_number values stay absolute.
+// ---------------------------------------------------------------------------
+
+fn compact_queue(scanner: Scanner&) {
+    if scanner.head == 0u64 {
+        return;
+    }
+    let count: u64 = scanner.tokens.len() - scanner.head;
+    let index = 0u64;
+    while index < count {
+        scanner.tokens[index] = scanner.tokens[scanner.head + index];
+        index += 1u64;
+    };
+    scanner.tokens.truncate(count);
+    scanner.head = 0u64;
+}
+
+fn enqueue(scanner: Scanner&, token: Token) {
+    if scanner.tokens.len() >= scanner.tokens.capacity() && scanner.head > 0u64 {
+        compact_queue(scanner);
+    }
+    scanner.tokens.push(token);
+}
+
+fn queue_insert(scanner: Scanner&, index: u64, token: Token) {
+    if scanner.tokens.len() >= scanner.tokens.capacity() && scanner.head > 0u64 {
+        compact_queue(scanner);
+    }
+    scanner.tokens.insert(scanner.head + index, token);
+}
+
+fn dequeue(scanner: Scanner&) -> Token {
+    let token: Token = scanner.tokens[scanner.head];
+    // The payload moved out above; the slot is forgotten by truncate/compaction
+    // and never dropped again, so no replacement object is written back.
+    scanner.head += 1u64;
+    if scanner.head == scanner.tokens.len() {
+        scanner.tokens.truncate(0u64);
+        scanner.head = 0u64;
+    }
+    token
+}
+
+fn queue_length(scanner: Scanner&) -> u64 {
+    scanner.tokens.len() - scanner.head
+}
+
+// ---------------------------------------------------------------------------
+// Cached character access and character classes.
+// ---------------------------------------------------------------------------
+
+fn cache(scanner: Scanner&, length: u64) -> Result<(), i32> {
+    if scanner.reader.unread >= length {
+        return Result<(), i32>.Ok(val=());
+    }
+    match reader_update_buffer(&scanner.reader, length) {
+        Ok(_) => Result<(), i32>.Ok(val=()),
+        Err(error) => {
+            scanner.error = Option<ParserError>.Some(error);
+            fail_unit(error)
+        },
+    }
+}
+
+fn byte_at(scanner: Scanner&, offset: u64) -> u8 {
+    scanner.reader.cursor[offset]
+}
+
+fn width_at(scanner: Scanner&, offset: u64) -> u64 {
+    let lead: u32 = u32(byte_at(scanner, offset));
+    if (lead & 0x80u32) == 0u32 {
+        return 1u64;
+    }
+    if (lead & 0xE0u32) == 0xC0u32 {
+        return 2u64;
+    }
+    if (lead & 0xF0u32) == 0xE0u32 {
+        return 3u64;
+    }
+    if (lead & 0xF8u32) == 0xF0u32 {
+        return 4u64;
+    }
+    0u64
+}
+
+fn check(scanner: Scanner&, octet: u8) -> bool {
+    byte_at(scanner, 0u64) == octet
+}
+
+fn check_at(scanner: Scanner&, octet: u8, offset: u64) -> bool {
+    byte_at(scanner, offset) == octet
+}
+
+fn is_z_at(scanner: Scanner&, offset: u64) -> bool {
+    byte_at(scanner, offset) == 0u8
+}
+
+fn is_z(scanner: Scanner&) -> bool {
+    is_z_at(scanner, 0u64)
+}
+
+fn is_space_at(scanner: Scanner&, offset: u64) -> bool {
+    byte_at(scanner, offset) == 32u8
+}
+
+fn is_space(scanner: Scanner&) -> bool {
+    is_space_at(scanner, 0u64)
+}
+
+fn is_tab_at(scanner: Scanner&, offset: u64) -> bool {
+    byte_at(scanner, offset) == 9u8
+}
+
+fn is_tab(scanner: Scanner&) -> bool {
+    is_tab_at(scanner, 0u64)
+}
+
+fn is_blank_at(scanner: Scanner&, offset: u64) -> bool {
+    let byte: u8 = byte_at(scanner, offset);
+    byte == 32u8 || byte == 9u8
+}
+
+fn is_blank(scanner: Scanner&) -> bool {
+    is_blank_at(scanner, 0u64)
+}
+
+fn is_break_at(scanner: Scanner&, offset: u64) -> bool {
+    let first: u8 = byte_at(scanner, offset);
+    if first == 13u8 || first == 10u8 {
+        return true;
+    }
+    if first == 0xC2u8 {
+        return byte_at(scanner, offset + 1u64) == 0x85u8;
+    }
+    if first == 0xE2u8 && byte_at(scanner, offset + 1u64) == 0x80u8 {
+        let third: u8 = byte_at(scanner, offset + 2u64);
+        return third == 0xA8u8 || third == 0xA9u8;
+    }
+    false
+}
+
+fn is_break(scanner: Scanner&) -> bool {
+    is_break_at(scanner, 0u64)
+}
+
+fn is_crlf(scanner: Scanner&) -> bool {
+    byte_at(scanner, 0u64) == 13u8 && byte_at(scanner, 1u64) == 10u8
+}
+
+fn is_breakz_at(scanner: Scanner&, offset: u64) -> bool {
+    let first: u8 = byte_at(scanner, offset);
+    if first == 0u8 || first == 13u8 || first == 10u8 {
+        return true;
+    }
+    if first == 0xC2u8 {
+        return byte_at(scanner, offset + 1u64) == 0x85u8;
+    }
+    if first == 0xE2u8 && byte_at(scanner, offset + 1u64) == 0x80u8 {
+        let third: u8 = byte_at(scanner, offset + 2u64);
+        return third == 0xA8u8 || third == 0xA9u8;
+    }
+    false
+}
+
+fn is_breakz(scanner: Scanner&) -> bool {
+    is_breakz_at(scanner, 0u64)
+}
+
+fn is_blankz_at(scanner: Scanner&, offset: u64) -> bool {
+    let first: u8 = byte_at(scanner, offset);
+    if first == 32u8 || first == 9u8 || first == 13u8 || first == 10u8 || first == 0u8 {
+        return true;
+    }
+    if first == 0xC2u8 {
+        return byte_at(scanner, offset + 1u64) == 0x85u8;
+    }
+    if first == 0xE2u8 && byte_at(scanner, offset + 1u64) == 0x80u8 {
+        let third: u8 = byte_at(scanner, offset + 2u64);
+        return third == 0xA8u8 || third == 0xA9u8;
+    }
+    false
+}
+
+fn is_blankz(scanner: Scanner&) -> bool {
+    is_blankz_at(scanner, 0u64)
+}
+
+fn is_bom(scanner: Scanner&) -> bool {
+    byte_at(scanner, 0u64) == 0xEFu8 && byte_at(scanner, 1u64) == 0xBBu8
+        && byte_at(scanner, 2u64) == 0xBFu8
+}
+
+fn is_alpha_at(scanner: Scanner&, offset: u64) -> bool {
+    let byte: u8 = byte_at(scanner, offset);
+    (byte >= 48u8 && byte <= 57u8) || (byte >= 65u8 && byte <= 90u8)
+        || (byte >= 97u8 && byte <= 122u8) || byte == 95u8 || byte == 45u8
+}
+
+fn is_alpha(scanner: Scanner&) -> bool {
+    is_alpha_at(scanner, 0u64)
+}
+
+fn is_digit_at(scanner: Scanner&, offset: u64) -> bool {
+    let byte: u8 = byte_at(scanner, offset);
+    byte >= 48u8 && byte <= 57u8
+}
+
+fn is_digit(scanner: Scanner&) -> bool {
+    is_digit_at(scanner, 0u64)
+}
+
+fn as_digit_at(scanner: Scanner&, offset: u64) -> u8 {
+    byte_at(scanner, offset) - 48u8
+}
+
+fn as_digit(scanner: Scanner&) -> u8 {
+    as_digit_at(scanner, 0u64)
+}
+
+fn is_hex_at(scanner: Scanner&, offset: u64) -> bool {
+    let byte: u8 = byte_at(scanner, offset);
+    (byte >= 48u8 && byte <= 57u8) || (byte >= 65u8 && byte <= 70u8)
+        || (byte >= 97u8 && byte <= 102u8)
+}
+
+fn as_hex_at(scanner: Scanner&, offset: u64) -> u8 {
+    let byte: u8 = byte_at(scanner, offset);
+    if byte >= 65u8 && byte <= 70u8 {
+        return byte - 55u8;
+    }
+    if byte >= 97u8 && byte <= 102u8 {
+        return byte - 87u8;
+    }
+    byte - 48u8
+}
+
+fn is_flow_indicator_at(scanner: Scanner&, offset: u64) -> bool {
+    let byte: u8 = byte_at(scanner, offset);
+    byte == 44u8 || byte == 91u8 || byte == 93u8 || byte == 123u8 || byte == 125u8
+}
+
+// ---------------------------------------------------------------------------
+// Character movement and scalar output helpers.
+// ---------------------------------------------------------------------------
+
+fn skip(scanner: Scanner&) {
+    reader_skip(&scanner.reader, 1u64);
+}
+
+fn skip_line(scanner: Scanner&) {
+    reader_skip_line(&scanner.reader);
+}
+
+fn read_current(scanner: Scanner&, out: Vec<u8>&) {
+    let first: u8 = byte_at(scanner, 0u64);
+    if first > 0u8 && first < 0x80u8 {
+        // ASCII characters are one byte wide and never line breaks here, so
+        // this matches reader_skip(&reader, 1) without re-reading the octet.
+        out.push(first);
+        scanner.reader.mark.index += 1u64;
+        scanner.reader.mark.column += 1u64;
+        scanner.reader.unread -= 1u64;
+        scanner.reader.position += 1u64;
+        scanner.reader.cursor = scanner.reader.cursor + 1u64;
+        return;
+    }
+    let width: u64 = width_at(scanner, 0u64);
+    let index = 0u64;
+    while index < width {
+        out.push(byte_at(scanner, index));
+        index += 1u64;
+    };
+    reader_skip(&scanner.reader, 1u64);
+}
+
+// Number of leading plain-scalar characters that are definitely ordinary:
+// printable ASCII excluding the characters that terminate or redirect a plain
+// scalar (: # , [ ] { }) and the document indicators at column zero.
+fn plain_ascii_run(scanner: Scanner&) -> u64 {
+    let count: u64 = 0u64;
+    let at_line_start: bool = scanner.reader.mark.column == 0u64;
+    while count < scanner.reader.unread {
+        let b: u8 = byte_at(scanner, count);
+        if b < 0x21u8 || b > 0x7Eu8 {
+            break;
+        }
+        if b == 58u8 || b == 35u8 || b == 44u8 || b == 91u8 || b == 93u8
+                || b == 123u8 || b == 125u8 {
+            break;
+        }
+        if at_line_start && count == 0u64 && (b == 45u8 || b == 46u8) {
+            break;
+        }
+        count += 1u64;
+    }
+    count
+}
+
+// Append one validated run with a single reservation instead of one Vec push
+// per character, and advance the reader by the whole run.
+fn append_plain_run(scanner: Scanner&, out: Vec<u8>&, count: u64) {
+    let start: u64 = scanner.reader.position;
+    let end: u64 = start + count;
+    out.extend_from_slice(scanner.reader.buffer.as_slice()[start..end]);
+    scanner.reader.mark.index += count;
+    scanner.reader.mark.column += count;
+    scanner.reader.unread -= count;
+    scanner.reader.position += count;
+    scanner.reader.cursor = scanner.reader.cursor + count;
+}
+
+fn read_line(scanner: Scanner&, out: Vec<u8>&) -> bool {
+    if is_crlf(scanner) {
+        out.push(10u8);
+        scanner.reader.mark.index += 2u64;
+        scanner.reader.mark.column = 0u64;
+        scanner.reader.mark.line += 1u64;
+        scanner.reader.unread -= 2u64;
+        scanner.reader.position += 2u64;
+        scanner.reader.cursor = scanner.reader.cursor + 2u64;
+        return true;
+    }
+    if !is_break(scanner) {
+        // READ_LINE is a successful no-op when the current character is not a
+        // line break; callers reach this at the EOF sentinel after a trailing
+        // blank line of a block scalar.
+        return true;
+    }
+    let first: u8 = byte_at(scanner, 0u64);
+    if first == 0xC2u8 {
+        out.push(10u8);
+        scanner.reader.position += 2u64;
+        scanner.reader.cursor = scanner.reader.cursor + 2u64;
+    } elif first == 0xE2u8 {
+        out.push(0xE2u8);
+        out.push(0x80u8);
+        out.push(byte_at(scanner, 2u64));
+        scanner.reader.position += 3u64;
+        scanner.reader.cursor = scanner.reader.cursor + 3u64;
+    } else {
+        out.push(10u8);
+        scanner.reader.position += 1u64;
+        scanner.reader.cursor = scanner.reader.cursor + 1u64;
+    }
+    scanner.reader.mark.index += 1u64;
+    scanner.reader.mark.column = 0u64;
+    scanner.reader.mark.line += 1u64;
+    scanner.reader.unread -= 1u64;
+    true
+}
+
+fn join(destination: Vec<u8>&, source: Vec<u8>&) {
+    let index = 0u64;
+    while index < source.len() {
+        destination.push(source[index]);
+        index += 1u64;
+    };
+}
+
+fn clear(value: Vec<u8>&) {
+    value.truncate(0u64);
+}
+
+// ---------------------------------------------------------------------------
+// Potential simple keys and indentation.
+// ---------------------------------------------------------------------------
+
+fn stale_simple_keys(scanner: Scanner&) -> Result<(), i32> {
+    let index = 0u64;
+    while index < scanner.simple_keys.len() {
+        let possible: bool = scanner.simple_keys[index].possible;
+        if possible {
+            let key_mark: Mark = scanner.simple_keys[index].mark;
+            let expired: bool = key_mark.line < scanner.reader.mark.line
+                || key_mark.index + 1024u64 < scanner.reader.mark.index;
+            if expired {
+                if scanner.simple_keys[index].required {
+                    return fail_unit(set_scanner_error(
+                        scanner,
+                        "while scanning a simple key",
+                        key_mark,
+                        "could not find expected ':'",
+                    ));
+                }
+                scanner.simple_keys[index].possible = false;
+            }
+        }
+        index += 1u64;
+    }
+    Result<(), i32>.Ok(val=())
+}
+
+fn remove_simple_key(scanner: Scanner&) -> Result<(), i32> {
+    let index: u64 = scanner.simple_keys.len() - 1u64;
+    if scanner.simple_keys[index].possible && scanner.simple_keys[index].required {
+        return fail_unit(set_scanner_error(
+            scanner,
+            "while scanning a simple key",
+            scanner.simple_keys[index].mark,
+            "could not find expected ':'",
+        ));
+    }
+    scanner.simple_keys[index].possible = false;
+    Result<(), i32>.Ok(val=())
+}
+
+fn save_simple_key(scanner: Scanner&) -> Result<(), i32> {
+    let required: bool = scanner.flow_level == 0i32
+        && scanner.indent == i32(scanner.reader.mark.column);
+    if scanner.simple_key_allowed {
+        remove_simple_key(scanner)?;
+        let index: u64 = scanner.simple_keys.len() - 1u64;
+        scanner.simple_keys[index] = SimpleKey(
+            possible=true,
+            required=required,
+            token_number=scanner.tokens_parsed + queue_length(scanner),
+            mark=scanner.reader.mark,
+        );
+    }
+    Result<(), i32>.Ok(val=())
+}
+
+fn increase_flow_level(scanner: Scanner&) -> Result<(), i32> {
+    let empty = SimpleKey(possible=false, required=false, token_number=0u64, mark=zero_mark());
+    scanner.simple_keys.push(empty);
+    if scanner.flow_level == 2147483647i32 {
+        return fail_unit(set_scanner_error(
+            scanner,
+            "while increasing flow level",
+            scanner.reader.mark,
+            "exceeded maximum nesting depth",
+        ));
+    }
+    let limit: i32 = limits_get(scanner.limits) - scanner.flow_level;
+    if i64(scanner.indents.len()) >= i64(limit) {
+        return fail_unit(set_scanner_error(
+            scanner,
+            "while increasing flow level",
+            scanner.reader.mark,
+            "exceeded maximum nesting depth",
+        ));
+    }
+    scanner.flow_level += 1i32;
+    Result<(), i32>.Ok(val=())
+}
+
+fn decrease_flow_level(scanner: Scanner&) {
+    if scanner.flow_level != 0i32 {
+        scanner.flow_level -= 1i32;
+        scanner.simple_keys.truncate(scanner.simple_keys.len() - 1u64);
+    }
+}
+
+fn roll_indent(scanner: Scanner&, column: i32, number: i64, kind: TokenKind, mark: Mark) -> Result<(), i32> {
+    if scanner.flow_level != 0i32 {
+        return Result<(), i32>.Ok(val=());
+    }
+    if scanner.indent < column {
+        scanner.indents.push(scanner.indent);
+        let limit: i32 = limits_get(scanner.limits) - scanner.flow_level;
+        if i64(scanner.indents.len()) >= i64(limit) {
+            return fail_unit(set_scanner_error(
+                scanner,
+                "while increasing block level",
+                scanner.reader.mark,
+                "exceeded maximum nesting depth",
+            ));
+        }
+        scanner.indent = column;
+        let token: Token = empty_token(kind, mark, mark);
+        if number < 0i64 {
+            enqueue(scanner, token);
+        } else {
+            let index: u64 = u64(number) - scanner.tokens_parsed;
+            queue_insert(scanner, index, token);
+        }
+    }
+    Result<(), i32>.Ok(val=())
+}
+
+fn unroll_indent(scanner: Scanner&, column: i32) -> Result<(), i32> {
+    if scanner.flow_level != 0i32 {
+        return Result<(), i32>.Ok(val=());
+    }
+    while scanner.indent > column {
+        enqueue(scanner, empty_token(TokenKind.BlockEnd, scanner.reader.mark, scanner.reader.mark));
+        let index: u64 = scanner.indents.len() - 1u64;
+        scanner.indent = scanner.indents[index];
+        scanner.indents.truncate(index);
+    };
+    Result<(), i32>.Ok(val=())
+}
+
+// ---------------------------------------------------------------------------
+// Token fetchers.
+// ---------------------------------------------------------------------------
+
+fn fetch_stream_start(scanner: Scanner&) {
+    scanner.indent = -1i32;
+    scanner.simple_keys.push(SimpleKey(possible=false, required=false, token_number=0u64, mark=zero_mark()));
+    scanner.simple_key_allowed = true;
+    scanner.stream_start_produced = true;
+    let token = Token(
+        kind=TokenKind.StreamStart,
+        start=scanner.reader.mark,
+        end=scanner.reader.mark,
+        data=TokenData.StreamStart(encoding=scanner.reader.encoding),
+    );
+    enqueue(scanner, token);
+}
+
+fn fetch_stream_end(scanner: Scanner&) -> Result<(), i32> {
+    if scanner.reader.mark.column != 0u64 {
+        scanner.reader.mark.column = 0u64;
+        scanner.reader.mark.line += 1u64;
+    }
+    unroll_indent(scanner, -1i32)?;
+    remove_simple_key(scanner)?;
+    scanner.simple_key_allowed = false;
+    enqueue(scanner, empty_token(TokenKind.StreamEnd, scanner.reader.mark, scanner.reader.mark));
+    Result<(), i32>.Ok(val=())
+}
+
+fn fetch_directive(scanner: Scanner&) -> Result<(), i32> {
+    unroll_indent(scanner, -1i32)?;
+    remove_simple_key(scanner)?;
+    scanner.simple_key_allowed = false;
+    let token: Token = empty_token(TokenKind.StreamEnd, zero_mark(), zero_mark());
+    scan_directive(scanner, &token)?;
+    enqueue(scanner, token);
+    Result<(), i32>.Ok(val=())
+}
+
+fn fetch_document_indicator(scanner: Scanner&, kind: TokenKind) -> Result<(), i32> {
+    unroll_indent(scanner, -1i32)?;
+    remove_simple_key(scanner)?;
+    scanner.simple_key_allowed = false;
+    let start: Mark = scanner.reader.mark;
+    skip(scanner);
+    skip(scanner);
+    skip(scanner);
+    let end: Mark = scanner.reader.mark;
+    enqueue(scanner, empty_token(kind, start, end));
+    Result<(), i32>.Ok(val=())
+}
+
+fn fetch_flow_collection_start(scanner: Scanner&, kind: TokenKind) -> Result<(), i32> {
+    save_simple_key(scanner)?;
+    increase_flow_level(scanner)?;
+    scanner.simple_key_allowed = true;
+    let start: Mark = scanner.reader.mark;
+    skip(scanner);
+    let end: Mark = scanner.reader.mark;
+    enqueue(scanner, empty_token(kind, start, end));
+    Result<(), i32>.Ok(val=())
+}
+
+fn fetch_flow_collection_end(scanner: Scanner&, kind: TokenKind) -> Result<(), i32> {
+    remove_simple_key(scanner)?;
+    decrease_flow_level(scanner);
+    scanner.simple_key_allowed = false;
+    let start: Mark = scanner.reader.mark;
+    skip(scanner);
+    let end: Mark = scanner.reader.mark;
+    enqueue(scanner, empty_token(kind, start, end));
+    Result<(), i32>.Ok(val=())
+}
+
+fn fetch_flow_entry(scanner: Scanner&) -> Result<(), i32> {
+    remove_simple_key(scanner)?;
+    scanner.simple_key_allowed = true;
+    let start: Mark = scanner.reader.mark;
+    skip(scanner);
+    let end: Mark = scanner.reader.mark;
+    enqueue(scanner, empty_token(TokenKind.FlowEntry, start, end));
+    Result<(), i32>.Ok(val=())
+}
+
+fn fetch_block_entry(scanner: Scanner&) -> Result<(), i32> {
+    if scanner.flow_level == 0i32 {
+        if !scanner.simple_key_allowed {
+            return fail_unit(set_scanner_error(
+                scanner,
+                "",
+                scanner.reader.mark,
+                "block sequence entries are not allowed in this context",
+            ));
+        }
+        roll_indent(scanner, i32(scanner.reader.mark.column), -1i64, TokenKind.BlockSequenceStart, scanner.reader.mark)?;
+    }
+    remove_simple_key(scanner)?;
+    scanner.simple_key_allowed = true;
+    let start: Mark = scanner.reader.mark;
+    skip(scanner);
+    let end: Mark = scanner.reader.mark;
+    enqueue(scanner, empty_token(TokenKind.BlockEntry, start, end));
+    Result<(), i32>.Ok(val=())
+}
+
+fn fetch_key(scanner: Scanner&) -> Result<(), i32> {
+    if scanner.flow_level == 0i32 {
+        if !scanner.simple_key_allowed {
+            return fail_unit(set_scanner_error(
+                scanner,
+                "",
+                scanner.reader.mark,
+                "mapping keys are not allowed in this context",
+            ));
+        }
+        roll_indent(scanner, i32(scanner.reader.mark.column), -1i64, TokenKind.BlockMappingStart, scanner.reader.mark)?;
+    }
+    remove_simple_key(scanner)?;
+    scanner.simple_key_allowed = scanner.flow_level == 0i32;
+    let start: Mark = scanner.reader.mark;
+    skip(scanner);
+    let end: Mark = scanner.reader.mark;
+    enqueue(scanner, empty_token(TokenKind.Key, start, end));
+    Result<(), i32>.Ok(val=())
+}
+
+fn fetch_value(scanner: Scanner&) -> Result<(), i32> {
+    let index: u64 = scanner.simple_keys.len() - 1u64;
+    if scanner.simple_keys[index].possible {
+        let key_mark: Mark = scanner.simple_keys[index].mark;
+        let token_number: u64 = scanner.simple_keys[index].token_number;
+        let key_token = empty_token(TokenKind.Key, key_mark, key_mark);
+        queue_insert(scanner, token_number - scanner.tokens_parsed, key_token);
+        roll_indent(scanner, i32(key_mark.column), i64(token_number), TokenKind.BlockMappingStart, key_mark)?;
+        scanner.simple_keys[index].possible = false;
+        scanner.simple_key_allowed = false;
+    } else {
+        if scanner.flow_level == 0i32 {
+            if !scanner.simple_key_allowed {
+                return fail_unit(set_scanner_error(
+                    scanner,
+                    "",
+                    scanner.reader.mark,
+                    "mapping values are not allowed in this context",
+                ));
+            }
+            roll_indent(scanner, i32(scanner.reader.mark.column), -1i64, TokenKind.BlockMappingStart, scanner.reader.mark)?;
+        }
+        scanner.simple_key_allowed = scanner.flow_level == 0i32;
+    }
+    let start: Mark = scanner.reader.mark;
+    skip(scanner);
+    let end: Mark = scanner.reader.mark;
+    enqueue(scanner, empty_token(TokenKind.Value, start, end));
+    Result<(), i32>.Ok(val=())
+}
+
+fn fetch_anchor(scanner: Scanner&, kind: TokenKind) -> Result<(), i32> {
+    save_simple_key(scanner)?;
+    scanner.simple_key_allowed = false;
+    let token: Token = empty_token(TokenKind.StreamEnd, zero_mark(), zero_mark());
+    scan_anchor(scanner, kind, &token)?;
+    enqueue(scanner, token);
+    Result<(), i32>.Ok(val=())
+}
+
+fn fetch_tag(scanner: Scanner&) -> Result<(), i32> {
+    save_simple_key(scanner)?;
+    scanner.simple_key_allowed = false;
+    let token: Token = empty_token(TokenKind.StreamEnd, zero_mark(), zero_mark());
+    scan_tag(scanner, &token)?;
+    enqueue(scanner, token);
+    Result<(), i32>.Ok(val=())
+}
+
+fn fetch_block_scalar(scanner: Scanner&, literal: bool) -> Result<(), i32> {
+    remove_simple_key(scanner)?;
+    scanner.simple_key_allowed = true;
+    let token: Token = empty_token(TokenKind.StreamEnd, zero_mark(), zero_mark());
+    scan_block_scalar(scanner, literal, &token)?;
+    enqueue(scanner, token);
+    Result<(), i32>.Ok(val=())
+}
+
+fn fetch_flow_scalar(scanner: Scanner&, single: bool) -> Result<(), i32> {
+    save_simple_key(scanner)?;
+    scanner.simple_key_allowed = false;
+    let token: Token = empty_token(TokenKind.StreamEnd, zero_mark(), zero_mark());
+    scan_flow_scalar(scanner, single, &token)?;
+    enqueue(scanner, token);
+    Result<(), i32>.Ok(val=())
+}
+
+fn fetch_plain_scalar(scanner: Scanner&) -> Result<(), i32> {
+    save_simple_key(scanner)?;
+    scanner.simple_key_allowed = false;
+    let token: Token = empty_token(TokenKind.StreamEnd, zero_mark(), zero_mark());
+    scan_plain_scalar(scanner, &token)?;
+    enqueue(scanner, token);
+    Result<(), i32>.Ok(val=())
+}
+
+fn scan_to_next_token(scanner: Scanner&) -> Result<(), i32> {
+    loop {
+        if scanner.reader.unread < 1u64 {
+            cache(scanner, 1u64)?;
+        }
+        if scanner.reader.mark.column == 0u64 && is_bom(scanner) {
+            skip(scanner);
+        }
+        if scanner.reader.unread < 1u64 {
+            cache(scanner, 1u64)?;
+        }
+        while is_space(scanner)
+                || ((scanner.flow_level != 0i32 || !scanner.simple_key_allowed) && is_tab(scanner)) {
+            skip(scanner);
+            if scanner.reader.unread < 1u64 {
+                cache(scanner, 1u64)?;
+            }
+        }
+        if check(scanner, 35u8) {
+            while !is_breakz(scanner) {
+                skip(scanner);
+                if scanner.reader.unread < 1u64 {
+                    cache(scanner, 1u64)?;
+                }
+            }
+        }
+        if is_break(scanner) {
+            if scanner.reader.unread < 2u64 {
+                cache(scanner, 2u64)?;
+            }
+            skip_line(scanner);
+            if scanner.flow_level == 0i32 {
+                scanner.simple_key_allowed = true;
+            }
+        } else {
+            break;
+        }
+    };
+    Result<(), i32>.Ok(val=())
+}
+
+fn fetch_next_token(scanner: Scanner&) -> Result<(), i32> {
+    if scanner.reader.unread < 1u64 {
+        cache(scanner, 1u64)?;
+    }
+    if !scanner.stream_start_produced {
+        fetch_stream_start(scanner);
+        return Result<(), i32>.Ok(val=());
+    }
+    scan_to_next_token(scanner)?;
+    stale_simple_keys(scanner)?;
+    unroll_indent(scanner, i32(scanner.reader.mark.column))?;
+    if scanner.reader.unread < 4u64 {
+        cache(scanner, 4u64)?;
+    }
+    if is_z(scanner) {
+        return fetch_stream_end(scanner);
+    }
+    if scanner.reader.mark.column == 0u64 && check(scanner, 37u8) {
+        return fetch_directive(scanner);
+    }
+    if scanner.reader.mark.column == 0u64 && check_at(scanner, 45u8, 0u64)
+            && check_at(scanner, 45u8, 1u64) && check_at(scanner, 45u8, 2u64)
+            && is_blankz_at(scanner, 3u64) {
+        return fetch_document_indicator(scanner, TokenKind.DocumentStart);
+    }
+    if scanner.reader.mark.column == 0u64 && check_at(scanner, 46u8, 0u64)
+            && check_at(scanner, 46u8, 1u64) && check_at(scanner, 46u8, 2u64)
+            && is_blankz_at(scanner, 3u64) {
+        return fetch_document_indicator(scanner, TokenKind.DocumentEnd);
+    }
+    if check(scanner, 91u8) {
+        return fetch_flow_collection_start(scanner, TokenKind.FlowSequenceStart);
+    }
+    if check(scanner, 123u8) {
+        return fetch_flow_collection_start(scanner, TokenKind.FlowMappingStart);
+    }
+    if check(scanner, 93u8) {
+        return fetch_flow_collection_end(scanner, TokenKind.FlowSequenceEnd);
+    }
+    if check(scanner, 125u8) {
+        return fetch_flow_collection_end(scanner, TokenKind.FlowMappingEnd);
+    }
+    if check(scanner, 44u8) {
+        return fetch_flow_entry(scanner);
+    }
+    if check(scanner, 45u8) && is_blankz_at(scanner, 1u64) {
+        return fetch_block_entry(scanner);
+    }
+    if check(scanner, 63u8)
+            && (scanner.flow_level != 0i32 || is_blankz_at(scanner, 1u64)) {
+        return fetch_key(scanner);
+    }
+    if check(scanner, 58u8)
+            && (scanner.flow_level != 0i32 || is_blankz_at(scanner, 1u64)) {
+        return fetch_value(scanner);
+    }
+    if check(scanner, 42u8) {
+        return fetch_anchor(scanner, TokenKind.Alias);
+    }
+    if check(scanner, 38u8) {
+        return fetch_anchor(scanner, TokenKind.Anchor);
+    }
+    if check(scanner, 33u8) {
+        return fetch_tag(scanner);
+    }
+    if check(scanner, 124u8) && scanner.flow_level == 0i32 {
+        return fetch_block_scalar(scanner, true);
+    }
+    if check(scanner, 62u8) && scanner.flow_level == 0i32 {
+        return fetch_block_scalar(scanner, false);
+    }
+    if check(scanner, 39u8) {
+        return fetch_flow_scalar(scanner, true);
+    }
+    if check(scanner, 34u8) {
+        return fetch_flow_scalar(scanner, false);
+    }
+    let cannot_start: bool = is_blankz(scanner) || check(scanner, 45u8)
+        || check(scanner, 63u8) || check(scanner, 58u8) || check(scanner, 44u8)
+        || check(scanner, 91u8) || check(scanner, 93u8) || check(scanner, 123u8)
+        || check(scanner, 125u8) || check(scanner, 35u8) || check(scanner, 38u8)
+        || check(scanner, 42u8) || check(scanner, 33u8) || check(scanner, 124u8)
+        || check(scanner, 62u8) || check(scanner, 39u8) || check(scanner, 34u8)
+        || check(scanner, 37u8) || check(scanner, 64u8) || check(scanner, 96u8);
+    let starts_plain: bool = !cannot_start
+        || (check(scanner, 45u8) && !is_blank_at(scanner, 1u64))
+        || (scanner.flow_level == 0i32
+            && (check(scanner, 63u8) || check(scanner, 58u8))
+            && !is_blankz_at(scanner, 1u64));
+    if starts_plain {
+        return fetch_plain_scalar(scanner);
+    }
+    fail_unit(set_scanner_error(
+        scanner,
+        "while scanning for the next token",
+        scanner.reader.mark,
+        "found character that cannot start any token",
+    ))
+}
+
+fn fetch_more_tokens(scanner: Scanner&) -> Result<(), i32> {
+    loop {
+        let need_more: bool;
+        if scanner.head == scanner.tokens.len() {
+            need_more = true;
+        } else {
+            stale_simple_keys(scanner)?;
+            need_more = false;
+            let index = 0u64;
+            while index < scanner.simple_keys.len() {
+                if scanner.simple_keys[index].possible
+                        && scanner.simple_keys[index].token_number == scanner.tokens_parsed {
+                    need_more = true;
+                    break;
+                }
+                index += 1u64;
+            };
+        }
+        if !need_more {
+            break;
+        }
+        fetch_next_token(scanner)?;
+    };
+    scanner.token_available = true;
+    Result<(), i32>.Ok(val=())
+}
+
+// ---------------------------------------------------------------------------
+// Directive scanning.
+// ---------------------------------------------------------------------------
+
+fn scan_directive(scanner: Scanner&, token: Token&) -> Result<(), i32> {
+    let start_mark: Mark = scanner.reader.mark;
+    skip(scanner);
+    let name = scan_directive_name(scanner, start_mark)?;
+    let name_moved = false;
+    defer { if !name_moved { name.drop(); } };
+    if name.len() == 4u64 && name[0u64] == 89u8 && name[1u64] == 65u8
+            && name[2u64] == 77u8 && name[3u64] == 76u8 {
+        let major: i32 = 0i32;
+        let minor: i32 = 0i32;
+        scan_version_directive_value(scanner, start_mark, &major, &minor)?;
+        let end_mark: Mark = scanner.reader.mark;
+        finish_directive_line(scanner, start_mark)?;
+        return ok_token(token, Token(
+            kind=TokenKind.VersionDirective,
+            start=start_mark,
+            end=end_mark,
+            data=TokenData.VersionDirective(value=VersionDirective(major=major, minor=minor)),
+        ));
+    }
+    if name.len() == 3u64 && name[0u64] == 84u8 && name[1u64] == 65u8 && name[2u64] == 71u8 {
+        let handle: Vec<u8> = Vec<u8>.new();
+        let prefix: Vec<u8> = Vec<u8>.new();
+        let handle_moved = false;
+        let prefix_moved = false;
+        defer { if !handle_moved { handle.drop(); } };
+        defer { if !prefix_moved { prefix.drop(); } };
+        scan_tag_directive_value(scanner, start_mark, &handle, &prefix)?;
+        let end_mark: Mark = scanner.reader.mark;
+        finish_directive_line(scanner, start_mark)?;
+        let directive = TagDirective(handle=handle, prefix=prefix);
+        handle_moved = true;
+        prefix_moved = true;
+        return ok_token(token, Token(
+            kind=TokenKind.TagDirective,
+            start=start_mark,
+            end=end_mark,
+            data=TokenData.TagDirective(value=directive),
+        ));
+    }
+    fail_unit(set_scanner_error(
+        scanner,
+        "while scanning a directive",
+        start_mark,
+        "found unknown directive name",
+    ))
+}
+
+fn finish_directive_line(scanner: Scanner&, start_mark: Mark) -> Result<(), i32> {
+    if scanner.reader.unread < 1u64 {
+        cache(scanner, 1u64)?;
+    }
+    while is_blank(scanner) {
+        skip(scanner);
+        if scanner.reader.unread < 1u64 {
+            cache(scanner, 1u64)?;
+        }
+    }
+    if check(scanner, 35u8) {
+        while !is_breakz(scanner) {
+            skip(scanner);
+            if scanner.reader.unread < 1u64 {
+                cache(scanner, 1u64)?;
+            }
+        }
+    }
+    if !is_breakz(scanner) {
+        return fail_unit(set_scanner_error(
+            scanner,
+            "while scanning a directive",
+            start_mark,
+            "did not find expected comment or line break",
+        ));
+    }
+    if is_break(scanner) {
+        if scanner.reader.unread < 2u64 {
+            cache(scanner, 2u64)?;
+        }
+        skip_line(scanner);
+    }
+    Result<(), i32>.Ok(val=())
+}
+
+fn scan_directive_name(scanner: Scanner&, start_mark: Mark) -> Result<Vec<u8>, i32> {
+    let name: Vec<u8> = Vec<u8>.with_capacity(INITIAL_STRING_SIZE);
+    let moved = false;
+    defer { if !moved { name.drop(); } };
+    if scanner.reader.unread < 1u64 {
+        cache(scanner, 1u64)?;
+    }
+    while is_alpha(scanner) {
+        read_current(scanner, &name);
+        if scanner.reader.unread < 1u64 {
+            cache(scanner, 1u64)?;
+        }
+    };
+    if name.len() == 0u64 {
+        return fail_bytes(set_scanner_error(
+            scanner,
+            "while scanning a directive",
+            start_mark,
+            "could not find expected directive name",
+        ));
+    }
+    if !is_blankz(scanner) {
+        return fail_bytes(set_scanner_error(
+            scanner,
+            "while scanning a directive",
+            start_mark,
+            "found unexpected non-alphabetical character",
+        ));
+    }
+    let result: Vec<u8> = name;
+    moved = true;
+    Result<Vec<u8>, i32>.Ok(val=result)
+}
+
+fn scan_version_directive_value(scanner: Scanner&, start_mark: Mark, major: i32&, minor: i32&) -> Result<(), i32> {
+    if scanner.reader.unread < 1u64 {
+        cache(scanner, 1u64)?;
+    }
+    while is_blank(scanner) {
+        skip(scanner);
+        if scanner.reader.unread < 1u64 {
+            cache(scanner, 1u64)?;
+        }
+    };
+    *major = scan_version_directive_number(scanner, start_mark)?;
+    if !check(scanner, 46u8) {
+        return fail_unit(set_scanner_error(
+            scanner,
+            "while scanning a %YAML directive",
+            start_mark,
+            "did not find expected digit or '.' character",
+        ));
+    }
+    skip(scanner);
+    *minor = scan_version_directive_number(scanner, start_mark)?;
+    Result<(), i32>.Ok(val=())
+}
+
+fn scan_version_directive_number(scanner: Scanner&, start_mark: Mark) -> Result<i32, i32> {
+    let value: i32 = 0i32;
+    let length: u64 = 0u64;
+    if scanner.reader.unread < 1u64 {
+        cache(scanner, 1u64)?;
+    }
+    while is_digit(scanner) {
+        length += 1u64;
+        if length > MAX_NUMBER_LENGTH {
+            return fail_i32(set_scanner_error(
+                scanner,
+                "while scanning a %YAML directive",
+                start_mark,
+                "found extremely long version number",
+            ));
+        }
+        value = value * 10i32 + i32(as_digit(scanner));
+        skip(scanner);
+        if scanner.reader.unread < 1u64 {
+            cache(scanner, 1u64)?;
+        }
+    };
+    if length == 0u64 {
+        return fail_i32(set_scanner_error(
+            scanner,
+            "while scanning a %YAML directive",
+            start_mark,
+            "did not find expected version number",
+        ));
+    }
+    Result<i32, i32>.Ok(val=value)
+}
+
+fn scan_tag_directive_value(scanner: Scanner&, start_mark: Mark, handle: Vec<u8>&, prefix: Vec<u8>&) -> Result<(), i32> {
+    if scanner.reader.unread < 1u64 {
+        cache(scanner, 1u64)?;
+    }
+    while is_blank(scanner) {
+        skip(scanner);
+        if scanner.reader.unread < 1u64 {
+            cache(scanner, 1u64)?;
+        }
+    };
+    let handle_value = scan_tag_handle(scanner, true, start_mark)?;
+    let handle_moved = false;
+    defer { if !handle_moved { handle_value.drop(); } };
+    if scanner.reader.unread < 1u64 {
+        cache(scanner, 1u64)?;
+    }
+    if !is_blank(scanner) {
+        return fail_unit(set_scanner_error(
+            scanner,
+            "while scanning a %TAG directive",
+            start_mark,
+            "did not find expected whitespace",
+        ));
+    }
+    while is_blank(scanner) {
+        skip(scanner);
+        if scanner.reader.unread < 1u64 {
+            cache(scanner, 1u64)?;
+        }
+    };
+    let empty: u8[] = "".as_slice();
+    let prefix_value = scan_tag_uri(scanner, true, true, empty, start_mark)?;
+    let prefix_moved = false;
+    defer { if !prefix_moved { prefix_value.drop(); } };
+    if scanner.reader.unread < 1u64 {
+        cache(scanner, 1u64)?;
+    }
+    if !is_blankz(scanner) {
+        return fail_unit(set_scanner_error(
+            scanner,
+            "while scanning a %TAG directive",
+            start_mark,
+            "did not find expected whitespace or line break",
+        ));
+    };
+    *handle = handle_value;
+    *prefix = prefix_value;
+    handle_moved = true;
+    prefix_moved = true;
+    Result<(), i32>.Ok(val=())
+}
+
+// ---------------------------------------------------------------------------
+// Anchor, alias and tag scanning.
+// ---------------------------------------------------------------------------
+
+fn anchor_terminator(scanner: Scanner&) -> bool {
+    is_blankz(scanner) || check(scanner, 63u8) || check(scanner, 58u8)
+        || check(scanner, 44u8) || check(scanner, 93u8) || check(scanner, 125u8)
+        || check(scanner, 37u8) || check(scanner, 64u8) || check(scanner, 96u8)
+}
+
+fn scan_anchor(scanner: Scanner&, kind: TokenKind, token: Token&) -> Result<(), i32> {
+    let start_mark: Mark = scanner.reader.mark;
+    skip(scanner);
+    let value: Vec<u8> = Vec<u8>.with_capacity(INITIAL_STRING_SIZE);
+    let moved = false;
+    defer { if !moved { value.drop(); } };
+    if scanner.reader.unread < 1u64 {
+        cache(scanner, 1u64)?;
+    }
+    while is_alpha(scanner) {
+        read_current(scanner, &value);
+        if scanner.reader.unread < 1u64 {
+            cache(scanner, 1u64)?;
+        }
+    };
+    let end_mark: Mark = scanner.reader.mark;
+    if value.len() == 0u64 || !anchor_terminator(scanner) {
+        let context: str = if kind == TokenKind.Anchor { "while scanning an anchor" } else { "while scanning an alias" };
+        return fail_unit(set_scanner_error(
+            scanner,
+            context,
+            start_mark,
+            "did not find expected alphabetic or numeric character",
+        ));
+    }
+    moved = true;
+    let data: TokenData = if kind == TokenKind.Anchor {
+        TokenData.Anchor(value=value)
+    } else {
+        TokenData.Alias(value=value)
+    };
+    ok_token(token, Token(kind=kind, start=start_mark, end=end_mark, data=data))
+}
+
+fn scan_tag(scanner: Scanner&, token: Token&) -> Result<(), i32> {
+    let start_mark: Mark = scanner.reader.mark;
+    let handle: Vec<u8> = Vec<u8>.new();
+    let suffix: Vec<u8> = Vec<u8>.new();
+    let handle_moved = false;
+    let suffix_moved = false;
+    defer { if !handle_moved { handle.drop(); } };
+    defer { if !suffix_moved { suffix.drop(); } };
+    if scanner.reader.unread < 2u64 {
+        cache(scanner, 2u64)?;
+    }
+    if check_at(scanner, 60u8, 1u64) {
+        // Verbatim tag: !<...>
+        skip(scanner);
+        skip(scanner);
+        let empty: u8[] = "".as_slice();
+        let verbatim = scan_tag_uri(scanner, true, false, empty, start_mark)?;
+        let verbatim_moved = false;
+        defer { if !verbatim_moved { verbatim.drop(); } };
+        if !check(scanner, 62u8) {
+            return fail_unit(set_scanner_error(
+                scanner,
+                "while scanning a tag",
+                start_mark,
+                "did not find the expected '>'",
+            ));
+        }
+        skip(scanner);
+        suffix = verbatim;
+        verbatim_moved = true;
+    } else {
+        // The tag has either the '!suffix' or the '!handle!suffix' form.
+        let scanned_handle = scan_tag_handle(scanner, false, start_mark)?;
+        let scanned_moved = false;
+        defer { if !scanned_moved { scanned_handle.drop(); } };
+        if scanned_handle.len() > 1u64 && scanned_handle[0u64] == 33u8
+                && scanned_handle[scanned_handle.len() - 1u64] == 33u8 {
+            let empty: u8[] = "".as_slice();
+            let scanned_suffix = scan_tag_uri(scanner, false, false, empty, start_mark)?;
+            handle = scanned_handle;
+            suffix = scanned_suffix;
+            scanned_moved = true;
+            suffix_moved = true;
+        } else {
+            let scanned_suffix = scan_tag_uri(scanner, false, false, scanned_handle.as_slice(), start_mark)?;
+            let scanned_suffix_moved = false;
+            defer { if !scanned_suffix_moved { scanned_suffix.drop(); } };
+            let bang: Vec<u8> = Vec<u8>.with_capacity(2u64);
+            bang.push(33u8);
+            if scanned_suffix.len() == 0u64 {
+                handle = scanned_suffix;
+                suffix = bang;
+            } else {
+                handle = bang;
+                suffix = scanned_suffix;
+            }
+            handle_moved = true;
+            suffix_moved = true;
+            scanned_suffix_moved = true;
+            scanned_moved = true;
+            scanned_handle.drop();
+        }
+    }
+    if scanner.reader.unread < 1u64 {
+        cache(scanner, 1u64)?;
+    }
+    if !is_blankz(scanner) {
+        if scanner.flow_level == 0i32 || !check(scanner, 44u8) {
+            return fail_unit(set_scanner_error(
+                scanner,
+                "while scanning a tag",
+                start_mark,
+                "did not find expected whitespace or line break",
+            ));
+        }
+    }
+    let end_mark: Mark = scanner.reader.mark;
+    handle_moved = true;
+    suffix_moved = true;
+    ok_token(token, Token(
+        kind=TokenKind.Tag,
+        start=start_mark,
+        end=end_mark,
+        data=TokenData.Tag(handle=handle, suffix=suffix),
+    ))
+}
+
+fn scan_tag_handle(scanner: Scanner&, directive: bool, start_mark: Mark) -> Result<Vec<u8>, i32> {
+    let handle: Vec<u8> = Vec<u8>.with_capacity(INITIAL_STRING_SIZE);
+    let moved = false;
+    defer { if !moved { handle.drop(); } };
+    if scanner.reader.unread < 1u64 {
+        cache(scanner, 1u64)?;
+    }
+    if !check(scanner, 33u8) {
+        let context: str = if directive { "while scanning a tag directive" } else { "while scanning a tag" };
+        return fail_bytes(set_scanner_error(
+            scanner,
+            context,
+            start_mark,
+            "did not find expected '!'",
+        ));
+    }
+    read_current(scanner, &handle);
+    if scanner.reader.unread < 1u64 {
+        cache(scanner, 1u64)?;
+    }
+    while is_alpha(scanner) {
+        read_current(scanner, &handle);
+        if scanner.reader.unread < 1u64 {
+            cache(scanner, 1u64)?;
+        }
+    };
+    if check(scanner, 33u8) {
+        read_current(scanner, &handle);
+    } elif directive && !(handle.len() == 1u64 && handle[0u64] == 33u8) {
+        return fail_bytes(set_scanner_error(
+            scanner,
+            "while parsing a tag directive",
+            start_mark,
+            "did not find expected '!'",
+        ));
+    }
+    let result: Vec<u8> = handle;
+    moved = true;
+    Result<Vec<u8>, i32>.Ok(val=result)
+}
+
+fn tag_uri_char(scanner: Scanner&, uri_char: bool) -> bool {
+    if is_alpha(scanner) || check(scanner, 59u8) || check(scanner, 47u8)
+            || check(scanner, 63u8) || check(scanner, 58u8) || check(scanner, 64u8)
+            || check(scanner, 38u8) || check(scanner, 61u8) || check(scanner, 43u8)
+            || check(scanner, 36u8) || check(scanner, 46u8) || check(scanner, 37u8)
+            || check(scanner, 33u8) || check(scanner, 126u8) || check(scanner, 42u8)
+            || check(scanner, 39u8) || check(scanner, 40u8) || check(scanner, 41u8) {
+        return true;
+    }
+    uri_char && (check(scanner, 44u8) || check(scanner, 91u8) || check(scanner, 93u8))
+}
+
+fn scan_tag_uri(scanner: Scanner&, uri_char: bool, directive: bool, head: u8[], start_mark: Mark) -> Result<Vec<u8>, i32> {
+    let uri: Vec<u8> = Vec<u8>.with_capacity(INITIAL_STRING_SIZE);
+    let moved = false;
+    defer { if !moved { uri.drop(); } };
+    let length: u64 = head.len();
+    if head.len() > 1u64 {
+        let index = 1u64;
+        while index < head.len() {
+            uri.push(head[index]);
+            index += 1u64;
+        };
+    }
+    if scanner.reader.unread < 1u64 {
+        cache(scanner, 1u64)?;
+    }
+    while tag_uri_char(scanner, uri_char) {
+        if check(scanner, 37u8) {
+            scan_uri_escapes(scanner, directive, start_mark, &uri)?;
+        } else {
+            read_current(scanner, &uri);
+        }
+        length += 1u64;
+        if scanner.reader.unread < 1u64 {
+            cache(scanner, 1u64)?;
+        }
+    };
+    if length == 0u64 {
+        let context: str = if directive { "while parsing a %TAG directive" } else { "while parsing a tag" };
+        return fail_bytes(set_scanner_error(
+            scanner,
+            context,
+            start_mark,
+            "did not find expected tag URI",
+        ));
+    }
+    let result: Vec<u8> = uri;
+    moved = true;
+    Result<Vec<u8>, i32>.Ok(val=result)
+}
+
+fn scan_uri_escapes(scanner: Scanner&, directive: bool, start_mark: Mark, uri: Vec<u8>&) -> Result<(), i32> {
+    let width: i32 = 0i32;
+    loop {
+        if scanner.reader.unread < 3u64 {
+            cache(scanner, 3u64)?;
+        }
+        if !(check(scanner, 37u8) && is_hex_at(scanner, 1u64) && is_hex_at(scanner, 2u64)) {
+            let context: str = if directive { "while parsing a %TAG directive" } else { "while parsing a tag" };
+            return fail_unit(set_scanner_error(
+                scanner,
+                context,
+                start_mark,
+                "did not find URI escaped octet",
+            ));
+        }
+        let octet: u8 = (as_hex_at(scanner, 1u64) << 4u8) + as_hex_at(scanner, 2u64);
+        if width == 0i32 {
+            if (octet & 0x80u8) == 0u8 {
+                width = 1i32;
+            } elif (octet & 0xE0u8) == 0xC0u8 {
+                width = 2i32;
+            } elif (octet & 0xF0u8) == 0xE0u8 {
+                width = 3i32;
+            } elif (octet & 0xF8u8) == 0xF0u8 {
+                width = 4i32;
+            } else {
+                let context: str = if directive { "while parsing a %TAG directive" } else { "while parsing a tag" };
+                return fail_unit(set_scanner_error(
+                    scanner,
+                    context,
+                    start_mark,
+                    "found an incorrect leading UTF-8 octet",
+                ));
+            }
+        } elif (octet & 0xC0u8) != 0x80u8 {
+            let context: str = if directive { "while parsing a %TAG directive" } else { "while parsing a tag" };
+            return fail_unit(set_scanner_error(
+                scanner,
+                context,
+                start_mark,
+                "found an incorrect trailing UTF-8 octet",
+            ));
+        }
+        uri.push(octet);
+        skip(scanner);
+        skip(scanner);
+        skip(scanner);
+        width -= 1i32;
+        if width == 0i32 {
+            break;
+        }
+    };
+    Result<(), i32>.Ok(val=())
+}
+
+// ---------------------------------------------------------------------------
+// Block scalar scanning.
+// ---------------------------------------------------------------------------
+
+fn scan_block_scalar_breaks(scanner: Scanner&, indent: i32&, breaks: Vec<u8>&, start_mark: Mark, end_mark: Mark&) -> Result<(), i32> {
+    let max_indent: i32 = 0i32;
+    *end_mark = scanner.reader.mark;
+    loop {
+        if scanner.reader.unread < 1u64 {
+            cache(scanner, 1u64)?;
+        }
+        while (*indent == 0i32 || i32(scanner.reader.mark.column) < *indent) && is_space(scanner) {
+            skip(scanner);
+            if scanner.reader.unread < 1u64 {
+                cache(scanner, 1u64)?;
+            }
+        };
+        if i32(scanner.reader.mark.column) > max_indent {
+            max_indent = i32(scanner.reader.mark.column);
+        }
+        if (*indent == 0i32 || i32(scanner.reader.mark.column) < *indent) && is_tab(scanner) {
+            return fail_unit(set_scanner_error(
+                scanner,
+                "while scanning a block scalar",
+                start_mark,
+                "found a tab character where an indentation space is expected",
+            ));
+        }
+        if !is_break(scanner) {
+            break;
+        }
+        if scanner.reader.unread < 2u64 {
+            cache(scanner, 2u64)?;
+        }
+        if !read_line(scanner, breaks) {
+            return fail_unit(set_scanner_error(
+                scanner,
+                "while scanning a block scalar",
+                start_mark,
+                "did not find expected line break",
+            ));
+        };
+        *end_mark = scanner.reader.mark;
+    };
+    if *indent == 0i32 {
+        *indent = max_indent;
+        if *indent < scanner.indent + 1i32 {
+            *indent = scanner.indent + 1i32;
+        }
+        if *indent < 1i32 {
+            *indent = 1i32;
+        }
+    }
+    Result<(), i32>.Ok(val=())
+}
+
+fn scan_block_scalar(scanner: Scanner&, literal: bool, token: Token&) -> Result<(), i32> {
+    let string: Vec<u8> = Vec<u8>.with_capacity(INITIAL_STRING_SIZE);
+    let leading_break: Vec<u8> = Vec<u8>.with_capacity(INITIAL_STRING_SIZE);
+    let trailing_breaks: Vec<u8> = Vec<u8>.with_capacity(INITIAL_STRING_SIZE);
+    let moved = false;
+    defer { if !moved { string.drop(); } };
+    defer { leading_break.drop(); };
+    defer { trailing_breaks.drop(); };
+    let start_mark: Mark = scanner.reader.mark;
+    skip(scanner);
+    if scanner.reader.unread < 1u64 {
+        cache(scanner, 1u64)?;
+    }
+    let mut_chomping: i32 = 0i32;
+    let mut_increment: i32 = 0i32;
+    let mut_indent: i32 = 0i32;
+    let mut_leading_blank: bool = false;
+    let mut_trailing_blank: bool = false;
+    if check(scanner, 43u8) || check(scanner, 45u8) {
+        mut_chomping = if check(scanner, 43u8) { 1i32 } else { -1i32 };
+        skip(scanner);
+        if scanner.reader.unread < 1u64 {
+            cache(scanner, 1u64)?;
+        }
+        if is_digit(scanner) {
+            if check(scanner, 48u8) {
+                return fail_unit(set_scanner_error(
+                    scanner,
+                    "while scanning a block scalar",
+                    start_mark,
+                    "found an indentation indicator equal to 0",
+                ));
+            }
+            mut_increment = i32(as_digit(scanner));
+            skip(scanner);
+        }
+    } elif is_digit(scanner) {
+        if check(scanner, 48u8) {
+            return fail_unit(set_scanner_error(
+                scanner,
+                "while scanning a block scalar",
+                start_mark,
+                "found an indentation indicator equal to 0",
+            ));
+        }
+        mut_increment = i32(as_digit(scanner));
+        skip(scanner);
+        if scanner.reader.unread < 1u64 {
+            cache(scanner, 1u64)?;
+        }
+        if check(scanner, 43u8) || check(scanner, 45u8) {
+            mut_chomping = if check(scanner, 43u8) { 1i32 } else { -1i32 };
+            skip(scanner);
+        }
+    }
+    if scanner.reader.unread < 1u64 {
+        cache(scanner, 1u64)?;
+    }
+    while is_blank(scanner) {
+        skip(scanner);
+        if scanner.reader.unread < 1u64 {
+            cache(scanner, 1u64)?;
+        }
+    };
+    if check(scanner, 35u8) {
+        while !is_breakz(scanner) {
+            skip(scanner);
+            if scanner.reader.unread < 1u64 {
+                cache(scanner, 1u64)?;
+            }
+        }
+    }
+    if !is_breakz(scanner) {
+        return fail_unit(set_scanner_error(
+            scanner,
+            "while scanning a block scalar",
+            start_mark,
+            "did not find expected comment or line break",
+        ));
+    }
+    if is_break(scanner) {
+        if scanner.reader.unread < 2u64 {
+            cache(scanner, 2u64)?;
+        }
+        skip_line(scanner);
+    }
+    let end_mark: Mark = scanner.reader.mark;
+    if mut_increment != 0i32 {
+        if scanner.indent >= 0i32 {
+            mut_indent = scanner.indent + mut_increment;
+        } else {
+            mut_indent = mut_increment;
+        }
+    }
+    scan_block_scalar_breaks(scanner, &mut_indent, &trailing_breaks, start_mark, &end_mark)?;
+    if scanner.reader.unread < 1u64 {
+        cache(scanner, 1u64)?;
+    }
+    while i32(scanner.reader.mark.column) == mut_indent && !is_z(scanner) {
+        mut_trailing_blank = is_blank(scanner);
+        let leading: bool = leading_break.len() > 0u64 && leading_break[0u64] == 10u8;
+        if !literal && leading && !mut_leading_blank && !mut_trailing_blank {
+            let trailing_empty: bool = trailing_breaks.len() == 0u64;
+            if trailing_empty {
+                string.push(32u8);
+            }
+            clear(&leading_break);
+        } else {
+            join(&string, &leading_break);
+            clear(&leading_break);
+        }
+        join(&string, &trailing_breaks);
+        clear(&trailing_breaks);
+        mut_leading_blank = is_blank(scanner);
+        while !is_breakz(scanner) {
+            read_current(scanner, &string);
+            if scanner.reader.unread < 1u64 {
+                cache(scanner, 1u64)?;
+            }
+        };
+        if scanner.reader.unread < 2u64 {
+            cache(scanner, 2u64)?;
+        }
+        if !read_line(scanner, &leading_break) {
+            return fail_unit(set_scanner_error(
+                scanner,
+                "while scanning a block scalar",
+                start_mark,
+                "did not find expected line break",
+            ));
+        }
+        scan_block_scalar_breaks(scanner, &mut_indent, &trailing_breaks, start_mark, &end_mark)?;
+    };
+    if mut_chomping != -1i32 {
+        join(&string, &leading_break);
+    }
+    if mut_chomping == 1i32 {
+        join(&string, &trailing_breaks);
+    }
+    moved = true;
+    let style: ScalarStyle = if literal { ScalarStyle.Literal } else { ScalarStyle.Folded };
+    ok_token(token, Token(
+        kind=TokenKind.Scalar,
+        start=start_mark,
+        end=end_mark,
+        data=TokenData.Scalar(value=string, style=style),
+    ))
+}
+
+// ---------------------------------------------------------------------------
+// Quoted and plain scalar scanning.
+// ---------------------------------------------------------------------------
+
+fn append_code_point(out: Vec<u8>&, value: u32) {
+    if value <= 0x7Fu32 {
+        out.push(u8(value));
+    } elif value <= 0x7FFu32 {
+        out.push(u8(0xC0u32 | (value >> 6u32)));
+        out.push(u8(0x80u32 | (value & 0x3Fu32)));
+    } elif value <= 0xFFFFu32 {
+        out.push(u8(0xE0u32 | (value >> 12u32)));
+        out.push(u8(0x80u32 | ((value >> 6u32) & 0x3Fu32)));
+        out.push(u8(0x80u32 | (value & 0x3Fu32)));
+    } else {
+        out.push(u8(0xF0u32 | (value >> 18u32)));
+        out.push(u8(0x80u32 | ((value >> 12u32) & 0x3Fu32)));
+        out.push(u8(0x80u32 | ((value >> 6u32) & 0x3Fu32)));
+        out.push(u8(0x80u32 | (value & 0x3Fu32)));
+    }
+}
+
+fn scan_flow_scalar(scanner: Scanner&, single: bool, token: Token&) -> Result<(), i32> {
+    let string: Vec<u8> = Vec<u8>.with_capacity(INITIAL_STRING_SIZE);
+    let leading_break: Vec<u8> = Vec<u8>.with_capacity(INITIAL_STRING_SIZE);
+    let trailing_breaks: Vec<u8> = Vec<u8>.with_capacity(INITIAL_STRING_SIZE);
+    let whitespaces: Vec<u8> = Vec<u8>.with_capacity(INITIAL_STRING_SIZE);
+    let moved = false;
+    defer { if !moved { string.drop(); } };
+    defer { leading_break.drop(); };
+    defer { trailing_breaks.drop(); };
+    defer { whitespaces.drop(); };
+    let start_mark: Mark = scanner.reader.mark;
+    skip(scanner);
+    let leading_blanks: bool = false;
+    loop {
+        if scanner.reader.unread < 4u64 {
+            cache(scanner, 4u64)?;
+        }
+        let document_indicator: bool = scanner.reader.mark.column == 0u64
+            && (((check_at(scanner, 45u8, 0u64) && check_at(scanner, 45u8, 1u64)
+                  && check_at(scanner, 45u8, 2u64))
+                 || (check_at(scanner, 46u8, 0u64) && check_at(scanner, 46u8, 1u64)
+                     && check_at(scanner, 46u8, 2u64)))
+                && is_blankz_at(scanner, 3u64));
+        if document_indicator {
+            return fail_unit(set_scanner_error(
+                scanner,
+                "while scanning a quoted scalar",
+                start_mark,
+                "found unexpected document indicator",
+            ));
+        }
+        if is_z(scanner) {
+            return fail_unit(set_scanner_error(
+                scanner,
+                "while scanning a quoted scalar",
+                start_mark,
+                "found unexpected end of stream",
+            ));
+        }
+        if scanner.reader.unread < 2u64 {
+            cache(scanner, 2u64)?;
+        }
+        leading_blanks = false;
+        while !is_blankz(scanner) {
+            let quote: u8 = if single { 39u8 } else { 34u8 };
+            if single && check(scanner, 39u8) && check_at(scanner, 39u8, 1u64) {
+                string.push(39u8);
+                skip(scanner);
+                skip(scanner);
+            } elif check(scanner, quote) {
+                break;
+            } elif !single && check(scanner, 92u8) && is_break_at(scanner, 1u64) {
+                if scanner.reader.unread < 3u64 {
+                    cache(scanner, 3u64)?;
+                }
+                skip(scanner);
+                skip_line(scanner);
+                leading_blanks = true;
+                break;
+            } elif !single && check(scanner, 92u8) {
+                let escaped: u8 = byte_at(scanner, 1u64);
+                let code_length: u64;
+                if escaped == 48u8 {
+                    string.push(0u8); code_length = 0u64;
+                } elif escaped == 97u8 {
+                    string.push(7u8); code_length = 0u64;
+                } elif escaped == 98u8 {
+                    string.push(8u8); code_length = 0u64;
+                } elif escaped == 116u8 || escaped == 9u8 {
+                    string.push(9u8); code_length = 0u64;
+                } elif escaped == 110u8 {
+                    string.push(10u8); code_length = 0u64;
+                } elif escaped == 118u8 {
+                    string.push(11u8); code_length = 0u64;
+                } elif escaped == 102u8 {
+                    string.push(12u8); code_length = 0u64;
+                } elif escaped == 114u8 {
+                    string.push(13u8); code_length = 0u64;
+                } elif escaped == 101u8 {
+                    string.push(27u8); code_length = 0u64;
+                } elif escaped == 32u8 {
+                    string.push(32u8); code_length = 0u64;
+                } elif escaped == 34u8 {
+                    string.push(34u8); code_length = 0u64;
+                } elif escaped == 47u8 {
+                    string.push(47u8); code_length = 0u64;
+                } elif escaped == 92u8 {
+                    string.push(92u8); code_length = 0u64;
+                } elif escaped == 78u8 {
+                    string.push(0xC2u8); string.push(0x85u8); code_length = 0u64;
+                } elif escaped == 95u8 {
+                    string.push(0xC2u8); string.push(0xA0u8); code_length = 0u64;
+                } elif escaped == 76u8 {
+                    string.push(0xE2u8); string.push(0x80u8); string.push(0xA8u8); code_length = 0u64;
+                } elif escaped == 80u8 {
+                    string.push(0xE2u8); string.push(0x80u8); string.push(0xA9u8); code_length = 0u64;
+                } elif escaped == 120u8 {
+                    code_length = 2u64;
+                } elif escaped == 117u8 {
+                    code_length = 4u64;
+                } elif escaped == 85u8 {
+                    code_length = 8u64;
+                } else {
+                    return fail_unit(set_scanner_error(
+                        scanner,
+                        "while parsing a quoted scalar",
+                        start_mark,
+                        "found unknown escape character",
+                    ));
+                }
+                skip(scanner);
+                skip(scanner);
+                if code_length > 0u64 {
+                    cache(scanner, code_length)?;
+                    let value: u32 = 0u32;
+                    let index = 0u64;
+                    while index < code_length {
+                        if !is_hex_at(scanner, index) {
+                            return fail_unit(set_scanner_error(
+                                scanner,
+                                "while parsing a quoted scalar",
+                                start_mark,
+                                "did not find expected hexdecimal number",
+                            ));
+                        }
+                        value = (value << 4u32) + u32(as_hex_at(scanner, index));
+                        index += 1u64;
+                    };
+                    if (value >= 0xD800u32 && value <= 0xDFFFu32) || value > 0x10FFFFu32 {
+                        return fail_unit(set_scanner_error(
+                            scanner,
+                            "while parsing a quoted scalar",
+                            start_mark,
+                            "found invalid Unicode character escape code",
+                        ));
+                    }
+                    append_code_point(&string, value);
+                    index = 0u64;
+                    while index < code_length {
+                        skip(scanner);
+                        index += 1u64;
+                    };
+                }
+            } else {
+                read_current(scanner, &string);
+            }
+            if scanner.reader.unread < 2u64 {
+                cache(scanner, 2u64)?;
+            }
+        };
+        if scanner.reader.unread < 1u64 {
+            cache(scanner, 1u64)?;
+        }
+        let quote: u8 = if single { 39u8 } else { 34u8 };
+        if check(scanner, quote) {
+            break;
+        }
+        if scanner.reader.unread < 1u64 {
+            cache(scanner, 1u64)?;
+        }
+        while is_blank(scanner) || is_break(scanner) {
+            if is_blank(scanner) {
+                if !leading_blanks {
+                    read_current(scanner, &whitespaces);
+                } else {
+                    skip(scanner);
+                }
+            } else {
+                if scanner.reader.unread < 2u64 {
+                    cache(scanner, 2u64)?;
+                }
+                if !leading_blanks {
+                    clear(&whitespaces);
+                    if !read_line(scanner, &leading_break) {
+                        return fail_unit(set_scanner_error(
+                            scanner,
+                            "while scanning a quoted scalar",
+                            start_mark,
+                            "did not find expected line break",
+                        ));
+                    }
+                    leading_blanks = true;
+                } else {
+                    if !read_line(scanner, &trailing_breaks) {
+                        return fail_unit(set_scanner_error(
+                            scanner,
+                            "while scanning a quoted scalar",
+                            start_mark,
+                            "did not find expected line break",
+                        ));
+                    }
+                }
+            }
+            if scanner.reader.unread < 1u64 {
+                cache(scanner, 1u64)?;
+            }
+        };
+        if leading_blanks {
+            let leading_newline: bool = leading_break.len() > 0u64 && leading_break[0u64] == 10u8;
+            if leading_newline {
+                let trailing_empty: bool = trailing_breaks.len() == 0u64;
+                if trailing_empty {
+                    string.push(32u8);
+                } else {
+                    join(&string, &trailing_breaks);
+                    clear(&trailing_breaks);
+                }
+                clear(&leading_break);
+            } else {
+                join(&string, &leading_break);
+                join(&string, &trailing_breaks);
+                clear(&leading_break);
+                clear(&trailing_breaks);
+            }
+        } else {
+            join(&string, &whitespaces);
+            clear(&whitespaces);
+        }
+    };
+    skip(scanner);
+    let end_mark: Mark = scanner.reader.mark;
+    moved = true;
+    let style: ScalarStyle = if single { ScalarStyle.SingleQuoted } else { ScalarStyle.DoubleQuoted };
+    ok_token(token, Token(
+        kind=TokenKind.Scalar,
+        start=start_mark,
+        end=end_mark,
+        data=TokenData.Scalar(value=string, style=style),
+    ))
+}
+
+fn scan_plain_scalar(scanner: Scanner&, token: Token&) -> Result<(), i32> {
+    let string: Vec<u8> = Vec<u8>.with_capacity(INITIAL_STRING_SIZE);
+    let leading_break: Vec<u8> = Vec<u8>.with_capacity(INITIAL_STRING_SIZE);
+    let trailing_breaks: Vec<u8> = Vec<u8>.with_capacity(INITIAL_STRING_SIZE);
+    let whitespaces: Vec<u8> = Vec<u8>.with_capacity(INITIAL_STRING_SIZE);
+    let moved = false;
+    defer { if !moved { string.drop(); } };
+    defer { leading_break.drop(); };
+    defer { trailing_breaks.drop(); };
+    defer { whitespaces.drop(); };
+    let leading_blanks: bool = false;
+    let indent: i32 = scanner.indent + 1i32;
+    let start_mark: Mark = scanner.reader.mark;
+    let end_mark: Mark = scanner.reader.mark;
+    loop {
+        if scanner.reader.unread < 4u64 {
+            cache(scanner, 4u64)?;
+        }
+        let document_indicator: bool = scanner.reader.mark.column == 0u64
+            && (((check_at(scanner, 45u8, 0u64) && check_at(scanner, 45u8, 1u64)
+                  && check_at(scanner, 45u8, 2u64))
+                 || (check_at(scanner, 46u8, 0u64) && check_at(scanner, 46u8, 1u64)
+                     && check_at(scanner, 46u8, 2u64)))
+                && is_blankz_at(scanner, 3u64));
+        if document_indicator {
+            break;
+        }
+        if check(scanner, 35u8) {
+            break;
+        }
+        while !is_blankz(scanner) {
+            if scanner.flow_level != 0i32 && check(scanner, 58u8)
+                    && (check_at(scanner, 44u8, 1u64) || check_at(scanner, 63u8, 1u64)
+                        || check_at(scanner, 91u8, 1u64) || check_at(scanner, 93u8, 1u64)
+                        || check_at(scanner, 123u8, 1u64) || check_at(scanner, 125u8, 1u64)) {
+                return fail_unit(set_scanner_error(
+                    scanner,
+                    "while scanning a plain scalar",
+                    start_mark,
+                    "found unexpected ':'",
+                ));
+            }
+            if (check(scanner, 58u8) && is_blankz_at(scanner, 1u64))
+                    || (scanner.flow_level != 0i32
+                        && (check(scanner, 44u8) || check(scanner, 91u8)
+                            || check(scanner, 93u8) || check(scanner, 123u8)
+                            || check(scanner, 125u8))) {
+                break;
+            }
+            if leading_blanks || whitespaces.len() > 0u64 {
+                if leading_blanks {
+                    let leading_newline: bool = leading_break.len() > 0u64 && leading_break[0u64] == 10u8;
+                    if leading_newline {
+                        let trailing_empty: bool = trailing_breaks.len() == 0u64;
+                        if trailing_empty {
+                            string.push(32u8);
+                        } else {
+                            join(&string, &trailing_breaks);
+                            clear(&trailing_breaks);
+                        }
+                        clear(&leading_break);
+                    } else {
+                        join(&string, &leading_break);
+                        join(&string, &trailing_breaks);
+                        clear(&leading_break);
+                        clear(&trailing_breaks);
+                    }
+                    leading_blanks = false;
+                } else {
+                    join(&string, &whitespaces);
+                    clear(&whitespaces);
+                }
+            }
+            let run: u64 = plain_ascii_run(scanner);
+            if run > 0u64 {
+                append_plain_run(scanner, &string, run);
+                end_mark = scanner.reader.mark;
+                if scanner.reader.unread < 2u64 {
+                    cache(scanner, 2u64)?;
+                }
+                continue;
+            }
+            read_current(scanner, &string);
+            end_mark = scanner.reader.mark;
+            if scanner.reader.unread < 2u64 {
+                cache(scanner, 2u64)?;
+            }
+        };
+        if !(is_blank(scanner) || is_break(scanner)) {
+            break;
+        }
+        if scanner.reader.unread < 1u64 {
+            cache(scanner, 1u64)?;
+        }
+        while is_blank(scanner) || is_break(scanner) {
+            if is_blank(scanner) {
+                if leading_blanks && i32(scanner.reader.mark.column) < indent && is_tab(scanner) {
+                    return fail_unit(set_scanner_error(
+                        scanner,
+                        "while scanning a plain scalar",
+                        start_mark,
+                        "found a tab character that violates indentation",
+                    ));
+                }
+                if !leading_blanks {
+                    read_current(scanner, &whitespaces);
+                } else {
+                    skip(scanner);
+                }
+            } else {
+                if scanner.reader.unread < 2u64 {
+                    cache(scanner, 2u64)?;
+                }
+                if !leading_blanks {
+                    clear(&whitespaces);
+                    if !read_line(scanner, &leading_break) {
+                        return fail_unit(set_scanner_error(
+                            scanner,
+                            "while scanning a plain scalar",
+                            start_mark,
+                            "did not find expected line break",
+                        ));
+                    }
+                    leading_blanks = true;
+                } else {
+                    if !read_line(scanner, &trailing_breaks) {
+                        return fail_unit(set_scanner_error(
+                            scanner,
+                            "while scanning a plain scalar",
+                            start_mark,
+                            "did not find expected line break",
+                        ));
+                    }
+                }
+            }
+            if scanner.reader.unread < 1u64 {
+                cache(scanner, 1u64)?;
+            }
+        };
+        if scanner.flow_level == 0i32 && i32(scanner.reader.mark.column) < indent {
+            break;
+        }
+    };
+    if leading_blanks {
+        scanner.simple_key_allowed = true;
+    }
+    moved = true;
+    ok_token(token, Token(
+        kind=TokenKind.Scalar,
+        start=start_mark,
+        end=end_mark,
+        data=TokenData.Scalar(value=string, style=ScalarStyle.Plain),
+    ))
+}
+
+// ---------------------------------------------------------------------------
+// Public interface.
+// ---------------------------------------------------------------------------
+
+pub fn scanner_new(input: Input, encoding: Encoding, limits: Limits&) -> Scanner {
+    Scanner(
+        reader=reader_new(input, encoding),
+        limits=limits,
+        stream_start_produced=false,
+        stream_end_produced=false,
+        flow_level=0i32,
+        tokens=Vec<Token>.with_capacity(INITIAL_QUEUE_SIZE),
+        head=0u64,
+        tokens_parsed=0u64,
+        token_available=false,
+        indents=Vec<i32>.with_capacity(INITIAL_STACK_SIZE),
+        indent=-1i32,
+        simple_key_allowed=false,
+        simple_keys=Vec<SimpleKey>.with_capacity(INITIAL_STACK_SIZE),
+        error=Option<ParserError>.None,
+    )
+}
+
+// Store one token into the caller's object.  Returns 1 when a token was
+// written, 0 at end of stream and -1 on error (the error stays in
+// scanner.error).  This mirrors C yaml_parser_scan(parser, token*).
+pub fn scanner_scan_into(scanner: Scanner&, token: Token&) -> i32 {
+    match sticky_error(scanner) {
+        Some(_) => { return -1i32; },
+        None => {},
+    }
+    if scanner.stream_end_produced {
+        return 0i32;
+    }
+    if !scanner.token_available {
+        match fetch_more_tokens(scanner) {
+            Ok(_) => {},
+            Err(_) => { return -1i32; },
+        }
+    }
+    let value: Token = dequeue(scanner);
+    scanner.token_available = false;
+    scanner.tokens_parsed += 1u64;
+    let finished: bool = value.kind == TokenKind.StreamEnd;
+    *token = value;
+    if finished {
+        scanner.stream_end_produced = true;
+    }
+    1i32
+}
+
+pub fn scanner_error(scanner: Scanner&) -> ParserError {
+    take_error(scanner)
+}
+
+// Advance past the current head token.  The caller has already moved any owned
+// payload out of the slot; the slot is forgotten, never dropped.
+pub fn scanner_skip(scanner: Scanner&) {
+    if scanner.head >= scanner.tokens.len() {
+        return;
+    }
+    let last: bool = scanner.tokens[scanner.head].kind == TokenKind.StreamEnd;
+    scanner.tokens_parsed += 1u64;
+    scanner.head += 1u64;
+    scanner.token_available = false;
+    if last {
+        scanner.stream_end_produced = true;
+    }
+    if scanner.head == scanner.tokens.len() {
+        scanner.tokens.truncate(0u64);
+        scanner.head = 0u64;
+    }
+}
+
+pub fn scanner_scan(scanner: Scanner&) -> Result<Option<Token>, ParserError> {
+    match sticky_error(scanner) {
+        Some(error) => { return Result<Option<Token>, ParserError>.Err(error); },
+        None => {},
+    }
+    let token: Token = empty_token(TokenKind.StreamEnd, zero_mark(), zero_mark());
+    match scanner_scan_into(scanner, &token) {
+        1i32 => Result<Option<Token>, ParserError>.Ok(val=Option<Token>.Some(token)),
+        0i32 => Result<Option<Token>, ParserError>.Ok(val=Option<Token>.None),
+        _ => Result<Option<Token>, ParserError>.Err(take_error(scanner)),
+    }
+}
+
+// Ensure one token is ready at the queue head.  Returns 1 when
+// scanner.tokens[head] is valid, 0 at end of stream and -1 on error (the error
+// stays in scanner.error).  Callers that only need the head token avoid the
+// large Result<Option<Token&>, ParserError> aggregate.
+pub fn scanner_ensure(scanner: Scanner&) -> i32 {
+    match &scanner.error {
+        Some(_) => { return -1i32; },
+        None => {},
+    }
+    if scanner.stream_end_produced {
+        return 0i32;
+    }
+    // A delivered token invalidates the queue snapshot: fetching again lets a
+    // pending simple key be inserted before the head token.
+    if !scanner.token_available {
+        match fetch_more_tokens(scanner) {
+            Ok(_) => {},
+            Err(_) => { return -1i32; },
+        }
+    }
+    if scanner.head < scanner.tokens.len() {
+        return 1i32;
+    }
+    0i32
+}
+
+pub fn scanner_head(scanner: Scanner&) -> Token& {
+    &scanner.tokens[scanner.head]
+}
+
+pub fn scanner_peek(scanner: Scanner&) -> Result<Option<Token&>, ParserError> {
+    match scanner_ensure(scanner) {
+        1i32 => Result<Option<Token&>, ParserError>.Ok(
+            val=Option<Token&>.Some(scanner_head(scanner))),
+        0i32 => Result<Option<Token&>, ParserError>.Ok(val=Option<Token&>.None),
+        _ => Result<Option<Token&>, ParserError>.Err(take_error(scanner)),
+    }
+}
+
+pub fn scanner_delete(scanner: Scanner&) {
+    let index: u64 = scanner.head;
+    while index < scanner.tokens.len() {
+        token_delete(&scanner.tokens[index]);
+        index += 1u64;
+    };
+    scanner.tokens.drop();
+    scanner.indents.drop();
+    scanner.simple_keys.drop();
+    reader_delete(&scanner.reader);
+    scanner.head = 0u64;
+    scanner.tokens_parsed = 0u64;
+    scanner.token_available = false;
+}

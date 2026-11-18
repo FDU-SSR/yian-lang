@@ -1,23 +1,21 @@
 from yianc.codegen.cfg.dominance import Dominance, dominators;
-from yianc.codegen.cfg.ids import FunctionId, BlockId, ValueId;
-from yianc.codegen.cfg.model import CfgModule, CfgFunction, Operation, ValueKind, Terminator, Instruction;
+from yianc.codegen.cfg.ids import FunctionId, BlockId, ValueId, LocalId, ScopeId;
+from yianc.codegen.cfg.model import CfgModule, CfgFunction, Operation, ValueKind, Terminator, Instruction, SafetyStage;
 from yianc.codegen.error import CodegenError;
 from yianc.codegen.types import BackendTypes;
+from yianc.codegen.cfg.type_contract import assert_cfg_type;
+from yianc.codegen.cfg.passes.activation import verify_prepared;
+from yianc.codegen.cfg.passes.eliminate import verify_optimized;
+from yianc.analysis.ty.store import TypeStore, INT_LITERAL_TYPE_ID, FLOAT_LITERAL_TYPE_ID;
 from yianc.analysis.ty.callable import store_signature;
 from yianc.analysis.ty.queries import struct_fields, enum_variants;
 from yianc.common.ids import TypeId;
 from yianc.frontend.ast.operator import BinaryOperator;
 from std.collections.hash_set import HashSet;
-from std.core.drop import Drop;
 from std.core.convert import From;
 from std.core.fmt import ToString;
-from std.core.string import String;
 from std.core.iter import Iterator, IntoIterator;
 from std.core.ops import Index;
-from std.core.range import Range;
-from std.core.option import Option;
-from std.core.result import Result;
-from std.core.vec import Vec;
 
 fn release_rows<T>(rows: Vec<Vec<T>>&) {
     for row in *rows { row.drop(); }
@@ -148,6 +146,43 @@ fn verify_instruction(function: CfgFunction&, types: BackendTypes&, instruction:
             let target = check_use(function, *destination, block_id, order, dominates)?;
             same(pointee(types, target)?, check_use(function, *element, block_id, order, dominates)?)?;
             integer_offset(types, check_use(function, *count, block_id, order, dominates)?)?;
+        },
+        EnumInitAt(address, enumeration, discriminant, fields) => {
+            if result.is_some() { return Result<(), CodegenError>.Err(CodegenError.invalid("enum place initialization defines a value")); }
+            let pointer = check_use(function, *address, block_id, order, dominates)?;
+            same(*enumeration, pointee(types, pointer)?)?;
+            tagged_enum(types, *enumeration)?;
+            match variant_payload(types, *enumeration, *discriminant)? {
+                Some(payload) => {
+                    let members = types.fields_of(payload)?;
+                    if members.len() != fields.len() {
+                        return Result<(), CodegenError>.Err(CodegenError.invalid("CFG enum initializer field count is inconsistent"));
+                    }
+                    for index in 0u64..fields.len() {
+                        same(members[index].type_id, check_use(function, fields[index], block_id, order, dominates)?)?;
+                    }
+                },
+                None => {
+                    if !fields.is_empty() {
+                        return Result<(), CodegenError>.Err(CodegenError.invalid("CFG unit variant initializer has fields"));
+                    }
+                },
+            }
+        },
+        EnumCopyAt(destination, source, enumeration) => {
+            if result.is_some() { return Result<(), CodegenError>.Err(CodegenError.invalid("enum place copy defines a value")); }
+            let target = check_use(function, *destination, block_id, order, dominates)?;
+            same(*enumeration, pointee(types, target)?)?;
+            let origin = check_use(function, *source, block_id, order, dominates)?;
+            same(*enumeration, pointee(types, origin)?)?;
+            tagged_enum(types, *enumeration)?;
+        },
+        ScopeEnter(scope) | ScopeExit(scope) => {
+            if result.is_some() { return Result<(), CodegenError>.Err(CodegenError.invalid("scope operation defines a value")); }
+            function.scope(*scope)?;
+        },
+        SafetyPoint => {
+            if result.is_some() { return Result<(), CodegenError>.Err(CodegenError.invalid("safety point defines a value")); }
         },
         Write(address, value) => {
             if result.is_some() { return Result<(), CodegenError>.Err(CodegenError.invalid("write defines a value")); }
@@ -341,6 +376,27 @@ fn verify_instruction(function: CfgFunction&, types: BackendTypes&, instruction:
                     same(*enum_type, pointee(types, source)?)?;
                     validate_payload(types, *enum_type, pointee(types, type_id)?)?;
                 },
+                EnumTagAt(address, enumeration) => {
+                    let source = check_use(function, *address, block_id, order, dominates)?;
+                    same(*enumeration, pointee(types, source)?)?;
+                    tagged_enum(types, *enumeration)?;
+                    match types.semantic_store().require(type_id)? {
+                        Integer(bits, signed) => {
+                            if *bits != 32u32 || *signed { return Result<(), CodegenError>.Err(CodegenError.invalid("CFG enum tag place type is invalid")); }
+                        },
+                        _ => return Result<(), CodegenError>.Err(CodegenError.invalid("CFG enum tag place is not an integer")),
+                    }
+                },
+                EnumFieldAt(address, enumeration, discriminant, field) => {
+                    let source = check_use(function, *address, block_id, order, dominates)?;
+                    same(*enumeration, pointee(types, source)?)?;
+                    tagged_enum(types, *enumeration)?;
+                    let payload = match variant_payload(types, *enumeration, *discriminant)? {
+                        Some(value) => value,
+                        None => return Result<(), CodegenError>.Err(CodegenError.invalid("CFG enum field read has no payload")),
+                    };
+                    same(field_type(types, payload, *field)?, type_id)?;
+                },
                 PointerOffset(pointer, offset, _) => {
                     let source = check_use(function, *pointer, block_id, order, dominates)?;
                     pointee(types, source)?;
@@ -389,7 +445,46 @@ fn verify_instruction(function: CfgFunction&, types: BackendTypes&, instruction:
     Result<(), CodegenError>.Ok(())
 }
 
+// Scope identity is structural: parents precede children and locals belong to a declared scope.
+fn verify_scopes(function: CfgFunction&, store: TypeStore&) -> Result<(), CodegenError> {
+    if function.scopes.len() == 0u64 {
+        return Result<(), CodegenError>.Err(CodegenError.invalid("CFG function has no root scope"));
+    }
+    let root = function.scope(ScopeId(0u64))?;
+    if root.parent.is_some() || root.callable != function.callable {
+        return Result<(), CodegenError>.Err(CodegenError.invalid("CFG root scope has the wrong owner"));
+    }
+    for index in 0u64..function.scopes.len() {
+        let scope = function.scope(ScopeId(index))?;
+        assert_cfg_type(store, scope.callable);
+        if index != 0u64 {
+            match scope.parent {
+                Some(parent) => {
+                    if parent.index >= index {
+                        return Result<(), CodegenError>.Err(CodegenError.invalid("CFG scope parent does not precede its child"));
+                    }
+                },
+                None => return Result<(), CodegenError>.Err(CodegenError.invalid("CFG child scope has no parent")),
+            }
+        }
+    }
+    for index in 0u64..function.local_count() {
+        let local = function.local(LocalId(index))?;
+        function.scope(local.scope)?;
+    }
+    match &function.fat_plan {
+        Some(plan) => {
+            if plan.scopes.len() != function.scopes.len() {
+                return Result<(), CodegenError>.Err(CodegenError.invalid("CFG fat plan scope count is inconsistent"));
+            }
+        },
+        None => {},
+    }
+    Result<(), CodegenError>.Ok(())
+}
+
 fn verify_function(function: CfgFunction&, types: BackendTypes&) -> Result<(), CodegenError> {
+    verify_scopes(function, types.semantic_store())?;
     if function.block_count() == 0 {
         return Result<(), CodegenError>.Err(CodegenError.invalid("CFG function has no entry block"));
     }
@@ -451,6 +546,26 @@ fn integer_offset(types: BackendTypes&, type_id: TypeId) -> Result<(), CodegenEr
     Result<(), CodegenError>.Err(CodegenError.invalid("CFG offset is not u64"))
 }
 
+// Tagged enum place operations require the explicit tag word and payload area.
+// Zero-sized and niche representations keep their value-level operations.
+fn tagged_enum(types: BackendTypes&, enumeration: TypeId) -> Result<(), CodegenError> {
+    if types.is_zst(enumeration)? || types.niche_payload(enumeration)?.is_some() {
+        return Result<(), CodegenError>.Err(CodegenError.invalid("CFG enum place operation requires a tagged enum"));
+    }
+    types.variants_of(enumeration)?;
+    Result<(), CodegenError>.Ok(())
+}
+
+fn variant_payload(types: BackendTypes&, enumeration: TypeId, discriminant: u64) -> Result<Option<TypeId>, CodegenError> {
+    let variants = types.variants_of(enumeration)?;
+    for variant in variants {
+        if variant.discriminant == discriminant {
+            return Result<Option<TypeId>, CodegenError>.Ok(variant.payload);
+        }
+    }
+    Result<Option<TypeId>, CodegenError>.Err(CodegenError.invalid("CFG enum place operation has an invalid discriminant"))
+}
+
 fn field_type(types: BackendTypes&, aggregate: TypeId, field: u64) -> Result<TypeId, CodegenError> {
     match types.semantic_store().require(aggregate)? {
         Tuple(elements) => match elements.as_slice().get(field) {
@@ -468,17 +583,84 @@ fn field_type(types: BackendTypes&, aggregate: TypeId, field: u64) -> Result<Typ
     }
 }
 
-pub fn verify_cfg(module: CfgModule&, types: BackendTypes&) -> Result<(), CodegenError> {
+fn verify_neutral(module: CfgModule&) -> Result<(), CodegenError> {
+    if !module.representations.is_empty() {
+        return Result<(), CodegenError>.Err(CodegenError.invalid("neutral CFG carries representation decisions"));
+    }
     for index in 0u64..module.len() {
-        verify_function(*module.function(FunctionId(index)).unwrap(), types)?;
+        let function = *module.function(FunctionId(index)).unwrap();
+        match &function.fat_plan {
+            Some(_) => return Result<(), CodegenError>.Err(CodegenError.invalid("neutral CFG carries a fat plan")),
+            None => {},
+        }
+        for block_index in 0u64..function.block_count() {
+            for instruction in function.block(BlockId(block_index))?.instructions {
+                if !instruction.checks.is_empty() {
+                    return Result<(), CodegenError>.Err(CodegenError.invalid("neutral CFG carries safety checks"));
+                }
+                if !instruction.guards.is_empty() {
+                    return Result<(), CodegenError>.Err(CodegenError.invalid("neutral CFG carries operation guards"));
+                }
+                if !instruction.live_proofs.is_empty() {
+                    return Result<(), CodegenError>.Err(CodegenError.invalid("neutral CFG carries live proofs"));
+                }
+            }
+        }
     }
     Result<(), CodegenError>.Ok(())
+}
+
+fn verify_ssa(module: CfgModule&, types: BackendTypes&) -> Result<(), CodegenError> {
+    for index in 0u64..module.len() {
+        let function = *module.function(FunctionId(index)).unwrap();
+        assert_cfg_type(types.semantic_store(), function.callable);
+        assert_cfg_type(types.semantic_store(), function.result_type);
+
+        for parameter in function.parameters {
+            assert_cfg_type(types.semantic_store(), *parameter);
+        }
+
+        for value_index in 0u64..function.value_count() {
+            let value = function.value(ValueId(value_index))?;
+            assert_cfg_type(types.semantic_store(), value.type_id);
+        }
+
+        for local_index in 0u64..function.local_count() {
+            let local = function.local(LocalId(local_index))?;
+            assert_cfg_type(types.semantic_store(), local.type_id);
+        }
+
+        verify_function(function, types)?;
+    }
+    Result<(), CodegenError>.Ok(())
+}
+
+fn structural_literal(type_id: TypeId) {
+    if type_id.index == INT_LITERAL_TYPE_ID || type_id.index == FLOAT_LITERAL_TYPE_ID {
+        @panic("literal type reached CFG");
+    }
 }
 
 // Structural checks precede cleanup; SSA dominance applies to the retained graph.
 pub fn verify_structure(module: CfgModule&) -> Result<(), CodegenError> {
     for index in 0u64..module.len() {
         let function = *module.function(FunctionId(index)).unwrap();
+        structural_literal(function.callable);
+        structural_literal(function.result_type);
+
+        for parameter in function.parameters {
+            structural_literal(*parameter);
+        }
+
+        for value_index in 0u64..function.value_count() {
+            structural_literal(function.value(ValueId(value_index))?.type_id);
+        }
+
+        for local_index in 0u64..function.local_count() {
+            structural_literal(function.local(LocalId(local_index))?.type_id);
+        }
+
+        verify_scopes(function, module.type_store())?;
         if function.block_count() == 0u64 {
             return Result<(), CodegenError>.Err(CodegenError.invalid("CFG function has no entry block"));
         }
@@ -486,4 +668,14 @@ pub fn verify_structure(module: CfgModule&) -> Result<(), CodegenError> {
         release_rows<BlockId>(&rows);
     }
     Result<(), CodegenError>.Ok(())
+}
+
+// Stages select their own completeness rules after the shared structural and SSA checks.
+pub fn verify_cfg(module: CfgModule&, types: BackendTypes&) -> Result<(), CodegenError> {
+    verify_ssa(module, types)?;
+    match module.safety_stage {
+        Neutral => verify_neutral(module),
+        Prepared => verify_prepared(module, types),
+        Optimized => verify_optimized(module, types),
+    }
 }

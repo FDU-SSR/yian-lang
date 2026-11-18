@@ -22,28 +22,25 @@ class BuiltinKind(Enum):
     StrFromParts = "str_from_parts"
     StrGetPtr = "str_get_ptr"
     StrGetLen = "str_get_len"
-    SysRead = "sys_read"
-    SysReadBytes = "sys_read_bytes"
-    SysWrite = "sys_write"
-    SysWriteBytes = "sys_write_bytes"
-    Open = "open"
-    Close = "close"
-    Sqrt = "sqrt"
-    Sin = "sin"
-    Cos = "cos"
-    Argc = "argc"
     ArgBytes = "arg_bytes"
-    Exit = "exit"
     FfiAddr = "ffi_addr"
     FfiParts = "ffi_parts"
     FfiNull = "ffi_null"
     FfiPtrCast = "ffi_ptr_cast"
-    FfiCopyFrom = "ffi_copy_from"
-    FfiCopyTo = "ffi_copy_to"
+    Append = "append"
+    Write = "write"
+    Print = "print"
+    Println = "println"
+    Eprint = "eprint"
+    Eprintln = "eprintln"
 
     @property
     def spelling(self) -> str:
         return f"@{self.value}"
+
+    @property
+    def is_print_entry(self) -> bool:
+        return self in (BuiltinKind.Print, BuiltinKind.Println, BuiltinKind.Eprint, BuiltinKind.Eprintln)
 
     @classmethod
     def try_from_name(cls, name: str) -> BuiltinKind | None:

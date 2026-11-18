@@ -1,0 +1,5 @@
+{
+  "pointer_modes": ["fat"],
+  "raw_inapplicable_reason": "the fixture intentionally dereferences an escaped frame reference, which raw-pointer mode cannot diagnose",
+  "compiler_args": ["--no-cfg-inline"]
+}

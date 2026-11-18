@@ -1,5 +1,4 @@
 // Entry file connecting the modules, used as the editor's default file.
-from std.core.io import print;
 from sample.geometry import Point, Pair, span;
 from sample.shapes import Shape, area, max;
 from sample.types import Meters, Millis;
@@ -30,5 +29,5 @@ fn main() {
     assert total == 24.0: "circle 3*2*2 = 12 plus rect 3*4 = 12";
     assert biggest == 7: "type alias Millis is an integer type";
 
-    print("sample ok\n");
+    @print("sample ok\n");
 }

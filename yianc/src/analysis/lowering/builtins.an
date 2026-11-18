@@ -3,32 +3,32 @@ from yianc.analysis.resolution.types import resolve_type;
 from yianc.analysis.hir.node import HirKind, Builtin;
 from yianc.analysis.ty.model import TypeData;
 from yianc.analysis.ty.validation import validate_value;
+from yianc.analysis.ty.relations import is_u64_range;
 from yianc.common.ids import TypeId, HirId;
-from yianc.frontend.ast.node import TypeSyntax, Argument;
+from yianc.frontend.ast.node import TypeSyntax, Argument, ExprData, Literal, FormatPart;
+from yianc.analysis.lowering.format import FormatDestination, lower_format;
 from yianc.frontend.ast.atoms import BuiltinKind;
 from yianc.frontend.source import Span;
 from yianc.diagnostics.model import AnalysisError, DiagnosticCode;
-from std.core.drop import Drop;
 from std.core.iter import Iterator, IntoIterator;
-from std.core.result import Result;
-from std.core.vec import Vec;
-from std.core.string import String;
 from std.core.convert import From;
 from std.core.fmt import ToString;
+from yianc.analysis.ty.store import I32_TYPE_ID, NEVER_TYPE_ID, STR_TYPE_ID, U64_TYPE_ID, VOID_TYPE_ID;
 
 fn arity(kind: BuiltinKind) -> (u64, u64) {
     match &kind {
         SizeOf => (1u64, 0u64), Undef => (1u64, 0u64), Dangling => (1u64, 0u64),
         BitCast => (1u64, 1u64), Alloc => (1u64, 1u64), Realloc => (1u64, 2u64),
         Panic => (0u64, 1u64), RuntimeFail => (0u64, 1u64), AssumeInit => (0u64, 1u64),
-        MemCopy => (0u64, 3u64), SliceFromParts => (0u64, 2u64),
+        MemCopy => (0u64, 3u64), SliceFromParts => (0u64, 2u64), SliceRange => (0u64, 2u64),
         SliceGetPtr => (0u64, 1u64), SliceGetLen => (0u64, 1u64),
         StrFromParts => (0u64, 2u64), StrGetPtr => (0u64, 1u64), StrGetLen => (0u64, 1u64),
-        SysRead => (0u64, 2u64), SysReadBytes => (0u64, 2u64), SysWrite => (0u64, 2u64), SysWriteBytes => (0u64, 2u64),
-        Open => (0u64, 2u64), Close => (0u64, 1u64), Sqrt => (0u64, 1u64), Sin => (0u64, 1u64), Cos => (0u64, 1u64),
-        Argc => (0u64, 0u64), ArgBytes => (0u64, 1u64), Exit => (0u64, 1u64),
+        ArgBytes => (0u64, 1u64),
         FfiAddr => (0u64, 1u64), FfiParts => (0u64, 1u64), FfiNull => (1u64, 0u64),
-        FfiPtrCast => (1u64, 1u64), FfiCopyFrom => (0u64, 3u64), FfiCopyTo => (0u64, 3u64),
+        FfiPtrCast => (1u64, 1u64),
+        Append => (0u64, 2u64), Write => (0u64, 2u64),
+        Print => (0u64, 1u64), Println => (0u64, 1u64),
+        Eprint => (0u64, 1u64), Eprintln => (0u64, 1u64),
     }
 }
 
@@ -36,7 +36,7 @@ impl ExprChecker {
     fn c_element(span: Span, type_id: TypeId, incomplete: bool) -> Result<(), AnalysisError> {
         let legal = match self.ctx.session.types.require(type_id)? {
             Integer(_, _) => true,
-            CScalar(_, _, _) => true,
+            CScalar(_) => true,
             Float(bits) => *bits == 32 || *bits == 64,
             Opaque(_, _) => incomplete,
             CPointer(inner) => {
@@ -77,7 +77,11 @@ impl ExprChecker {
             return Result<HirId, AnalysisError>.Err(self.ctx.error(self.unit, span, code, message.as_str()));
         }
 
-        let ffi = kind == BuiltinKind.FfiAddr || kind == BuiltinKind.FfiParts || kind == BuiltinKind.FfiNull || kind == BuiltinKind.FfiPtrCast || kind == BuiltinKind.FfiCopyFrom || kind == BuiltinKind.FfiCopyTo;
+        if kind == BuiltinKind.Append || kind == BuiltinKind.Write || kind == BuiltinKind.Print || kind == BuiltinKind.Println || kind == BuiltinKind.Eprint || kind == BuiltinKind.Eprintln {
+            return self.format_builtin(span, kind, args);
+        }
+
+        let ffi = kind == BuiltinKind.FfiAddr || kind == BuiltinKind.FfiParts || kind == BuiltinKind.FfiNull || kind == BuiltinKind.FfiPtrCast;
 
         if ffi && !self.ffi_allowed {
             return Result<HirId, AnalysisError>.Err(self.error(span, "FFI builtin requires an ffi fn"));
@@ -115,8 +119,8 @@ impl ExprChecker {
         let bytes = self.ctx.session.types.slice(byte);
         let pointer = self.ctx.session.types.pointer(byte);
         let c_pointer = self.ctx.session.types.c_pointer(byte);
-        let integer = self.ctx.primitives.integer;
-        let unsigned = self.ctx.primitives.unsigned;
+        let integer = TypeId(I32_TYPE_ID);
+        let unsigned = TypeId(U64_TYPE_ID);
         let result = match &kind {
             SizeOf => unsigned,
             Undef => types[0],
@@ -146,8 +150,8 @@ impl ExprChecker {
                 types[0]
             },
             Panic => {
-                values[0] = self.coerce(values[0], self.ctx.primitives.string)?;
-                self.ctx.primitives.never
+                values[0] = self.coerce(values[0], TypeId(STR_TYPE_ID))?;
+                TypeId(NEVER_TYPE_ID)
             },
             RuntimeFail => {
                 let code = match &args[0].data.value.data {
@@ -161,7 +165,7 @@ impl ExprChecker {
                     return Result<HirId, AnalysisError>.Err(self.error(span, "runtime_fail requires a known runtime error code literal"));
                 }
 
-                self.ctx.primitives.never
+                TypeId(NEVER_TYPE_ID)
             },
             AssumeInit => self.type_of(values[0]),
             MemCopy => {
@@ -177,7 +181,7 @@ impl ExprChecker {
                 }
 
                 values[2] = self.coerce(values[2], unsigned)?;
-                self.ctx.primitives.void
+                TypeId(VOID_TYPE_ID)
             },
             SliceFromParts => {
                 let element = match self.ctx.session.types.require(self.type_of(values[0]))? {
@@ -185,6 +189,16 @@ impl ExprChecker {
                     _ => return Result<HirId, AnalysisError>.Err(self.error(span, "slice_from_parts requires a pointer")),
                 };
                 values[1] = self.coerce(values[1], unsigned)?;
+                self.ctx.session.types.slice(element)
+            },
+            SliceRange => {
+                let element = match self.ctx.session.types.require(self.type_of(values[0]))? {
+                    Slice(value) => *value,
+                    _ => return Result<HirId, AnalysisError>.Err(self.error(span, "slice_range requires a slice")),
+                };
+                if !is_u64_range(self.ctx, self.type_of(values[1])) {
+                    return Result<HirId, AnalysisError>.Err(self.error(span, "slice_range requires a Range<u64>"));
+                }
                 self.ctx.session.types.slice(element)
             },
             SliceGetPtr => match self.ctx.session.types.require(self.type_of(values[0]))? {
@@ -201,64 +215,19 @@ impl ExprChecker {
             StrFromParts => {
                 values[0] = self.coerce(values[0], pointer)?;
                 values[1] = self.coerce(values[1], unsigned)?;
-                self.ctx.primitives.string
+                TypeId(STR_TYPE_ID)
             },
             StrGetPtr => {
-                values[0] = self.coerce(values[0], self.ctx.primitives.string)?;
+                values[0] = self.coerce(values[0], TypeId(STR_TYPE_ID))?;
                 pointer
             },
             StrGetLen => {
-                values[0] = self.coerce(values[0], self.ctx.primitives.string)?;
+                values[0] = self.coerce(values[0], TypeId(STR_TYPE_ID))?;
                 unsigned
             },
-            SysRead => {
-                values[0] = self.coerce(values[0], integer)?;
-                self.ctx.primitives.string
-            },
-            SysReadBytes => {
-                values[0] = self.coerce(values[0], integer)?;
-                values[1] = self.coerce(values[1], bytes)?;
-                self.ctx.session.types.primitive(TypeData.Integer(64, true))?
-            },
-            SysWrite => {
-                values[0] = self.coerce(values[0], integer)?;
-                values[1] = self.coerce(values[1], self.ctx.primitives.string)?;
-                self.ctx.primitives.void
-            },
-            SysWriteBytes => {
-                values[0] = self.coerce(values[0], integer)?;
-                values[1] = self.coerce(values[1], bytes)?;
-                self.ctx.session.types.primitive(TypeData.Integer(64, true))?
-            },
-            Open => {
-                values[0] = self.coerce(values[0], self.ctx.primitives.string)?;
-                values[1] = self.coerce(values[1], integer)?;
-                integer
-            },
-            Close => {
-                values[0] = self.coerce(values[0], integer)?;
-                integer
-            },
-            Sqrt => {
-                values[0] = self.coerce(values[0], self.ctx.primitives.float)?;
-                self.ctx.primitives.float
-            },
-            Sin => {
-                values[0] = self.coerce(values[0], self.ctx.primitives.float)?;
-                self.ctx.primitives.float
-            },
-            Cos => {
-                values[0] = self.coerce(values[0], self.ctx.primitives.float)?;
-                self.ctx.primitives.float
-            },
-            Argc => unsigned,
             ArgBytes => {
                 values[0] = self.coerce(values[0], unsigned)?;
                 bytes
-            },
-            Exit => {
-                values[0] = self.coerce(values[0], integer)?;
-                self.ctx.primitives.never
             },
             FfiAddr => {
                 let element = match self.ctx.session.types.require(self.type_of(values[0]))? {
@@ -294,20 +263,48 @@ impl ExprChecker {
                 self.c_element(span, types[0], true)?;
                 self.ctx.session.types.c_pointer(types[0])
             },
-            FfiCopyFrom => {
-                values[0] = self.coerce(values[0], bytes)?;
-                values[1] = self.coerce(values[1], c_pointer)?;
-                values[2] = self.coerce(values[2], unsigned)?;
-                self.ctx.primitives.void
-            },
-            FfiCopyTo => {
-                values[0] = self.coerce(values[0], c_pointer)?;
-                values[1] = self.coerce(values[1], bytes)?;
-                values[2] = self.coerce(values[2], unsigned)?;
-                self.ctx.primitives.void
+            Append | Write | Print | Println | Eprint | Eprintln => {
+                return Result<HirId, AnalysisError>.Err(AnalysisError.internal("formatting builtins lower through lower_format"));
             },
         };
         accepted = true;
         Result<HirId, AnalysisError>.Ok(self.node(span, result, false, HirKind.Builtin(Builtin(kind, types, values))))
+    }
+
+    // Desugar normalizes print arguments to templates; append/write already require templates.
+    fn format_builtin(span: Span, kind: BuiltinKind, args: Vec<Argument&>&) -> Result<HirId, AnalysisError> {
+        for argument in *args {
+            if argument.data.name.is_some() {
+                return Result<HirId, AnalysisError>.Err(self.error(argument.span, "formatting arguments cannot be named"));
+            }
+        }
+
+        let print_entry = kind.is_print_entry();
+        let destination = match &kind {
+            Append => FormatDestination.Append(target=args[0].data.value),
+            Write => FormatDestination.Writer(target=args[0].data.value),
+            Print => FormatDestination.Stdout(newline=false),
+            Println => FormatDestination.Stdout(newline=true),
+            Eprint => FormatDestination.Stderr(newline=false),
+            Eprintln => FormatDestination.Stderr(newline=true),
+            _ => return Result<HirId, AnalysisError>.Err(AnalysisError.internal("not a formatting builtin")),
+        };
+        let template = if print_entry { args[0] } else { args[1] };
+
+        return match &template.data.value.data {
+            FormatTemplate(parts) => lower_format(self, span, destination, parts),
+            Literal(value) => match value {
+                StringLiteral(text) => {
+                    let temporary = Vec<FormatPart>.new();
+                    temporary.push(FormatPart.Literal(text=String.from(&text.data.value.as_str()), span=template.span));
+                    let result = lower_format(self, span, destination, &temporary);
+                    for part in temporary { part.drop(); }
+                    temporary.drop();
+                    result
+                },
+                _ => Result<HirId, AnalysisError>.Err(self.error(template.span, "format template must be an f-string or string literal")),
+            },
+            _ => Result<HirId, AnalysisError>.Err(self.error(template.span, "format template must be an f-string or string literal")),
+        };
     }
 }

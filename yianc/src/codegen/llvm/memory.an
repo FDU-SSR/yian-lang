@@ -1,4 +1,5 @@
 from yianc.codegen.llvm.module import FunctionLowering;
+from yianc.codegen.cfg.model import GuardKind, GuardSite;
 from yianc.codegen.cfg.ids import ValueId;
 from yianc.codegen.cfg.model import IndexBounds;
 from yianc.codegen.error import CodegenError;
@@ -6,8 +7,6 @@ from yianc.common.ids import TypeId;
 from yianc.frontend.ast.operator import BinaryOperator;
 from yianc.codegen.llvm.scalar import binary;
 from llvm.ir import IrValue, BinaryOp, CastOp, IntCompare;
-from std.core.option import Option;
-from std.core.result import Result;
 
 impl FunctionLowering {
     fn pointed_type(type_id: TypeId) -> Result<TypeId, CodegenError> {
@@ -24,19 +23,31 @@ impl FunctionLowering {
             return Result<IrValue, CodegenError>.Ok(self.owner.module.const_null(self.owner.types.value_type(type_id)?));
         }
         let offset = self.get(index)?;
-        if subtract { offset = self.builder.neg(offset, ""); }
         if self.fat(type_id)? {
+            self.require_guard(GuardKind.PointerStep, GuardSite.Before)?;
             let value = self.get(pointer)?;
             let old_index = self.pointer_index(value);
+            let size = self.pointer_size(value);
+            if subtract {
+                // p - n: the unsigned displacement cannot exceed the current index, and the result stays in bounds.
+                let next = self.builder.binary(BinaryOp.Sub, old_index, offset, "");
+                let valid = self.builder.binary(BinaryOp.And,
+                    self.builder.icmp(IntCompare.Ule, offset, old_index, ""),
+                    self.builder.icmp(IntCompare.Ule, next, size, ""), "");
+                self.checked(valid, "S004")?;
+                return Result<IrValue, CodegenError>.Ok(self.builder.insert_value(value,
+                    self.builder.cast(CastOp.Trunc, next, self.owner.module.int_type(32u32), ""), 2u32, ""));
+            }
             let next = self.builder.binary(BinaryOp.Add, old_index, offset, "");
             let valid = self.builder.binary(BinaryOp.And,
                 self.builder.icmp(IntCompare.Uge, next, old_index, ""),
-                self.builder.icmp(IntCompare.Ule, next, self.pointer_size(value), ""), "");
+                self.builder.icmp(IntCompare.Ule, next, size, ""), "");
             self.checked(valid, "S004")?;
             return Result<IrValue, CodegenError>.Ok(self.builder.insert_value(value,
                 self.builder.cast(CastOp.Trunc, next, self.owner.module.int_type(32u32), ""), 2u32, ""));
         }
-        let indices = [offset];
+        let delta = if subtract { self.builder.neg(offset, "") } else { offset };
+        let indices = [delta];
         Result<IrValue, CodegenError>.Ok(self.builder.gep(self.owner.types.value_type(element)?,
             self.get(pointer)?, indices.as_slice(), false, ""))
     }
@@ -44,16 +55,21 @@ impl FunctionLowering {
     pub fn pointer_difference(left: ValueId, right: ValueId) -> Result<IrValue, CodegenError> {
         let module = self.owner.module;
         let integer = module.int_type(64u32);
-        let element = self.pointed_type(self.cfg.value(left)?.type_id)?;
+        let type_id = self.cfg.value(left)?.type_id;
+        let element = self.pointed_type(type_id)?;
         let size = module.abi_size(self.owner.types.value_type(element)?);
         if size == 0u64 { return Result<IrValue, CodegenError>.Ok(module.const_int(integer, 0u64)); }
-        if self.fat(self.cfg.value(left)?.type_id)? {
+        if self.fat(type_id)? {
+            self.require_guard(GuardKind.PointerDifference, GuardSite.Before)?;
             let first = self.get(left)?;
             let second = self.get(right)?;
             let same = self.builder.icmp(IntCompare.Eq, self.builder.extract_value(first, 0u32, ""), self.builder.extract_value(second, 0u32, ""), "");
+            let same_pair = self.builder.icmp(IntCompare.Eq,
+                self.pointer_word(type_id, first)?, self.pointer_word(type_id, second)?, "");
             let lhs_index = self.pointer_index(first);
             let rhs_index = self.pointer_index(second);
-            let valid = self.builder.binary(BinaryOp.And, same, self.builder.binary(BinaryOp.And,
+            let valid = self.builder.binary(BinaryOp.And, self.builder.binary(BinaryOp.And, same, same_pair, ""),
+                self.builder.binary(BinaryOp.And,
                 self.builder.icmp(IntCompare.Ule, lhs_index, self.pointer_size(first), ""),
                 self.builder.icmp(IntCompare.Ule, rhs_index, self.pointer_size(second), ""), ""), "");
             self.checked(valid, "S005")?;
@@ -74,6 +90,7 @@ impl FunctionLowering {
         let source = self.get(address)?;
         let result_pointer = match self.owner.session.types.require(type_id)? { Pointer(_) => true, _ => false, };
         if self.fat(source_type)? && result_pointer {
+            self.require_guard(GuardKind.IndexOffset, GuardSite.Before)?;
             let absolute = self.builder.binary(BinaryOp.Add, self.pointer_index(source), self.get(index)?, "");
             let valid = self.builder.binary(BinaryOp.And,
                 self.builder.icmp(IntCompare.Uge, absolute, self.pointer_index(source), ""),
@@ -102,7 +119,10 @@ impl FunctionLowering {
                 }
                 return Result<IrValue, CodegenError>.Ok(if op == BinaryOperator.Neq { self.builder.not(equal, "") } else { equal });
             }
-            self.checked(equal, "S005")?;
+            self.require_guard(GuardKind.PointerOrder, GuardSite.Before)?;
+            let same_pair = self.builder.icmp(IntCompare.Eq,
+                self.pointer_word(type_id, first)?, self.pointer_word(type_id, second)?, "");
+            self.checked(self.builder.binary(BinaryOp.And, equal, same_pair, ""), "S005")?;
             let predicate = match op {
                 Lt => IntCompare.Ult, Leq => IntCompare.Ule, Gt => IntCompare.Ugt, Geq => IntCompare.Uge,
                 _ => return Result<IrValue, CodegenError>.Err(CodegenError.invalid("invalid pointer comparison")),

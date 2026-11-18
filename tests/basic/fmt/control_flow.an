@@ -1,0 +1,59 @@
+from std.core.io import IoError, IoErrorKind;
+
+fn return_inside() -> i32 {
+    let text = f"x{if true { return 7; } else { 1 }}";
+    text.drop();
+    return 9;
+}
+
+fn loop_break() -> i32 {
+    let total: u64 = 0;
+    let index = 0;
+    while index < 3 {
+        let text = f"x{if index == 1 { break; } else { index }}";
+        total += text.len();
+        text.drop();
+        index += 1;
+    }
+    i32(total)
+}
+
+fn loop_continue() -> i32 {
+    let total: u64 = 0;
+    let index = 0;
+    while index < 3 {
+        let text = f"x{if index == 1 { index += 1; continue; } else { index }}";
+        total += text.len();
+        text.drop();
+        index += 1;
+    }
+    i32(total)
+}
+
+fn produce(flag: bool) -> Result<i32, IoError> {
+    if flag { return Result<i32, IoError>.Err(msg=IoError.new(IoErrorKind.Other, "bad")); }
+    Result<i32, IoError>.Ok(val=3)
+}
+
+fn propagate(flag: bool) -> Result<i32, IoError> {
+    let text = f"x{produce(flag)?}";
+    let length = text.len();
+    text.drop();
+    Result<i32, IoError>.Ok(val=i32(length))
+}
+
+fn main() {
+    assert return_inside() == 7: "return keeps function scope";
+    assert loop_break() == 2: "break keeps loop scope";
+    assert loop_continue() == 4: "continue keeps loop scope";
+    let good = propagate(false).unwrap();
+    assert *good == 2: "propagation success";
+    match propagate(true) {
+        Ok(_) => @panic("expected propagation failure"),
+        Err(error) => {
+            defer error.drop();
+            assert error.msg() == "bad": "propagation keeps source error";
+        },
+    }
+    @println("control ok");
+}

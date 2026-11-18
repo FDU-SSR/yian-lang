@@ -2,8 +2,6 @@
 //
 // Expected output: 0
 
-from std.core.option import Option;
-
 fn main() {
     // ---- from_slice: valid UTF-8 ----
 

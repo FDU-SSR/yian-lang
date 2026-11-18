@@ -1,6 +1,7 @@
 from yianc.codegen.lowering.context import Lowering;
-from yianc.codegen.cfg.ids import ValueId;
+from yianc.codegen.cfg.ids import LocalId, ValueId;
 from yianc.codegen.cfg.model import ValueKind, Operation, Terminator, IndexBounds;
+from yianc.codegen.cfg.type_contract import assert_cfg_type;
 from yianc.codegen.error import CodegenError;
 from yianc.analysis.hir.node import HirNode, Binary, Builtin;
 from yianc.analysis.ty.queries import struct_fields, enum_variants;
@@ -9,23 +10,15 @@ from yianc.frontend.ast.atoms import BuiltinKind;
 from yianc.analysis.constant.evaluate import TypeSizeProvider;
 from yianc.common.ids import HirId, TypeId;
 from yianc.frontend.ast.operator import BinaryOperator, UnaryOperator;
-from std.core.drop import Drop;
 from std.core.iter import Iterator, IntoIterator;
 from std.core.ops import Index;
-from std.core.option import Option;
-from std.core.result import Result;
-from std.core.vec import Vec;
 
 impl Lowering {
     pub fn expression(id: HirId) -> Result<ValueId, CodegenError> {
         let node = self.session.hir.require(id)?;
+        assert_cfg_type(&self.session.types, node.type_id);
         if self.current.is_none() {
-            let type_id = match self.session.types.require(node.type_id)? {
-                IntLiteral => self.session.types.primitive(TypeData.Integer(32u32, true))?,
-                FloatLiteral => self.session.types.primitive(TypeData.Float(64u32))?,
-                _ => node.type_id,
-            };
-            return Result<ValueId, CodegenError>.Ok(self.zero(type_id));
+            return Result<ValueId, CodegenError>.Ok(self.zero(node.type_id));
         }
         match self.lower_expression(id) {
             Ok(value) => Result<ValueId, CodegenError>.Ok(value),
@@ -37,19 +30,11 @@ impl Lowering {
         let node = self.session.hir.require(id)?;
         let result = match &node.kind {
             IntLiteral(value) => {
-                let type_id = match self.session.types.require(node.type_id)? {
-                    IntLiteral => self.session.types.primitive(TypeData.Integer(32u32, true))?,
-                    _ => node.type_id,
-                };
-                self.function.add_value(type_id, ValueKind.Integer(
+                self.function.add_value(node.type_id, ValueKind.Integer(
                     if value.is_untyped() && value.is_negative() { 0u64 - value.raw_bits() } else { value.raw_bits() }))
             },
             FloatLiteral(value) => {
-                let type_id = match self.session.types.require(node.type_id)? {
-                    FloatLiteral => self.session.types.primitive(TypeData.Float(64u32))?,
-                    _ => node.type_id,
-                };
-                self.function.add_value(type_id, ValueKind.Float(*value))
+                self.function.add_value(node.type_id, ValueKind.Float(*value))
             },
             BoolLiteral(value) => self.function.add_value(node.type_id, ValueKind.Integer(if *value { 1u64 } else { 0u64 })),
             CharLiteral(value) => self.function.add_value(node.type_id, ValueKind.Integer(u64(*value))),
@@ -90,17 +75,23 @@ impl Lowering {
                 self.zero(node.type_id)
             },
             Let(value) => {
+                // Binding a local has no runtime effect, so a direct enum initializer
+                // can target the new slot without an intermediate aggregate value.
+                let local = match value.symbol_id {
+                    Some(symbol) => Option<LocalId>.Some(self.bind(symbol)?),
+                    None => Option<LocalId>.None,
+                };
                 let initial = match value.init {
-                    Some(expr) => Option<ValueId>.Some(self.expression(expr)?),
+                    Some(expr) => match local {
+                        Some(target) => self.enum_let(node.span, target, expr)?,
+                        None => Option<ValueId>.Some(self.expression(expr)?),
+                    },
                     None => Option<ValueId>.None,
                 };
-                match value.symbol_id {
-                    Some(symbol) => {
-                        let local = self.bind(symbol)?;
-                        match initial {
-                            Some(value) => { self.effect(node.span, Operation.Store(local, value))?; },
-                            None => {},
-                        }
+                match local {
+                    Some(target) => match initial {
+                        Some(value) => { self.effect(node.span, Operation.Store(target, value))?; },
+                        None => {},
                     },
                     None => {},
                 }
@@ -146,11 +137,7 @@ impl Lowering {
                     self.emit(node.span, node.type_id, Operation.Read(address))?
                 } else {
                     let operand = self.expression(value.operand)?;
-                    let type_id = match self.session.types.require(node.type_id)? {
-                        IntLiteral | FloatLiteral => self.function.value(operand)?.type_id,
-                        _ => node.type_id,
-                    };
-                    self.emit(node.span, type_id, Operation.Unary(value.op, operand))?
+                    self.emit(node.span, node.type_id, Operation.Unary(value.op, operand))?
                 }
             },
             Cast(value) => {
@@ -369,10 +356,7 @@ impl Lowering {
         match &node.kind {
             Block(value) => {
                 if node.is_place { return self.block_address(node, value); }
-                let value = self.expression(id)?;
-                let local = self.function.add_local(node.type_id);
-                self.effect(node.span, Operation.Store(local, value))?;
-                self.emit(node.span, reference, Operation.Address(local))
+                Result<ValueId, CodegenError>.Err(CodegenError.invalid("non-place block reached address lowering"))
             },
             Var(symbol) => {
                 match self.captured_places.get(symbol) {
@@ -384,7 +368,7 @@ impl Lowering {
             },
             Unary(value) => {
                 if value.op == UnaryOperator.Deref { return self.expression(value.operand); }
-                Result<ValueId, CodegenError>.Err(CodegenError.unsupported(node.span, "unary expression is not an address"))
+                Result<ValueId, CodegenError>.Err(CodegenError.invalid("non-dereference unary expression reached address lowering"))
             },
             FieldAccess(value) => {
                 let receiver = self.session.hir.require(value.receiver)?;
@@ -418,12 +402,7 @@ impl Lowering {
                 let length = self.emit(node.span, unsigned, Operation.Builtin(BuiltinKind.SliceGetLen, Vec<TypeId>.new(), lengths))?;
                 self.emit(node.span, pointer, Operation.IndexAddress(base, value.element_type, index, IndexBounds.Slice(length)))
             },
-            _ => {
-                let value = self.expression(id)?;
-                let local = self.function.add_local(node.type_id);
-                self.effect(node.span, Operation.Store(local, value))?;
-                self.emit(node.span, reference, Operation.Address(local))
-            },
+            _ => Result<ValueId, CodegenError>.Err(CodegenError.invalid("address lowering requires normalized storage")),
         }
     }
 
@@ -463,10 +442,10 @@ impl Lowering {
                 let operand = self.expression(value.args[0])?;
                 self.emit(node.span, node.type_id, Operation.Cast(operand))
             },
-            Panic | RuntimeFail | Exit | SysRead | SysReadBytes | SysWrite | SysWriteBytes | Open | Close |
-            MemCopy | SliceFromParts | SliceGetPtr | SliceGetLen | StrFromParts | StrGetPtr | StrGetLen |
-            FfiAddr | FfiParts | FfiPtrCast | FfiCopyFrom | FfiCopyTo | Alloc | Realloc | Dangling |
-            Sqrt | Sin | Cos | Argc | ArgBytes => {
+            Panic | RuntimeFail |
+            MemCopy | SliceFromParts | SliceRange | SliceGetPtr | SliceGetLen | StrFromParts | StrGetPtr | StrGetLen |
+            FfiAddr | FfiParts | FfiPtrCast | Alloc | Realloc | Dangling |
+            ArgBytes => {
                 let args = Vec<ValueId>.new();
                 let transferred = false;
                 defer { if !transferred { args.drop(); } };
@@ -475,6 +454,9 @@ impl Lowering {
                 for type_id in value.type_args { types.push(*type_id); }
                 transferred = true;
                 self.emit(node.span, node.type_id, Operation.Builtin(value.kind, types, args))
+            },
+            Append | Write | Print | Println | Eprint | Eprintln => {
+                return Result<ValueId, CodegenError>.Err(CodegenError.invalid("formatting builtin has no HIR node"));
             },
         }
     }
@@ -485,6 +467,11 @@ impl Lowering {
         }
         if value.op == BinaryOperator.Assign {
             let address = self.address(value.left)?;
+            // Payload field values are already computed when the destination is written,
+            // so a direct initializer can fill the assigned storage in place.
+            if self.enum_assign(node.span, address, value.right)? {
+                return Result<ValueId, CodegenError>.Ok(self.zero(node.type_id));
+            }
             let rhs = self.expression(value.right)?;
             self.effect(node.span, Operation.Write(address, rhs))?;
             return Result<ValueId, CodegenError>.Ok(self.zero(node.type_id));
@@ -523,13 +510,7 @@ impl Lowering {
             }
             return self.emit(node.span, node.type_id, Operation.PointerOffset(left, right, value.op == BinaryOperator.Sub));
         }
-        // Mathematical literal types survive semantic checking; runtime CFG operands use their default type.
-        let type_id = match self.session.types.require(node.type_id)? {
-            IntLiteral => self.session.types.primitive(TypeData.Integer(32u32, true))?,
-            FloatLiteral => self.session.types.primitive(TypeData.Float(64u32))?,
-            _ => node.type_id,
-        };
-        self.emit(node.span, type_id, Operation.Binary(op, left, right))
+        self.emit(node.span, node.type_id, Operation.Binary(op, left, right))
     }
 
 }

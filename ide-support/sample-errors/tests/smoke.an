@@ -1,6 +1,5 @@
 // Keep this test valid to avoid unrelated diagnostic noise.
-from std.core.io import print;
 
 fn main() {
-    print("sample-errors smoke\n");
+    @print("sample-errors smoke\n");
 }

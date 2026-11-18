@@ -1,0 +1,17 @@
+{
+  "name": "nbody",
+  "measurement": {"warmups": 2, "runs": 9},
+  "source": "AWFY",
+  "tags": [
+    "numeric"
+  ],
+  "argv": [],
+  "check": {
+    "rc": 0
+  },
+  "note": "Official work unit: 250000 steps, final energy -0.1690859889909308; default 196 outer iterations",
+  "scale": {
+    "default": 196,
+    "c": "argv"
+  }
+}

@@ -9,18 +9,14 @@ from yianc.analysis.hir.node import HirKind, Match as HirMatch, MatchArm, Patter
 from yianc.analysis.constant.evaluate import ConstantEvaluator;
 from yianc.analysis.constant.interval import Boundary, scalar_key;
 from yianc.common.ids import PatternId, TypeId, HirId, ScopeId, SymbolId, NameId, DefId;
-from yianc.analysis.editor_facts import EditorMemberKind;
 from yianc.common.location import SourceSpan;
 from yianc.frontend.ast.node import Pattern, PatternArguments, PatternLet as SyntaxPatternLet, Literal;
 from yianc.frontend.source import Span;
 from yianc.frontend.ast.operator import UnaryOperator, BinaryOperator;
 from yianc.diagnostics.model import AnalysisError, DiagnosticCode;
-from std.core.drop import Drop;
 from std.core.iter import Iterator, IntoIterator;
-from std.core.option import Option;
-from std.core.result import Result;
-from std.core.vec import Vec;
 from std.collections.hash_map import HashMap;
+from yianc.analysis.ty.store import ERROR_TYPE_ID, NEVER_TYPE_ID, STR_TYPE_ID, VOID_TYPE_ID;
 
 impl ExprChecker {
     fn bindings(id: PatternId, names: HashMap<NameId, SymbolId>&, replacements: Option<HashMap<SymbolId, SymbolId>&>) -> Result<(), AnalysisError> {
@@ -86,17 +82,16 @@ impl ExprChecker {
     fn range_endpoint(span: Span, literal: Literal, type_id: TypeId) -> Result<u64, AnalysisError> {
         let value = self.literal(span, &literal)?;
         let converted = self.coerce(value, type_id)?;
-        let evaluator = ConstantEvaluator.new(&self.ctx.session.types, &self.ctx.session.hir, self.sizes);
-        let constant = evaluator.evaluate(converted)?;
+        let constant = self.ctx.evaluator.evaluate(converted)?;
         defer constant.drop();
 
         match &constant.value {
             Integer(value) => match self.ctx.session.types.require(type_id)? {
                 Integer(bits, signed) => Result<u64, AnalysisError>.Ok(scalar_key(value.raw_bits(), *bits, *signed)),
-                CScalar(bits, signed, _) => Result<u64, AnalysisError>.Ok(scalar_key(value.raw_bits(), *bits, *signed)),
+                CScalar(kind) => Result<u64, AnalysisError>.Ok(scalar_key(value.raw_bits(), kind.bits(), kind.is_signed())),
                 _ => Result<u64, AnalysisError>.Err(self.error(span, "range requires an integer or character type")),
             },
-            Char(value) => Result<u64, AnalysisError>.Ok(u64(*value)),
+            Char(value) => Result<u64, AnalysisError>.Ok(u64(u32(*value))),
             _ => Result<u64, AnalysisError>.Err(self.error(span, "range endpoint must be an integer or character")),
         }
     }
@@ -104,13 +99,13 @@ impl ExprChecker {
     pub fn pattern_binding(binding: SyntaxPatternLet&) -> Result<HirId, AnalysisError> {
         let value = self.expression(binding.data.init_expr)?;
         let annotation = self.local_type(binding.data.var_type)?;
-        let expected = if annotation == self.ctx.primitives.error {
+        let expected = if annotation == TypeId(ERROR_TYPE_ID) {
             self.type_of(value)
         } else {
             annotation
         };
 
-        if annotation == self.ctx.primitives.error && self.pattern_tests_value(binding.data.pattern) {
+        if annotation == TypeId(ERROR_TYPE_ID) && self.pattern_tests_value(binding.data.pattern) {
             match self.ctx.session.types.require(expected)? {
                 Pointer(inner) => {
                     let direct_address = match &self.ctx.session.hir.require(value)?.kind {
@@ -132,7 +127,7 @@ impl ExprChecker {
             Some(branch) => {
                 let body = self.block(*branch)?;
 
-                if self.type_of(body) != self.ctx.primitives.never {
+                if self.type_of(body) != TypeId(NEVER_TYPE_ID) {
                     return Result<HirId, AnalysisError>.Err(self.error(branch.span, "The else block of a pattern declaration must diverge"));
                 }
 
@@ -144,7 +139,7 @@ impl ExprChecker {
         self.parameter_binding = binding.data.is_parameter;
         defer self.parameter_binding = previous_binding;
         let pattern = self.pattern(binding.data.pattern, expected, false)?;
-        Result<HirId, AnalysisError>.Ok(self.node(binding.span, self.ctx.primitives.void, false,
+        Result<HirId, AnalysisError>.Ok(self.node(binding.span, TypeId(VOID_TYPE_ID), false,
             HirKind.PatternLet(PatternLet(value, pattern, otherwise, binding.data.is_parameter))))
     }
 
@@ -220,13 +215,7 @@ impl ExprChecker {
                             Enum(body) => {
                                 for variant in body.variants {
                                     if variant.name == interned {
-                                        match &variant.span {
-                                            Some(target) => self.ctx.session.editor_facts.record_member_reference(
-                                                EditorMemberKind.Variant, interned, self.ctx.span(self.unit, name.span),
-                                                *target, expected),
-                                            None => {},
-                                        };
-                                        return Result<PatternId, AnalysisError>.Ok(self.pattern_node(span, expected, PatternKind.EnumPattern(EnumPattern(*variant, Option<Vec<(u64, PatternId)>>.None))));
+                                        return Result<PatternId, AnalysisError>.Ok(self.pattern_node(span, expected, PatternKind.EnumPattern(EnumPattern(*variant, Option<Vec<(u64, PatternId)>>.None, Option<SourceSpan>.Some(self.ctx.span(self.unit, name.span)), Option<Vec<Option<SourceSpan>>>.None))));
                                     }
                                 }
                             },
@@ -264,10 +253,9 @@ impl ExprChecker {
 
                 let value = self.literal(span, literal)?;
                 let converted = self.coerce(value, expected)?;
-                let evaluator = ConstantEvaluator.new(&self.ctx.session.types, &self.ctx.session.hir, self.sizes);
-                let constant = evaluator.evaluate(converted)?;
+                let constant = self.ctx.evaluator.evaluate(converted)?;
 
-                if expected == self.ctx.primitives.string {
+                if expected == TypeId(STR_TYPE_ID) {
                     let name = self.ctx.session.names.intern("%literal_pattern");
                     let symbol = self.ctx.session.symbols.add(Symbol(name, SymbolKind.Variable, expected, self.unit, Option<SourceSpan>.Some(self.ctx.span(self.unit, span)), false, false, false, Option<SymbolId>.None, Option<DefId>.None));
                     let actual = self.node(span, expected, true, HirKind.Var(symbol));
@@ -333,13 +321,6 @@ impl ExprChecker {
                                 continue;
                             }
 
-                            match &variant.span {
-                                Some(target) => self.ctx.session.editor_facts.record_member_reference(
-                                    EditorMemberKind.Variant, interned, self.ctx.span(self.unit, name.span),
-                                    *target, expected),
-                                None => {},
-                            };
-
                             let types = Vec<TypeId>.new();
                             defer types.drop();
                             let descriptors = payload_fields(self.ctx, variant.payload)?;
@@ -350,10 +331,12 @@ impl ExprChecker {
                             }
 
                             let fields = Vec<(u64, PatternId)>.new();
+                            let field_spans = Vec<Option<SourceSpan>>.new();
                             let accepted = false;
                             defer {
                                 if !accepted {
                                     fields.drop();
+                                    field_spans.drop();
                                 }
                             };
 
@@ -367,6 +350,7 @@ impl ExprChecker {
 
                                     while index < values.len() {
                                         fields.push((index, self.pattern(values[index], types[index], borrowed)?));
+                                        field_spans.push(Option<SourceSpan>.None);
                                         index += 1;
                                     }
                                 },
@@ -388,14 +372,8 @@ impl ExprChecker {
                                                     }
                                                 }
 
-                                                match &field.span {
-                                                    Some(target) => self.ctx.session.editor_facts.record_member_reference(
-                                                        EditorMemberKind.Field, field.name,
-                                                        self.ctx.span(self.unit, value.data.name.span), *target, field.type_id),
-                                                    None => {},
-                                                };
-
                                                 fields.push((field.index, self.pattern(value.data.pattern, types[field.index], borrowed)?));
+                                                field_spans.push(Option<SourceSpan>.Some(self.ctx.span(self.unit, value.data.name.span)));
                                                 found = true;
                                             }
                                         }
@@ -412,7 +390,7 @@ impl ExprChecker {
                             }
 
                             accepted = true;
-                            selected = Option<PatternId>.Some(self.pattern_node(span, expected, PatternKind.EnumPattern(EnumPattern(*variant, Option<Vec<(u64, PatternId)>>.Some(fields)))));
+                            selected = Option<PatternId>.Some(self.pattern_node(span, expected, PatternKind.EnumPattern(EnumPattern(*variant, Option<Vec<(u64, PatternId)>>.Some(fields), Option<SourceSpan>.Some(self.ctx.span(self.unit, name.span)), Option<Vec<Option<SourceSpan>>>.Some(field_spans)))));
                         }
 
                         match selected {
@@ -427,10 +405,12 @@ impl ExprChecker {
                         }
 
                         let fields = Vec<(u64, PatternId)>.new();
+                        let field_spans = Vec<Option<SourceSpan>>.new();
                         let accepted = false;
                         defer {
                             if !accepted {
                                 fields.drop();
+                                field_spans.drop();
                             }
                         };
 
@@ -450,13 +430,8 @@ impl ExprChecker {
 
                                             self.check_field_access(expected, *field, value.data.name.span)?;
                                             let type_id = substitute(&self.ctx.session.types, field.type_id, &substitutions)?;
-                                            match &field.span {
-                                                Some(target) => self.ctx.session.editor_facts.record_member_reference(
-                                                    EditorMemberKind.Field, field.name,
-                                                    self.ctx.span(self.unit, value.data.name.span), *target, type_id),
-                                                None => {},
-                                            };
                                             fields.push((field.index, self.pattern(value.data.pattern, type_id, borrowed)?));
+                                            field_spans.push(Option<SourceSpan>.Some(self.ctx.span(self.unit, value.data.name.span)));
                                             found = true;
                                         }
                                     }
@@ -480,6 +455,7 @@ impl ExprChecker {
                                 while index < values.len() {
                                     let type_id = substitute(&self.ctx.session.types, body.fields[index].type_id, &substitutions)?;
                                     fields.push((index, self.pattern(values[index], type_id, borrowed)?));
+                                    field_spans.push(Option<SourceSpan>.None);
                                     index += 1;
                                 }
                             },
@@ -491,7 +467,7 @@ impl ExprChecker {
                         }
 
                         accepted = true;
-                        PatternKind.StructPattern(StructPattern(fields))
+                        PatternKind.StructPattern(StructPattern(fields, field_spans))
                     },
                     _ => return Result<PatternId, AnalysisError>.Err(self.error(span, "pattern type is not an aggregate")),
                 }

@@ -1,0 +1,17 @@
+{
+  "name": "deltablue",
+  "measurement": {"warmups": 1, "runs": 5},
+  "source": "AWFY",
+  "tags": [
+    "ptr"
+  ],
+  "argv": [],
+  "check": {
+    "rc": 0
+  },
+  "note": "Official work unit: chainTest(12000) and projectionTest(12000), preserving internal correctness checks; default 134 outer iterations",
+  "scale": {
+    "default": 134,
+    "c": "argv"
+  }
+}

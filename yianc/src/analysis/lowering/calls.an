@@ -10,13 +10,8 @@ from yianc.common.location import SourceSpan;
 from yianc.frontend.ast.node import Expr, Argument;
 from yianc.frontend.source import Span;
 from yianc.diagnostics.model import AnalysisError;
-from std.core.drop import Drop;
-from std.core.clone import Clone;
 from std.core.iter import Iterator, IntoIterator;
-from std.core.option import Option;
-from std.core.result import Result;
-from std.core.vec import Vec;
-from std.core.string import String;
+from yianc.analysis.ty.store import BOOL_TYPE_ID, CHAR_TYPE_ID;
 
 impl ExprChecker {
     pub fn call(span: Span, callee: Expr&, args: Vec<Argument&>&) -> Result<HirId, AnalysisError> {
@@ -42,7 +37,7 @@ impl ExprChecker {
             _ => {},
         }
 
-        if is_numeric(self.ctx, type_id) || type_id == self.ctx.primitives.character {
+        if is_numeric(self.ctx, type_id) || type_id == TypeId(CHAR_TYPE_ID) {
             if !type_expression {
                 return Result<HirId, AnalysisError>.Err(self.error(span, "expression is not callable"));
             }
@@ -53,11 +48,11 @@ impl ExprChecker {
             let value = self.expression(args[0].data.value)?;
             let source = self.type_of(value);
 
-            if source == self.ctx.primitives.boolean && is_integer(self.ctx, type_id) {
+            if source == TypeId(BOOL_TYPE_ID) && is_integer(self.ctx, type_id) {
                 return Result<HirId, AnalysisError>.Err(self.error(span, "cannot convert bool to an integer"));
             }
 
-            if !is_numeric(self.ctx, source) && source != self.ctx.primitives.character && source != self.ctx.primitives.boolean {
+            if !is_numeric(self.ctx, source) && source != TypeId(CHAR_TYPE_ID) && source != TypeId(BOOL_TYPE_ID) {
                 return Result<HirId, AnalysisError>.Err(self.error(span, "invalid scalar conversion"));
             }
 
@@ -80,7 +75,7 @@ impl ExprChecker {
             }
         }
 
-        self.call_nominal(span, type_id, args)
+        self.call_nominal(span, type_id, args, Option<Span>.Some(callee.span))
     }
 
     fn invoke(span: Span, target: HirId, parameters: Vec<TypeId>&, result: TypeId, args: Vec<Argument&>&) -> Result<HirId, AnalysisError> {
@@ -130,11 +125,12 @@ impl ExprChecker {
         AnalysisError.arity(Option<SourceSpan>.Some(self.ctx.span(self.unit, span)), subject.as_str(), expected, actual, false)
     }
 
-    pub fn call_nominal(span: Span, type_id: TypeId, args: Vec<Argument&>&) -> Result<HirId, AnalysisError> {
-        self.call_with_receiver(span, type_id, args, Option<HirId>.None)
+    pub fn call_nominal(span: Span, type_id: TypeId, args: Vec<Argument&>&, name_span: Option<Span>) -> Result<HirId, AnalysisError> {
+        self.call_with_receiver(span, type_id, args, Option<HirId>.None, name_span)
     }
 
-    fn call_with_receiver(span: Span, type_id: TypeId, args: Vec<Argument&>&, receiver: Option<HirId>) -> Result<HirId, AnalysisError> {
+    fn call_with_receiver(span: Span, type_id: TypeId, args: Vec<Argument&>&, receiver: Option<HirId>,
+        name_span: Option<Span>) -> Result<HirId, AnalysisError> {
         let nominal = match self.ctx.session.types.require(type_id)? {
             Nominal(definition, _) => *definition,
             _ => return Result<HirId, AnalysisError>.Err(self.error(span, "expression is not callable")),
@@ -142,7 +138,7 @@ impl ExprChecker {
         let definition = match self.ctx.session.types.complete_definition(nominal)? {
             Function(value) => value,
             Method(value) => value,
-            Struct(_) => return self.construct(span, type_id, args),
+            Struct(_) => return self.construct(span, type_id, args, name_span),
             _ => return Result<HirId, AnalysisError>.Err(self.error(span, "type is not callable")),
         };
 
@@ -167,12 +163,13 @@ impl ExprChecker {
             index += 1;
         }
 
-        self.call_values(span, type_id, &values, receiver)
+        self.call_values(span, type_id, &values, receiver, name_span)
     }
 
     // Prepared arguments are borrowed. The HIR receives a separate ID list on success.
 
-    pub fn call_values(span: Span, type_id: TypeId, arguments: Vec<HirId>&, receiver: Option<HirId>) -> Result<HirId, AnalysisError> {
+    pub fn call_values(span: Span, type_id: TypeId, arguments: Vec<HirId>&, receiver: Option<HirId>,
+        name_span: Option<Span>) -> Result<HirId, AnalysisError> {
         let nominal = match self.ctx.session.types.require(type_id)? {
             Nominal(definition, _) => *definition,
             _ => return Result<HirId, AnalysisError>.Err(self.error(span, "call requires a callable definition")),
@@ -279,9 +276,13 @@ impl ExprChecker {
         }
 
         accepted = true;
+        let owned_name = match name_span {
+            Some(value) => Option<SourceSpan>.Some(self.ctx.span(self.unit, value)),
+            None => Option<SourceSpan>.None,
+        };
         let kind = match receiver {
-            Some(value) => HirKind.MethodCall(HirMethodCall(value, instance, values)),
-            None => HirKind.Call(HirCall(instance, values)),
+            Some(value) => HirKind.MethodCall(HirMethodCall(value, instance, values, owned_name)),
+            None => HirKind.Call(HirCall(instance, values, owned_name)),
         };
         Result<HirId, AnalysisError>.Ok(self.node(span, callable.result, false, kind))
     }

@@ -1,17 +1,21 @@
-from yianc.codegen.cfg.ids import FunctionId, BlockId, ValueId, LocalId;
+from yianc.codegen.cfg.ids import FunctionId, BlockId, ValueId, LocalId, ScopeId;
 from yianc.codegen.error import CodegenError;
+from yianc.codegen.representation import TypeRepresentation;
 from yianc.common.ids import TypeId, NameId;
 from yianc.common.location import SourceSpan;
 from yianc.frontend.ast.operator import BinaryOperator, UnaryOperator;
 from yianc.frontend.ast.atoms import BuiltinKind;
-from yianc.analysis.ty.store import TypeStore;
+from yianc.analysis.ty.store import TypeStore, INT_LITERAL_TYPE_ID, FLOAT_LITERAL_TYPE_ID;
 from std.collections.arena import Arena;
 from std.collections.hash_map import HashMap;
-from std.core.drop import Drop;
 from std.core.iter import Iterator, IntoIterator;
-from std.core.option import Option;
-from std.core.result import Result;
-from std.core.vec import Vec;
+
+// Direct placeholders are rejected without a store; nested graphs are checked at lowering boundaries.
+fn reject_literal(type_id: TypeId) {
+    if type_id.index == INT_LITERAL_TYPE_ID || type_id.index == FLOAT_LITERAL_TYPE_ID {
+        @panic("literal type reached CFG");
+    }
+}
 
 pub enum ValueKind {
     Integer { bits: u64 },
@@ -31,7 +35,34 @@ pub struct Value {
 
 pub struct Local {
     pub type_id: TypeId,
+    pub scope: ScopeId,
 }
+
+// A logical call scope. The root scope belongs to the function itself; inlined bodies add children.
+pub struct InlineScope {
+    pub parent: Option<ScopeId>,
+    pub callable: TypeId,
+}
+
+// One physical frame word controls the first acquired local address of a scope.
+pub struct FrameScopePlan {
+    pub needs_lock: bool,
+}
+
+pub struct FunctionFatPlan {
+    pub scopes: Vec<FrameScopePlan>,
+}
+
+impl Drop for FunctionFatPlan {
+    pub fn drop() { self.scopes.drop(); }
+}
+
+pub enum SafetyStage {
+    Neutral,
+    Prepared,
+    Optimized,
+}
+
 
 pub enum IndexBounds {
     Array { length: ValueId },
@@ -63,6 +94,10 @@ pub enum Operation {
     EnumTag { value: ValueId },
     EnumPayload { value: ValueId },
     EnumPayloadAddress { address: ValueId, enum_type: TypeId },
+    EnumInitAt { address: ValueId, enum_type: TypeId, discriminant: u64, fields: Vec<ValueId> },
+    EnumTagAt { address: ValueId, enum_type: TypeId },
+    EnumFieldAt { address: ValueId, enum_type: TypeId, discriminant: u64, field_index: u64 },
+    EnumCopyAt { destination: ValueId, source: ValueId, enum_type: TypeId },
     Delete { value: ValueId },
     PointerOffset { pointer: ValueId, index: ValueId, subtract: bool },
     PointerDifference { left: ValueId, right: ValueId },
@@ -72,6 +107,9 @@ pub enum Operation {
     Fill { destination: ValueId, element: ValueId, count: ValueId },
     TraitObject { source: ValueId, methods: Vec<TypeId> },
     DynamicCall { receiver: ValueId, method: TypeId, slot: u64, args: Vec<ValueId> },
+    ScopeEnter { scope: ScopeId },
+    ScopeExit { scope: ScopeId },
+    SafetyPoint,
 }
 
 impl Drop for Operation {
@@ -83,6 +121,7 @@ impl Drop for Operation {
             DynamicCall(_, _, _, args) => args.drop(),
             Phi(incoming) => incoming.drop(),
             Aggregate(fields) => fields.drop(),
+            EnumInitAt(_, _, _, fields) => fields.drop(),
             Builtin(_, type_args, args) => { type_args.drop(); args.drop(); },
             _ => {},
         }
@@ -97,9 +136,12 @@ impl Operation {
             Address(_) => "address", Read(_) => "read", Write(_, _) => "write", Aggregate(_) => "aggregate",
             Extract(_, _) => "extract", FieldAddress(_, _, _) => "field-address", Builtin(_, _, _) => "builtin",
             EnumConstruct(_, _) => "enum", EnumTag(_) => "tag", EnumPayload(_) => "payload", EnumPayloadAddress(_, _) => "payload-address",
+            EnumInitAt(_, _, _, _) => "enum-init-at", EnumTagAt(_, _) => "enum-tag-at",
+            EnumFieldAt(_, _, _, _) => "enum-field-at", EnumCopyAt(_, _, _) => "enum-copy-at",
             Delete(_) => "delete", PointerOffset(_, _, _) => "pointer-offset", PointerDifference(_, _) => "pointer-difference",
             IndexAddress(_, _, _, _) => "index-address", Repeat(_, _) => "repeat", Fill(_, _, _) => "fill",
             TraitObject(_, _) => "trait-object", DynamicCall(_, _, _, _) => "dynamic-call",
+            ScopeEnter(_) => "scope-enter", ScopeExit(_) => "scope-exit", SafetyPoint => "safety-point",
         }
     }
 
@@ -116,6 +158,13 @@ impl Operation {
             Call(_, args) | Builtin(_, _, args) | Aggregate(args) => { for arg in *args { result.push(*arg); } },
             Phi(incoming) => { for edge in *incoming { result.push(edge[0]); } },
             EnumConstruct(_, payload) => match payload { Some(value) => result.push(*value), None => {}, },
+            EnumInitAt(address, _, _, fields) => {
+                result.push(*address);
+                for field in *fields { result.push(*field); }
+            },
+            EnumTagAt(address, _) => result.push(*address),
+            EnumFieldAt(address, _, _, _) => result.push(*address),
+            EnumCopyAt(destination, source, _) => { result.push(*destination); result.push(*source); },
             IndexAddress(address, _, index, bounds) => {
                 result.push(*address);
                 result.push(*index);
@@ -132,11 +181,57 @@ impl Operation {
     }
 }
 
+// Guard sites name fixed points in one LLVM template. The CFG fixes kind, site, and order.
+pub enum GuardSite {
+    Before,
+    AfterAllocation,
+    BeforeRelease,
+    AfterArgumentLoad,
+}
+
+pub enum GuardKind {
+    Count,
+    AllocationSize,
+    AllocationResult,
+    HeapRoot,
+    PointerStep,
+    PointerDifference,
+    PointerOrder,
+    IndexOffset,
+    ViewParts,
+    SliceRange,
+    ArgumentIndex,
+    ArgumentData,
+    PointerRemaining,
+    CastAccess,
+    CastView,
+    CastNonempty,
+    DynamicReceiver,
+}
+
+pub struct OperationGuard {
+    pub kind: GuardKind,
+    pub site: GuardSite,
+}
+
+pub struct CheckLocation {
+    pub block: BlockId,
+    pub instruction: u64,
+    pub check: u64,
+}
+
+pub struct LiveProof {
+    pub address: ValueId,
+    pub witness: CheckLocation,
+}
+
 pub struct Instruction {
     pub span: SourceSpan,
     pub result: Option<ValueId>,
     pub operation: Operation,
     pub checks: Vec<SafetyCheck>,
+    pub guards: Vec<OperationGuard>,
+    pub live_proofs: Vec<LiveProof>,
 }
 
 // Checks borrow value identities. They carry no LLVM handles or mutable liveness facts.
@@ -158,6 +253,8 @@ pub enum SafetyCheck {
     Index { index: ValueId, bounds: IndexBounds },
     Nonempty { view: ValueId },
     Copy { destination: ValueId, source: ValueId, count: ValueId },
+    Live { address: ValueId, kind: AccessKind },
+    AccessBounds { address: ValueId, kind: AccessKind },
 }
 
 impl SafetyCheck {
@@ -169,13 +266,15 @@ impl SafetyCheck {
             Index(_, _) => "index",
             Nonempty(_) => "nonempty",
             Copy(_, _, _) => "copy",
+            Live(_, _) => "live",
+            AccessBounds(_, _) => "access-bounds",
         }
     }
 
     pub fn operands() -> Vec<ValueId> {
         let values = Vec<ValueId>.new();
         match self {
-            Access(value, _) | InBounds(value) | View(value) | Nonempty(value) => values.push(*value),
+            Access(value, _) | InBounds(value) | View(value) | Nonempty(value) | Live(value, _) | AccessBounds(value, _) => values.push(*value),
             Index(index, bounds) => { values.push(*index); values.push(bounds.limit()); },
             Copy(destination, source, count) => { values.push(*destination); values.push(*source); values.push(*count); },
         }
@@ -187,6 +286,8 @@ impl Drop for Instruction {
     pub fn drop() {
         self.operation.drop();
         self.checks.drop();
+        self.guards.drop();
+        self.live_proofs.drop();
     }
 }
 
@@ -214,6 +315,8 @@ pub struct CfgFunction {
     pub callable: TypeId,
     pub result_type: TypeId,
     pub parameters: Vec<TypeId>,
+    pub scopes: Vec<InlineScope>,
+    pub fat_plan: Option<FunctionFatPlan>,
     blocks: Arena<BasicBlock>,
     values: Arena<Value>,
     locals: Arena<Local>,
@@ -222,7 +325,17 @@ pub struct CfgFunction {
 impl CfgFunction {
     // Parameter storage transfers to the function.
     static pub fn new(callable: TypeId, result_type: TypeId, parameters: Vec<TypeId>) -> Self {
-        Self(callable, result_type, parameters, Arena<BasicBlock>.new(), Arena<Value>.new(), Arena<Local>.new())
+        reject_literal(callable);
+        reject_literal(result_type);
+
+        for parameter in parameters {
+            reject_literal(*parameter);
+        }
+
+        let scopes = Vec<InlineScope>.new();
+        scopes.push(InlineScope(Option<ScopeId>.None, callable));
+        Self(callable, result_type, parameters, scopes, Option<FunctionFatPlan>.None,
+            Arena<BasicBlock>.new(), Arena<Value>.new(), Arena<Local>.new())
     }
 
     pub fn block_count() -> u64 { self.blocks.len() }
@@ -257,12 +370,56 @@ impl CfgFunction {
     }
 
     pub fn add_local(type_id: TypeId) -> LocalId {
+        reject_literal(type_id);
         let id = LocalId(self.locals.len());
-        self.locals.alloc(Local(type_id));
+        self.locals.alloc(Local(type_id, ScopeId(0u64)));
         id
     }
 
+    pub fn add_scoped_local(type_id: TypeId, scope: ScopeId) -> Result<LocalId, CodegenError> {
+        self.scope(scope)?;
+        reject_literal(type_id);
+        let id = LocalId(self.locals.len());
+        self.locals.alloc(Local(type_id, scope));
+        Result<LocalId, CodegenError>.Ok(id)
+    }
+
+    pub fn scope(id: ScopeId) -> Result<InlineScope&, CodegenError> {
+        match self.scopes.as_slice().get(id.index) {
+            Some(value) => Result<InlineScope&, CodegenError>.Ok(value),
+            None => Result<InlineScope&, CodegenError>.Err(CodegenError.invalid("invalid CFG scope ID")),
+        }
+    }
+
+    pub fn add_scope(parent: Option<ScopeId>, callable: TypeId) -> Result<ScopeId, CodegenError> {
+        match parent {
+            Some(value) => { self.scope(value)?; },
+            None => {},
+        }
+        reject_literal(callable);
+        let id = ScopeId(self.scopes.len());
+        self.scopes.push(InlineScope(parent, callable));
+        Result<ScopeId, CodegenError>.Ok(id)
+    }
+
+    pub fn set_local_scope(id: LocalId, scope: ScopeId) -> Result<(), CodegenError> {
+        self.scope(scope)?;
+        match self.locals.get(id.index) {
+            Some(value) => { value.scope = scope; Result<(), CodegenError>.Ok(()) },
+            None => Result<(), CodegenError>.Err(CodegenError.invalid("invalid CFG local ID")),
+        }
+    }
+
+    pub fn set_scope_parent(id: ScopeId, parent: Option<ScopeId>) -> Result<(), CodegenError> {
+        match parent { Some(value) => { self.scope(value)?; }, None => {}, }
+        match self.scopes.as_slice().get(id.index) {
+            Some(value) => { value.parent = parent; Result<(), CodegenError>.Ok(()) },
+            None => Result<(), CodegenError>.Err(CodegenError.invalid("invalid CFG scope ID")),
+        }
+    }
+
     pub fn add_value(type_id: TypeId, kind: ValueKind) -> ValueId {
+        reject_literal(type_id);
         let id = ValueId(self.values.len());
         self.values.alloc(Value(type_id, kind));
         id
@@ -271,6 +428,10 @@ impl CfgFunction {
     // Operation ownership transfers on both success and failure.
     pub fn append(block: BlockId, span: SourceSpan, type_id: Option<TypeId>, operation: Operation)
     -> Result<Option<ValueId>, CodegenError> {
+        match type_id {
+            Some(value) => reject_literal(value),
+            None => {},
+        };
         let target = match self.block(block) {
             Ok(value) => value,
             Err(problem) => {
@@ -288,7 +449,8 @@ impl CfgFunction {
                 ValueKind.Temporary(block, target.instructions.len()))),
             None => Option<ValueId>.None,
         };
-        target.instructions.push(Instruction(span, result, operation, Vec<SafetyCheck>.new()));
+        target.instructions.push(Instruction(span, result, operation,
+            Vec<SafetyCheck>.new(), Vec<OperationGuard>.new(), Vec<LiveProof>.new()));
         Result<Option<ValueId>, CodegenError>.Ok(result)
     }
 
@@ -307,6 +469,8 @@ impl Drop for CfgFunction {
     pub fn drop() {
         for block in self.blocks { block.drop(); }
         self.parameters.drop();
+        match &self.fat_plan { Some(value) => value.drop(), None => {}, }
+        self.scopes.drop();
         self.blocks.drop();
         self.values.drop();
         self.locals.drop();
@@ -318,11 +482,14 @@ pub struct CfgModule {
     functions: Arena<CfgFunction>,
     index: HashMap<TypeId, FunctionId>,
     pub entry: Option<TypeId>,
+    pub safety_stage: SafetyStage,
+    pub representations: Vec<TypeRepresentation>,
 }
 
 impl CfgModule {
     static pub fn new(owner: TypeStore&, entry: Option<TypeId>) -> Self {
-        Self(owner, Arena<CfgFunction>.new(), HashMap<TypeId, FunctionId>.new(), entry)
+        Self(owner, Arena<CfgFunction>.new(), HashMap<TypeId, FunctionId>.new(), entry,
+            SafetyStage.Neutral, Vec<TypeRepresentation>.new())
     }
 
     pub fn type_store() -> TypeStore& { self.owner }
@@ -358,5 +525,6 @@ impl Drop for CfgModule {
         for function in self.functions { function.drop(); }
         self.index.drop();
         self.functions.drop();
+        self.representations.drop();
     }
 }

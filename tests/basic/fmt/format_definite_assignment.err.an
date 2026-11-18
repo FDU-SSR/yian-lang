@@ -1,0 +1,17 @@
+from std.core.io import Write, IoError;
+
+struct Sink {}
+impl Write for Sink {
+    fn write(data: u8[]) -> Result<u64, IoError> {
+        Result<u64, IoError>.Ok(val=u64(data.len()))
+    }
+    fn flush() -> Result<(), IoError> { Result<(), IoError>.Ok(val=()) }
+}
+
+fn main() {
+    let sink = Sink();
+    let value: i32;
+    let result = @write(&sink, f"A{value = 3}");
+    match result { Ok(_) => {}, Err(error) => error.drop(), }
+    @println(f"{value}");
+}

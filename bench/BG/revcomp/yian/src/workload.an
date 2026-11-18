@@ -1,0 +1,96 @@
+// bench/BG/revcomp/yian/src/workload.an — Benchmarks Game reverse complement.
+//
+// Source: bench/BG/revcomp/c/upstream/main.c (revcomp-gcc-5; revised BSD).
+// Read FASTA records from stdin, preserve headers and record order, and emit
+// each sequence's reverse complement in lines of at most 60 bytes.
+//
+// Input and sequence cursors are u64 offsets into the owned input Vec. No
+// pointer is formed before the input buffer's first byte.
+
+from std.core.io import BufWriter, Read, Stdin, Stdout, Write;
+
+fn process(input: u8[], table: u8[], record_start: u64, sequence_start: u64, sequence_end: u64) {
+    let output_stream: Stdout = Stdout.new();
+    let output: BufWriter<Stdout> = BufWriter<Stdout>.new(&output_stream);
+    output.write_all(input[record_start..sequence_start]).unwrap();
+
+    let line: u8[61] = [0u8; 61];
+    let line_length: u64 = 0;
+    let position: u64 = sequence_end;
+    while position > sequence_start {
+        position -= 1u64;
+        let byte: u8 = input[position];
+        if byte != b'\n' {
+            line[line_length] = table[u64(byte)];
+            line_length += 1u64;
+            if line_length == 60u64 {
+                line[60u64] = b'\n';
+                output.write_all(line[0u64..61u64]).unwrap();
+                line_length = 0u64;
+            }
+        }
+    }
+
+    if line_length > 0u64 {
+        line[line_length] = b'\n';
+        output.write_all(line[0u64..(line_length + 1u64)]).unwrap();
+    }
+    output.finish().unwrap();
+    output.drop();
+    output_stream.drop();
+}
+
+pub fn run() -> i32 {
+
+    let input: Vec<u8> = Vec<u8>.new();
+    let read_buffer: u8[8192] = [0u8; 8192];
+    let stdin: Stdin = Stdin.new();
+    loop {
+        let count: u64 = *stdin.read(read_buffer.as_slice()).unwrap();
+        if count == 0u64 {
+            break;
+        }
+        input.extend_from_slice(read_buffer[0u64..count]);
+    }
+    stdin.drop();
+
+    let input_bytes: u8[] = input.as_slice();
+    let table: u8[256] = [0u8; 256];
+    let pairs: str = "ATCGGCTAUAMKRYWWSSYRKMVBHDDHBVNN\n\n\0";
+    let pair_bytes: u8[] = pairs.as_slice();
+    let pair_index: u64 = 0;
+    while pair_bytes[pair_index] != 0u8 {
+        let upper: u8 = pair_bytes[pair_index];
+        let lower: u8 = if upper >= b'A' && upper <= b'Z' { upper + 32u8 } else { upper };
+        let complement: u8 = pair_bytes[pair_index + 1u64];
+        table[u64(upper)] = complement;
+        table[u64(lower)] = complement;
+        pair_index += 2u64;
+    }
+
+    let record_start: u64 = 0u64;
+    while record_start < input_bytes.len() {
+        if input_bytes[record_start] != b'>' {
+            @panic("revcomp: expected a FASTA record header");
+        }
+        let header_end: u64 = record_start;
+        while header_end < input_bytes.len() && input_bytes[header_end] != b'\n' {
+            header_end += 1u64;
+        }
+        if header_end == input_bytes.len() {
+            @panic("revcomp: unterminated FASTA header");
+        }
+        let sequence_start: u64 = header_end + 1u64;
+        let record_end: u64 = sequence_start;
+        while record_end < input_bytes.len() && input_bytes[record_end] != b'>' {
+            record_end += 1u64;
+        }
+
+        process(input_bytes, table.as_slice(), record_start, sequence_start, record_end);
+        record_start = record_end;
+    }
+
+    input.drop();
+
+    return 0;
+}

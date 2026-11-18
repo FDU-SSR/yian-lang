@@ -1,0 +1,5 @@
+// Removed I/O builtin names are rejected by the parser.
+
+fn main() {
+    @sys_write(1, "x");
+}

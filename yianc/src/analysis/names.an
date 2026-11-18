@@ -1,12 +1,8 @@
 from yianc.common.ids import NameId;
 from std.collections.hash_map import HashMap;
 from std.core.convert import From;
-from std.core.drop import Drop;
 from std.core.iter import Iterator, IntoIterator;
 from std.core.ops import Index;
-from std.core.option import Option;
-from std.core.string import String;
-from std.core.vec import Vec;
 
 // Strings own their buffers; index keys borrow those buffers across vector growth.
 pub struct NameInterner {

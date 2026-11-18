@@ -1,0 +1,17 @@
+// Fat-pointer ordered comparison across lifetimes.
+//
+// old and second name the same payload after reuse but carry different lock
+// keys. Ordered comparison requires the same lifetime pair, so the run ends
+// with S005 before any access.
+//
+// Expected runtime safety error: Exit code 1
+
+fn main() {
+    let first: i32* = dyn[4] 0i32;
+    let old: i32* = first;
+    del first;
+
+    let second: i32* = dyn[2] 0i32;
+    assert old == second: "first-fit pool reuses the block";
+    assert old < second: "cross-lifetime order must trap";
+}

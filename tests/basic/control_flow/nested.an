@@ -4,8 +4,6 @@
 // 25
 // 5050
 
-from std.core.io import print;
-
 // Test: match inside if
 fn classify_then_act(x: i32) -> i32 {
     if x > 0 {
@@ -59,8 +57,8 @@ fn case_nested_branch_and_loop_control() {
     }
     assert total == 5050: "for inside while failed";
 
-    print("25\n");
-    print("5050\n");
+    @print("25\n");
+    @print("5050\n");
 }
 
 fn case_nested_trailing_semicolons() {

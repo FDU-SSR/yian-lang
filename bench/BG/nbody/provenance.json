@@ -1,0 +1,74 @@
+{
+  "format": 2,
+  "task": "nbody",
+  "description_url": "https://benchmarksgame-team.pages.debian.net/benchmarksgame/description/nbody.html",
+  "source": {
+    "url": "https://benchmarksgame-team.pages.debian.net/benchmarksgame/program/nbody-gcc-1.html",
+    "retrieved_at": "2026-10-31T10:42:07Z",
+    "extracted_sha256": "a2750e1505f86f3815cc0efbb0c665c9117cdca3ae4ae55bbb3da597858062b2",
+    "extraction": "First HTML pre block; remove HTML tags, HTML-unescape once, UTF-8 encode; preserve leading and trailing whitespace.",
+    "archive_path": "c/upstream/main.c"
+  },
+  "files": [
+    {
+      "path": "c/upstream/main.c",
+      "sha256": "a2750e1505f86f3815cc0efbb0c665c9117cdca3ae4ae55bbb3da597858062b2",
+      "license_id": "BSD-3-Clause"
+    },
+    {
+      "path": "c/src/main.c",
+      "sha256": "a2750e1505f86f3815cc0efbb0c665c9117cdca3ae4ae55bbb3da597858062b2",
+      "license_id": "BSD-3-Clause"
+    },
+    {
+      "path": "LICENSE-BenchmarksGame.txt",
+      "sha256": "32ef9bf57891917e5a636ebccf3ff6d14536a3a794075ef0887b412cdebfd89e",
+      "license_id": "BSD-3-Clause"
+    }
+  ],
+  "patches": [],
+  "fixtures": [
+    {
+      "input_url": null,
+      "input_path": null,
+      "input_sha256": null,
+      "output_url": "https://benchmarksgame-team.pages.debian.net/benchmarksgame/download/nbody-output.txt",
+      "output_path": "fixtures/official-output.txt",
+      "output_sha256": "76de83d6d51a74f82828547423f516e7815cfe8cfea6290a2831aa173f806de7",
+      "argv": [
+        "1000"
+      ]
+    }
+  ],
+  "translation": [
+    {
+      "c_symbol": "advance",
+      "yian_symbol": "advance",
+      "differences": [
+        "C updates planet pointers and YIAN updates entries through a checked Planet[] slice; both traverse i then j=i+1, apply pairwise velocity updates, and then update all positions in body order."
+      ]
+    },
+    {
+      "c_symbol": "energy",
+      "yian_symbol": "energy",
+      "differences": [
+        "Both accumulate kinetic energy followed by each i<j potential term in the same body and expression order using f64 values."
+      ]
+    },
+    {
+      "c_symbol": "offset_momentum",
+      "yian_symbol": "offset_momentum",
+      "differences": [
+        "Both accumulate momentum in body order and update the Sun velocity using solar_mass."
+      ]
+    },
+    {
+      "c_symbol": "main",
+      "yian_symbol": "main",
+      "differences": [
+        "C reads steps from argv and has file-scope bodies; YIAN uses its bench-scale step marker and initializes the five bodies in a local fixed array.",
+        "Both apply offset_momentum once, print initial energy, advance by 0.01 exactly n times, and print final energy. YIAN prints both energies through the standard library's nine-digit fixed specification, which reproduces the C printf precision."
+      ]
+    }
+  ]
+}

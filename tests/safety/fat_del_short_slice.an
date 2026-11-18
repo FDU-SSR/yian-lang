@@ -1,4 +1,6 @@
-// A short base slice does not cover the complete multi-element allocation.
+// A root-start slice may release the whole allocation at any extent.
+//
+// Expected output: 0
 
 fn main() {
     let p: i32* = dyn[4] 0i32;

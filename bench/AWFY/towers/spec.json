@@ -1,0 +1,17 @@
+{
+  "name": "towers",
+  "measurement": {"warmups": 1, "runs": 5},
+  "source": "AWFY",
+  "tags": [
+    "ptr"
+  ],
+  "argv": [],
+  "check": {
+    "rc": 0
+  },
+  "note": "Official work unit: 13 disks, result 8191; default 41065 outer iterations",
+  "scale": {
+    "default": 41065,
+    "c": "argv"
+  }
+}

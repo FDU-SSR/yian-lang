@@ -1,15 +1,11 @@
 from yianc.codegen.lowering.context import Lowering, CleanupScope, LoopTarget;
-from yianc.codegen.cfg.ids import ValueId, BlockId;
+from yianc.codegen.cfg.ids import ValueId, BlockId, ScopeId;
 from yianc.codegen.cfg.model import Operation, Terminator;
 from yianc.codegen.error import CodegenError;
 from yianc.analysis.hir.node import HirNode, Block, If;
 from yianc.common.ids import HirId;
-from std.core.drop import Drop;
 from std.core.iter import Iterator, IntoIterator;
 from std.core.ops import Index;
-from std.core.option import Option;
-from std.core.result import Result;
-from std.core.vec import Vec;
 
 impl Lowering {
     // Place-valued blocks retain the final place instead of copying it into a temporary.
@@ -195,7 +191,10 @@ impl Lowering {
             None => Option<ValueId>.None,
         };
         self.clean_to(0u64)?;
-        if self.current.is_some() { self.end(Terminator.Return(result))?; }
+        if self.current.is_some() {
+            self.effect(node.span, Operation.ScopeExit(ScopeId(0u64)))?;
+            self.end(Terminator.Return(result))?;
+        }
         Result<ValueId, CodegenError>.Ok(self.zero(node.type_id))
     }
 }

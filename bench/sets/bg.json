@@ -1,0 +1,7 @@
+{
+  "name": "bg",
+  "scale": "full",
+  "include": ["BG/*"],
+  "exclude": [],
+  "note": "All ten official Benchmarksgame projects at their full task dimensions"
+}

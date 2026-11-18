@@ -36,15 +36,14 @@ class ScalarOps:
             if isinstance(lhs_ty, Type.PointerType) and isinstance(rhs_ty, Type.PointerType):
                 return self.__memory.build_ptr_diff(lhs, rhs)
             if isinstance(lhs_ty, Type.PointerType):
-                # ptr - int → negate offset then ElementPtr
-                zero = IR.IntLiteral(value=0, type_id=rhs.type_id)
-                neg_offset = self.build_binary(BinaryOperator.Sub, zero, rhs, rhs.type_id)
-                return self.__memory.build_element_ptr(lhs, neg_offset, type_id)
+                # ptr - n: keep the unsigned displacement and check n <= index in the arithmetic guard.
+                return self.__memory.build_element_ptr(lhs, rhs, type_id, backward=True)
 
         # -- Compare pointer fields --
         # Route fat-pointer comparisons (both PointerType with non-ZST pointees) through PtrCmp:
-        # ordering inserts CheckPtrCmp for equal data, rejecting different objects; equality compares
-        # (data,index). FunctionPointerType is not PointerType and does not use this path.
+        # ordering inserts CheckPtrCmp for equal data and lifetime word, rejecting different objects
+        # or lifetimes; equality compares (data,index). FunctionPointerType is not PointerType and
+        # does not use this path.
         if op.is_comparison() and self.__state.pointers.is_fat_pointer(lhs) and self.__state.pointers.is_fat_pointer(rhs):
             return self.__memory.build_ptr_cmp(op, lhs, rhs, type_id)
 

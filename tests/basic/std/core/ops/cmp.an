@@ -4,7 +4,7 @@
 
 // Test comparison and ordering traits, including the min/max helpers.
 
-from std.core.ops import PartialEq, PartialOrd, Ordering, max, min;
+from std.core.ops import PartialEq, PartialOrd, max, min;
 
 struct Value<T> {
     pub value: T,

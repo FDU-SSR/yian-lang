@@ -6,7 +6,6 @@ from yianc.frontend.desugar import desugar;
 from yianc.frontend.ast.node import Expr;
 from yianc.frontend.ast.traversal import AstVisitor, walk_program;
 from yianc.frontend.ast.atoms import MatchArmOrigin;
-from std.core.drop import Drop;
 from std.core.ops import Index;
 
 struct Counter { make: u64, into_iter: u64, next: u64 }

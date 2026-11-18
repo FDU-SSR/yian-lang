@@ -9,12 +9,7 @@ from yianc.common.ids import TypeId, DefId;
 from yianc.common.location import SourceSpan;
 from yianc.diagnostics.model import AnalysisError, DiagnosticCode;
 from std.collections.hash_set import HashSet;
-from std.core.drop import Drop;
 from std.core.iter import Iterator, IntoIterator;
-from std.core.option import Option;
-from std.core.result import Result;
-from std.core.vec import Vec;
-from std.core.string import String;
 
 enum StorageVisit {
     Enter {
@@ -56,7 +51,6 @@ fn check_value(ctx: ResolutionContext&, type_id: TypeId, active_types: HashSet<T
         match ctx.session.types.require(current)? {
             Nominal(id, _) => {
                 let definition = *ctx.session.types.definition(*id).unwrap();
-                if ctx.session.editor_recovery && !definition.is_complete() { continue; }
                 let recursive = if expand {
                     active_types.contains(&current)
                 } else {

@@ -2,7 +2,6 @@
 //
 // Expected output: 0
 
-from std.core.io import print;
 from std.core.convert import From;
 
 struct Circle {
@@ -23,7 +22,7 @@ trait Shape {
 
     // Has a default implementation.
     fn move_by(dx: i32, dy: i32) {
-        print("Nothing to do\n");
+        @print("Nothing to do\n");
     }
 }
 

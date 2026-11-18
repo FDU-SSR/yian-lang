@@ -1,18 +1,33 @@
-# 评测来源与许可
+# Benchmark sources and licenses
 
-本文件登记仓库中实际运行的基准及其来源。评测集合、规模档、运行协议和结果文件见
-[`bench/README.md`](README.md)。
+This file registers the benchmark projects included in the repository and their
+sources. Sets, scale profiles, run protocol, and result files are documented in
+[`bench/README.md`](README.md).
 
-| 来源 | 目录 | 成员 | 许可与来源说明 |
+| Source | Directory | Members | License and source notes |
 | --- | --- | ---: | --- |
-| Are We Fast Yet（`smarr/are-we-fast-yet`） | `bench/AWFY/` | 14 | 上游来源与许可因基准而异：部分实现来自 Benchmarks Game（Revised BSD）；Richards 和 DeltaBlue 的 Java 实现带 MIT 许可，其更早来源见对应源文件头注释。AWFY 的 C 参考实现由本仓库编写。 |
-| The Computer Language Benchmarks Game | `bench/BG/` | 5 | Revised BSD；基准源文件头注释记录具体来源与版权信息。 |
-| 本仓库编写的分配器负载 | `bench/ALLOC/` | 4 | 本仓库代码；fat/raw 两态对照 libc `malloc`/`free`。 |
-| 本仓库编写的机制微基准 | `bench/fatptr/` | 3 | 本仓库代码；比较表示尺寸、传参、拷贝与指针追逐的成本。 |
-| 对应基准的 C 参考实现 | `bench/AWFY/c/`、`bench/BG/c/`、`bench/fatptr/c/` | 22 | 本仓库编写；用于对齐工作量与结果校验；算法等价需逐项核对。 |
+| Are We Fast Yet (`smarr/are-we-fast-yet`) | `bench/AWFY/<name>/` | 14 | Upstream algorithm provenance and licenses vary by benchmark. The C references are repository projects; the Java implementations of Richards and DeltaBlue carry MIT notices. |
+| The Computer Language Benchmarks Game | `bench/BG/<name>/` | 10 | Revised BSD. Each project records its selected official C source, license, input/output fixtures, function mapping, local portability patches, and hashes in `README.md` and `provenance.json`. |
+| Allocator workloads written in this repository | `bench/ALLOC/<name>/` | 4 | Repository code; fat/raw two-state comparison against libc `malloc`/`free`, without a C reference. |
+| Mechanism microbenchmarks written in this repository | `bench/fatptr/<name>/` | 3 | Repository code; C/YIAN pairs compare representation size, argument passing, copying, and pointer-chasing costs. |
+| libyaml parser (`LIBYAML/libyaml`) | `bench/LIBYAML/libyaml/` | 1 | Upstream libyaml 0.2.5, MIT. The C reference uses the vendored parser; YIAN ports the same reader/scanner/parser/loader and is validated by an independent compatibility runner and reports. |
+| Paired C/YIAN projects | `bench/AWFY/<name>/c/`, `bench/BG/<name>/c/`, `bench/fatptr/<name>/c/`, `bench/LIBYAML/libyaml/c/` | 28 | The AWFY/fatptr references are repository C projects; BG references retain the selected official sources and disclose any small C portability patch. Workload criteria are in the [C → YIAN specification](../docs/c-to-yian.md). |
 
-上游主页：
+The repository contains 28 C/YIAN pairs (14 AWFY, 10 BG, 3 fatptr, and
+LIBYAML). The `full` three-state set selects 27 of them; LIBYAML is selected
+separately by `sets/real.json` and is not part of the paper geomean group.
+`sets/bg.json` selects the ten BG projects, and the `paper` set selects all 14
+AWFY and all ten BG projects (24 benchmarks). The paper analysis reports
+LIBYAML's three-state and ASan data separately from that group. The four
+`ALLOC` projects are selected only by the fat/raw allocator runner. GMP 6.3.0 and PCRE2 10.47 are fixed project-local
+dependencies for pidigits and regexredux; they are not benchmark projects. Both
+libraries use the same static archives in C/raw/fat and are not ASan-instrumented
+or covered by YIAN guards. See [`native/README.md`](native/README.md) and each
+case's dependency provenance.
+
+Upstream home pages:
 
 - [Are We Fast Yet](https://github.com/smarr/are-we-fast-yet)
 - [The Computer Language Benchmarks Game](https://benchmarksgame-team.pages.debian.net/benchmarksgame/)
-- [Benchmarks Game 许可说明](https://benchmarksgame-team.pages.debian.net/benchmarksgame/license.html)
+- [Benchmarks Game license](https://benchmarksgame-team.pages.debian.net/benchmarksgame/license.html)
+- [libyaml](https://github.com/yaml/libyaml)

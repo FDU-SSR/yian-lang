@@ -1,0 +1,7 @@
+from knucleotide.workload import run;
+from std.core.env import exit;
+
+fn main() {
+    let status: i32 = run();
+    if status != 0 { exit(status); }
+}

@@ -229,11 +229,14 @@ class FatSafety:
         lock_index = self.__core.flow.emit_either(has_free, take_fast, take_slow, i64)  # type: ignore
         entry = self.__builder.gep(table, [ir.Constant(i64, 0), lock_index], inbounds=True)  # type: ignore
         stored = self.__builder.load(entry, typ=i64)  # type: ignore
+        old_key = self.__builder.and_(stored, ir.Constant(i64, ABI.KEY_MASK))  # type: ignore
+        # An entry whose key reaches the limit traps instead of wrapping to an issued key.
+        self.__core.flow.emit_check(
+            LLValue(self.__type_ctx.bool_id, self.__builder.icmp_unsigned(  # type: ignore
+                "<", old_key, ir.Constant(i64, ABI.HEAP_KEY_LIMIT))),  # type: ignore
+            RuntimeErrorCode.R003, "lockkey")
         next_key = self.__builder.and_(  # type: ignore
-            self.__builder.add(  # type: ignore
-                self.__builder.and_(stored, ir.Constant(i64, ABI.KEY_MASK)),  # type: ignore
-                ir.Constant(i64, 1),  # type: ignore
-            ),
+            self.__builder.add(old_key, ir.Constant(i64, 1)),  # type: ignore
             ir.Constant(i64, ABI.KEY_MASK),  # type: ignore
         )
         next_entry = self.__builder.or_(  # type: ignore
@@ -359,7 +362,7 @@ class FatSafety:
         acquire_frame_lock records the address in __frame_lock_slot_name.
         This method records acquisition state; its argument is word, not the address.
         """
-        assert isinstance(e_f, IR.Reg), "帧锁必须为入口寄存器"
+        assert isinstance(e_f, IR.Reg), "frame lock must be an entry register"
         self.__frame_lock_acquired = True
 
     def release_frame_lock(self) -> None:
@@ -437,7 +440,7 @@ class FatSafety:
     def cmp_fat_values(self, op: BinaryOperator, lhs: ir.Value, rhs: ir.Value) -> ir.Value:
         """Compare fields of fat ir.Value aggregates.
 
-        Equality uses (data,index); ordering first checks equal data and rejects different objects.
+        Equality uses (data,index); ordering requires equal data and lifetime word.
         CFG did not route these values here, so insert the precondition locally.
         """
         data_l, idx_l = self.__fat_value_pair(lhs)
@@ -448,6 +451,10 @@ class FatSafety:
             both = self.__builder.and_(data_eq, idx_eq)  # type: ignore
             return self.__builder.not_(both) if op == BinaryOperator.Neq else both  # type: ignore
         data_ok = self.__builder.icmp_signed("==", data_l, data_r)  # type: ignore
+        if isinstance(lhs.type, ir.LiteralStructType) and len(lhs.type.elements) >= 4:  # type: ignore
+            word_l = self.__builder.extract_value(lhs, ABI.FAT_WORD)  # type: ignore
+            word_r = self.__builder.extract_value(rhs, ABI.FAT_WORD)  # type: ignore
+            data_ok = self.__builder.and_(data_ok, self.__builder.icmp_signed("==", word_l, word_r))  # type: ignore
         self.__core.flow.emit_check(LLValue(self.__type_ctx.bool_id, data_ok), RuntimeErrorCode.S005, "ptrcmp")
         predicate = {
             BinaryOperator.Lt: "<", BinaryOperator.Gt: ">",
@@ -638,36 +645,32 @@ class FatSafety:
         cond = self.__check_live(word, data)
         self.__core.flow.emit_check(cond, RuntimeErrorCode.S003, "ref")
 
-    def __element_arith_cond(self, base: LLValue, offset: LLValue) -> ir.Value:
+    def __element_arith_cond(self, base: LLValue, offset: LLValue, backward: bool = False) -> ir.Value:
         index = self.extract_fat_field(base, ABI.FAT_INDEX).ir_val
         size = self.extract_fat_field(base, ABI.FAT_SIZE).ir_val
         off64 = self.__builder.bitcast(offset.ir_val, ir.IntType(64))  # type: ignore
+        if backward:
+            fits = self.__builder.icmp_unsigned("<=", off64, index)  # type: ignore
+            total = self.__builder.sub(index, off64)  # type: ignore
+            in_range = self.__builder.icmp_unsigned("<=", total, size)  # type: ignore
+            return self.__builder.and_(fits, in_range)  # type: ignore
         total = self.__builder.add(index, off64)  # type: ignore
         no_wrap = self.__builder.icmp_unsigned(">=", total, index)  # type: ignore
         in_range = self.__builder.icmp_unsigned("<=", total, size)  # type: ignore
         return self.__builder.and_(no_wrap, in_range)  # type: ignore
 
-    def check_element_arith(self, base: LLValue, offset: LLValue) -> None:
-        """Check 0 <= index+offset <= size using u64 no-wrap and upper-bound comparisons.
+    def check_element_arith(self, base: LLValue, offset: LLValue, backward: bool = False) -> None:
+        """Check arithmetic validity for p+n or p-n using u64 comparisons.
 
-        Pointer arithmetic does not access memory, so, like PtrDiff/PtrCmp, it omits
-        allocation liveness. Dereference and external I/O check live at their access boundaries.
-
-        For unsigned indices, nonnegativity is automatic. Decompose the condition into:
-        (a) no_wrap = icmp uge sum,index (sum=index+offset; unsigned wrap means sum<index),
-        (b) in_range = icmp ule sum,size, combining them with and.
-        For positive offsets below 2^63 and index+offset below 2^64, no_wrap is true,
-        leaving the upper bound, equivalent to the i128 formulation.
-        On overflow sum<index rejects the operation, equivalent to i128 sum>=2^64>size.
-        Offsets >=2^63 are very large unsigned indices and report a safety error;
-        sign-extension would instead treat them as negative and could admit a subslice
-        when base.index >= |offset|. The u64 form lets ConstraintElimination relate
-        loop/branch constraints and remove redundant checks,
-        while no-wrap remains enforced without wide integers. LLVM emits the predicate.
+        For p+n the condition is 0 <= index+n <= size; no-wrap rejects unsigned overflow.
+        For p-n the unsigned displacement must not exceed index, and index-n must stay
+        within size. Pointer arithmetic does not access memory, so, like PtrDiff/PtrCmp,
+        it omits allocation liveness. Dereference and external I/O check live at their
+        access boundaries.
         """
         if not self.is_fat(base):
             return
-        cond = self.__element_arith_cond(base, offset)
+        cond = self.__element_arith_cond(base, offset, backward)
         self.__core.flow.emit_check(LLValue(self.__type_ctx.bool_id, cond), RuntimeErrorCode.S004, "elarith")
 
     def check_element_access(self, base: LLValue, offset: LLValue, ptr: LLValue, live: bool = True) -> None:
@@ -707,7 +710,7 @@ class FatSafety:
         self.__core.flow.emit_check(LLValue(self.__type_ctx.bool_id, cond), RuntimeErrorCode.S001, "rb")
 
     def check_ptrdiff(self, lhs: LLValue, rhs: LLValue) -> None:
-        """Preconditions: equal data, both indices <= size, and a representable difference.
+        """Preconditions: equal data and lifetime word, both indices <= size, and a representable difference.
 
         PtrDiff does not access memory and, like pointer arithmetic, omits allocation liveness.
         """
@@ -716,6 +719,9 @@ class FatSafety:
         data_l = self.extract_fat_field(lhs, ABI.FAT_DATA).ir_val
         data_r = self.extract_fat_field(rhs, ABI.FAT_DATA).ir_val
         data_eq = self.__builder.icmp_signed("==", data_l, data_r)  # type: ignore
+        word_l = self.extract_fat_field(lhs, ABI.FAT_WORD).ir_val
+        word_r = self.extract_fat_field(rhs, ABI.FAT_WORD).ir_val
+        pair_eq = self.__builder.icmp_signed("==", word_l, word_r)  # type: ignore
         idx_l = self.extract_fat_field(lhs, ABI.FAT_INDEX).ir_val
         idx_r = self.extract_fat_field(rhs, ABI.FAT_INDEX).ir_val
         size_l = self.extract_fat_field(lhs, ABI.FAT_SIZE).ir_val
@@ -727,11 +733,11 @@ class FatSafety:
         diff64 = self.__builder.trunc(diff128, ir.IntType(64))  # type: ignore
         no_wrap = self.__builder.icmp_signed("==", self.__builder.sext(diff64, i128), diff128)  # type: ignore
         wf_cond = self.__builder.and_(wf_l, wf_r)  # type: ignore
-        cond: ir.Value = self.__builder.and_(data_eq, self.__builder.and_(wf_cond, no_wrap))  # type: ignore
+        cond: ir.Value = self.__builder.and_(data_eq, self.__builder.and_(pair_eq, self.__builder.and_(wf_cond, no_wrap)))  # type: ignore
         self.__core.flow.emit_check(LLValue(self.__type_ctx.bool_id, cond), RuntimeErrorCode.S005, "ptrdiff")
 
     def check_ptr_cmp(self, lhs: LLValue, rhs: LLValue) -> None:
-        """Ordering precondition: equal data; cross-object ordering reports S005.
+        """Ordering precondition: equal data and lifetime word; cross-object ordering reports S005.
 
         PtrCmp does not access memory and, like pointer arithmetic, omits allocation liveness.
         """
@@ -739,15 +745,19 @@ class FatSafety:
             return
         data_l = self.extract_fat_field(lhs, ABI.FAT_DATA).ir_val
         data_r = self.extract_fat_field(rhs, ABI.FAT_DATA).ir_val
-        cond = self.__builder.icmp_signed("==", data_l, data_r)  # type: ignore
+        word_l = self.extract_fat_field(lhs, ABI.FAT_WORD).ir_val
+        word_r = self.extract_fat_field(rhs, ABI.FAT_WORD).ir_val
+        cond = self.__builder.and_(
+            self.__builder.icmp_signed("==", data_l, data_r),  # type: ignore
+            self.__builder.icmp_signed("==", word_l, word_r),  # type: ignore
+        )
         self.__core.flow.emit_check(LLValue(self.__type_ctx.bool_id, cond), RuntimeErrorCode.S005, "ptrcmp")
 
     def check_delete(self, ptr: LLValue) -> None:
-        """Validate and release a complete, live heap view.
+        """Validate and release a live heap root view.
 
-        The view must be live, start at the heap allocation base, and cover
-        exactly the active payload extent recorded in the block header.  Pool
-        capacity can exceed that logical extent.
+        The view must be live and start at the heap allocation base; a root view at
+        any extent may release the block. Pool capacity can exceed the logical extent.
         """
         if not self.is_fat(ptr):
             return
@@ -776,13 +786,7 @@ class FatSafety:
             ptr_index = self.extract_fat_field(ptr, ABI.FAT_INDEX).ir_val
             raw_index_ok = self.__builder.icmp_signed("==", ptr_index, ir.Constant(ir.IntType(64), 0))  # type: ignore
             raw_cond = self.__builder.and_(raw_data_ok, raw_index_ok)  # type: ignore
-        _, block_int = self.__heap_block(data_int, anchor)
-        active_size = self.__load_guarded_u32(block_int, ABI.BlockHeader.EXTENT_OFFSET, header_guard)
-        extent_ok = self.__delete_extent_ok(ptr, ptr_type, active_size)
-        cond: ir.Value = self.__builder.and_(
-            header_guard,
-            self.__builder.and_(raw_cond, extent_ok),  # type: ignore
-        )  # type: ignore
+        cond: ir.Value = self.__builder.and_(header_guard, raw_cond)  # type: ignore
         self.__core.flow.emit_check(LLValue(self.__type_ctx.bool_id, cond), RuntimeErrorCode.S006, "del")
 
     def __heap_block(self, data_int: ir.Value, anchor: ir.Value) -> tuple[ir.Value, ir.Value]:
@@ -813,38 +817,6 @@ class FatSafety:
             return builder.zext(builder.load(field, typ=i32), i64)  # type: ignore
 
         return self.__core.flow.emit_guarded(guard, load_field, ir.IntType(64))  # type: ignore
-
-    def __delete_extent_ok(
-        self,
-        ptr: LLValue,
-        ptr_type: Type.PointerType | Type.SliceType | Type.StrType | Type.RefType,
-        active_size: ir.Value,
-    ) -> ir.Value:
-        """Check that *ptr* denotes exactly the active heap payload."""
-        i128: ir.IntType = ir.IntType(128)  # type: ignore
-        if isinstance(ptr_type, Type.PointerType):
-            count = self.extract_fat_field(ptr, ABI.FAT_SIZE).ir_val
-            element_type = ptr_type.pointee_type
-        elif isinstance(ptr_type, (Type.SliceType, Type.StrType)):
-            count = self.extract_fat_field(ptr, ABI.SLICE_SIZE).ir_val
-            element_type = ptr_type.element_type if isinstance(ptr_type, Type.SliceType) else self.__type_ctx.u8_id
-        else:
-            count = ir.Constant(ir.IntType(64), 1)  # type: ignore
-            element_type = ptr_type.pointee_type
-
-        element_size = self.__ll_type_ctx.get_type_size(element_type)
-        logical_bytes, logical_no_wrap = self.__mul_u64_i128(count, element_size)
-        active_bytes = self.__builder.zext(  # type: ignore
-            self.__builder.mul(active_size, ir.Constant(ir.IntType(64), element_size)),  # type: ignore
-            i128,
-        )
-        return cast(
-            ir.Value,
-            self.__builder.and_(  # type: ignore
-                logical_no_wrap,
-                self.__builder.icmp_unsigned("==", logical_bytes, active_bytes),  # type: ignore
-            ),
-        )
 
     def __mul_u64_i128(self, value: ir.Value, factor: int) -> tuple[ir.Value, ir.Value]:
         """Multiply a u64 value in i128 and return (product, no_wrap)."""

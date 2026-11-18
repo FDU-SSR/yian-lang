@@ -2,12 +2,13 @@ from yianc.codegen.llvm.module import FunctionLowering;
 from yianc.codegen.cfg.model import SafetyCheck;
 from yianc.codegen.error import CodegenError;
 from llvm.ir import IntCompare;
-from std.core.result import Result;
 
 impl FunctionLowering {
     pub fn safety_check(check: SafetyCheck&) -> Result<(), CodegenError> {
         match check {
             Access(address, kind) => self.check_access_as(self.cfg.value(*address)?.type_id, self.get(*address)?, kind.code()),
+            Live(address, kind) => self.check_live(self.cfg.value(*address)?.type_id, self.get(*address)?, kind.code()),
+            AccessBounds(address, kind) => self.check_access_bounds(self.cfg.value(*address)?.type_id, self.get(*address)?, kind.code()),
             InBounds(pointer) => self.check_in_bounds(self.cfg.value(*pointer)?.type_id, self.get(*pointer)?),
             View(value) => self.check_view(self.cfg.value(*value)?.type_id, self.get(*value)?),
             Index(index, bounds) => {

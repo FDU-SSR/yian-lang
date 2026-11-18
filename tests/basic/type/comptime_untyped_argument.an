@@ -1,6 +1,6 @@
 // Type-level arithmetic shares the precision rules of compile-time expressions.
-typedef Three = i32[((1 << 80) >> 80) + 2];
-typedef Recovered = i32[(18446744073709551615 + 3) - 18446744073709551615];
+typedef Three = i32[((1 << 60) >> 60) + 2];
+typedef Recovered = i32[(18446744073709551615 - 3) - (18446744073709551615 - 6)];
 
 fn main() {
     let first: Three = [1, 2, 3];

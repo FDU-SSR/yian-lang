@@ -1,0 +1,14 @@
+// Non-template print arguments are formatted as f"{p}"; string literals remain literal templates.
+fn main() {
+    let value: i32 = 41;
+    let reference: i32& = &value;
+    let text: str = "runtime {braces}";
+    let owned: String = String.from(&"owned");
+    @println(f"{*reference}");
+    @print(text);
+    @println("");
+    @print(owned);
+    @println("");
+    @print(42);
+    @println("");
+}

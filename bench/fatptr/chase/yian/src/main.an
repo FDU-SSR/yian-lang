@@ -1,0 +1,79 @@
+from std.core.env import args;
+
+// bench/fatptr/an/chase.an: node-size/cache-footprint microbenchmark.
+//
+// Chase a linked list. Each node contains i64 and Option<Node&>, so its size directly reflects
+//       representation size: raw 16 B, fat 24 B (16 B reference plus 8 B value). These are the endpoints of
+//       the node-size/cache-footprint curve. Exceed LLC capacity to expose differences in miss rates.
+// Scale: NODES at the // bench-scale marker; ROUNDS is fixed.
+// C reference: bench/fatptr/c/chase.c, same algorithm/scale with 16 B nodes.
+//
+// Build the chain tail-to-head, keeping head at the built prefix; each round follows it and sums value,
+//           then release every node with del.
+//
+// Both modes share this source; raw Option<Node&> is an 8 B pointer.
+
+struct Node {
+    value: i64,
+    next: Option<Node&>,
+}
+
+// Decimal prefix parsing for the C atoi/atoll workload argument.
+fn c_decimal(text: str) -> i64 {
+    let bytes = text.as_slice();
+    let i: u64 = 0;
+    while i < bytes.len() && (bytes[u64(i)] == 32 || (bytes[u64(i)] >= 9 && bytes[u64(i)] <= 13)) { i += 1; }
+    let negative: bool = false;
+    if i < bytes.len() && (bytes[u64(i)] == b'-' || bytes[u64(i)] == b'+') {
+        negative = bytes[u64(i)] == b'-';
+        i += 1;
+    }
+    let value: i64 = 0;
+    while i < bytes.len() && bytes[u64(i)] >= b'0' && bytes[u64(i)] <= b'9' {
+        value = value * 10 + i64(bytes[u64(i)] - b'0');
+        i += 1;
+    }
+    return if negative { -value } else { value };
+}
+
+fn main() {
+    let NODES: i64 = 4000000;  // bench-scale
+    let argv = args();
+    if argv.len() > 1u64 { NODES = c_decimal(argv[1u64].as_str()); }
+    for argument in &argv { argument.drop(); }
+    argv.drop();
+    let ROUNDS: i64 = 8;
+    let head: Option<Node&> = Option<Node&>.None;
+    let i: u64 = u64(if NODES > 0 { NODES } else { 0i64 });
+    while i > 0 {
+        head = Option<Node&>.Some(dyn Node(i64(i), head));
+        i -= 1;
+    }
+    let acc: i64 = 0;
+    let round: u64 = 0;
+    while round < u64(ROUNDS) {
+        let cur: Option<Node&> = head;
+        while true {
+            match cur {
+                None => { break; },
+                Some(node) => {
+                    acc = acc + node.value;
+                    cur = node.next;
+                }
+            }
+        }
+        round += 1;
+    }
+    assert acc == i64(ROUNDS) * (i64(NODES) * (i64(NODES) + 1) / 2): "chase checksum";
+    @print("chase pass\n");
+    while true {
+        match head {
+            None => { break; },
+            Some(node) => {
+                let next: Option<Node&> = node.next;
+                del node;
+                head = next;
+            }
+        }
+    }
+}

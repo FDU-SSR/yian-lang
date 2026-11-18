@@ -58,6 +58,7 @@ class Case:
 class __Arguments(argparse.Namespace):
     native: str
     anx: str | None
+    formatter: str | None
     groups: str
     filter: str
     report: Path
@@ -68,92 +69,86 @@ class __Arguments(argparse.Namespace):
 
 def __cases() -> list[Case]:
     cases = [
-        Case("untyped-integer", "analyze", ("tests/basic/control_flow/comptime_untyped_integer.an",), ("--analyze", "--json"), json_output=True),
-        Case("untyped-type-argument", "analyze", ("tests/basic/type/comptime_untyped_argument.an",), ("--analyze", "--json"), json_output=True),
-        Case("integer-conversion", "analyze", ("tests/basic/control_flow/comptime_untyped_integer.an",), ("--analyze", "--json"), json_output=True),
-        Case("float-conversion", "analyze", ("tests/basic/control_flow/comptime_untyped_integer.an",), ("--analyze", "--json"), json_output=True),
-        Case("nonfinite-cast", "analyze", ("tests/basic/diagnostics/comptime_nonfinite_cast.err.an",), ("--analyze", "--json"), json_output=True),
-        Case("bool-float-cast", "analyze", ("tests/basic/diagnostics/comptime_bool_float_cast.err.an",), ("--analyze", "--json"), json_output=True),
-        Case("bool-integer-constant-error", "analyze", ("tests/basic/diagnostics/comptime_bool_integer_cast.err.an",), ("--analyze", "--json"), json_output=True),
-        Case("bool-integer-casts", "analyze", ("tests/compiler_parity/bool_conversion.an",), ("--analyze", "--json", "--allow-ffi"), json_output=True, expected_error="cannot convert bool to an integer", expected_error_count=12),
-        Case("division-by-zero", "analyze", ("tests/basic/error/comptime_if_div_zero.err.an",), ("--analyze", "--json"), json_output=True, expected_error_code="E503", expected_error_count=1),
-        Case("defer-uninitialized", "analyze", ("tests/basic/error/defer_uninitialized.err.an",), ("--analyze", "--json"), json_output=True, expected_error_code="E502", expected_error_count=1),
-        Case("uncalled-concrete-definition", "analyze", ("tests/basic/error/uncalled_concrete_definition.err.an",), ("--analyze", "--json"), json_output=True, expected_error_code="E502", expected_error_count=1),
-        Case("uncalled-comptime-condition", "analyze", ("tests/basic/error/uncalled_comptime_condition.err.an",), ("--analyze", "--json"), json_output=True, expected_error_code="E503", expected_error_count=1),
-        Case("ffi-alias-permission", "analyze", ("tests/basic/type/alias/ffi_alias_permission.err.an",), ("--analyze", "--json", "--allow-ffi"), json_output=True, expected_error="C ABI types require an ffi fn", expected_error_count=1),
-        Case("negative-shift", "analyze", ("tests/basic/error/comptime_if_negative_shift.err.an",), ("--analyze", "--json"), json_output=True),
-        Case("multiple-errors", "analyze", ("tests/compiler_parity/multiple_errors.an",), ("--analyze", "--json"), json_output=True),
-        Case("strict-partial-input", "analyze", ("tests/compiler_parity/partial_analysis_invalid.an",), ("--analyze", "--json"), json_output=True, expected_error="Unknown identifier 'missing'", expected_error_code="E301", expected_error_count=1),
-        Case("stage-error-order", "analyze", ("tests/compiler_parity/parse_before_lex.an", "tests/compiler_parity/later_lex_error.an"), ("--analyze", "--json"), json_output=True),
-        Case("syntax-error", "analyze", ("tests/compiler_parity/parse_before_lex.an",), ("--analyze", "--json"), standard_library=False, json_output=True),
-        Case("entry-errors", "analyze", ("tests/compiler_parity/entry_error_order.an",), ("--analyze", "--json"), json_output=True),
-        Case("strict-entry-first", "cli", ("tests/compiler_parity/entry_error_order.an",), ("-t", "none"), expected_error="Unknown identifier 'missing_called'"),
-        Case("unicode-range", "analyze", ("tests/compiler_parity/unicode_error.an",), ("--analyze", "--json"), json_output=True),
-        Case("pattern-warnings", "analyze", ("tests/compiler_parity/irrefutable_else.an",), ("--analyze", "--json"), json_output=True),
-        Case("existing-warning", "analyze", ("tests/basic/match/unreachable.an",), ("--analyze", "--json"), json_output=True),
-        Case("pattern-condition", "analyze", ("tests/basic/pattern/positions.an",), ("--analyze", "--json"), json_output=True),
-        Case("nested-witness", "analyze", ("tests/basic/diagnostics/non_exhaustive_nested.err.an",), ("--analyze", "--json"), json_output=True),
-        Case("character-witness", "analyze", ("tests/basic/diagnostics/non_exhaustive_char.err.an",), ("--analyze", "--json"), json_output=True),
-        Case("multiple-main", "analyze", ("tests/basic/array/access.an", "tests/basic/literal/str.an"), ("--analyze", "--json"), json_output=True),
-        Case("default-roots", "cli", ("tests/basic/array/access.an",), ("--analyze", "--json"), json_output=True, root_option=False),
-        Case("explicit-root-precedence", "cli", ("tests/basic/array/access.an",), ("--analyze", "--json"), json_output=True, environment=(("YIAN_LIB", "/nonexistent/library"), ("YIAN_ROOT", "/nonexistent/checkout"))),
-        Case("analysis-observation-flags", "cli", ("tests/basic/array/access.an",), ("--analyze", "--json", "--profile", "--dump"), json_output=True),
-        Case("missing-package-entry", "cli", ("tests/basic/array/access.an",), ("--analyze", "--json"), json_output=True, package=True),
-        Case("mode-precedence", "cli", ("tests/basic/array/access.an",), ("--frontend-json", "tokens", "--analyze"), standard_library=False, json_output=True),
-        Case("json-mode-precedence", "cli", ("tests/basic/array/access.an",), ("--frontend-json", "tokens", "--json"), standard_library=False, json_output=True),
-        Case("profile", "observability", ("tests/basic/array/access.an",), ("-t", "none", "--profile"), observability="profile"),
-        Case("log-file", "observability", ("tests/basic/array/access.an",), ("-t", "none", "--log-spec", "main=INFO", "--log-file", "requested.log"), observability="log"),
-        Case("log-off", "observability", ("tests/basic/array/access.an",), ("-t", "none", "--log-spec", "all=OFF", "--log-file", "requested.log"), observability="off"),
-        Case("log-empty-environment", "observability", ("tests/basic/array/access.an",), ("-t", "none", "--log-spec", "", "--log-file", "requested.log"), observability="log", environment=(("YIAN_LOG", "main=INFO"),)),
-        Case("log-invalid-spec", "cli", ("tests/basic/array/access.an",), ("-t", "none", "--log-spec", "OFF")),
-        Case("log-empty-path", "cli", ("tests/basic/array/access.an",), ("-t", "none", "--log-file", "")),
-        Case("log-file-environment", "observability", ("tests/basic/array/access.an",), ("-t", "none"), observability="log", environment=(("YIAN_LOG", "main=INFO"), ("YIAN_LOG_FILE", "requested.log"))),
-        Case("dump-none", "observability", ("tests/basic/array/access.an",), ("-t", "none", "--dump"), observability="dump"),
-        Case("dump-parse-failure", "observability", ("tests/compiler_parity/parse_before_lex.an",), ("-t", "none", "--dump"), observability="dump"),
-        Case("empty-root-environment", "cli", ("tests/basic/array/access.an",), ("--analyze", "--json"), json_output=True, root_option=False, environment=(("YIAN_LIB", ""), ("YIAN_ROOT", ""))),
-        Case("library-environment", "cli", ("tests/basic/array/access.an",), ("--analyze", "--json"), json_output=True, root_option=False, environment=(("YIAN_LIB", str(__ROOT / "lib/src")), ("YIAN_ROOT", "/nonexistent"))),
-        Case("restricted-bitcast", "analyze", ("tests/basic/error/restricted_bitcast.err.an",), ("--analyze", "--json"), json_output=True, expected_error="restricted operation '@bitcast' is only allowed in the standard library", expected_error_code="E501", expected_error_count=1),
-        Case("no-input", "cli", (), ("--analyze", "--json"), standard_library=False),
-        Case("invalid-json-mode", "cli", ("tests/basic/array/access.an",), ("--json",)),
+        Case("untyped-integer", "analyze", ("tests/basic/control_flow/comptime_untyped_integer.an",), ("--check",)),
+        Case("untyped-type-argument", "analyze", ("tests/basic/type/comptime_untyped_argument.an",), ("--check",)),
+        Case("integer-conversion", "analyze", ("tests/basic/control_flow/comptime_untyped_integer.an",), ("--check",)),
+        Case("float-conversion", "analyze", ("tests/basic/control_flow/comptime_untyped_integer.an",), ("--check",)),
+        Case("nonfinite-cast", "analyze", ("tests/basic/diagnostics/comptime_nonfinite_cast.err.an",), ("--check",)),
+        Case("bool-float-cast", "analyze", ("tests/basic/diagnostics/comptime_bool_float_cast.err.an",), ("--check",)),
+        Case("bool-integer-constant-error", "analyze", ("tests/basic/diagnostics/comptime_bool_integer_cast.err.an",), ("--check",)),
+        Case("bool-integer-casts", "analyze", ("tests/compiler_parity/bool_conversion.an",), ("--check", "--allow-ffi"), expected_error="cannot convert bool to an integer", expected_error_count=12),
+        Case("division-by-zero", "analyze", ("tests/basic/error/comptime_if_div_zero.err.an",), ("--check",), expected_error_code="E503", expected_error_count=1),
+        Case("defer-uninitialized", "analyze", ("tests/basic/error/defer_uninitialized.err.an",), ("--check",), expected_error_code="E502", expected_error_count=1),
+        Case("uncalled-concrete-definition", "analyze", ("tests/basic/error/uncalled_concrete_definition.err.an",), ("--check",), expected_error_code="E502", expected_error_count=1),
+        Case("uncalled-comptime-condition", "analyze", ("tests/basic/error/uncalled_comptime_condition.err.an",), ("--check",), expected_error_code="E503", expected_error_count=1),
+        Case("ffi-alias-permission", "analyze", ("tests/basic/type/alias/ffi_alias_permission.err.an",), ("--check", "--allow-ffi"), expected_error="C ABI types require an ffi fn", expected_error_count=1),
+        Case("negative-shift", "analyze", ("tests/basic/error/comptime_if_negative_shift.err.an",), ("--check",)),
+        Case("multiple-errors", "analyze", ("tests/compiler_parity/multiple_errors.an",), ("--check",)),
+        Case("strict-partial-input", "analyze", ("tests/compiler_parity/partial_analysis_invalid.an",), ("--check",), expected_error="Unknown identifier 'missing'", expected_error_code="E301", expected_error_count=1),
+        Case("stage-error-order", "analyze", ("tests/compiler_parity/parse_before_lex.an", "tests/compiler_parity/later_lex_error.an"), ("--check",)),
+        Case("syntax-error", "analyze", ("tests/compiler_parity/parse_before_lex.an",), ("--check",), standard_library=False),
+        Case("entry-errors", "analyze", ("tests/compiler_parity/entry_error_order.an",), ("--check",)),
+        Case("strict-entry-first", "cli", ("tests/compiler_parity/entry_error_order.an",), ("--check",), expected_error="Unknown identifier 'missing_called'"),
+        Case("unicode-range", "analyze", ("tests/compiler_parity/unicode_error.an",), ("--check",)),
+        Case("pattern-warnings", "analyze", ("tests/compiler_parity/irrefutable_else.an",), ("--check",)),
+        Case("existing-warning", "analyze", ("tests/basic/match/unreachable.an",), ("--check",)),
+        Case("pattern-condition", "analyze", ("tests/basic/pattern/positions.an",), ("--check",)),
+        Case("nested-witness", "analyze", ("tests/basic/diagnostics/non_exhaustive_nested.err.an",), ("--check",)),
+        Case("character-witness", "analyze", ("tests/basic/diagnostics/non_exhaustive_char.err.an",), ("--check",)),
+        Case("multiple-main", "analyze", ("tests/basic/array/access.an", "tests/basic/literal/str.an"), ("--check",)),
+        Case("default-roots", "cli", ("tests/basic/array/access.an",), ("--check",), root_option=False),
+        Case("explicit-root-precedence", "cli", ("tests/basic/array/access.an",), ("--check",), environment=(("YIAN_LIB", "/nonexistent/library"), ("YIAN_ROOT", "/nonexistent/checkout"))),
+        Case("analysis-observation-flags", "cli", ("tests/basic/array/access.an",), ("--check", "--profile", "--dump")),
+        Case("missing-package-entry", "cli", ("tests/basic/array/access.an",), ("--check",), package=True),
+        Case("profile", "observability", ("tests/basic/array/access.an",), ("--check", "--profile"), observability="profile"),
+        Case("log-file", "observability", ("tests/basic/array/access.an",), ("--check", "--log-spec", "main=INFO", "--log-file", "requested.log"), observability="log"),
+        Case("log-off", "observability", ("tests/basic/array/access.an",), ("--check", "--log-spec", "all=OFF", "--log-file", "requested.log"), observability="off"),
+        Case("log-empty-environment", "observability", ("tests/basic/array/access.an",), ("--check", "--log-spec", "", "--log-file", "requested.log"), observability="log", environment=(("YIAN_LOG", "main=INFO"),)),
+        Case("log-invalid-spec", "cli", ("tests/basic/array/access.an",), ("--check", "--log-spec", "OFF")),
+        Case("log-empty-path", "cli", ("tests/basic/array/access.an",), ("--check", "--log-file", "")),
+        Case("log-file-environment", "observability", ("tests/basic/array/access.an",), ("--check",), observability="log", environment=(("YIAN_LOG", "main=INFO"), ("YIAN_LOG_FILE", "requested.log"))),
+        Case("dump-none", "observability", ("tests/basic/array/access.an",), ("--check", "--dump"), observability="dump"),
+        Case("dump-parse-failure", "observability", ("tests/compiler_parity/parse_before_lex.an",), ("--check", "--dump"), observability="dump"),
+        Case("empty-root-environment", "cli", ("tests/basic/array/access.an",), ("--check",), root_option=False, environment=(("YIAN_LIB", ""), ("YIAN_ROOT", ""))),
+        Case("library-environment", "cli", ("tests/basic/array/access.an",), ("--check",), root_option=False, environment=(("YIAN_LIB", str(__ROOT / "lib/src")), ("YIAN_ROOT", "/nonexistent"))),
+        Case("restricted-bitcast", "analyze", ("tests/basic/error/restricted_bitcast.err.an",), ("--check",), expected_error="restricted operation '@bitcast' is only allowed in the standard library", expected_error_code="E501", expected_error_count=1),
+        Case("no-input", "cli", (), ("--check",), standard_library=False),
         Case("invalid-option", "cli", (), ("--unknown-option",), standard_library=False),
         Case("invalid-optimization", "cli", (), ("-O4",), standard_library=False),
-        Case("invalid-package-map", "cli", ("tests/basic/array/access.an",), ("--analyze", "--json", "--packages", "packages.json"), preexisting=(("packages.json", '{"format": 1}'),)),
+        Case("invalid-package-map", "cli", ("tests/basic/array/access.an",), ("--check", "--packages", "packages.json"), preexisting=(("packages.json", '{"format": 1}'),)),
         Case("blocked-output-directory", "native", ("tests/basic/array/access.an",), ("-o", "result/app"), preexisting=(("result", "preserved output"),)),
-        Case("invalid-library", "cli", ("tests/basic/array/access.an",), ("-t", "none", "--link-lib", "bad/name")),
-        Case("empty-library", "cli", ("tests/basic/array/access.an",), ("-t", "none", "--link-lib", "")),
-        Case("unicode-library", "cli", ("tests/basic/array/access.an",), ("-t", "none", "--link-lib", "中²")),
-        Case("nonalnum-library", "cli", ("tests/basic/array/access.an",), ("-t", "none", "--link-lib", "bad😀")),
-        Case("input-separator", "cli", ("tests/basic/array/access.an",), ("--analyze", "--json"), json_output=True, separator=True),
-        Case("interleaved-options", "cli", ("tests/basic/array/access.an",), ("--analyze", "--json"), json_output=True, interleave=True),
-        Case("unicode-source-path", "analyze", ("tests/compiler_parity/unicode_error.an",), ("--analyze", "--json"), json_output=True, source_prefix="source space 中文"),
+        Case("invalid-library", "cli", ("tests/basic/array/access.an",), ("-o", "result", "--link-lib", "bad/name")),
+        Case("empty-library", "cli", ("tests/basic/array/access.an",), ("-o", "result", "--link-lib", "")),
+        Case("unicode-library", "cli", ("tests/basic/array/access.an",), ("-o", "result", "--link-lib", "中²")),
+        Case("nonalnum-library", "cli", ("tests/basic/array/access.an",), ("-o", "result", "--link-lib", "bad😀")),
+        Case("input-separator", "cli", ("tests/basic/array/access.an",), ("--check",), separator=True),
+        Case("interleaved-options", "cli", ("tests/basic/array/access.an",), ("--check",), interleave=True),
+        Case("unicode-source-path", "analyze", ("tests/compiler_parity/unicode_error.an",), ("--check",), source_prefix="source space 中文"),
         Case("attached-options", "native", ("tests/basic/array/access.an",), ("-texe", "-O2", "-oresult"), run=True),
         Case("output-space", "native", ("tests/basic/array/access.an",), ("-O2", "-o", "result with space"), run=True, executable="result with space"),
         Case("output-extension", "native", ("tests/basic/array/access.an",), ("-t", "ll", "-o", "result.old")),
     ]
-    for phase in ("tokens", "ast", "desugared"):
-        cases.append(Case("crlf-" + phase, "frontend", ("tests/basic/array/access.an",), ("--frontend-json", phase), standard_library=False, json_output=True, newlines="\r\n"))
-        source = "tests/compiler_parity/later_lex_error.an" if phase == "tokens" else "tests/compiler_parity/parse_before_lex.an"
-        cases.append(Case("error-" + phase, "frontend", (source,), ("--frontend-json", phase), standard_library=False, json_output=True))
-    for name, flags in (
-        ("analyze", ("--analyze", "--json")), ("frontend", ("--frontend-json", "tokens")),
-        ("format", ("--format",)), ("compile", ("-t", "none")),
-    ):
+    for name, flags in (("analyze", ("--check",)), ("compile", ("--check",))):
         cases.append(Case("missing-input-" + name, "cli", (), (*flags, "missing.an"), standard_library=False))
-        cases.append(Case("empty-input-" + name, "cli", (), (*flags, "empty"), standard_library=False, json_output=name in ("analyze", "frontend"), preexisting=(("empty/.keep", ""),)))
+        cases.append(Case("empty-input-" + name, "cli", (), (*flags, "empty"), standard_library=False, json_output=False, preexisting=(("empty/.keep", ""),)))
+    # Formatting belongs to yian-fmt. The compiler must reject its former options.
+    for old_option in ("--format", "--format-check", "--write", "-w"):
+        cases.append(Case(
+            "removed-" + old_option.strip("-"), "cli", ("tests/basic/array/access.an",), (old_option,),
+            standard_library=False, expected_error="unknown option",
+        ))
     for flags, name in ((("--check",), "check"), (("--write",), "write"), ((), "stdout")):
-        cases.append(Case("crlf-format-" + name, "format", ("tests/compiler_parity/format.an",), ("--format", *flags), standard_library=False, newlines="\r\n"))
-    for phase in ("tokens", "ast", "desugared"):
-        cases.append(Case(phase, "frontend", ("tests/basic/literal/str.an", "tests/basic/fmt/fstring_basic.an", "tests/basic/try/generic.an"), ("--frontend-json", phase), standard_library=False, json_output=True))
+        cases.append(Case("crlf-format-" + name, "format", ("tests/format/fixtures/comments/mixed.an",), flags, standard_library=False, newlines="\r\n"))
     for name, flags in (("format-stdout", ()), ("format-check", ("--check",)), ("format-write", ("--write",))):
-        cases.append(Case(name, "format", ("tests/compiler_parity/format.an",), ("--format", *flags), standard_library=False))
+        cases.append(Case(name, "format", ("tests/format/fixtures/comments/mixed.an",), flags, standard_library=False))
     format_fixtures = __ROOT / "tests/format/fixtures"
     for fixture in sorted(format_fixtures.rglob("*.an")):
         if not fixture.name.endswith(".expected.an"):
-            cases.append(Case("fixture-" + fixture.relative_to(format_fixtures).as_posix(), "format", (fixture.relative_to(__ROOT).as_posix(),), ("--format",), standard_library=False))
+            cases.append(Case("fixture-" + fixture.relative_to(format_fixtures).as_posix(), "format", (fixture.relative_to(__ROOT).as_posix(),), (), standard_library=False))
     for name in ("mixed", "only"):
         for flag in ("--write", "--check"):
-            cases.append(Case(f"comments-{name}-{flag[2:]}", "format", (f"tests/format/fixtures/comments/{name}.an",), ("--format", flag), standard_library=False))
-    for target in ("none", "exe", "ll", "bc", "obj", "asm"):
+            cases.append(Case(f"comments-{name}-{flag[2:]}", "format", (f"tests/format/fixtures/comments/{name}.an",), (flag,), standard_library=False))
+    for target in ("exe", "ll", "bc"):
         cases.append(Case("no-main-" + target, "cli", ("tests/compiler_parity/no_main.an",), ("-t", target, "-o", "result")))
         cases.append(Case("output-" + target, "native", ("tests/basic/type/sizeof_full.an",), ("-t", target, "-o", "result"), run=target == "exe"))
         cases.append(Case("default-output-" + target, "native", ("tests/basic/array/access.an",), ("-t", target), run=target == "exe", executable="build/a.out", artifact_patterns=("build/a.out", "build/*.o", "build/*.ll", "build/*.bc", "*.s")))
@@ -192,6 +187,54 @@ def __normalize(value: Json, directory: Path, stdlib_root: Path) -> Json:
 cases = __cases
 
 
+def __run_format(
+    formatter: list[str],
+    case: Case,
+    directory: Path,
+) -> dict[str, Json]:
+    """Run one format case through the standalone formatter, without compiler inputs."""
+    sources: list[str] = []
+    for path, contents in case.preexisting:
+        destination = directory / path
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_text(contents, encoding="utf-8")
+    for source in case.sources:
+        destination = directory / case.source_prefix / source
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(__ROOT / source, destination)
+        if case.newlines:
+            text = destination.read_text(encoding="utf-8")
+            destination.write_bytes(text.replace("\n", case.newlines).encode())
+        sources.append(str(destination))
+
+    source_inputs = {
+        source: (directory / case.source_prefix / source).read_bytes().decode("utf-8")
+        for source in case.sources
+    }
+    command = [*formatter, *case.arguments, *sources]
+    environment = os.environ.copy()
+    for name in ("YIAN_FMT", "YIANC", "YIAN_ROOT", "YIAN_LIB", "YIAN_LOG", "YIAN_LOG_FILE"):
+        environment.pop(name, None)
+    process = subprocess.run(command, cwd=directory, env=environment, capture_output=True,
+                             text=True, check=False)
+    result: dict[str, Json] = {
+        "status": process.returncode,
+        "stdout": process.stdout,
+        "stderr": process.stderr,
+        "source_inputs": cast(Json, source_inputs),
+        "sources": {
+            source: (directory / case.source_prefix / source).read_bytes().decode("utf-8")
+            for source in case.sources
+        },
+    }
+    return {
+        "command": [str(value) for value in command],
+        "observation": __normalize(result, directory, __ROOT / "lib/src"),
+        "raw_stdout": process.stdout,
+        "raw_stderr": process.stderr,
+    }
+
+
 def __run(
     native: list[str],
     case: Case,
@@ -202,6 +245,8 @@ def __run(
 ) -> dict[str, Json]:
     if case.package_build:
         return __run_package_build(native, case, directory, raw, default_library, anx)
+    if case.group == "format":
+        return __run_format(native, case, directory)
 
     sources: list[str] = []
     for path, contents in case.preexisting:
@@ -224,7 +269,7 @@ def __run(
     mapping: dict[str, Json] | None = None
     arguments = list(case.arguments)
     if case.root_option:
-        arguments.extend(("--compiler-root", str(__ROOT)))
+        arguments.extend(("--compiler-root", str(default_library.parent.parent)))
     if case.package:
         mapping: dict[str, Json] = {
             "format": 2,
@@ -457,10 +502,9 @@ __ANALYSIS_ERRORS = frozenset({
 })
 __CLI_ERRORS = frozenset({
     "strict-entry-first", "missing-package-entry", "log-invalid-spec", "log-empty-path",
-    "no-input", "invalid-json-mode", "invalid-option", "invalid-optimization",
+    "no-input", "invalid-option", "invalid-optimization",
     "invalid-package-map", "invalid-library", "empty-library", "unicode-library",
-    "nonalnum-library", "no-main-exe", "no-main-ll", "no-main-bc", "no-main-obj",
-    "no-main-asm",
+    "nonalnum-library", "no-main-exe", "no-main-ll", "no-main-bc",
 })
 __NATIVE_ERRORS = frozenset({
     "blocked-output-directory", "missing-native-tool", "failed-native-tool",
@@ -619,62 +663,27 @@ def oracle_passes(case: Case, record: dict[str, Json]) -> bool:
             and len(native_llvm.get("sources", [])) == 1
         )
 
-    if case.group == "analyze" and case.json_output:
-        result = observation.get("stdout")
-        if not isinstance(result, dict):
+    if case.group == "analyze":
+        stderr = observation.get("stderr")
+        stdout = observation.get("stdout")
+        if not isinstance(stderr, str) or not isinstance(stdout, str):
             return False
-        diagnostics = result.get("diagnostics")
-        if not isinstance(diagnostics, list):
-            return False
-        errors = [item for item in diagnostics if isinstance(item, dict) and item.get("severity") == "error"]
-        expected_ok = not expects_error
-        expected_status = 0 if expected_ok else 1
-        if result.get("ok") is not expected_ok or status != expected_status:
-            return False
-        if result.get("format") != 1 or result.get("stage") != "semantic":
-            return False
-        if expected_ok and errors:
-            return False
-        if expects_error and not errors:
-            return False
-        if __expected_error_text(case) and observation.get("expected_error") is not True:
-            return False
-        if case.expected_error_code and observation.get("expected_error_code") is not True:
-            return False
-        if case.expected_error_count is not None and len(errors) != case.expected_error_count:
+        if expects_error:
+            if status == 0:
+                return False
+            expected = __expected_error_text(case)
+            if expected and expected not in stderr:
+                return False
+            if case.expected_error_code and f"error[{case.expected_error_code}]" not in stderr:
+                return False
+            if case.expected_error_count is not None and stderr.count("error[") != case.expected_error_count:
+                return False
+            return True
+        if status != 0:
             return False
         if case.name in {"pattern-warnings", "existing-warning"}:
-            warnings = [item for item in diagnostics if isinstance(item, dict) and item.get("severity") == "warning"]
-            return bool(warnings)
-        return True
-
-    if case.group == "frontend" and case.json_output:
-        result = observation.get("stdout")
-        if not isinstance(result, dict):
-            return False
-        expected_error = case.name.startswith("error-")
-        if status != (1 if expected_error else 0):
-            return False
-        phase = case.arguments[1] if len(case.arguments) > 1 else ""
-        files = result.get("files")
-        if result.get("version") != 1 or result.get("phase") != phase or not isinstance(files, list):
-            return False
-        if expected_error:
-            diagnostic = result.get("diagnostic")
-            expected_stage = "lex" if phase == "tokens" else "parse"
-            return (
-                isinstance(diagnostic, dict)
-                and diagnostic.get("stage") == expected_stage
-                and isinstance(diagnostic.get("code"), str)
-                and isinstance(diagnostic.get("message"), str)
-                and bool(diagnostic.get("message"))
-            )
-        if result.get("diagnostic") is not None or len(files) != len(case.sources):
-            return False
-        return all(
-            isinstance(item, dict) and ("tokens" in item if phase == "tokens" else "ast" in item)
-            for item in files
-        )
+            return "warning[" in stderr
+        return stdout == ""
 
     if case.group == "cli":
         if expects_error:
@@ -707,6 +716,15 @@ def oracle_passes(case: Case, record: dict[str, Json]) -> bool:
                     and dumps.get("tokens.txt") is True
                     and dumps.get("ast.txt") is False
                     and dumps.get("hir.txt") is False
+                    and dumps.get("cfg.txt") is False
+                    and observation.get("llvm_dump") is False
+                )
+            if case.name == "dump-none":
+                return (
+                    status == 0
+                    and dumps.get("tokens.txt") is True
+                    and dumps.get("ast.txt") is True
+                    and dumps.get("hir.txt") is True
                     and dumps.get("cfg.txt") is False
                     and observation.get("llvm_dump") is False
                 )
@@ -778,6 +796,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--native", required=True, help="Native yianc executable.")
     parser.add_argument("--anx", help="Native anx executable for package build cases.")
+    parser.add_argument("--formatter", help="Native yian-fmt executable for format cases.")
     parser.add_argument("--groups", default="analyze,cli,frontend,format,native,observability")
     parser.add_argument("--filter", default="")
     parser.add_argument("--report", type=Path, required=True)
@@ -807,8 +826,7 @@ def main() -> int:
                 "analysis-" + test.name,
                 "analyze",
                 tuple(path.relative_to(__ROOT).as_posix() for path in test.source_files),
-                ("--analyze", "--json", *test.compiler_args),
-                json_output=True,
+                ("--check", *test.compiler_args),
                 expected_error=test.expected_substring,
                 expected_exit_code=test.expected_exit_code,
                 expected_output=test.expected_output,
@@ -818,15 +836,7 @@ def main() -> int:
             if "experimental" in source.parts or source.name.endswith(".err.an"):
                 continue
             name = source.relative_to(__ROOT).as_posix()
-            for phase in ("tokens", "ast", "desugared"):
-                available.append(Case(
-                    "corpus-" + name + "-" + phase,
-                    "frontend",
-                    (name,),
-                    ("--frontend-json", phase),
-                    standard_library=False,
-                    json_output=True,
-                ))
+            available.append(Case("corpus-" + name, "analyze", (name,), ("--check",)))
 
     if len({case.name for case in available}) != len(available):
         parser.error("case names must be unique")
@@ -858,6 +868,14 @@ def main() -> int:
             anx_command = [str(resolve_native(args.anx))]
         except NativeToolError as error:
             parser.error(str(error))
+    formatter_path: Path | None = None
+    if any(case.group == "format" for case in selected):
+        if not args.formatter:
+            parser.error("--formatter PATH is required when the selection contains a format case")
+        try:
+            formatter_path = resolve_native(args.formatter)
+        except NativeToolError as error:
+            parser.error(str(error))
 
     revision = subprocess.run(
         ["git", "rev-parse", "HEAD"], cwd=__ROOT, text=True, capture_output=True, check=False
@@ -873,11 +891,13 @@ def main() -> int:
     failure_log.write_text("", encoding="utf-8")
 
     for case in selected:
-        for raw in case.target_modes:
-            mode = "raw" if raw else "fat"
+        modes = (False,) if case.group == "format" else case.target_modes
+        for raw in modes:
+            mode = "none" if case.group == "format" else ("raw" if raw else "fat")
             with tempfile.TemporaryDirectory(prefix="yian-native-parity-") as temporary:
+                program = [str(formatter_path)] if case.group == "format" else native
                 observed = run_case(
-                    native,
+                    program,
                     case,
                     Path(temporary),
                     raw,
@@ -909,6 +929,9 @@ def main() -> int:
         "native_sha256": source_identity,
         "native_source_sha256": component_source_sha256(__ROOT, "yianc"),
         "anx": anx_command[0] if anx_command else None,
+        "formatter": str(formatter_path) if formatter_path else None,
+        "formatter_sha256": file_sha256(formatter_path) if formatter_path else None,
+        "formatter_source_sha256": component_source_sha256(__ROOT, "yian-fmt") if formatter_path else None,
         "total": len(records),
         "failures": failures,
         "cases": records,
