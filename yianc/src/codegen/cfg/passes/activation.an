@@ -252,11 +252,14 @@ fn cast_guards(function: CfgFunction&, types: BackendTypes&, operand: ValueId, r
     }
     if types.is_zst(source)? { return Result<(), CodegenError>.Ok(()); }
     if types.raw_pointers() { return Result<(), CodegenError>.Ok(()); }
-    if array { push_guard(guards, GuardKind.Count, GuardSite.Before); }
     match (store.require(source)?, store.require(target)?) {
         (Pointer(_), Pointer(_)) => {
-            if array { push_guard(guards, GuardKind.CastAccess, GuardSite.Before); }
+            if array {
+                push_guard(guards, GuardKind.ByteExtent, GuardSite.Before);
+                push_guard(guards, GuardKind.CastAccess, GuardSite.Before);
+            }
         },
+        (Reference(_), Pointer(_)) => push_guard(guards, GuardKind.ByteExtent, GuardSite.Before),
         (Pointer(_), Reference(_)) | (Slice(_), Reference(_)) => {},
         (Str, Reference(_)) => {
             push_guard(guards, GuardKind.CastNonempty, GuardSite.Before);
@@ -277,7 +280,6 @@ fn builtin_guards(function: CfgFunction&, types: BackendTypes&, instruction: Ins
             if types.is_zst(type_id)? { return Result<(), CodegenError>.Ok(()); }
             if !types.raw_pointers() {
                 if kind == BuiltinKind.Realloc { push_guard(guards, GuardKind.HeapRoot, GuardSite.BeforeRelease); }
-                push_guard(guards, GuardKind.Count, GuardSite.Before);
                 push_guard(guards, GuardKind.AllocationSize, GuardSite.Before);
                 if kind == BuiltinKind.Realloc { push_guard(guards, GuardKind.HeapRoot, GuardSite.BeforeRelease); }
             } else {
@@ -288,7 +290,7 @@ fn builtin_guards(function: CfgFunction&, types: BackendTypes&, instruction: Ins
         SliceFromParts | StrFromParts => {
             let source = function.value(args[0])?.type_id;
             if is_fat(types, source)? {
-                push_guard(guards, GuardKind.Count, GuardSite.Before);
+                push_guard(guards, GuardKind.ByteExtent, GuardSite.Before);
                 push_guard(guards, GuardKind.ViewParts, GuardSite.Before);
             }
         },
@@ -297,7 +299,7 @@ fn builtin_guards(function: CfgFunction&, types: BackendTypes&, instruction: Ins
             let result = *instruction.result.unwrap();
             let type_id = function.value(result)?.type_id;
             if !types.raw_pointers() && !types.is_zst(type_id)? {
-                push_guard(guards, GuardKind.Count, GuardSite.Before);
+                push_guard(guards, GuardKind.ByteExtent, GuardSite.Before);
             }
         },
         ArgBytes => {
@@ -329,12 +331,24 @@ fn expected_guards(function: CfgFunction&, types: BackendTypes&, instruction: In
             let type_id = function.value(*left)?.type_id;
             if is_fat(types, type_id)? { push_guard(&guards, GuardKind.PointerDifference, GuardSite.Before); }
         },
+        Address(_) | FieldAddress(_, _, _) | EnumPayloadAddress(_, _) => {
+            let result = function.value(*instruction.result.unwrap())?.type_id;
+            if is_fat(types, result)? {
+                match types.semantic_store().require(result)? {
+                    Pointer(_) => push_guard(&guards, GuardKind.ByteExtent, GuardSite.Before),
+                    _ => {},
+                }
+            }
+        },
         IndexAddress(address, _, _, _) => {
             let source = function.value(*address)?.type_id;
             let result = function.value(*instruction.result.unwrap())?.type_id;
             let pointer_result = match types.semantic_store().require(result)? { Pointer(_) => true, _ => false, };
-            if !types.is_zst(result)? && is_fat(types, source)? && pointer_result {
-                push_guard(&guards, GuardKind.IndexOffset, GuardSite.Before);
+            if is_fat(types, result)? && pointer_result {
+                match types.semantic_store().require(source)? {
+                    Pointer(_) => push_guard(&guards, GuardKind.IndexOffset, GuardSite.Before),
+                    _ => push_guard(&guards, GuardKind.ByteExtent, GuardSite.Before),
+                }
             }
         },
         Binary(op, left, _) => {

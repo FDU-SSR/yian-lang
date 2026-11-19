@@ -3,6 +3,7 @@ from yianc.codegen.cfg.model import GuardKind, GuardSite;
 from yianc.codegen.cfg.ids import ValueId;
 from yianc.codegen.cfg.model import IndexBounds;
 from yianc.codegen.error import CodegenError;
+from yianc.codegen.abi.runtime import FAT_MAX_EXTENT_BYTES;
 from yianc.common.ids import TypeId;
 from yianc.frontend.ast.operator import BinaryOperator;
 from yianc.codegen.llvm.scalar import binary;
@@ -16,6 +17,26 @@ impl FunctionLowering {
         }
     }
 
+    fn offset_full_pointer(value: IrValue, delta: IrValue, subtract: bool, code: str) -> Result<IrValue, CodegenError> {
+        let old_offset = self.pointer_offset_bytes(value);
+        let next = if subtract {
+            self.checked(self.builder.icmp(IntCompare.Ule, delta, old_offset, ""), code)?;
+            self.builder.binary(BinaryOp.Sub, old_offset, delta, "")
+        } else {
+            // Both operands fit in u32, so this addition cannot overflow in i64.
+            self.builder.binary(BinaryOp.Add, old_offset, delta, "")
+        };
+        let integer = self.owner.module.int_type(64u32);
+        let base = self.builder.cast(CastOp.Ptrtoint, self.builder.extract_value(value, 0u32, ""), integer, "");
+        let address = self.builder.binary(BinaryOp.Add, base, next, "");
+        let valid = self.builder.binary(BinaryOp.And,
+            self.builder.icmp(IntCompare.Ule, next, self.pointer_extent_bytes(value), ""),
+            self.builder.icmp(IntCompare.Uge, address, base, ""), "");
+        self.checked(valid, code)?;
+        Result<IrValue, CodegenError>.Ok(self.builder.insert_value(value,
+            self.builder.cast(CastOp.Trunc, next, self.owner.module.int_type(32u32), ""), 2u32, ""))
+    }
+
     pub fn pointer_offset(pointer: ValueId, index: ValueId, subtract: bool) -> Result<IrValue, CodegenError> {
         let type_id = self.cfg.value(pointer)?.type_id;
         let element = self.pointed_type(type_id)?;
@@ -25,26 +46,9 @@ impl FunctionLowering {
         let offset = self.get(index)?;
         if self.fat(type_id)? {
             self.require_guard(GuardKind.PointerStep, GuardSite.Before)?;
-            let value = self.get(pointer)?;
-            let old_index = self.pointer_index(value);
-            let size = self.pointer_size(value);
-            if subtract {
-                // p - n: the unsigned displacement cannot exceed the current index, and the result stays in bounds.
-                let next = self.builder.binary(BinaryOp.Sub, old_index, offset, "");
-                let valid = self.builder.binary(BinaryOp.And,
-                    self.builder.icmp(IntCompare.Ule, offset, old_index, ""),
-                    self.builder.icmp(IntCompare.Ule, next, size, ""), "");
-                self.checked(valid, "S004")?;
-                return Result<IrValue, CodegenError>.Ok(self.builder.insert_value(value,
-                    self.builder.cast(CastOp.Trunc, next, self.owner.module.int_type(32u32), ""), 2u32, ""));
-            }
-            let next = self.builder.binary(BinaryOp.Add, old_index, offset, "");
-            let valid = self.builder.binary(BinaryOp.And,
-                self.builder.icmp(IntCompare.Uge, next, old_index, ""),
-                self.builder.icmp(IntCompare.Ule, next, size, ""), "");
-            self.checked(valid, "S004")?;
-            return Result<IrValue, CodegenError>.Ok(self.builder.insert_value(value,
-                self.builder.cast(CastOp.Trunc, next, self.owner.module.int_type(32u32), ""), 2u32, ""));
+            let stride = self.owner.module.abi_size(self.owner.types.value_type(element)?);
+            let delta = self.checked_byte_extent(offset, stride, FAT_MAX_EXTENT_BYTES, "S004")?;
+            return self.offset_full_pointer(self.get(pointer)?, delta, subtract, "S004");
         }
         let delta = if subtract { self.builder.neg(offset, "") } else { offset };
         let indices = [delta];
@@ -66,14 +70,18 @@ impl FunctionLowering {
             let same = self.builder.icmp(IntCompare.Eq, self.builder.extract_value(first, 0u32, ""), self.builder.extract_value(second, 0u32, ""), "");
             let same_pair = self.builder.icmp(IntCompare.Eq,
                 self.pointer_word(type_id, first)?, self.pointer_word(type_id, second)?, "");
-            let lhs_index = self.pointer_index(first);
-            let rhs_index = self.pointer_index(second);
+            let lhs_offset = self.pointer_offset_bytes(first);
+            let rhs_offset = self.pointer_offset_bytes(second);
             let valid = self.builder.binary(BinaryOp.And, self.builder.binary(BinaryOp.And, same, same_pair, ""),
                 self.builder.binary(BinaryOp.And,
-                self.builder.icmp(IntCompare.Ule, lhs_index, self.pointer_size(first), ""),
-                self.builder.icmp(IntCompare.Ule, rhs_index, self.pointer_size(second), ""), ""), "");
+                self.builder.icmp(IntCompare.Ule, lhs_offset, self.pointer_extent_bytes(first), ""),
+                self.builder.icmp(IntCompare.Ule, rhs_offset, self.pointer_extent_bytes(second), ""), ""), "");
             self.checked(valid, "S005")?;
-            return Result<IrValue, CodegenError>.Ok(self.builder.binary(BinaryOp.Sub, lhs_index, rhs_index, ""));
+            let bytes = self.builder.binary(BinaryOp.Sub, lhs_offset, rhs_offset, "");
+            let stride = module.const_int(integer, size);
+            let remainder = self.builder.binary(BinaryOp.Srem, bytes, stride, "");
+            self.checked(self.builder.icmp(IntCompare.Eq, remainder, self.integer(0u64), ""), "S005")?;
+            return Result<IrValue, CodegenError>.Ok(self.builder.binary(BinaryOp.Sdiv, bytes, stride, ""));
         }
         let lhs = self.builder.cast(CastOp.Ptrtoint, self.get(left)?, integer, "");
         let rhs = self.builder.cast(CastOp.Ptrtoint, self.get(right)?, integer, "");
@@ -89,20 +97,19 @@ impl FunctionLowering {
         let source_type = self.cfg.value(address)?.type_id;
         let source = self.get(address)?;
         let result_pointer = match self.owner.session.types.require(type_id)? { Pointer(_) => true, _ => false, };
-        if self.fat(source_type)? && result_pointer {
+        let full_source = match self.owner.session.types.require(source_type)? { Pointer(_) => self.fat(source_type)?, _ => false, };
+        if full_source && result_pointer {
             self.require_guard(GuardKind.IndexOffset, GuardSite.Before)?;
-            let absolute = self.builder.binary(BinaryOp.Add, self.pointer_index(source), self.get(index)?, "");
-            let valid = self.builder.binary(BinaryOp.And,
-                self.builder.icmp(IntCompare.Uge, absolute, self.pointer_index(source), ""),
-                self.builder.icmp(IntCompare.Ult, absolute, self.pointer_size(source), ""), "");
-            self.checked(valid, "S002")?;
-            return Result<IrValue, CodegenError>.Ok(self.builder.insert_value(source,
-                self.builder.cast(CastOp.Trunc, absolute, self.owner.module.int_type(32u32), ""), 2u32, ""));
+            let stride = self.owner.module.abi_size(self.owner.types.value_type(element)?);
+            let delta = self.checked_byte_extent(self.get(index)?, stride, FAT_MAX_EXTENT_BYTES, "S002")?;
+            let result = self.offset_full_pointer(source, delta, false, "S002")?;
+            self.check_access_bounds(type_id, result, "S002")?;
+            return Result<IrValue, CodegenError>.Ok(result);
         }
         let indices = [self.get(index)?];
         let base = self.pointer_data(source_type, source)?;
         let pointer = self.builder.gep(self.owner.types.value_type(element)?, base, indices.as_slice(), false, "");
-        self.make_pointer(type_id, pointer, self.pointer_word(source_type, source)?, self.integer(0u64), self.integer(1u64))
+        self.make_place_pointer(type_id, pointer, self.pointer_word(source_type, source)?)
     }
 
     pub fn binary_value(op: BinaryOperator, left: ValueId, right: ValueId) -> Result<IrValue, CodegenError> {
@@ -115,7 +122,7 @@ impl FunctionLowering {
             if op == BinaryOperator.Eq || op == BinaryOperator.Neq {
                 if pointer {
                     equal = self.builder.binary(BinaryOp.And, equal,
-                        self.builder.icmp(IntCompare.Eq, self.pointer_index(first), self.pointer_index(second), ""), "");
+                        self.builder.icmp(IntCompare.Eq, self.pointer_offset_bytes(first), self.pointer_offset_bytes(second), ""), "");
                 }
                 return Result<IrValue, CodegenError>.Ok(if op == BinaryOperator.Neq { self.builder.not(equal, "") } else { equal });
             }
@@ -127,7 +134,7 @@ impl FunctionLowering {
                 Lt => IntCompare.Ult, Leq => IntCompare.Ule, Gt => IntCompare.Ugt, Geq => IntCompare.Uge,
                 _ => return Result<IrValue, CodegenError>.Err(CodegenError.invalid("invalid pointer comparison")),
             };
-            return Result<IrValue, CodegenError>.Ok(self.builder.icmp(predicate, self.pointer_index(first), self.pointer_index(second), ""));
+            return Result<IrValue, CodegenError>.Ok(self.builder.icmp(predicate, self.pointer_offset_bytes(first), self.pointer_offset_bytes(second), ""));
         }
         binary(&self.builder, self.owner.types, self.owner.module, op, type_id,
             self.cfg.value(right)?.type_id, self.get(left)?, self.get(right)?)
@@ -165,6 +172,15 @@ impl FunctionLowering {
     pub fn fill(destination: ValueId, element: ValueId, count: ValueId) -> Result<(), CodegenError> {
         let module = self.owner.module;
         let integer = module.int_type(64u32);
+        let destination_type = self.cfg.value(destination)?.type_id;
+        let target = self.get(destination)?;
+        let native_element = self.owner.types.value_type(self.cfg.value(element)?.type_id)?;
+        let length = self.get(count)?;
+        if self.fat(destination_type)? {
+            let span = self.checked_byte_extent(length, module.abi_size(native_element), FAT_MAX_EXTENT_BYTES, "S002")?;
+            self.check_pointer_span(target, span, "S002")?;
+        }
+        let base = self.pointer_data(destination_type, target)?;
         let origin = self.builder.insertion_block();
         let header = self.function.append_block("");
         let body = self.function.append_block("");
@@ -172,14 +188,11 @@ impl FunctionLowering {
         self.builder.br(header);
         self.builder.position_at_end(header);
         let index = self.builder.phi(integer, "");
-        let condition = self.builder.icmp(IntCompare.Ult, index, self.get(count)?, "");
+        let condition = self.builder.icmp(IntCompare.Ult, index, length, "");
         self.builder.cond_br(condition, body, done);
         self.builder.position_at_end(body);
         let indices = [index];
-        let destination_type = self.cfg.value(destination)?.type_id;
-        let base = self.pointer_data(destination_type, self.get(destination)?)?;
-        let pointer = self.builder.gep(self.owner.types.value_type(self.cfg.value(element)?.type_id)?,
-            base, indices.as_slice(), false, "");
+        let pointer = self.builder.gep(native_element, base, indices.as_slice(), false, "");
         self.builder.store(self.get(element)?, pointer);
         let next = self.builder.binary(BinaryOp.Add, index, module.const_int(integer, 1u64), "");
         self.builder.br(header);

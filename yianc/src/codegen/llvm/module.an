@@ -375,7 +375,7 @@ impl FunctionLowering {
         global.set_initializer(self.owner.module.const_bytes(text.as_slice(), true));
         global.set_constant(true);
         global.set_private_linkage();
-        self.make_pointer(type_id, global.value(), self.integer(LITERAL_WORD), self.integer(0u64), self.integer(text.as_slice().len()))
+        self.make_view(type_id, global.value(), self.integer(LITERAL_WORD), self.integer(text.as_slice().len()))
     }
 
     fn instruction(instruction: Instruction&) -> Result<(), CodegenError> {
@@ -437,7 +437,7 @@ impl FunctionLowering {
                     Load(local) => if zst { module.const_null(native) } else { self.builder.load(native, self.locals[local.index], "") },
                     Address(local) => if zst { module.const_null(native) } else {
                         let word = self.frame_lock(self.cfg.local(*local)?.scope)?;
-                        self.make_pointer(type_id, self.locals[local.index], word, self.integer(0u64), self.integer(1u64))?
+                        self.make_place_pointer(type_id, self.locals[local.index], word)?
                     },
                     Read(address) => if zst { module.const_null(native) } else {
                         let pointer = self.memory_address(self.cfg.value(*address)?.type_id, self.get(*address)?)?;
@@ -493,7 +493,7 @@ impl FunctionLowering {
                             let source = self.cfg.value(*address)?.type_id;
                             let base = self.memory_address(source, self.get(*address)?)?;
                             let pointer = self.builder.gep(types.value_type(*aggregate)?, base, indices.as_slice(), false, "");
-                            self.make_pointer(type_id, pointer, self.pointer_word(source, self.get(*address)?)?, self.integer(0u64), self.integer(1u64))?
+                            self.make_place_pointer(type_id, pointer, self.pointer_word(source, self.get(*address)?)?)?
                         }
                     },
                     EnumConstruct(discriminant, payload) => self.enum_construct(type_id, *discriminant, *payload, *instruction.result.unwrap())?,
@@ -503,7 +503,7 @@ impl FunctionLowering {
                         let source = self.cfg.value(*address)?.type_id;
                         let base = self.memory_address(source, self.get(*address)?)?;
                         let pointer = self.enum_address(*enumeration, base)?;
-                        self.make_pointer(type_id, pointer, self.pointer_word(source, self.get(*address)?)?, self.integer(0u64), self.integer(1u64))?
+                        self.make_place_pointer(type_id, pointer, self.pointer_word(source, self.get(*address)?)?)?
                     },
                     EnumTagAt(address, enumeration) => self.enum_tag_at(*address, *enumeration)?,
                     EnumFieldAt(address, enumeration, discriminant, field) => self.enum_field_at(*instruction.result.unwrap(), *address, *enumeration, *discriminant, *field)?,

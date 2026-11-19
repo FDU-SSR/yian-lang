@@ -49,7 +49,7 @@ fn representation_name(representation: PointerRepresentation) -> str {
 
 fn guard_kind_name(kind: GuardKind) -> str {
     match kind {
-        Count => "count", AllocationSize => "allocation-size", AllocationResult => "allocation-result",
+        ByteExtent => "byte-extent", AllocationSize => "allocation-size", AllocationResult => "allocation-result",
         HeapRoot => "heap-root", PointerStep => "pointer-step", PointerDifference => "pointer-difference",
         PointerOrder => "pointer-order", IndexOffset => "index-offset", ViewParts => "view-parts",
         SliceRange => "slice-range", ArgumentIndex => "argument-index", ArgumentData => "argument-data",

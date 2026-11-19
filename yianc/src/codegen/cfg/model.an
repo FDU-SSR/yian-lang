@@ -190,7 +190,7 @@ pub enum GuardSite {
 }
 
 pub enum GuardKind {
-    Count,
+    ByteExtent,
     AllocationSize,
     AllocationResult,
     HeapRoot,

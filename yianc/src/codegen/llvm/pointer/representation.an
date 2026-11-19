@@ -2,7 +2,7 @@ from yianc.codegen.llvm.module import FunctionLowering;
 from yianc.codegen.cfg.model import GuardKind, GuardSite;
 from yianc.codegen.llvm.scalar import cast;
 from yianc.codegen.error import CodegenError;
-from yianc.codegen.abi.runtime import ENV_WORD, LITERAL_WORD;
+from yianc.codegen.abi.runtime import ENV_WORD, LITERAL_WORD, FAT_MAX_EXTENT_BYTES;
 from yianc.common.ids import TypeId;
 from yianc.analysis.ty.model import TypeData;
 from yianc.codegen.representation import PointerRepresentation;
@@ -30,17 +30,17 @@ impl FunctionLowering {
             } else { self.integer(ENV_WORD) })
     }
 
-    pub fn pointer_index(value: IrValue) -> IrValue {
+    pub fn pointer_offset_bytes(value: IrValue) -> IrValue {
         self.builder.cast(CastOp.Zext, self.builder.extract_value(value, 2u32, ""),
             self.owner.module.int_type(64u32), "")
     }
 
-    pub fn pointer_size(value: IrValue) -> IrValue {
+    pub fn pointer_extent_bytes(value: IrValue) -> IrValue {
         self.builder.cast(CastOp.Zext, self.builder.extract_value(value, 3u32, ""),
             self.owner.module.int_type(64u32), "")
     }
 
-    // Arithmetic keeps the allocation base fixed; only the element index changes.
+    // The full pointer address is independent of the pointee layout.
     pub fn pointer_data(type_id: TypeId, value: IrValue) -> Result<IrValue, CodegenError> {
         if self.owner.types.is_zst(type_id)? {
             return Result<IrValue, CodegenError>.Ok(self.owner.module.const_null(self.owner.module.pointer_type(0u32)));
@@ -54,46 +54,63 @@ impl FunctionLowering {
 
         let data = self.builder.extract_value(value, 0u32, "");
         match self.owner.session.types.require(type_id)? {
-            Pointer(element) => {
-                let indices = [self.pointer_index(value)];
-                Result<IrValue, CodegenError>.Ok(self.builder.gep(self.owner.types.value_type(*element)?,
+            Pointer(_) => {
+                let indices = [self.pointer_offset_bytes(value)];
+                Result<IrValue, CodegenError>.Ok(self.builder.gep(self.owner.module.int_type(8u32),
                     data, indices.as_slice(), false, ""))
             },
             _ => Result<IrValue, CodegenError>.Ok(data),
         }
     }
 
-    // Callers establish range and lifetime checks before constructing a derived view.
-    pub fn make_pointer(type_id: TypeId, data: IrValue, word: IrValue, index: IrValue, length: IrValue)
+    // Callers establish offset <= extent <= FAT_MAX_EXTENT_BYTES before truncating.
+    pub fn make_full_pointer(type_id: TypeId, data: IrValue, word: IrValue, offset_bytes: IrValue, extent_bytes: IrValue)
     -> Result<IrValue, CodegenError> {
         let native = self.owner.types.value_type(type_id)?;
         if self.owner.types.is_zst(type_id)? {
             return Result<IrValue, CodegenError>.Ok(self.owner.module.const_null(native));
         }
-        let view = match self.owner.session.types.require(type_id)? { Slice(_) | Str => true, _ => false, };
-        if self.owner.types.raw_pointers() && !view {
+        if self.owner.types.raw_pointers() {
             return Result<IrValue, CodegenError>.Ok(data);
         }
 
         let result = self.builder.insert_value(self.owner.module.undef_value(native), data, 0u32, "");
+        result = self.builder.insert_value(result, word, 1u32, "");
+        let narrow = self.owner.module.int_type(32u32);
+        result = self.builder.insert_value(result, self.builder.cast(CastOp.Trunc, offset_bytes, narrow, ""), 2u32, "");
+        Result<IrValue, CodegenError>.Ok(self.builder.insert_value(result, self.builder.cast(CastOp.Trunc, extent_bytes, narrow, ""), 3u32, ""))
+    }
+
+    pub fn make_view(type_id: TypeId, data: IrValue, word: IrValue, length: IrValue) -> Result<IrValue, CodegenError> {
+        let native = self.owner.types.value_type(type_id)?;
+        let result = self.builder.insert_value(self.owner.module.undef_value(native), data, 0u32, "");
         if self.owner.types.raw_pointers() {
-            result = self.builder.insert_value(result, length, 1u32, "");
-        } else {
-            result = self.builder.insert_value(result, word, 1u32, "");
-            if view {
-                result = self.builder.insert_value(result, length, 2u32, "");
-            } else {
-                match self.owner.session.types.require(type_id)? {
-                    Pointer(_) => {
-                        let narrow = self.owner.module.int_type(32u32);
-                        result = self.builder.insert_value(result, self.builder.cast(CastOp.Trunc, index, narrow, ""), 2u32, "");
-                        result = self.builder.insert_value(result, self.builder.cast(CastOp.Trunc, length, narrow, ""), 3u32, "");
-                    },
-                    _ => {},
-                }
-            }
+            return Result<IrValue, CodegenError>.Ok(self.builder.insert_value(result, length, 1u32, ""));
         }
-        Result<IrValue, CodegenError>.Ok(result)
+        result = self.builder.insert_value(result, word, 1u32, "");
+        Result<IrValue, CodegenError>.Ok(self.builder.insert_value(result, length, 2u32, ""))
+    }
+
+    // The caller supplies a validated address for one object.
+    pub fn make_place_pointer(type_id: TypeId, data: IrValue, word: IrValue) -> Result<IrValue, CodegenError> {
+        let native = self.owner.types.value_type(type_id)?;
+        if self.owner.types.is_zst(type_id)? {
+            return Result<IrValue, CodegenError>.Ok(self.owner.module.const_null(native));
+        }
+        if self.owner.types.raw_pointers() { return Result<IrValue, CodegenError>.Ok(data); }
+        match self.owner.session.types.require(type_id)? {
+            Pointer(element) => {
+                self.require_guard(GuardKind.ByteExtent, GuardSite.Before)?;
+                let stride = self.owner.module.abi_size(self.owner.types.value_type(*element)?);
+                let extent = self.checked_byte_extent(self.integer(1u64), stride, FAT_MAX_EXTENT_BYTES, "R001")?;
+                self.make_full_pointer(type_id, data, word, self.integer(0u64), extent)
+            },
+            Reference(_) => {
+                let result = self.builder.insert_value(self.owner.module.undef_value(native), data, 0u32, "");
+                Result<IrValue, CodegenError>.Ok(self.builder.insert_value(result, word, 1u32, ""))
+            },
+            _ => Result<IrValue, CodegenError>.Err(CodegenError.invalid("place address has no language pointer type")),
+        }
     }
 
     pub fn pointer_cast(source: TypeId, target: TypeId, value: IrValue) -> Result<IrValue, CodegenError> {
@@ -113,7 +130,8 @@ impl FunctionLowering {
             return Result<IrValue, CodegenError>.Err(CodegenError.invalid("invalid language pointer conversion"));
         }
 
-        let length = self.integer(1u64);
+        let module = self.owner.module;
+        let zero = self.integer(0u64);
         let array = false;
         let empty = false;
         match source_type {
@@ -125,7 +143,6 @@ impl FunctionLowering {
                             LiteralValue(bits, false, _) => *bits,
                             _ => return Result<IrValue, CodegenError>.Err(CodegenError.invalid("array pointer conversion has no length")),
                         };
-                        length = self.integer(bits);
                         empty = bits == 0u64;
                         array = true;
                     }
@@ -137,45 +154,71 @@ impl FunctionLowering {
         if self.owner.types.is_zst(source)? {
             if empty {
                 let slot = self.lock_slot(self.integer(LITERAL_WORD));
-                return self.make_pointer(target, slot, self.integer(LITERAL_WORD), self.integer(0u64), self.integer(0u64));
+                let word = self.integer(LITERAL_WORD);
+                return match target_type {
+                    Pointer(_) => self.make_full_pointer(target, slot, word, zero, zero),
+                    _ => self.make_place_pointer(target, slot, word),
+                };
             }
             return Result<IrValue, CodegenError>.Err(CodegenError.invalid("nonempty pointer conversion from a zero-sized value"));
         }
 
-        if !self.owner.types.raw_pointers() {
-            if array {
-                self.require_guard(GuardKind.Count, GuardSite.Before)?;
-                self.check_count(length)?;
-            }
+        if !self.owner.types.raw_pointers() && !array {
             match (source_type, target_type) {
-                (Pointer(_), Pointer(_)) => {
-                    if !array { return Result<IrValue, CodegenError>.Ok(value); }
-                    self.require_guard(GuardKind.CastAccess, GuardSite.Before)?;
-                    self.check_access(source, value)?;
-                },
-                (Pointer(_), Reference(_)) | (Slice(_), Reference(_)) => {},
-                (TypeData.Str, Reference(_)) => {
-                    self.require_guard(GuardKind.CastNonempty, GuardSite.Before)?;
-                    self.checked(self.builder.icmp(IntCompare.Ne, self.view_length(value), self.integer(0u64), ""), "S007")?;
-                    self.require_guard(GuardKind.CastView, GuardSite.Before)?;
-                    self.check_view(source, value)?;
-                },
-                (Pointer(_), Slice(_)) => {
-                    self.require_guard(GuardKind.PointerRemaining, GuardSite.Before)?;
-                    let index = self.pointer_index(value);
-                    let size = self.pointer_size(value);
-                    self.checked(self.builder.icmp(IntCompare.Ule, index, size, ""), "S004")?;
-                    length = self.builder.binary(BinaryOp.Sub, size, index, "");
-                },
-                _ => {},
-            }
-        } else {
-            match (source_type, target_type) {
-                (Pointer(_), Slice(_)) => { length = self.integer(0u64); },
+                (Pointer(_), Pointer(_)) => return Result<IrValue, CodegenError>.Ok(value),
                 _ => {},
             }
         }
         let data = self.pointer_data(source, value)?;
-        self.make_pointer(target, data, self.pointer_word(source, value)?, self.integer(0u64), length)
+        let word = self.pointer_word(source, value)?;
+        if self.owner.types.raw_pointers() {
+            return match target_type {
+                Slice(_) | TypeData.Str => self.make_view(target, data, word, zero),
+                _ => Result<IrValue, CodegenError>.Ok(data),
+            };
+        }
+
+        match target_type {
+            Pointer(_) => {
+                let element = match source_type {
+                    Pointer(element) | Reference(element) => *element,
+                    _ => return Result<IrValue, CodegenError>.Err(CodegenError.invalid("full pointer conversion has no source pointee")),
+                };
+                self.require_guard(GuardKind.ByteExtent, GuardSite.Before)?;
+                let stride = module.abi_size(self.owner.types.value_type(element)?);
+                let extent = self.checked_byte_extent(self.integer(1u64), stride, FAT_MAX_EXTENT_BYTES, "R001")?;
+                match source_type {
+                    Pointer(_) => {
+                        self.require_guard(GuardKind.CastAccess, GuardSite.Before)?;
+                        self.check_access(source, value)?;
+                    },
+                    _ => {},
+                }
+                self.make_full_pointer(target, data, word, zero, extent)
+            },
+            Slice(element) => {
+                self.require_guard(GuardKind.PointerRemaining, GuardSite.Before)?;
+                self.check_pointer_span(value, zero, "S004")?;
+                let remaining = self.builder.binary(BinaryOp.Sub, self.pointer_extent_bytes(value), self.pointer_offset_bytes(value), "");
+                let stride = module.abi_size(self.owner.types.value_type(*element)?);
+                let length = if stride == 0u64 { zero } else {
+                    self.builder.binary(BinaryOp.Udiv, remaining, self.integer(stride), "")
+                };
+                self.make_view(target, data, word, length)
+            },
+            Reference(_) => {
+                match source_type {
+                    TypeData.Str => {
+                        self.require_guard(GuardKind.CastNonempty, GuardSite.Before)?;
+                        self.checked(self.builder.icmp(IntCompare.Ne, self.view_length(value), zero, ""), "S007")?;
+                        self.require_guard(GuardKind.CastView, GuardSite.Before)?;
+                        self.check_view(source, value)?;
+                    },
+                    _ => {},
+                }
+                self.make_place_pointer(target, data, word)
+            },
+            _ => Result<IrValue, CodegenError>.Err(CodegenError.invalid("unsupported language pointer conversion")),
+        }
     }
 }

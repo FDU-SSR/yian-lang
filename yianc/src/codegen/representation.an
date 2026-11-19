@@ -12,6 +12,7 @@ pub enum PointerRepresentation {
     RawAddress,
     RawView,
     RawTraitObject,
+    // {data, word, offset_bytes: u32, extent_bytes: u32}
     FatPointer,
     FatReference,
     FatView,

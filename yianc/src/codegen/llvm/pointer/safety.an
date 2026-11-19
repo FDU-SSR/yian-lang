@@ -13,8 +13,28 @@ impl FunctionLowering {
         self.builder.gep(module.array_type(module.int_type(64u32), LOCK_TABLE_SLOTS), table.value(), indices.as_slice(), false, "")
     }
 
-    pub fn check_count(count: IrValue) -> Result<(), CodegenError> {
-        self.checked(self.builder.icmp(IntCompare.Ule, count, self.integer(LOCK_MASK), ""), "R001")
+    pub fn checked_byte_extent(count: IrValue, stride: u64, limit: u64, code: str) -> Result<IrValue, CodegenError> {
+        if stride == 0u64 { return Result<IrValue, CodegenError>.Ok(self.integer(0u64)); }
+        self.checked(self.builder.icmp(IntCompare.Ule, count, self.integer(limit / stride), ""), code)?;
+        Result<IrValue, CodegenError>.Ok(self.builder.binary(BinaryOp.Mul, count, self.integer(stride), ""))
+    }
+
+    pub fn check_pointer_span(value: IrValue, byte_count: IrValue, code: str) -> Result<(), CodegenError> {
+        let offset = self.pointer_offset_bytes(value);
+        let extent = self.pointer_extent_bytes(value);
+        let remaining = self.builder.binary(BinaryOp.Sub, extent, offset, "");
+        let valid_range = self.builder.binary(BinaryOp.And,
+            self.builder.icmp(IntCompare.Ule, offset, extent, ""),
+            self.builder.icmp(IntCompare.Ule, byte_count, remaining, ""), "");
+
+        let integer = self.owner.module.int_type(64u32);
+        let base = self.builder.cast(CastOp.Ptrtoint, self.builder.extract_value(value, 0u32, ""), integer, "");
+        let start = self.builder.binary(BinaryOp.Add, base, offset, "");
+        let end = self.builder.binary(BinaryOp.Add, start, byte_count, "");
+        let valid_address = self.builder.binary(BinaryOp.And,
+            self.builder.icmp(IntCompare.Uge, start, base, ""),
+            self.builder.icmp(IntCompare.Uge, end, start, ""), "");
+        self.checked(self.builder.binary(BinaryOp.And, valid_range, valid_address, ""), code)
     }
 
     // Slot identity is checked before any allocation header is read.
@@ -47,12 +67,24 @@ impl FunctionLowering {
         self.checked(valid, code)
     }
 
-    // Bounds apply to fat pointers; references have no element index.
+    // References have already established the typed spatial obligations at formation.
     pub fn check_access_bounds(type_id: TypeId, value: IrValue, code: str) -> Result<(), CodegenError> {
         if !self.fat(type_id)? { return Result<(), CodegenError>.Ok(()); }
-        let reference = match self.owner.session.types.require(type_id)? { Reference(_) => true, _ => false, };
-        if reference { return Result<(), CodegenError>.Ok(()); }
-        self.checked(self.builder.icmp(IntCompare.Ult, self.pointer_index(value), self.pointer_size(value), ""), code)
+        match self.owner.session.types.require(type_id)? {
+            Pointer(element) => {
+                let native = self.owner.types.value_type(*element)?;
+                self.check_pointer_span(value, self.integer(self.owner.module.abi_size(native)), code)?;
+                let alignment = u64(self.owner.module.abi_alignment(native));
+                if alignment > 1u64 {
+                    let address = self.builder.cast(CastOp.Ptrtoint, self.pointer_data(type_id, value)?,
+                        self.owner.module.int_type(64u32), "");
+                    let remainder = self.builder.binary(BinaryOp.And, address, self.integer(alignment - 1u64), "");
+                    self.checked(self.builder.icmp(IntCompare.Eq, remainder, self.integer(0u64), ""), code)?;
+                }
+            },
+            _ => {},
+        }
+        Result<(), CodegenError>.Ok(())
     }
 
     pub fn memory_address(type_id: TypeId, value: IrValue) -> Result<IrValue, CodegenError> {
@@ -61,13 +93,7 @@ impl FunctionLowering {
     }
 
     pub fn check_in_bounds(type_id: TypeId, value: IrValue) -> Result<(), CodegenError> {
-        if self.fat(type_id)? {
-            match self.owner.session.types.require(type_id)? {
-                Pointer(_) => { self.checked(self.builder.icmp(IntCompare.Ult, self.pointer_index(value), self.pointer_size(value), ""), "S001")?; },
-                _ => {},
-            }
-        }
-        Result<(), CodegenError>.Ok(())
+        self.check_access_bounds(type_id, value, "S001")
     }
 
     // Scope entry starts a fresh dynamic frame; the first executed address acquires its slot.
@@ -158,7 +184,7 @@ impl FunctionLowering {
         self.builder.binary(BinaryOp.Or, high, low, "")
     }
 
-    pub fn heap_extent(anchor: IrValue) -> IrValue {
+    pub fn heap_extent_bytes(anchor: IrValue) -> IrValue {
         let module = self.owner.module;
         let base = self.builder.binary(BinaryOp.Sub, anchor, self.integer(HEADER_BYTES), "");
         let pointer = self.builder.cast(CastOp.Inttoptr, base, module.pointer_type(0u32), "");
@@ -171,35 +197,41 @@ impl FunctionLowering {
         let data = self.builder.extract_value(value, 0u32, "");
         let word = self.pointer_word(type_id, value)?;
         self.checked(self.live(word, "S002")?, "S002")?;
-        let length = self.view_length(value);
-        let empty = self.builder.icmp(IntCompare.Eq, length, self.integer(0u64), "");
-        let nonnull = self.builder.icmp(IntCompare.Ne, data, module.const_null(module.pointer_type(0u32)), "");
-        self.checked(self.builder.binary(BinaryOp.Or, empty, nonnull, ""), "S002")?;
-
-        let index = self.builder.binary(BinaryOp.And, word, self.integer(LOCK_MASK), "");
-        let heap = self.builder.icmp(IntCompare.Uge, index, self.integer(HEAP_LOCK_BASE), "");
-        let inspect = self.function.append_block("");
-        let done = self.function.append_block("");
-        self.builder.cond_br(heap, inspect, done);
-        self.builder.position_at_end(inspect);
-        let anchor = self.heap_anchor(data, word);
-        let extent = self.heap_extent(anchor);
         let element = match self.owner.session.types.require(type_id)? {
             Slice(element) => self.owner.types.value_type(*element)?,
             Str => module.int_type(8u32),
             _ => return Result<(), CodegenError>.Err(CodegenError.invalid("view check has no element type")),
         };
-        let wide = module.int_type(128u32);
-        let size = module.const_int(wide, module.abi_size(element));
-        let span = self.builder.binary(BinaryOp.Mul, self.builder.cast(CastOp.Zext, length, wide, ""), size, "");
-        let active = self.builder.binary(BinaryOp.Mul, self.builder.cast(CastOp.Zext, extent, wide, ""), size, "");
-        let start = self.builder.cast(CastOp.Zext, self.builder.cast(CastOp.Ptrtoint, data, module.int_type(64u32), ""), wide, "");
-        let base = self.builder.cast(CastOp.Zext, anchor, wide, "");
+        let span = self.checked_byte_extent(self.view_length(value), module.abi_size(element), 0xFFFFFFFFFFFFFFFFu64, "S002")?;
+        let empty = self.builder.icmp(IntCompare.Eq, span, self.integer(0u64), "");
+        let nonnull = self.builder.icmp(IntCompare.Ne, data, module.const_null(module.pointer_type(0u32)), "");
+        self.checked(self.builder.binary(BinaryOp.Or, empty, nonnull, ""), "S002")?;
+        let start = self.builder.cast(CastOp.Ptrtoint, data, module.int_type(64u32), "");
         let end = self.builder.binary(BinaryOp.Add, start, span, "");
-        let limit = self.builder.binary(BinaryOp.Add, base, active, "");
+        self.checked(self.builder.icmp(IntCompare.Uge, end, start, ""), "S002")?;
+        let alignment = u64(module.abi_alignment(element));
+        if alignment > 1u64 {
+            let remainder = self.builder.binary(BinaryOp.And, start, self.integer(alignment - 1u64), "");
+            let aligned = self.builder.icmp(IntCompare.Eq, remainder, self.integer(0u64), "");
+            self.checked(self.builder.binary(BinaryOp.Or, empty, aligned, ""), "S002")?;
+        }
+
+        let index = self.builder.binary(BinaryOp.And, word, self.integer(LOCK_MASK), "");
+        let heap = self.builder.icmp(IntCompare.Uge, index, self.integer(HEAP_LOCK_BASE), "");
+        let inspect = self.function.append_block("");
+        let done = self.function.append_block("");
+        // An empty tail may be at the start of the next window.
+        self.builder.cond_br(self.builder.binary(BinaryOp.And, heap, self.builder.not(empty, ""), ""), inspect, done);
+        self.builder.position_at_end(inspect);
+        let anchor = self.heap_anchor(data, word);
+        let extent = self.heap_extent_bytes(anchor);
+        let offset = self.builder.binary(BinaryOp.Sub, start, anchor, "");
+        let remaining = self.builder.binary(BinaryOp.Sub, extent, offset, "");
         let valid = self.builder.binary(BinaryOp.And,
-            self.builder.icmp(IntCompare.Uge, start, base, ""), self.builder.icmp(IntCompare.Ule, end, limit, ""), "");
-        valid = self.builder.binary(BinaryOp.And, valid, self.builder.icmp(IntCompare.Ule, limit, module.const_int(wide, 0xFFFFFFFFFFFFFFFFu64), ""), "");
+            self.builder.icmp(IntCompare.Uge, start, anchor, ""),
+            self.builder.binary(BinaryOp.And,
+                self.builder.icmp(IntCompare.Ule, offset, extent, ""),
+                self.builder.icmp(IntCompare.Ule, span, remaining, ""), ""), "");
         self.checked(valid, "S002")?;
         self.builder.br(done);
         self.builder.position_at_end(done);

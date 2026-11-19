@@ -1,7 +1,7 @@
 from yianc.codegen.llvm.module import FunctionLowering;
 from yianc.codegen.cfg.model import GuardKind, GuardSite;
 from yianc.codegen.error import CodegenError;
-from yianc.codegen.abi.runtime import LOCK_MASK, HEADER_BYTES, HEAP_LOCK_BASE, HEAP_KEY_LIMIT;
+from yianc.codegen.abi.runtime import LOCK_MASK, HEADER_BYTES, HEAP_LOCK_BASE, HEAP_KEY_LIMIT, FAT_HEAP_MAX_BYTES;
 from yianc.common.ids import TypeId;
 from llvm.ir import IrValue, BinaryOp, CastOp, IntCompare;
 
@@ -56,13 +56,9 @@ impl FunctionLowering {
         if self.owner.types.is_zst(type_id)? {
             return Result<IrValue, CodegenError>.Ok(module.const_null(self.owner.types.value_type(type_id)?));
         }
-        self.require_guard(GuardKind.Count, GuardSite.Before)?;
-        self.check_count(count)?;
         let size = module.abi_size(self.owner.types.value_type(element)?);
         self.require_guard(GuardKind.AllocationSize, GuardSite.Before)?;
-        let fits = self.builder.icmp(IntCompare.Ule, count, self.integer((0xFFFFFFFFFFFFFFFFu64 - HEADER_BYTES) / size), "");
-        self.checked(fits, "R001")?;
-        let bytes = self.builder.binary(BinaryOp.Mul, count, self.integer(size), "");
+        let bytes = self.checked_byte_extent(count, size, FAT_HEAP_MAX_BYTES, "R001")?;
         let payload = self.builder.select(self.builder.icmp(IntCompare.Eq, bytes, self.integer(0u64), ""), self.integer(1u64), bytes, "");
         let parameters = [module.int_type(64u32)];
         let arguments = [payload];
@@ -70,8 +66,8 @@ impl FunctionLowering {
         let indices = [self.integer(HEADER_BYTES)];
         let data = self.builder.gep(module.int_type(8u32), base, indices.as_slice(), false, "");
         let word = self.acquire_heap_word(data)?;
-        self.builder.store(self.builder.cast(CastOp.Trunc, count, module.int_type(32u32), ""), base);
-        self.make_pointer(type_id, data, word, self.integer(0u64), count)
+        self.builder.store(self.builder.cast(CastOp.Trunc, bytes, module.int_type(32u32), ""), base);
+        self.make_full_pointer(type_id, data, word, self.integer(0u64), bytes)
     }
 
     // Root views may release an allocation; a view whose data address is not the block root cannot.
@@ -90,7 +86,7 @@ impl FunctionLowering {
         match self.owner.session.types.require(type_id)? {
             Pointer(_) => {
                 valid = self.builder.binary(BinaryOp.And, valid,
-                    self.builder.icmp(IntCompare.Eq, self.pointer_index(value), self.integer(0u64), ""), "");
+                    self.builder.icmp(IntCompare.Eq, self.pointer_offset_bytes(value), self.integer(0u64), ""), "");
             },
             Slice(_) | Str | Reference(_) => {},
             _ => return Result<IrValue, CodegenError>.Err(CodegenError.invalid("deallocation has no language pointer")),
@@ -115,12 +111,15 @@ impl FunctionLowering {
 
     pub fn reallocate_fat(type_id: TypeId, element: TypeId, previous: IrValue, count: IrValue) -> Result<IrValue, CodegenError> {
         self.require_guard(GuardKind.HeapRoot, GuardSite.BeforeRelease)?;
-        self.checked_heap_base(type_id, previous)?;
+        let base = self.checked_heap_base(type_id, previous)?;
+        let anchor = self.builder.binary(BinaryOp.Add,
+            self.builder.cast(CastOp.Ptrtoint, base, self.owner.module.int_type(64u32), ""),
+            self.integer(HEADER_BYTES), "");
+        let old_extent = self.pointer_extent_bytes(previous);
+        self.checked(self.builder.icmp(IntCompare.Ule, old_extent, self.heap_extent_bytes(anchor), ""), "S006")?;
         let replacement = self.allocate_fat(type_id, element, count)?;
-        let old_count = self.pointer_size(previous);
-        let copied = self.builder.select(self.builder.icmp(IntCompare.Ult, old_count, count, ""), old_count, count, "");
-        let bytes = self.builder.binary(BinaryOp.Mul, copied,
-            self.integer(self.owner.module.abi_size(self.owner.types.value_type(element)?)), "");
+        let new_extent = self.pointer_extent_bytes(replacement);
+        let bytes = self.builder.select(self.builder.icmp(IntCompare.Ult, old_extent, new_extent, ""), old_extent, new_extent, "");
         self.builder.memcpy(self.pointer_data(type_id, replacement)?, 1u32, self.pointer_data(type_id, previous)?, 1u32, bytes);
         self.release_fat(type_id, previous)?;
         Result<IrValue, CodegenError>.Ok(replacement)

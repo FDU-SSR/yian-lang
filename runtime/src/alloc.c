@@ -1,8 +1,7 @@
 /*
  * alloc.c: YIAN heap allocator with size-class arenas.
  *
- * Block layout (matching lockmech.py::BlockHeader): [lock(8) | active_size(8) | payload...],
- * with payload at base+YIAN_HDR_BYTES. The compiler writes lock/active_size; the allocator leaves the header alone.
+ * Block layout: [compiler-owned header | payload...], with payload at base+YIAN_HDR_BYTES.
  * Free-list links occupy the first payload word (YIAN_NEXT_OFFSET=YIAN_HDR_BYTES).
  *
  * Allocation paths, with one free list and filling slab per class:
@@ -37,7 +36,13 @@
 #define YIAN_SLAB_BYTES ((uint64_t)64 * 1024)
 #define YIAN_SLAB_CHUNK ((uint64_t)16 * YIAN_SLAB_BYTES)
 #define YIAN_SLAB_HEADER ((uint64_t)64)
+#define YIAN_LARGE_PAYLOAD_ALIGNMENT ((uint64_t)16)
 #define YIAN_LARGE_CACHE ((uint64_t)8 << 20)
+
+_Static_assert(YIAN_FAT_HEAP_MAX_BYTES ==
+                   ((YIAN_WINDOW_BYTES - YIAN_SLAB_HEADER - YIAN_HDR_BYTES) &
+                    ~(YIAN_LARGE_PAYLOAD_ALIGNMENT - 1)),
+               "native fat payload limit must fit the large-object window");
 
 #define YIAN_SLAB_MAGIC 0x5949414e534c4142ull  /* "YIANSLAB" */
 #define YIAN_LARGE_MAGIC 0x5949414e4c415247ull /* "YIANLARG" */
@@ -275,7 +280,7 @@ static __attribute__((noinline)) void *large_alloc(uint64_t bytes) {
         previous = chunk;
     }
 
-    uint64_t payload = align_up(bytes, 16);
+    uint64_t payload = align_up(bytes, YIAN_LARGE_PAYLOAD_ALIGNMENT);
     uint64_t span = align_up(YIAN_HDR_BYTES + payload + YIAN_SLAB_BYTES * 2, 4096);
     /* Reserve an extra window and two slabs to place the entire block within one 4 GiB window.
      * MAP_NORESERVE reserves virtual addresses; physical memory is committed only for written pages. */
@@ -336,7 +341,7 @@ static __attribute__((noinline)) void large_release(void *chunk) {
 
 void *__secl_pool_alloc(uint64_t requested) {
     if (requested == 0) {
-        requested = 1; /* Match active_size normalization for empty requests. */
+        requested = 1; /* Reserve physical storage for empty requests. */
     }
     if (requested <= yian_class_bytes[YIAN_CLASS_COUNT - 1]) {
         if (__builtin_expect(!alloc_inited, 0)) {

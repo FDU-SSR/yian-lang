@@ -30,11 +30,16 @@ impl FunctionLowering {
                 // Empty copies perform no access and permit null or tail addresses.
                 let inspect = self.function.append_block("");
                 let done = self.function.append_block("");
-                let nonempty = self.builder.icmp(IntCompare.Ne, self.get(*count)?, self.integer(0u64), "");
+                let bytes = self.get(*count)?;
+                let nonempty = self.builder.icmp(IntCompare.Ne, bytes, self.integer(0u64), "");
                 self.builder.cond_br(nonempty, inspect, done);
                 self.builder.position_at_end(inspect);
-                self.check_access(self.cfg.value(*destination)?.type_id, self.get(*destination)?)?;
-                self.check_access(self.cfg.value(*source)?.type_id, self.get(*source)?)?;
+                let target = self.get(*destination)?;
+                let origin = self.get(*source)?;
+                self.check_live(self.cfg.value(*destination)?.type_id, target, "S002")?;
+                self.check_live(self.cfg.value(*source)?.type_id, origin, "S002")?;
+                self.check_pointer_span(target, bytes, "S002")?;
+                self.check_pointer_span(origin, bytes, "S002")?;
                 self.builder.br(done);
                 self.builder.position_at_end(done);
                 Result<(), CodegenError>.Ok(())

@@ -2,7 +2,7 @@ from yianc.codegen.llvm.module import FunctionLowering;
 from yianc.codegen.cfg.model import GuardKind, GuardSite;
 from yianc.codegen.cfg.ids import ValueId;
 from yianc.codegen.error import CodegenError;
-from yianc.codegen.abi.runtime import failure_message, ENV_WORD;
+from yianc.codegen.abi.runtime import failure_message, ENV_WORD, FAT_MAX_EXTENT_BYTES;
 from yianc.common.ids import TypeId;
 from yianc.frontend.ast.atoms import BuiltinKind;
 from llvm.ir import IrValue, IrType, IntCompare, BinaryOp, CastOp;
@@ -92,17 +92,14 @@ impl FunctionLowering {
                 let source = self.get(args[0])?;
                 let length = self.get(args[1])?;
                 if self.fat(source_type)? {
-                    self.require_guard(GuardKind.Count, GuardSite.Before)?;
-                    self.check_count(length)?;
-                    let index = self.pointer_index(source);
-                    let size = self.pointer_size(source);
-                    let available = self.builder.binary(BinaryOp.Sub, size, index, "");
-                    let valid = self.builder.binary(BinaryOp.And,
-                        self.builder.icmp(IntCompare.Ule, index, size, ""), self.builder.icmp(IntCompare.Ule, length, available, ""), "");
+                    let element = self.pointed_type(source_type)?;
+                    let stride = module.abi_size(self.owner.types.value_type(element)?);
+                    self.require_guard(GuardKind.ByteExtent, GuardSite.Before)?;
+                    let span = self.checked_byte_extent(length, stride, FAT_MAX_EXTENT_BYTES, "R001")?;
                     self.require_guard(GuardKind.ViewParts, GuardSite.Before)?;
-                    self.checked(valid, "S004")?;
+                    self.check_pointer_span(source, span, "S004")?;
                 }
-                self.make_pointer(type_id, self.pointer_data(source_type, source)?, self.pointer_word(source_type, source)?, self.integer(0u64), length)?
+                self.make_view(type_id, self.pointer_data(source_type, source)?, self.pointer_word(source_type, source)?, length)?
             },
             // A sub-slice keeps the parent view's lock word.  Only the parent
             // range is checked here; allocation extent and liveness are checked
@@ -124,21 +121,35 @@ impl FunctionLowering {
                 };
                 let data = self.pointer_data(source_type, source)?;
                 let word = self.pointer_word(source_type, source)?;
-                let indices = [start];
-                let new_data = self.builder.gep(self.owner.types.value_type(element)?, data, indices.as_slice(), false, "");
+                let native_element = self.owner.types.value_type(element)?;
+                let new_data = if self.owner.types.raw_pointers() {
+                    let indices = [start];
+                    self.builder.gep(native_element, data, indices.as_slice(), false, "")
+                } else {
+                    let stride = module.abi_size(native_element);
+                    let end_bytes = self.checked_byte_extent(end, stride, 0xFFFFFFFFFFFFFFFFu64, "S001")?;
+                    let base = self.builder.cast(CastOp.Ptrtoint, data, i64_type, "");
+                    let limit = self.builder.binary(BinaryOp.Add, base, end_bytes, "");
+                    self.checked(self.builder.icmp(IntCompare.Uge, limit, base, ""), "S001")?;
+                    let start_bytes = self.builder.binary(BinaryOp.Mul, start, self.integer(stride), "");
+                    let indices = [start_bytes];
+                    self.builder.gep(module.int_type(8u32), data, indices.as_slice(), false, "")
+                };
                 let new_length = self.builder.binary(BinaryOp.Sub, end, start, "");
-                self.make_pointer(type_id, new_data, word, self.integer(0u64), new_length)?
+                self.make_view(type_id, new_data, word, new_length)?
             },
             SliceGetPtr | StrGetPtr => {
                 if self.owner.types.is_zst(type_id)? { module.const_null(native) } else {
                     let source = self.get(args[0])?;
                     let source_type = self.cfg.value(args[0])?.type_id;
-                    let length = self.view_length(source);
-                    if !self.owner.types.raw_pointers() {
-                        self.require_guard(GuardKind.Count, GuardSite.Before)?;
-                        self.check_count(length)?;
-                    }
-                    self.make_pointer(type_id, self.builder.extract_value(source, 0u32, ""), self.pointer_word(source_type, source)?, self.integer(0u64), length)?
+                    let extent = if self.owner.types.raw_pointers() { self.integer(0u64) } else {
+                        self.require_guard(GuardKind.ByteExtent, GuardSite.Before)?;
+                        let element = self.pointed_type(type_id)?;
+                        let stride = module.abi_size(self.owner.types.value_type(element)?);
+                        self.checked_byte_extent(self.view_length(source), stride, FAT_MAX_EXTENT_BYTES, "R001")?
+                    };
+                    self.make_full_pointer(type_id, self.builder.extract_value(source, 0u32, ""), self.pointer_word(source_type, source)?,
+                        self.integer(0u64), extent)?
                 }
             },
             SliceGetLen | StrGetLen => self.view_length(self.get(args[0])?),
@@ -177,14 +188,14 @@ impl FunctionLowering {
                 let parameters = [pointer];
                 let arguments = [data];
                 let length = self.external_call("strlen", i64_type, parameters.as_slice(), arguments.as_slice())?;
-                self.make_pointer(type_id, data, self.integer(ENV_WORD), self.integer(0u64), length)?
+                self.make_view(type_id, data, self.integer(ENV_WORD), length)?
             },
             Dangling => {
                 if self.owner.types.is_zst(type_id)? { module.const_null(native) } else {
                     // A non-owning dangling pointer uses its pointee alignment as an address.
                     let data = self.builder.cast(CastOp.Inttoptr, module.const_int(i64_type,
                         u64(module.abi_alignment(self.owner.types.value_type(type_args[0])?))), pointer, "");
-                    self.make_pointer(type_id, data, self.integer(ENV_WORD), self.integer(0u64), self.integer(0u64))?
+                    self.make_full_pointer(type_id, data, self.integer(ENV_WORD), self.integer(0u64), self.integer(0u64))?
                 }
             },
             Alloc | Realloc => {
