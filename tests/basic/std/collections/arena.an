@@ -1,0 +1,114 @@
+from std.collections.arena import Arena;
+
+struct Large {
+    word: u64,
+    tag: u8,
+    payload: u64[1025],
+}
+
+struct Guard {
+    drops: u64*,
+}
+
+impl Drop for Guard {
+    fn drop() {
+        *self.drops += 1;
+    }
+}
+
+fn check_order() {
+    let arena = Arena<u64>.new();
+    assert arena.get(0).is_none();
+    let first = arena.alloc(11);
+    let old = arena.into_iter();
+    assert **old.next().unwrap() == 11;
+    assert old.next().is_none();
+    arena.alloc(12);
+    assert old.next().is_none();
+    for i in 2u64..257 {
+        arena.alloc(11 + i);
+    }
+    assert **old.next().unwrap() == 267;
+    assert old.next().is_none();
+    assert *first == 11;
+    assert arena.len() == 257;
+    let i = 0u64;
+    for node in arena {
+        assert *node == 11 + i;
+        assert **arena.get(i).unwrap() == *node;
+        i += 1;
+    }
+    assert i == 257;
+    assert arena.get(i).is_none();
+    arena.clear();
+    arena.clear();
+    assert arena.len() == 0;
+    assert *arena.alloc(42) == 42;
+    arena.drop();
+    assert arena.get(0).is_none();
+    assert *arena.alloc(43) == 43;
+    arena.drop();
+}
+
+fn check_directory_growth() {
+    let arena = Arena<Large>.new();
+    let value = Large(10, 20, [30; 1025]);
+    let first = arena.alloc(value);
+    for i in 1u64..5 {
+        value.word = 10 + i;
+        value.tag = 20 + u8(i);
+        arena.alloc(value);
+    }
+    assert arena.len() == 5;
+    assert first.word == 10 && first.tag == 20 && first.payload[1024] == 30;
+    first.word = 99;
+    let head = *arena.get(0).unwrap();
+    assert head.word == 99;
+    let last = *arena.get(4).unwrap();
+    assert last.word == 14 && last.tag == 24 && last.payload[0] == 30;
+    arena.drop();
+}
+
+fn unit() -> void {}
+
+fn check_zst() {
+    let arena = Arena<void>.new();
+    for _ in 0u64..257 {
+        arena.alloc(unit());
+    }
+    assert arena.len() == 257;
+    assert arena.get(0).is_some();
+    assert arena.get(256).is_some();
+    assert arena.get(257).is_none();
+    let count = 0u64;
+    for _ in arena {
+        count += 1;
+    }
+    assert count == 257;
+    arena.clear();
+    assert arena.len() == 0 && arena.get(0).is_none();
+    let empty = arena.into_iter();
+    assert empty.next().is_none();
+    arena.alloc(unit());
+    assert arena.get(0).is_some();
+    arena.drop();
+}
+
+fn check_payload_ownership() {
+    let drops = 0u64;
+    let arena = Arena<Guard>.new();
+    let first = arena.alloc(Guard(&drops));
+    arena.alloc(Guard(&drops));
+    first.drop();
+    assert drops == 1;
+    arena.clear();
+    arena.drop();
+    assert drops == 1;
+}
+
+fn main() {
+    check_order();
+    check_directory_growth();
+    check_zst();
+    check_payload_ownership();
+}

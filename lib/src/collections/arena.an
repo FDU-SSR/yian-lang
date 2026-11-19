@@ -8,65 +8,47 @@ from std.core.iter import Iterator, IntoIterator;
 // The arena owns storage only; callers release element payloads before clear/drop.
 // The owner must not be shallow-copied and independently cleared or dropped.
 pub struct Arena<T> {
-    chunks: Vec<Vec<T>>,
-    count: u64,
-    chunk_capacity: u64
+    raw: RawArena,
 }
 
 impl<T> Arena<T> {
     static pub fn new() -> Self {
-        let capacity = 256u64;
-
-        if @sizeof<T> != 0 {
-            capacity = 16384u64 / @sizeof<T>;
-
-            if capacity == 0 {
-                capacity = 1;
-            }
-
-            if capacity > 256 {
-                capacity = 256;
-            }
-        }
-
-        Self(Vec<Vec<T>>.new(), 0, capacity)
+        Self(RawArena.new(@sizeof<T>))
     }
 
     pub fn len() -> u64 {
-        self.count
+        self.raw.count
     }
 
     // Indices follow allocation order and are valid until clear/drop.
     pub fn get(index: u64) -> Option<T&> {
-        if index >= self.count {
+        if index >= self.raw.count {
             return Option<T&>.None;
         }
 
-        let chunk = &self.chunks[index / self.chunk_capacity];
-        Option<T&>.Some(&chunk[index % self.chunk_capacity])
+        let (root, offset) = self.raw.locate(index);
+        Option<T&>.Some(Self.slot(root, offset))
     }
 
     pub fn alloc(value: T) -> T& {
-        if self.chunks.len() == 0 || self.chunks[self.chunks.len() - 1].len() == self.chunk_capacity {
-            self.chunks.push(Vec<T>.with_capacity(self.chunk_capacity));
-        }
-
-        let chunk = &self.chunks[self.chunks.len() - 1];
-        let index = chunk.len();
-        chunk.push(value);
-        self.count += 1;
-        &chunk[index]
+        let (root, offset) = self.raw.prepare_slot(@sizeof<T>);
+        let slot = Self.slot(root, offset);
+        *slot = value;
+        self.raw.count += 1;
+        slot
     }
 
     // All issued references and iterators expire here; payloads are not dropped.
     pub fn clear() {
-        for chunk in self.chunks {
-            chunk.drop();
-        }
+        self.raw.clear(@sizeof<T>);
+    }
 
-        self.chunks.drop();
-        self.chunks = Vec<Vec<T>>.new();
-        self.count = 0;
+    static fn slot(root: u8*, offset: u64) -> T* {
+        comptime if @sizeof<T> == 0u64 {
+            @dangling<T>()
+        } else {
+            @bitcast<T*>(root) + offset
+        }
     }
 }
 
@@ -78,11 +60,10 @@ pub struct ArenaIter<T> {
 
 impl<T> Iterator<T&> for ArenaIter<T> {
     pub fn next() -> Option<T&> {
-        while self.chunk < self.arena.chunks.len() {
-            let chunk = &self.arena.chunks[self.chunk];
-
-            if self.index < chunk.len() {
-                let node = &chunk[self.index];
+        let raw = &self.arena.raw;
+        while self.chunk < raw.chunks.len() {
+            if self.index < raw.chunk_len(self.chunk) {
+                let node = Arena<T>.slot(raw.chunks[self.chunk], self.index);
                 self.index += 1;
                 return Option<T&>.Some(node);
             }
@@ -104,5 +85,55 @@ impl<T> IntoIterator<ArenaIter<T>> for Arena<T> {
 impl<T> Drop for Arena<T> {
     pub fn drop() {
         self.clear();
+    }
+}
+
+struct RawArena {
+    chunks: Vec<u8*>,
+    count: u64,
+    chunk_capacity: u64,
+}
+
+impl RawArena {
+    static fn new(stride: u64) -> Self {
+        let capacity = 256u64;
+        if stride != 0 {
+            let slots = 16384 / stride;
+            capacity = if slots == 0 { 1u64 } elif slots > 256 { 256u64 } else { slots };
+        }
+        Self(Vec<u8*>.new(), 0, capacity)
+    }
+
+    fn locate(index: u64) -> (u8*, u64) {
+        (self.chunks[index / self.chunk_capacity], index % self.chunk_capacity)
+    }
+
+    fn chunk_len(chunk: u64) -> u64 {
+        let remaining = self.count - chunk * self.chunk_capacity;
+        if remaining < self.chunk_capacity { remaining } else { self.chunk_capacity }
+    }
+
+    fn prepare_slot(stride: u64) -> (u8*, u64) {
+        let offset = self.count % self.chunk_capacity;
+        if offset == 0 {
+            // Fixed blocks retain their addresses when the directory grows.
+            let root = if stride == 0 {
+                @dangling<u8>()
+            } else {
+                @alloc<u8>(self.chunk_capacity * stride)
+            };
+            self.chunks.push(root);
+        }
+        return (self.chunks[self.chunks.len() - 1], offset);
+    }
+
+    fn clear(stride: u64) {
+        if stride != 0 {
+            for root in self.chunks {
+                del *root;
+            }
+        }
+        self.chunks.drop();
+        self.count = 0;
     }
 }

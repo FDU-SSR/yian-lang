@@ -10,11 +10,7 @@ from std.core.result import Result;
 from std.core.io import IoError;
 
 pub struct HashMap<K, V> {
-    buckets: Bucket<K, V>*,
-    ctrls: u8*,
-    size: u64,
-    capacity: u64,
-    growth_left: u64,
+    raw: RawTable,
     hasher_builder: Murmur3BuildHasher,
 }
 
@@ -33,82 +29,76 @@ impl<K, V> HashMap<K, V> {
     }
 
     static pub fn with_capacity_and_hasher(capacity: u64, hasher_builder: Murmur3BuildHasher) -> Self {
-        let actual_capacity = capacity.next_power_of_two();
-
-        let growth_left = Self.calculate_growth_left(actual_capacity);
-        let ctrls: u8* = @alloc<u8>(actual_capacity);
-        for i in 0..actual_capacity {
-            ctrls[i] = 0b1111_1111
-        }
-        let buckets: Bucket<K, V>* = @alloc<Bucket<K, V>>(actual_capacity);
-
-        Self(
-            buckets,
-            ctrls,
-            0,
-            actual_capacity,
-            growth_left,
-            hasher_builder
-        )
+        Self(RawTable.with_capacity(capacity, @sizeof<Bucket<K, V>>), hasher_builder)
     }
 
     static pub fn calculate_growth_left(capacity: u64) -> u64 {
-        capacity * 3 / 4
+        RawTable.calculate_growth_left(capacity)
+    }
+
+    fn typed_buckets() -> Bucket<K, V>* {
+        // A pointer to a zero-sized bucket is itself zero-sized. Querying the
+        // pointer keeps the bucket layout in the backend for recovery builds.
+        comptime if @sizeof<Bucket<K, V>*> == 0u64 {
+            @dangling<Bucket<K, V>>()
+        } else {
+            @bitcast<Bucket<K, V>*>(self.raw.buckets)
+        }
     }
 
     pub fn insert(key: K, value: V) {
-        if self.capacity == 0 {
+        if self.raw.capacity == 0 {
             @runtime_fail("S002");
         }
-        if self.growth_left == 0 {
-            self.resize(self.capacity * 2);
+        if self.raw.growth_left == 0 {
+            self.grow();
         }
         let hash = self.hash_key(&key);
-        let primary_index = hash & (self.capacity - 1);
-        let h2 = self.get_h2(hash);
-        let index = primary_index;
-        for i in 0..self.capacity {
-            let ctrl_byte = self.ctrls[index];
-
-            if ctrl_byte == 0b1111_1111 || ctrl_byte == 0b1000_0000 {
-                self.ctrls[index] = h2
-                self.buckets[index].key = key
-                self.buckets[index].value = value
-                self.size += 1
-                self.growth_left -= 1
+        let mask = self.raw.capacity - 1;
+        let h2 = hash_fragment(hash);
+        let buckets = self.typed_buckets();
+        let index = hash & mask;
+        for i in 0..self.raw.capacity {
+            let control = self.raw.ctrls[index];
+            if !is_occupied(control) {
+                buckets[index].key = key;
+                buckets[index].value = value;
+                self.raw.record_insert(index, h2);
                 return;
-            } elif ctrl_byte == h2 && self.buckets[index].key == key {
+            } elif control == h2 && buckets[index].key == key {
                 // Duplicate key: keep the stored key and replace only the value.
                 // Both the incoming key and the replaced value are discarded
                 // without Drop; shallow copies may alias caller-owned storage.
-                self.buckets[index].value = value
+                buckets[index].value = value;
                 return;
             }
-            index = (index + 1) & (self.capacity - 1);
+            index = (index + 1) & mask;
         }
     }
 
     // A single probe implementation serves borrowed lookup and resource transfer.
     fn find_index(key: K&) -> Option<u64> {
-        if self.capacity == 0 { return Option<u64>.None; }
+        if self.raw.capacity == 0 { return Option<u64>.None; }
 
         let hash = self.hash_key(key);
-        let index = hash & (self.capacity - 1);
-        let h2 = self.get_h2(hash);
-        for probe in 0..self.capacity {
-            let control = self.ctrls[index];
-            if control == 0xFF { return Option<u64>.None; }
-            if control == h2 && self.buckets[index].key == *key {
+        let mask = self.raw.capacity - 1;
+        let index = hash & mask;
+        let h2 = hash_fragment(hash);
+        let buckets = self.typed_buckets();
+        for probe in 0..self.raw.capacity {
+            let control = self.raw.ctrls[index];
+            if control == CTRL_EMPTY { return Option<u64>.None; }
+            if control == h2 && buckets[index].key == *key {
                 return Option<u64>.Some(index);
             }
-            index = (index + 1) & (self.capacity - 1);
+            index = (index + 1) & mask;
         }
         Option<u64>.None
     }
 
     pub fn get(key: K&) -> Option<V&> {
         match self.find_index(key) {
-            Some(index) => Option<V&>.Some(&self.buckets[index].value),
+            Some(index) => Option<V&>.Some(&self.typed_buckets()[index].value),
             None => Option<V&>.None,
         }
     }
@@ -126,8 +116,9 @@ impl<K, V> HashMap<K, V> {
     pub fn insert_or_replace(key: K, value: V) -> Option<(K, V)> {
         match self.find_index(&key) {
             Some(index) => {
-                let old = (self.buckets[index].key, self.buckets[index].value);
-                self.buckets[index] = Bucket<K, V>(key, value);
+                let bucket = self.typed_buckets() + index;
+                let old = (bucket.key, bucket.value);
+                *bucket = Bucket<K, V>(key, value);
                 return Option<(K, V)>.Some(old);
             },
             None => {},
@@ -142,9 +133,9 @@ impl<K, V> HashMap<K, V> {
             Some(index) => index,
             None => return Option<(K, V)>.None,
         };
-        let entry = (self.buckets[index].key, self.buckets[index].value);
-        self.ctrls[index] = 0x80;
-        self.size -= 1;
+        let bucket = self.typed_buckets() + index;
+        let entry = (bucket.key, bucket.value);
+        self.raw.record_remove(index);
         Option<(K, V)>.Some(entry)
     }
 
@@ -152,39 +143,30 @@ impl<K, V> HashMap<K, V> {
     // The factory must not reenter or structurally modify this table.
     pub fn get_or_insert_with<F>(key: K, factory: F) -> (V&, Option<K>) {
         match self.find_index(&key) {
-            Some(index) => return (&self.buckets[index].value, Option<K>.Some(key)),
+            Some(index) => return (&self.typed_buckets()[index].value, Option<K>.Some(key)),
             None => {},
         }
 
         let value = factory();
         let index = self.insert_absent(key, value);
-        (&self.buckets[index].value, Option<K>.None)
+        (&self.typed_buckets()[index].value, Option<K>.None)
     }
 
     // The caller has already excluded an equal key; no duplicate-key policy applies.
     fn insert_absent(key: K, value: V) -> u64 {
-        if self.capacity == 0 { @runtime_fail("S002"); }
-        if self.growth_left == 0 { self.resize(self.capacity * 2); }
+        if self.raw.capacity == 0 { @runtime_fail("S002"); }
+        if self.raw.growth_left == 0 { self.grow(); }
 
         let hash = self.hash_key(&key);
-        let index = hash & (self.capacity - 1);
-        for probe in 0..self.capacity {
-            let control = self.ctrls[index];
-            if control == 0xFF || control == 0x80 {
-                self.ctrls[index] = self.get_h2(hash);
-                self.buckets[index] = Bucket<K, V>(key, value);
-                self.size += 1;
-                self.growth_left -= 1;
-                return index;
-            }
-            index = (index + 1) & (self.capacity - 1);
-        }
-        @runtime_fail("S002")
+        let index = self.raw.find_vacant(hash, true);
+        self.typed_buckets()[index] = Bucket<K, V>(key, value);
+        self.raw.record_insert(index, hash_fragment(hash));
+        index
     }
 
     // Structural mutation invalidates these borrowed iterators and element references.
     pub fn entries() -> HashMapEntryIter<K, V> {
-        HashMapEntryIter<K, V>(self.buckets, self.ctrls, self.capacity, 0)
+        HashMapEntryIter<K, V>(self.typed_buckets(), self.raw.ctrls, self.raw.capacity, 0)
     }
 
     pub fn values() -> HashMapValueIter<K, V> {
@@ -192,79 +174,31 @@ impl<K, V> HashMap<K, V> {
     }
 
     pub fn len() -> u64 {
-        self.size
+        self.raw.size
     }
 
     pub fn is_empty() -> bool {
-        self.size == 0
+        self.raw.size == 0
     }
 
     pub fn clear() {
-        if self.capacity == 0 {
-            return;
-        }
-        for i in 0..self.capacity {
-            self.ctrls[i] = 0b1111_1111
-        }
-        self.size = 0;
-        self.growth_left = Self.calculate_growth_left(self.capacity);
+        self.raw.clear();
     }
 
-    fn get_h2(hash: u64) -> u8 {
-        let h2: u8 = u8(hash >> 56);
-        if h2 == 0xFF || h2 == 0x80 {
-            h2 = (h2 & 0x7F) | 0x40;
-        }
-        h2
-    }
-
-    fn resize(new_capacity: u64) {
-        let actual_capacity = new_capacity.next_power_of_two();
-        if actual_capacity == self.capacity {
-            return;
-        }
-
-        let old_ctrls: u8* = self.ctrls;
-        let old_buckets: Bucket<K, V>* = self.buckets
-        let old_capacity = self.capacity;
-
-        let new_ctrls: u8* = @alloc<u8>(actual_capacity);
-        for i in 0..actual_capacity {
-            new_ctrls[i] = 0b1111_1111
-        }
-        let new_buckets: Bucket<K, V>* = @alloc<Bucket<K, V>>(actual_capacity);
-
-        self.capacity = actual_capacity;
-        self.growth_left = Self.calculate_growth_left(actual_capacity);
-        self.size = 0;
-        if old_capacity > 0 {
-            for i in 0..old_capacity {
-                let ctrl_byte = old_ctrls[i];
-                if ctrl_byte != 0xFF && ctrl_byte != 0x80 {
-                    let hash = self.hash_key(&old_buckets[i].key);
-                    let h2 = self.get_h2(hash);
-                    let primary_index = hash & (actual_capacity - 1);
-                    for j in 0..actual_capacity {
-                        let new_ctrl_byte = new_ctrls[primary_index];
-                        if new_ctrl_byte == 0b1111_1111 {
-                            new_ctrls[primary_index] = h2
-                            new_buckets[primary_index].key = old_buckets[i].key
-                            new_buckets[primary_index].value = old_buckets[i].value
-                            self.size += 1
-                            self.growth_left -= 1
-                            break;
-                        }
-                        primary_index = (primary_index + 1) & (actual_capacity - 1);
-                    }
-                }
+    fn grow() {
+        let stride = @sizeof<Bucket<K, V>>;
+        let old = self.raw;
+        let old_buckets = self.typed_buckets();
+        let next = self.raw.prepare_growth(stride);
+        for i in 0..old.capacity {
+            if is_occupied(old.ctrls[i]) {
+                let hash = self.hash_key(&old_buckets[i].key);
+                self.raw.rehash_bucket(&next, i, hash, stride);
             }
-            // del releases only the allocation. It does not recursively drop
-            // bucket fields that were shallow-copied into the new table.
-            del old_ctrls;
-            del old_buckets;
         }
-        self.ctrls = new_ctrls;
-        self.buckets = new_buckets;
+        old.release(stride);
+        self.raw.ctrls = next.ctrls;
+        self.raw.buckets = next.buckets;
     }
 
     pub fn hash_key(key: K&) -> u64 {
@@ -276,13 +210,7 @@ impl<K, V> HashMap<K, V> {
 
 impl<K, V> Drop for HashMap<K, V> {
     pub fn drop() {
-        if self.capacity > 0 {
-            del self.ctrls;
-            del self.buckets;
-        }
-        self.size = 0;
-        self.capacity = 0;
-        self.growth_left = 0;
+        self.raw.drop_storage(@sizeof<Bucket<K, V>>);
     }
 }
 
@@ -290,47 +218,34 @@ impl<K, V> Clone for HashMap<K, V> {
     // Copy only the two owned buffers (ctrls + buckets); do not recursively copy resources owned by K/V.
     // Container clone has these semantics; callers explicitly clone keys and values when a deep copy is required.
     pub fn clone() -> Self {
-        if self.capacity == 0 {
-            @runtime_fail("S002");
-        }
-        let ctrls: u8* = @alloc<u8>(self.capacity);
-        @memcpy(ctrls, self.ctrls, self.capacity);
-        let buckets: Bucket<K, V>* = @alloc<Bucket<K, V>>(self.capacity);
-        @memcpy(buckets, self.buckets, self.capacity * @sizeof<Bucket<K, V>>);
-        Self(
-            buckets,
-            ctrls,
-            self.size,
-            self.capacity,
-            self.growth_left,
-            self.hasher_builder
-        )
+        Self(self.raw.clone_storage(@sizeof<Bucket<K, V>>), self.hasher_builder)
     }
 }
 
 impl<K, V> Index<K, V&> for HashMap<K, V> {
     pub fn index(key: K&) -> V& {
-        if self.capacity == 0 {
+        if self.raw.capacity == 0 {
             @panic("indexing into empty map");
         }
         let hash = self.hash_key(key);
-        let primary_index = hash & (self.capacity - 1);
-        let h2 = self.get_h2(hash);
-        let index = primary_index;
-        for i in 0..self.capacity {
-            let ctrl_byte = self.ctrls[index];
+        let mask = self.raw.capacity - 1;
+        let h2 = hash_fragment(hash);
+        let buckets = self.typed_buckets();
+        let index = hash & mask;
+        for i in 0..self.raw.capacity {
+            let ctrl_byte = self.raw.ctrls[index];
 
-            if ctrl_byte == 0b1111_1111 {
+            if ctrl_byte == CTRL_EMPTY {
                 @panic("key ! found");
             }
 
             if ctrl_byte == h2 {
-                let bucket: Bucket<K, V>* = &self.buckets[index]
+                let bucket = buckets + index;
                 if bucket.key == *key {
                     return &bucket.value;
                 }
             }
-            index = (index + 1) & (self.capacity - 1);
+            index = (index + 1) & mask;
         }
 
         @panic("key ! found");
@@ -347,7 +262,7 @@ impl<K, V> Iterator<(K&, V&)> for HashMapEntryIter<K, V> {
             let index = self.index;
             self.index += 1;
             let control = self.ctrls[index];
-            if control != 0xFF && control != 0x80 {
+            if is_occupied(control) {
                 return Option<(K&, V&)>.Some((&self.buckets[index].key, &self.buckets[index].value));
             }
         }
@@ -375,8 +290,7 @@ pub struct HashMapKeyIter<K, V> {
 impl<K, V> Iterator<K&> for HashMapKeyIter<K, V> {
     pub fn next() -> Option<K&> {
         while self.index < self.capacity {
-            let ctrl_byte = self.ctrls[self.index];
-            if ctrl_byte != 0b1111_1111 && ctrl_byte != 0b1000_0000 {
+            if is_occupied(self.ctrls[self.index]) {
                 let key: K* = &self.buckets[self.index].key;
                 self.index += 1
                 return Option<K&>.Some(key);
@@ -390,9 +304,9 @@ impl<K, V> Iterator<K&> for HashMapKeyIter<K, V> {
 impl<K, V> IntoIterator<HashMapKeyIter<K, V>> for HashMap<K, V> {
     pub fn into_iter() -> HashMapKeyIter<K, V> {
         HashMapKeyIter<K, V>(
-            buckets=self.buckets,
-            ctrls=self.ctrls,
-            capacity=self.capacity,
+            buckets=self.typed_buckets(),
+            ctrls=self.raw.ctrls,
+            capacity=self.raw.capacity,
             index=0
         )
     }
@@ -418,5 +332,157 @@ impl<K, V> Format for HashMap<K, V> if K: Format, V: Format {
             }
         }
         out.write_str("}")
+    }
+}
+
+const CTRL_EMPTY: u8 = 0xFF;
+const CTRL_DELETED: u8 = 0x80;
+const MAX_POWER_OF_TWO: u64 = 0x8000_0000_0000_0000;
+
+fn is_occupied(control: u8) -> bool {
+    control != CTRL_EMPTY && control != CTRL_DELETED
+}
+
+fn hash_fragment(hash: u64) -> u8 {
+    let h2 = u8(hash >> 56);
+    if !is_occupied(h2) {
+        h2 = (h2 & 0x7F) | 0x40;
+    }
+    h2
+}
+
+// The roots own separate allocations. A zero-sized bucket has no allocation.
+struct RawTable {
+    buckets: u8*,
+    ctrls: u8*,
+    size: u64,
+    capacity: u64,
+    growth_left: u64,
+}
+
+impl RawTable {
+    static fn with_capacity(capacity: u64, stride: u64) -> Self {
+        if capacity > MAX_POWER_OF_TWO {
+            @runtime_fail("R001");
+        }
+        Self.allocate(capacity.next_power_of_two(), stride)
+    }
+
+    static fn allocate(capacity: u64, stride: u64) -> Self {
+        let ctrls = @alloc<u8>(capacity);
+        Self.reset_controls(ctrls, capacity);
+        let buckets = if stride == 0 {
+            @dangling<u8>()
+        } else {
+            @alloc<u8>(Self.bucket_bytes(capacity, stride))
+        };
+        Self(buckets, ctrls, 0, capacity, Self.calculate_growth_left(capacity))
+    }
+
+    static fn bucket_bytes(capacity: u64, stride: u64) -> u64 {
+        if capacity > u64.max() / stride {
+            @runtime_fail("R001");
+        }
+        capacity * stride
+    }
+
+    static fn calculate_growth_left(capacity: u64) -> u64 {
+        capacity * 3 / 4
+    }
+
+    static fn reset_controls(ctrls: u8*, capacity: u64) {
+        for i in 0..capacity {
+            ctrls[i] = CTRL_EMPTY;
+        }
+    }
+
+    fn clear() {
+        if self.capacity == 0 {
+            return;
+        }
+        Self.reset_controls(self.ctrls, self.capacity);
+        self.size = 0;
+        self.growth_left = Self.calculate_growth_left(self.capacity);
+    }
+
+    fn find_vacant(hash: u64, reuse_deleted: bool) -> u64 {
+        let mask = self.capacity - 1;
+        let index = hash & mask;
+        for probe in 0..self.capacity {
+            let control = self.ctrls[index];
+            if control == CTRL_EMPTY || (reuse_deleted && control == CTRL_DELETED) {
+                return index;
+            }
+            index = (index + 1) & mask;
+        }
+        @runtime_fail("S002")
+    }
+
+    fn record_insert(index: u64, h2: u8) {
+        self.ctrls[index] = h2;
+        self.count_insert();
+    }
+
+    fn count_insert() {
+        self.size += 1;
+        self.growth_left -= 1;
+    }
+
+    fn record_remove(index: u64) {
+        self.ctrls[index] = CTRL_DELETED;
+        self.size -= 1;
+    }
+
+    // Transfer the roots after rehashing, when these old roots can be released.
+    fn prepare_growth(stride: u64) -> Self {
+        if self.capacity >= MAX_POWER_OF_TWO {
+            @runtime_fail("R001");
+        }
+        let next = Self.allocate(self.capacity * 2, stride);
+        self.capacity = next.capacity;
+        self.growth_left = next.growth_left;
+        self.size = 0;
+        next
+    }
+
+    fn rehash_bucket(next: RawTable&, old_index: u64, hash: u64, stride: u64) {
+        let index = next.find_vacant(hash, false);
+        next.ctrls[index] = hash_fragment(hash);
+        if stride != 0 {
+            @memcpy(next.buckets + index * stride, self.buckets + old_index * stride, stride);
+        }
+        self.count_insert();
+    }
+
+    fn clone_storage(stride: u64) -> Self {
+        if self.capacity == 0 {
+            @runtime_fail("S002");
+        }
+        let ctrls = @alloc<u8>(self.capacity);
+        @memcpy(ctrls, self.ctrls, self.capacity);
+        let buckets = @dangling<u8>();
+        if stride != 0 {
+            let bytes = Self.bucket_bytes(self.capacity, stride);
+            buckets = @alloc<u8>(bytes);
+            @memcpy(buckets, self.buckets, bytes);
+        }
+        Self(buckets, ctrls, self.size, self.capacity, self.growth_left)
+    }
+
+    fn release(stride: u64) {
+        if self.capacity == 0 {
+            return;
+        }
+        del self.ctrls;
+        if stride != 0 {
+            del self.buckets;
+        }
+    }
+
+    fn drop_storage(stride: u64) {
+        self.release(stride);
+        self.size = 0;
+        self.capacity = 0;
+        self.growth_left = 0;
     }
 }

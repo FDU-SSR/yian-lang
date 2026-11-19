@@ -1,0 +1,118 @@
+from std.collections.hash_map import HashMap;
+from std.core.hash import Hash, Murmur3Hasher;
+from std.core.ops import PartialEq;
+
+struct Key {
+    id: u64,
+    label: String,
+}
+
+impl Hash<Murmur3Hasher> for Key {
+    fn hash(hasher: Murmur3Hasher&) {}
+}
+
+impl PartialEq<Key> for Key {
+    fn eq(other: Key&) -> bool {
+        self.id == other.id
+    }
+}
+
+struct Value {
+    word: u64,
+    tag: u8,
+}
+
+fn key(id: u64, label: str) -> Key {
+    Key(id, String.from(&label))
+}
+
+fn check_entries(map: HashMap<Key, Value>&) {
+    let seen = 0u64;
+    let entries = map.entries();
+    for entry in entries {
+        let id = entry[0].id;
+        assert id >= 2 && id <= 6;
+        let bit = 1u64 << id;
+        assert (seen & bit) == 0;
+        seen |= bit;
+        assert entry[1].word == 100 + id && entry[1].tag == u8(id);
+    }
+    assert seen == 124;
+
+    let values = map.values();
+    seen = 0;
+    for value in values {
+        let id = u64(value.tag);
+        assert id >= 2 && id <= 6 && value.word == 100 + id;
+        let bit = 1u64 << id;
+        assert (seen & bit) == 0;
+        seen |= bit;
+    }
+    assert seen == 124;
+
+    seen = 0;
+    for stored in *map {
+        assert stored.id >= 2 && stored.id <= 6;
+        let bit = 1u64 << stored.id;
+        assert (seen & bit) == 0;
+        seen |= bit;
+    }
+    assert seen == 124;
+}
+
+fn main() {
+    let map = HashMap<Key, Value>.with_capacity(4);
+    for i in 1u64..5 {
+        map.insert(key(i, "original"), Value(100 + i, u8(i)));
+    }
+    assert map.len() == 4;
+    for i in 1u64..5 {
+        let query = Key(i, String.new());
+        let value = *map.get(&query).unwrap();
+        assert value.word == 100 + i && value.tag == u8(i);
+    }
+
+    let duplicate = key(2, "unused");
+    map.insert(duplicate, Value(900, 9));
+    assert map.len() == 4;
+    let updated = *map.get(&duplicate).unwrap();
+    assert updated.word == 900 && updated.tag == 9;
+    duplicate.label.drop();
+
+    let replaced = map.insert_or_replace(key(2, "replacement"), Value(102, 2));
+    let old = replaced.unwrap();
+    assert old[0].id == 2 && old[0].label.as_str() == "original";
+    assert old[1].word == 900 && old[1].tag == 9;
+    old[0].label.drop();
+
+    let query = Key(1, String.new());
+    let removed = map.remove_entry(&query);
+    let entry = removed.unwrap();
+    assert entry[0].id == 1 && entry[0].label.as_str() == "original";
+    assert entry[1].word == 101 && entry[1].tag == 1;
+    entry[0].label.drop();
+    assert map.get(&query).is_none();
+    assert map.contains(&Key(2, String.new()));
+    map.insert(key(5, "after tombstone"), Value(105, 5));
+
+    let runs = 0u64;
+    let factory = |count = &runs| () -> Value {
+        *count += 1;
+        Value(106, 6)
+    };
+    let (hit, unused) = map.get_or_insert_with(key(2, "hit input"), factory);
+    assert hit.word == 102 && hit.tag == 2 && runs == 0;
+    let returned = unused.unwrap();
+    assert returned.id == 2 && returned.label.as_str() == "hit input";
+    returned.label.drop();
+
+    let (added, no_key) = map.get_or_insert_with(key(6, "miss input"), factory);
+    assert added.word == 106 && added.tag == 6 && runs == 1;
+    assert no_key.is_none() && map.len() == 5;
+    check_entries(&map);
+
+    for stored in map {
+        stored.label.drop();
+    }
+    map.drop();
+}
