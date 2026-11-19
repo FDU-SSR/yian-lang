@@ -1,24 +1,41 @@
 from std.core.hash import Hash, Murmur3Hasher;
-from std.core.raw_vec import RawVec;
 from std.core.ops import Index, PartialEq, Deref, Add;
 from std.core.clone import Clone;
 from std.core.option import Option;
 from std.core.convert import From, Into;
 from std.core.drop import Drop;
-from std.core.range import Range;
 from std.core.fmt import Format, Formatter, FormatSpec;
 from std.core.result import Result;
 from std.core.io import IoError;
 
+// The recovery compiler reads this marker before generating code.
+const VEC_REQUIRES_BYTE_POINTER_METADATA: bool = true;
+
 pub struct Vec<T> {
-    raw_vec: RawVec<T>,
-    len: u64,
+    raw_vec: RawVec,
 }
 
 impl<T> Vec<T> {
+    static fn empty_data() -> u8* {
+        comptime if @sizeof<T> == 0u64 {
+            @dangling<u8>()
+        } else {
+            // A nonzero, type-aligned address also preserves Some(empty).
+            @bitcast<u8*>(@dangling<T>())
+        }
+    }
+
+    fn ptr() -> T* {
+        comptime if @sizeof<T> == 0u64 {
+            @dangling<T>()
+        } else {
+            @bitcast<T*>(self.raw_vec.data)
+        }
+    }
+
     // Create a new, empty Vec
     static pub fn new() -> Self {
-        Self.with_capacity(0)
+        Self(raw_vec=RawVec(data=Self.empty_data(), cap=0, len=0))
     }
 
     // Return the current vector and leave an empty vector in its place.
@@ -31,52 +48,35 @@ impl<T> Vec<T> {
 
     // Create a Vec with specified capacity
     static pub fn with_capacity(capacity: u64) -> Self {
-        Self(
-            raw_vec=RawVec<T>.with_capacity(capacity),
-            len=0
-        )
+        Self(raw_vec=RawVec.with_capacity(capacity, @sizeof<T>, Self.empty_data()))
     }
 
     // Get a slice reference to the elements
     pub fn as_slice() -> T[] {
-        @slice_from_parts(self.raw_vec.ptr(), self.len)
+        @slice_from_parts(self.ptr(), self.raw_vec.len)
     }
 
     // Push an element to the end. The argument is copied by value.
     pub fn push(value: T) {
-        let len = self.len;
-
-        if len == self.raw_vec.capacity() {
-            self.raw_vec.grow();
-        }
-
-        let end = self.raw_vec.ptr() + len;
-        *end = value;
-        self.len += 1;
+        let len = self.raw_vec.prepare_slot(@sizeof<T>);
+        *(self.ptr() + len) = value;
+        self.raw_vec.len = len + 1;
     }
 
     // Append another Vec's elements to the end; the source remains unchanged.
     // `other` may be this same Vec, so its data pointer is read only after
     // `reserve`: growing moves the buffer that `other` pointed at before.
     pub fn extend(other: Vec<T>&) {
-        let count = other.len;
-        self.reserve(count);
-
-        let src = other.raw_vec.ptr();
-        let dst = self.raw_vec.ptr() + self.len;
-
-        @memcpy(dst, src, count * @sizeof<T>);
-
-        self.len += count;
+        self.raw_vec.extend(&other.raw_vec.data, other.raw_vec.len, @sizeof<T>);
     }
 
     // Pop an element from the end, returning None if empty
     pub fn pop() -> Option<T> {
-        if self.len == 0 {
+        if self.raw_vec.len == 0 {
             Option<T>.None
         } else {
-            self.len -= 1
-            let end = self.raw_vec.ptr() + self.len;
+            self.raw_vec.len -= 1;
+            let end = self.ptr() + self.raw_vec.len;
             Option<T>.Some(*end)
         }
     }
@@ -84,69 +84,31 @@ impl<T> Vec<T> {
     // Insert an element at index, shifting elements to the right
     // Panics if index > len
     pub fn insert(index: u64, value: T) {
-        let len = self.len;
-        if index > len {
-            @runtime_fail("S001");
-        }
-
-        if len == self.raw_vec.capacity() {
-            self.raw_vec.grow();
-        }
-
-        let buf = self.raw_vec.ptr();
-
-        // Shift elements to the right
-        let i = len;
-        while i > index {
-            buf[i] = buf[i - 1];
-            i -= 1;
-        }
-
-        buf[index] = value;
-        self.len += 1;
+        self.raw_vec.prepare_insert(index, @sizeof<T>);
+        self.ptr()[index] = value;
+        self.raw_vec.len += 1;
     }
 
     // Remove an element at index, shifting elements to the left, returning the removed element
     // Panics if index >= len
     pub fn remove(index: u64) -> T {
-        let len = self.len;
-        if index >= len {
+        if index >= self.raw_vec.len {
             @runtime_fail("S001");
         }
-
-        let buf = self.raw_vec.ptr();
-
-        let ret = buf[index]; // The element to remove;
-
-        // Shift elements to the left
-        let i = index;
-        while i < len - 1 {
-            buf[i] = buf[i + 1];
-            i += 1;
-        }
-
-        self.len -= 1;
-        ret
+        let value = self.ptr()[index];
+        self.raw_vec.remove(index, @sizeof<T>);
+        value
     }
 
     // Remove the element at index, replacing it with the element at end, returning the removed element
     // Panics if index >= len
     pub fn swap_remove(index: u64) -> T {
-        let len = self.len;
-        if index >= len {
+        if index >= self.raw_vec.len {
             @runtime_fail("S001");
         }
-
-        let buf = self.raw_vec.ptr();
-        let ret = buf[index]; // The element to remove;
-        self.len -= 1;
-
-        if index != self.len {
-            // Copy the last element to the removed spot
-            buf[index] = buf[self.len];
-        }
-
-        ret
+        let value = self.ptr()[index];
+        self.raw_vec.swap_remove(index, @sizeof<T>);
+        value
     }
 
     // Extend the Vec with a slice
@@ -156,25 +118,23 @@ impl<T> Vec<T> {
     // the slice keeps the address it was built with.
     pub fn extend_from_slice(slice: T[]) {
         let count = slice.len();
-        self.reserve(count);
-
-        let src = slice.ptr();
-        let dst = self.raw_vec.ptr() + self.len;
-
-        @memcpy(dst, src, count * @sizeof<T>);
-
-        self.len += count;
+        comptime if @sizeof<T> == 0u64 {
+            self.raw_vec.len += count;
+        } else {
+            let source = @bitcast<u8*>(slice.ptr());
+            self.raw_vec.extend(&source, count, @sizeof<T>);
+        }
     }
 
     // Shorten the Vec, keeping the first `len` elements
     pub fn truncate(len: u64) {
-        if len > self.len {
+        if len > self.raw_vec.len {
             return;
         }
 
         // Element cleanup is the caller's responsibility. The container only
         // forgets the truncated range and retains the backing allocation.
-        self.len = len;
+        self.raw_vec.len = len;
     }
 
     // Remove all elements
@@ -184,37 +144,39 @@ impl<T> Vec<T> {
 
     // Reserve capacity for at least `additional` more elements
     pub fn reserve(additional: u64) {
-        self.raw_vec.reserve(self.len, additional);
+        self.raw_vec.reserve(additional, @sizeof<T>);
     }
 
     // Reserve `additional` elements and return a writable pointer at `len`.
     // Callers write at most `additional` elements, then update the length with advance_len.
-    // Out-of-bounds writes and advancing before initialization are the caller's responsibility, as with RawVec lifetimes.
+    // The caller initializes the slots before advancing the length.
     pub fn spare(additional: u64) -> T* {
         self.reserve(additional);
-        return self.raw_vec.ptr() + self.len;
+        return self.ptr() + self.raw_vec.len;
     }
 
     // Advance the length after writing `count` elements.
     pub fn advance_len(count: u64) {
-        self.len += count;
+        self.raw_vec.len += count;
     }
 
     // Shrinks the capacity as much as possible
     pub fn shrink_to_fit() {
-        if self.len < self.raw_vec.capacity() {
-            self.raw_vec.shrink_to_fit(self.len);
-        }
+        self.raw_vec.shrink_to_fit(@sizeof<T>, Self.empty_data());
     }
 
     // Check if the Vec is empty
     pub fn is_empty() -> bool {
-        self.len == 0
+        self.raw_vec.len == 0
     }
 
     // Get the capacity
     pub fn capacity() -> u64 {
-        self.raw_vec.capacity()
+        comptime if @sizeof<T> == 0u64 {
+            u64.max()
+        } else {
+            self.raw_vec.cap
+        }
     }
 }
 
@@ -228,12 +190,11 @@ impl<T> Clone for Vec<T> {
 
 impl<T> Index<u64, T&> for Vec<T> {
     pub fn index(index: u64&) -> T& {
-        if *index >= self.len {
+        if *index >= self.raw_vec.len {
             @runtime_fail("S001");
         }
-        // The return type implicitly converts `T*` to `T&`; avoid `&<place>`, which invokes an extra
-        // Direct pointer arithmetic avoids an extra pointer-index place conversion.
-        return self.raw_vec.ptr() + *index;
+        // The return type implicitly converts the typed pointer to a reference.
+        return self.ptr() + *index;
     }
 }
 
@@ -269,7 +230,7 @@ impl<T> Deref<T[]> for Vec<T> {
 // Concatenation builds a new Vec from bitwise copies of both inputs' elements.
 impl<T> Add<Vec<T>, Vec<T>> for Vec<T> {
     pub fn add(rhs: Vec<T>) -> Vec<T> {
-        let res = Vec<T>.with_capacity(self.len() + rhs.len());
+        let res = Vec<T>.with_capacity(checked_length(self.len(), rhs.len()));
         res.extend(self);
         res.extend(&rhs);
         res
@@ -280,8 +241,7 @@ impl<T> Add<Vec<T>, Vec<T>> for Vec<T> {
 // not dropped by the container.
 impl<T> Drop for Vec<T> {
     pub fn drop() {
-        self.raw_vec.drop();
-        self.len = 0;
+        self.raw_vec.reset(Self.empty_data());
     }
 }
 
@@ -302,4 +262,143 @@ impl<T> Format for Vec<T> if T: Format {
         }
         out.write_str("]")
     }
+}
+
+extern "C" {
+    fn memmove(destination: cptr<u8>, source: cptr<u8>, count: c_size) -> cptr<u8>;
+}
+
+ffi fn move_bytes(destination: u8*, source: u8*, count: u64) {
+    if count == 0 {
+        return;
+    }
+    let (dst, _) = @ffi_parts(@slice_from_parts(destination, count));
+    let (src, _) = @ffi_parts(@slice_from_parts(source, count));
+    memmove(dst, src, c_size(count));
+}
+
+// Counts are in elements. For an allocated buffer, data is the allocation
+// root and its byte extent is cap * stride. A zero stride never allocates.
+struct RawVec {
+    data: u8*,
+    cap: u64,
+    len: u64,
+}
+
+impl RawVec {
+    static fn with_capacity(capacity: u64, stride: u64, empty: u8*) -> Self {
+        let result = Self(data=empty, cap=0, len=0);
+        if capacity != 0u64 && stride != 0u64 {
+            result.resize(capacity, stride);
+        }
+        result
+    }
+
+    // Only called for nonzero capacities and strides. Publish the new root
+    // and capacity after the checked allocation succeeds.
+    fn resize(capacity: u64, stride: u64) {
+        if capacity > u64.max() / stride {
+            @runtime_fail("R001");
+        }
+        let bytes = capacity * stride;
+        self.data = if self.cap == 0 {
+            @alloc<u8>(bytes)
+        } else {
+            @realloc<u8>(self.data, bytes)
+        };
+        self.cap = capacity;
+    }
+
+    static fn doubled(capacity: u64) -> u64 {
+        if capacity > u64.max() / 2u64 {
+            @runtime_fail("R001");
+        }
+        capacity * 2
+    }
+
+    fn prepare_slot(stride: u64) -> u64 {
+        let len = self.len;
+        if stride != 0u64 && len == self.cap {
+            self.resize(if len == 0u64 { 4 } else { Self.doubled(len) }, stride);
+        }
+        len
+    }
+
+    fn reserve(additional: u64, stride: u64) {
+        if stride == 0u64 || additional <= self.cap - self.len {
+            return;
+        }
+        let required = checked_length(self.len, additional);
+        let preferred = Self.doubled(if self.cap < 2u64 { 2 } else { self.cap });
+        self.resize(if preferred < required { required } else { preferred }, stride);
+    }
+
+    fn shrink_to_fit(stride: u64, empty: u8*) {
+        if self.len >= self.cap {
+            return;
+        }
+        if self.len == 0 {
+            self.reset(empty);
+        } else {
+            self.resize(self.len, stride);
+        }
+    }
+
+    fn reset(empty: u8*) {
+        if self.cap != 0 {
+            del self.data;
+            self.data = empty;
+            self.cap = 0;
+        }
+        self.len = 0;
+    }
+
+    fn prepare_insert(index: u64, stride: u64) {
+        let len = self.len;
+        if index > len {
+            @runtime_fail("S001");
+        }
+        self.prepare_slot(stride);
+        self.shift_tail(index + 1, index, len - index, stride);
+    }
+
+    fn remove(index: u64, stride: u64) {
+        let last = self.len - 1;
+        self.shift_tail(index, index + 1, last - index, stride);
+        self.len = last;
+    }
+
+    fn shift_tail(destination: u64, source: u64, count: u64, stride: u64) {
+        if count != 0u64 && stride != 0u64 {
+            move_bytes(self.data + destination * stride, self.data + source * stride, count * stride);
+        }
+    }
+
+    fn swap_remove(index: u64, stride: u64) {
+        let last = self.len - 1;
+        if stride != 0u64 && index != last {
+            @memcpy(self.data + index * stride, self.data + last * stride, stride);
+        }
+        self.len = last;
+    }
+
+    // Read the source pointer after reserve. In a self-extension, source
+    // refers to this descriptor's data field.
+    fn extend(source: u8*&, count: u64, stride: u64) {
+        if count == 0 {
+            return;
+        }
+        if stride != 0 {
+            self.reserve(count, stride);
+            @memcpy(self.data + self.len * stride, *source, count * stride);
+        }
+        self.len += count;
+    }
+}
+
+fn checked_length(len: u64, additional: u64) -> u64 {
+    if additional > u64.max() - len {
+        @runtime_fail("R001");
+    }
+    len + additional
 }

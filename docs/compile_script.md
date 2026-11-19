@@ -216,6 +216,8 @@ yianc --raw-pointers lib/src main.an
 用裸 8 字节指针替换胖指针表示，不发射 fat 指针检查、锁槽与帧锁；固定数组边界检查仍可发射。这是诊断模式，不提供内存安全保证。
 `anx build --raw-pointers` 把该开关透传给编译器。
 
+Python 恢复编译器为使用字节存储 Vec 的标准库生成代码时需要 `--raw-pointers`。加载带有字节元数据依赖标记的标准库 Vec 模块时，Python 的旧胖指针模式在生成产物前报错。
+
 ### 2.10 `--check` — 只做前端与中端检查
 
 ```bash

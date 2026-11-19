@@ -1,0 +1,46 @@
+from std.core.vec import Vec;
+
+fn main() {
+    // new()
+    let v = Vec<i32>.new();
+    defer v.drop();
+    assert v.capacity() == 0: "initial capacity should be 0";
+
+    // with_capacity()
+    let v2 = Vec<i32>.with_capacity(10);
+    defer v2.drop();
+    assert v2.capacity() == 10: "with_capacity should be 10";
+
+    // ptr access
+    let ptr = v2.spare(2);
+    ptr[0] = 100;
+    ptr[1] = 200;
+    v2.advance_len(2);
+    assert v2.as_slice()[0] == 100: "pointer access failed 1";
+    assert v2.as_slice()[1] == 200: "pointer access failed 2";
+
+    v.push(0);
+    assert v.capacity() == 4: "grow empty vector failed";
+
+    // reserve()
+    // Required capacity is 5, so reserve doubles 4 to 8.
+    v.reserve(4);
+    assert v.capacity() == 8: "reserve failed";
+
+    v2.reserve(5);
+    assert v2.capacity() == 10: "reserve within capacity should not change cap";
+
+    // Reserve more slots than doubling can provide.
+    v2.reserve(20);
+    assert v2.capacity() == 22: "reserve realloc failed";
+
+    let expanded = v2.as_slice();
+    assert expanded[0] == 100: "reserve data copy fail 1";
+    assert expanded[1] == 200: "reserve data copy fail 2";
+
+    v2.shrink_to_fit();
+    assert v2.capacity() == 2: "shrink_to_fit failed";
+    let shrunk = v2.as_slice();
+    assert shrunk[0] == 100: "shrink data copy fail 1";
+    assert shrunk[1] == 200: "shrink data copy fail 2";
+}

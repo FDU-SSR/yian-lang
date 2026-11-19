@@ -1,0 +1,7 @@
+// Reserving this many i32 slots overflows the byte size.
+from std.core.vec import Vec;
+
+fn main() {
+    let values = Vec<i32>.new();
+    values.reserve(0x8000_0000_0000_0000u64);
+}

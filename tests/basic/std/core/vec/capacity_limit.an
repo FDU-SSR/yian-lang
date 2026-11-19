@@ -1,0 +1,6 @@
+// The element count cannot be represented as a byte size.
+from std.core.vec import Vec;
+
+fn main() {
+    Vec<i32>.with_capacity(0x8000_0000_0000_0000u64);
+}

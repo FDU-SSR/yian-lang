@@ -22,14 +22,16 @@ from yianc.analysis.diagnostics import (
 from yianc.analysis.documents import Document, DocumentStore
 from yianc.analysis.package_map import PackageMap
 from yianc.interop.positions import path_to_uri, to_lsp_range
-from yianc.analysis.session import AnalysisSession, collect_an_files
+from yianc.analysis.session import AnalysisResult, AnalysisSession, collect_an_files
 from yianc.utils.log import CompilerLog
 from yianc.utils.log import (
     format_cfg_output,
     format_hir_output, format_token_output,
 )
 from yianc.format import format_text
+from yianc.frontend.lex.token import BoolLiteral
 from yianc.frontend.observe import observe_ast, observe_tokens
+from yianc.frontend.parse import ast as AST
 from yianc.analysis.ty.context import TypeCtx
 from yianc.analysis.unit.def_point import DefPoint
 from yianc.codegen.cfg import ir as CFG_IR
@@ -258,8 +260,6 @@ def __analyze_payload(result: object) -> dict[str, object]:
     Positions use the shared LSP schema (0-based lines, UTF-16 characters,
     ``file://`` URIs) produced by the common position-conversion module.
     """
-    from yianc.analysis.session import AnalysisResult
-
     assert isinstance(result, AnalysisResult)
     diagnostics: list[dict[str, object]] = []
     errors = 0
@@ -464,6 +464,24 @@ def __format(args: argparse.Namespace) -> int:
     return 0
 
 
+def __requires_byte_pointer_metadata(analysis: AnalysisResult, std_root: Path) -> bool:
+    vec_path = (std_root / "core" / "vec.an").resolve()
+    for unit in analysis.units.values():
+        if not unit.is_stdlib or unit.path.resolve() != vec_path:
+            continue
+        for item in unit.items():
+            if (
+                isinstance(item, AST.ConstDef)
+                and item.name.name == "VEC_REQUIRES_BYTE_POINTER_METADATA"
+                and not item.attrs
+                and isinstance(item.value, AST.Literal)
+                and isinstance(item.value.literal, BoolLiteral)
+                and item.value.literal.value
+            ):
+                return True
+    return False
+
+
 def __run(argv: list[str] | None = None) -> int:
     args = parse_cli(argv)
 
@@ -544,6 +562,17 @@ def __run(argv: list[str] | None = None) -> int:
             )
     if not analysis.ok():
         print(analysis.formatted(), file=sys.stderr)
+        return 1
+    if (
+        not args.raw_pointers
+        and args.target != "none"
+        and __requires_byte_pointer_metadata(analysis, trust_root)
+    ):
+        print(
+            "error: this standard library Vec requires byte pointer metadata; "
+            "use --raw-pointers with the Python recovery compiler",
+            file=sys.stderr,
+        )
         return 1
     if analysis.diagnostics:
         print(analysis.formatted(), file=sys.stderr)
