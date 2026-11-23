@@ -1,8 +1,6 @@
 # Yian 编译器命令行手册
 
-本文档说明日常使用的原生 `yianc` 命令行。Python 恢复编译器通过
-`PYTHONPATH=python python -m yianc.main` 显式调用，只维护冷启动所需兼容性，不承诺与 native 完整功能对等。
-安装后的 `yianc` 是由 `yianc/` 构建的原生程序，是日常编译与分析的权威入口；格式化由独立的 `yian-fmt` 命令完成。
+本文档说明原生 `yianc` 的命令行。格式化由独立的 `yian-fmt` 命令完成。
 
 ## 1. 基本用法
 
@@ -24,18 +22,14 @@ yianc lib/src tests/basic/type/alias/imported_scope/types.an tests/basic/type/al
 
 ### 1.1 工具链要求
 
-Python 恢复编译器源码使用 Python 3.12 的泛型函数语法，冷启动因此需要 Python 3.12+。Python
-安装元数据和冷启动脚本要求 Python 3.12+；LLVM 工具链安装脚本是独立的 shell 脚本，不依赖 Python。日常 native 编译器不通过 Python CLI 启动。
-
-编译器依赖 **LLVM 22**：`llvmlite 0.49`（自带 LLVM 22）、`clang` 22，以及 LLVM 工具（`opt`、`llvm-dis`、`llvm-link`、`llvm-config`）。
+编译器使用 LLVM 22。生成可执行文件需要 C 编译与链接工具，声明 LLVM 原生依赖的包需要 LLVM 22 的 `llvm-config`。
 
 ```bash
-python -m pip install -r python/requirements.txt      # Install the Python recovery dependency.
-scripts/setup_llvm_toolchain.sh                    # Install missing LLVM 22 and native C build packages; requires sudo.
-scripts/setup_llvm_toolchain.sh --check            # Report current versions without changes.
+scripts/setup_llvm_toolchain.sh          # Install missing native tools; requires sudo.
+scripts/setup_llvm_toolchain.sh --check  # Report installed versions.
 ```
 
-`python/requirements.txt` 固定 Python 恢复编译器使用的 llvmlite 版本。LLVM 工具链安装脚本本身不依赖 Python。默认运行 `setup_llvm_toolchain.sh` 会用 sudo 从系统仓库安装缺少的 C 构建工具，并从官方 `apt.llvm.org` 安装缺少的 LLVM 工具，然后切换未版本化命令到 LLVM 22；已安装的软件包保持当前版本。脚本不安装 Python 包。`--check` 只报告各 LLVM 工具的实际版本。
+原生工具链的安装见[安装与环境](anx/06.install.md)。
 
 链接阶段使用的 C 编译器按 `$YIAN_CC` → `clang` → `cc` 选择，不隐式回落到带版本号的 `clang-18`/`clang-20`：
 
@@ -95,12 +89,10 @@ yianc -O2 lib/src tests/basic/array/assign.an
 ### 2.5 `--profile` / `--profile-output PATH` — 编译耗时报告
 
 ```bash
-yianc --profile-output build/profile/compiler.json lib/src tests/basic/array/assign.an
 yianc --profile --profile-output build/profile/compiler.json lib/src tests/basic/array/assign.an
 ```
 
-`--profile` 保留 stderr 上的 `[profile]` 文本汇总。native `yianc` 的 `--profile-output PATH` 会额外写结构化
-JSON，并在同目录写一个扩展名为 `.txt` 的可读汇总。两者可同时使用；单独使用 `--profile-output` 不输出
+`--profile` 启用采集，未指定输出路径时向 stderr 写 `[profile]` 文本汇总。`--profile-output PATH` 要求 `--profile`，写结构化 JSON 和同目录 `.txt` 汇总，不输出
 终端 profile 文本。报告含目标、优化级别、指针模式、成功状态、每项的 `pass_id`、父项、类型、调用次数、
 累计耗时、自耗时、失败次数、不完整标记、未运行原因和统计错误。耗时为包含子项的总耗时，`self_ns` 扣除
 直接子项；重复执行的 pass 累计调用次数及耗时。
@@ -110,12 +102,10 @@ JSON，并在同目录写一个扩展名为 `.txt` 的可读汇总。两者可�
 计时覆盖输入收集/读取、词法/解析/desugar、语义解析与检查、地址存储归一化、HIR 验证/覆盖/赋值、CFG
 lower/验证/清理/check insertion、LLVM lowering/优化前后验证/优化/native emission 或 IR/bitcode 序列化，
 以及 runtime、C shim、链接参数、最终链接和产物发布。优化等级 `-O0` 不运行 LLVM 优化；`--check` 在语义分析后结束，未执行项标为 `not_run`，不会伪造零耗时成功。原生链接阶段仅在 `exe` 目标运行。
+`--check` 和编译模式都将 `input.source_roots`、`input.collect_sources` 等输入准备计时归入 `source_preparation` 阶段。
 
-`--profile-output` 可用于编译模式与 `--check`；编译报告的目标为 `"exe"`、`"ll"` 或 `"bc"`，检查报告的目标为 `"check"`。报告写入失败只打印警告，不改变原编译结果。`anx
-build profile` 用该接口保存每次 compiler 调用的独立明细并生成命令级报告；命令选项见
-[anx CLI](anx/03.cli.md)。`anx run profile` 启动产物后的执行不计入编译计时；它使用下节的运行时插桩接口，
-不读取编译报告。Python 恢复编译器的 `--profile` 属于其恢复 CLI 行为；它不支持 native
-`--profile-output`。
+`--profile-output` 可用于编译模式与 `--check`；编译报告的目标为 `"exe"`、`"ll"` 或 `"bc"`，检查报告的目标为 `"check"`。报告写入失败只打印警告，不改变原编译结果。`anx build --profile` 用该接口保存每次 compiler 调用的独立明细并生成命令级报告；命令选项见
+[anx CLI](anx/03.cli.md)。`anx run --profile` 在启动产物前发布编译报告；运行时统计使用下节的插桩接口。
 
 ### 2.5.1 `--runtime-profile-dir PATH` — 运行时插桩构建
 
@@ -124,7 +114,7 @@ yianc --runtime-profile-dir /abs/run/dir -O2 -o build/app lib/src main.an
 ```
 
 该 native 选项只用于生成插桩可执行文件。`PATH` 必须是非空绝对路径，目标必须是 `exe`；与 `--check`、
-`-t ll`/`-t bc` 一起使用会报配置错误。`anx run profile` 自动分配本次 run 目录并传入该选项，
+`-t ll`/`-t bc` 一起使用会报配置错误。`anx run --runtime-profile` 自动分配本次 run 目录并传入该选项，
 普通构建不传。
 
 编译为本次构建中的每个生成 callable 分配 `function_id`，输出只读的描述符表与
@@ -137,7 +127,7 @@ profiling session 将 `MergeFunctions` 设为 `false`；优化级别仍按 `-O`/
 配置结构含 ABI 版本、报告目录、run id、程序绝对路径、指针模式、优化级别、描述符数量和描述符指针。
 所有字符串是 UTF-8 字节切片，带显式长度，不需要 NUL 结尾。报告目录由运行环境创建；collector 在
 `main` 正常返回后写 `profile.json` 与 `summary.txt`。格式、计时口径和正常返回保证见
-[anx CLI 的 `run profile`](anx/03.cli.md)。report 目录缺失、时钟或分配故障属于 profiling 故障边界，
+[anx CLI 的 `run --runtime-profile`](anx/03.cli.md)。report 目录缺失、时钟或分配故障属于 profiling 故障边界，
 不改变普通编译或既有安全错误协议；普通编译既不定义 collector，也不引用插桩符号。
 
 ### 2.6 `--packages` — 包名导入解析
@@ -216,8 +206,6 @@ yianc --raw-pointers lib/src main.an
 用裸 8 字节指针替换胖指针表示，不发射 fat 指针检查、锁槽与帧锁；固定数组边界检查仍可发射。这是诊断模式，不提供内存安全保证。
 `anx build --raw-pointers` 把该开关透传给编译器。
 
-Python 恢复编译器为使用字节存储 Vec 的标准库生成代码时需要 `--raw-pointers`。加载带有字节元数据依赖标记的标准库 Vec 模块时，Python 的旧胖指针模式在生成产物前报错。
-
 ### 2.10 `--check` — 只做前端与中端检查
 
 ```bash
@@ -271,33 +259,27 @@ yianc --allow-ffi --link-lib m --link-search /path/to/libs lib/src main.an
 
 `--allow-ffi` 只授予独立编译源码 FFI 权限；包模式的权限由各包的 `ffi` 字段决定。`--link-lib NAME` 和 `--link-search DIR` 可重复，分别向生成可执行文件时的链接命令加入 `-lNAME` 和 `-LDIR`。它们只在 `-t exe` 的最终链接步骤使用；`-t ll` 与 `-t bc` 保留外部符号。编译器会拒绝非法库名。
 
-声明 `[native.llvm]` 的包使用 LLVM 22 的 `llvm-config` 确定组件及系统库参数，要求 Linux x86-64 LP64 环境和 x86-64 Linux C 链接器。`[native.c]` 的 shim 使用 `-O2 -fPIC -std=c11` 和所属包的 include dirs；所有程序、运行时和 shim 对象先链接，之后按可达包顺序将显式归档放入一个 linker group。没有 LLVM 声明时不查询 `llvm-config`。`-t exe` 编译并链接包内 native 输入、YIAN 运行时及所需系统库。Python recovery 仍只接受 v2。语言层的 C ABI 限制与封送操作见 [FFI 参考](grammar/17.ffi.md)。
+声明 `[native.llvm]` 的包使用 LLVM 22 的 `llvm-config` 确定组件及系统库参数，要求 Linux x86-64 LP64 环境和 x86-64 Linux C 链接器。`[native.c]` 的 shim 使用 `-O2 -fPIC -std=c11` 和所属包的 include dirs；所有程序、运行时和 shim 对象先链接，之后按可达包顺序将显式归档放入一个 linker group。没有 LLVM 声明时不查询 `llvm-config`。`-t exe` 编译并链接包内 native 输入、YIAN 运行时及所需系统库。语言层的 C ABI 限制与封送操作见 [FFI 参考](grammar/17.ffi.md)。
 
-### 2.13 前端观察与 Python recovery CLI
+### 2.13 前端观察
 
-native `yianc` 不提供前端 JSON 观察入口；需要查看前端产物时使用 `--dump`，它会写出
-`tokens.txt`、`ast.txt`、`hir.txt` 等文件。Python recovery CLI 保留
-`--frontend-json {tokens,ast,desugared}`、`--analyze` 和 `--json`，其行为只属于恢复路径，
-见[自举编译器](manual/30.bootstrap.md)与 [Python CLI](manual/14.cli_build.md)。
+`--dump` 输出已完成阶段的中间文件。前端写出 `tokens.txt` 和 `ast.txt`，中端写出 `hir.txt`。
 
 ## 3. 日志与调试输出
 
-Yian 编译器内置结构化日志系统；日志开关是 `--log-spec` / `--log-file`，中间产物的完整转储
+Yian 编译器内置结构化日志系统；日志由 `--log` 启用，`--log-spec` / `--log-file` 配置规则和路径，缺少 `--log` 时显式传入它们会报错，中间产物的完整转储
 由 `--dump` 写出。`--token`、`--ast`、`--hir`、`--cfg`、`--emit-llvm` 不是命令行选项。
 
 ### 3.1 `--log-spec` — 配置日志级别
 
-格式：`channel=level`，逗号分隔。支持前缀匹配（如 `type_check=DEBUG` 同时匹配 `type_check.coerce`）。
+规则用 `channel=level` 表示，多条规则以逗号分隔。第一条匹配规则决定阈值。频道名可匹配同名频道和以点分隔的子频道，`all` 匹配全部频道。
 
 ```bash
 # DEBUG summaries for all stages.
-yianc --log-spec "all=DEBUG" lib/src tests/basic/array/assign.an
+yianc --log --log-spec "all=DEBUG" lib/src tests/basic/array/assign.an
 
-# Trace only type-checking expression evaluation.
-yianc --log-spec "type_check.expr=TRACE" lib/src tests/basic/array/assign.an
-
-# Trace method dispatch and CFG logical lowering.
-yianc --log-spec "call_dispatch=TRACE,cfg.logical=TRACE" lib/src tests/basic/array/assign.an
+# Trace concrete procedure checks.
+yianc --log --log-spec "type_check=TRACE" lib/src tests/basic/array/assign.an
 ```
 
 ### 3.2 日志级别
@@ -305,48 +287,41 @@ yianc --log-spec "call_dispatch=TRACE,cfg.logical=TRACE" lib/src tests/basic/arr
 | 级别    | 说明                     |
 | ------- | ------------------------ |
 | `OFF`   | 关闭                     |
-| `ERROR` | 仅致命错误               |
-| `WARN`  | 警告（**默认**）         |
-| `INFO`  | 关键阶段摘要             |
-| `DEBUG` | 详细过程 + 中间产物 dump |
-| `TRACE` | 每条指令/每次函数调用    |
+| `ERROR` | 错误                     |
+| `WARN`  | 警告及错误（默认）       |
+| `INFO`  | 增加关键进度消息         |
+| `DEBUG` | 增加阶段开始消息         |
+| `TRACE` | 增加具体过程检查消息     |
 
 ### 3.3 `--log-file` — 覆盖默认日志路径
 
-日志始终写到 stderr；文件名默认 `build/compile.log`，用 `--log-file` 覆盖：
+通过筛选的日志写到 stderr 和已打开的日志文件。编译模式默认打开 `build/compile.log`，`--check` 模式按显式配置打开文件。`--log-file` 可为两种模式指定文件。
 
 ```bash
-yianc --log-spec "all=DEBUG" --log-file /tmp/debug.log lib/src tests/basic/array/assign.an
+yianc --log --log-spec "all=DEBUG" --log-file /tmp/debug.log lib/src tests/basic/array/assign.an
 ```
 
 ### 3.4 环境变量
 
 ```bash
 # Equivalent to --log-spec; --log-spec takes precedence.
-YIAN_LOG="all=DEBUG,type_check=TRACE" yianc lib/src tests/basic/array/assign.an
+YIAN_LOG="type_check=TRACE,all=DEBUG" yianc --log lib/src tests/basic/array/assign.an
 
 # Write an additional log to PATH.
-YIAN_LOG_FILE=/tmp/debug.log yianc lib/src tests/basic/array/assign.an
+YIAN_LOG_FILE=/tmp/debug.log yianc --log lib/src tests/basic/array/assign.an
 
-# Disable logging entirely.
-YIAN_LOG="all=OFF" yianc lib/src tests/basic/array/assign.an
+# Filter all log messages; enabled logging still opens its configured files.
+YIAN_LOG="all=OFF" yianc --log lib/src tests/basic/array/assign.an
 ```
 
 ### 3.5 日志频道列表
 
 | 频道                | 说明                                    |
 | ------------------- | --------------------------------------- |
-| `main`              | 编译管线主流程                          |
-| `lex`               | 词法分析                                |
-| `parse`             | 语法分析                                |
-| `desugar`           | 脱糖                                    |
-| `type_check`        | 类型检查                                |
-| `type_check.expr`   | 表达式求值（TRACE 级输出每个 AST 节点） |
-| `type_check.coerce` | 隐式类型转换                            |
-| `call_dispatch`     | 方法/函数调度                           |
-| `cfg.logical`       | 控制流图：短路逻辑展开                  |
-| `cfg.block`         | 控制流图：基本块构造                    |
-| `llvm`              | LLVM IR 生成                            |
+| `main`              | 编译主流程、输入准备、语义分析与原生链接 |
+| `type_check`        | 具体过程检查                            |
+| `cfg`               | HIR 到 CFG                              |
+| `llvm`              | LLVM 下降与目标发射                     |
 
 ## 4. 常见工作流
 
@@ -359,25 +334,23 @@ yianc lib/src tests/basic/array/assign.an && ./build/a.out
 ### 4.2 调试类型错误
 
 ```bash
-yianc --log-spec "type_check=DEBUG,type_check.expr=TRACE" lib/src tests/basic/array/assign.an
+yianc --log --log-spec "type_check=TRACE" lib/src tests/basic/array/assign.an
 ```
 
 ### 4.3 查看各阶段摘要
 
 ```bash
-yianc --log-spec "main=DEBUG" lib/src tests/basic/array/assign.an
+yianc --log --log-spec "main=DEBUG" lib/src tests/basic/array/assign.an
 ```
 
 输出示例：
 
 ```text
-[ INFO][main        ]compiling 2 source file(s)
-[DEBUG][main        ]lexed 17793 tokens from 34 file(s)
-[DEBUG][main        ]parsed 356 top-level items
-[DEBUG][main        ]desugaring complete
-[DEBUG][main        ]global resolve complete — 34 units
-[DEBUG][main        ]type-checked 5 definitions
-[DEBUG][main        ]generated 5 CFG functions
+[DEBUG][main] compiler.total
+[INFO][main] compiling source inputs
+[DEBUG][main] source preparation
+[DEBUG][main] semantic analysis
+[DEBUG][main] native linking
 ```
 
 ### 4.4 前端与中端检查（不发射 LLVM）
@@ -439,7 +412,7 @@ python3 runtime/build.py --asan     # ASan/UBSan self-tests.
 
 ## 6. 日志输出位置
 
-- **默认**：写入 `build/compile.log`，同时输出到 stderr
+- 启用 `--log` 时，通过筛选的日志输出到 stderr，编译模式默认另写 `build/compile.log`
 - stderr 输出可以用 `2>/dev/null` 丢弃
 - `--log-file PATH`：覆盖默认路径
 - `YIAN_LOG_FILE=PATH`：环境变量方式指定额外文件
@@ -447,9 +420,9 @@ python3 runtime/build.py --asan     # ASan/UBSan self-tests.
 
 ## 7. 相关文件
 
-| 文件                    | 说明             |
-| ----------------------- | ---------------- |
-| `python/yianc/main.py`      | 冷启动恢复编译器入口 |
-| `python/yianc/utils/log.py` | 日志系统实现     |
-| `python/yianc/format/`      | 恢复格式化器副本 |
-| `runtime/`              | 运行时库（C）    |
+| 文件 | 说明 |
+| --- | --- |
+| `yianc/src/main.an`、`yianc/src/config.an` | 编译器命令行与驱动入口 |
+| `yianc/src/driver/trace.an` | 日志和计时入口 |
+| `fmt/src/` | 独立格式化器 |
+| `runtime/` | C 运行时 |

@@ -7,8 +7,7 @@
 ## 语言与编译器
 
 YIAN 是静态类型语言，支持泛型、trait/impl、闭包、引用、切片和枚举。日常编译器是以 YIAN 编写的原生实现
-`yianc/`。仓库也保留 Python 恢复编译器 `python/yianc/`，仅供显式冷启动和恢复使用，维护其所需兼容性，
-不要求与 native 功能对等。
+`yianc/`。
 
 模块级常量使用 `const NAME: T = expression;` 声明，可通过 `pub` 导出。常量必须标注类型，支持整数、浮点、布尔、
 字符、字符串及递归包含这些类型的固定数组，也支持相应类型别名。初始化表达式经过普通类型检查，并由编译期
@@ -47,8 +46,7 @@ fat 模式的指针携带边界与生命周期元数据，并在内存访问时�
 `anx` 是以 YIAN 编写的原生包管理器。`bootstrap/json`、`bootstrap/toml`、`bootstrap/ffi` 和
 `bootstrap/llvm` 提供它们所需的数据、C ABI 与 LLVM 22 支持。
 
-`scripts/bootstrap_toolchain.sh` 用 Python recovery compiler 和固定五包配方构建 raw 原生 `yianc`，再由
-staged native `yianc` 配合固定七包与六包配方构建最终 raw `anx` 和 `yian-fmt`。语言服务器
+`scripts/bootstrap_toolchain.sh` 分阶段构建 raw `yianc`、`anx` 和 `yian-fmt`。语言服务器
 `lsp/` 可由纯原生 warm 刷新入口与三个原生命令一起构建；cold 入口构建 `yianc`、`anx` 和 `yian-fmt`，不构建 LSP。warm 路径固定现有原生 seed，校验 formatter 冒烟、完整 staging 和 LSP 握手后事务发布，不调用 Python。自举包结构、构建入口与 CLI 见[自举编译器手册](manual/30.bootstrap.md)。
 
 ## 内存安全机制的边界

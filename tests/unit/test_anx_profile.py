@@ -119,7 +119,7 @@ class AnxProfileTests(_ProfileFixture):
         nested = project / "nested"
         nested.mkdir()
 
-        built = self.run_anx_in(nested, "build", "profile", "--profile-dir", "reports/compile", "-O1")
+        built = self.run_anx_in(nested, "build", "--profile", "--profile-dir", "reports/compile", "-O1")
         self.assertEqual(built.returncode, 0, built.stdout + built.stderr)
         self.assertEqual(built.stdout, "")
         self.assertIn(str(project / "reports" / "compile"), built.stderr)
@@ -156,7 +156,7 @@ class AnxProfileTests(_ProfileFixture):
         failed_project = self.make_project(
             name="failed-project", main='fn main() { let value: i32 = "bad"; }\n'
         )
-        failed = self.run_anx(failed_project, "build", "profile")
+        failed = self.run_anx(failed_project, "build", "--profile")
         self.assertEqual(failed.returncode, 1)
         self.assertNotIn("business-marker", failed.stdout)
         self.assertIn("Expected type 'i32' but got 'str'", failed.stderr)
@@ -168,28 +168,28 @@ class AnxProfileTests(_ProfileFixture):
         self.assertEqual(len(failed_report["invocations"]), 1)
         failed_invocation = failed_report["invocations"][0]
         self.assertNotEqual(failed_invocation["compiler_status"], 0)
-        self.assertEqual(failed_invocation["report_status"], "ok")
-        failed_compiler_report = _read_json(Path(failed_invocation["profile_file"]))
-        self.assertFalse(failed_compiler_report["ok"])
-        self.assertFalse(
-            any(item["pass_id"] == "native.link" and item["calls"] for item in failed_compiler_report["timings"])
-        )
+        self.assertEqual(failed_invocation["report_status"], "missing")
+        self.assertFalse(Path(failed_invocation["profile_file"]).exists())
         self.assertFalse((failed_project / "build" / "app").exists())
 
         empty = self.root / "empty"
         empty.mkdir()
-        for command in ("build", "run", "check", "test"):
-            rejected = self.run_anx_in(empty, command, "--profile")
+        for command, args, message in (
+            ("build", ("--profile-dir", "reports"), "--profile-dir requires --profile"),
+            ("check", ("--log-spec", "all=DEBUG"), "--log-spec requires --log"),
+            ("run", ("--runtime-profile-dir", "reports"), "--runtime-profile-dir requires --runtime-profile"),
+            ("test", ("--profile",), "anx build --profile"),
+        ):
+            rejected = self.run_anx_in(empty, command, *args)
             self.assertEqual(rejected.returncode, 2, command)
-            self.assertIn("--profile was removed", rejected.stderr)
-            self.assertIn("anx build profile", rejected.stderr)
+            self.assertIn(message, rejected.stderr)
             self.assertNotIn("no package.anx", rejected.stderr)
             self.assertFalse((empty / "build").exists())
 
-        empty_dir = self.run_anx(project, "build", "profile", "--profile-dir", "")
+        empty_dir = self.run_anx(project, "build", "--profile", "--profile-dir", "")
         self.assertEqual(empty_dir.returncode, 2)
         self.assertIn("--profile-dir requires a non-empty path", empty_dir.stderr)
-        missing_value = self.run_anx(project, "build", "profile", "--profile-dir")
+        missing_value = self.run_anx(project, "build", "--profile", "--profile-dir")
         self.assertEqual(missing_value.returncode, 2)
         self.assertEqual(sorted((project / "reports" / "compile").iterdir()), runs)
 
@@ -332,7 +332,7 @@ fn main() {{
 
         report_io_failure = subprocess.run(
             [
-                str(self.yianc), "--compiler-root", str(ROOT), "--check", "--profile-output", str(compiler_output),
+                str(self.yianc), "--compiler-root", str(ROOT), "--check", "--profile", "--profile-output", str(compiler_output),
                 str(ROOT / "lib" / "src"), str(report_io_source),
             ],
             cwd=ROOT,
@@ -518,7 +518,7 @@ fn main() {
         return project
 
     def report_directory(self, stderr: str) -> Path:
-        matches = re.findall(r"report written to (.+)", stderr)
+        matches = re.findall(r"runtime profile report written to (.+)", stderr)
         self.assertEqual(len(matches), 1, stderr)
         return Path(matches[0].strip())
 
@@ -529,7 +529,7 @@ fn main() {
         nested = project / "nested"
         nested.mkdir()
 
-        first = self.run_anx_input(nested, "hello\n", "run", "profile", "-O1", "--", "alpha")
+        first = self.run_anx_input(nested, "hello\n", "run", "--runtime-profile", "-O1", "--", "alpha")
         self.assertEqual(first.returncode, 0, first.stdout + first.stderr)
         expected = f"business:alpha:hello:{nested.resolve()}\n"
         self.assertEqual(first.stdout, expected)
@@ -582,7 +582,7 @@ fn main() {
 
         first_report = report_path.read_bytes()
         first_summary = summary_path.read_bytes()
-        second = self.run_anx_input(nested, "hello\n", "run", "profile", "--profile-dir", "reports/runtime", "--", "alpha")
+        second = self.run_anx_input(nested, "hello\n", "run", "--runtime-profile", "--runtime-profile-dir", "reports/runtime", "--", "alpha")
         self.assertEqual(second.returncode, 0, second.stdout + second.stderr)
         self.assertEqual(second.stdout, expected)
         second_dir = self.report_directory(second.stderr)
@@ -606,7 +606,7 @@ fn main() {
 
     def test_runtime_profile_identity_paths(self) -> None:
         project = self.identity_project()
-        result = self.run_anx(project, "run", "profile", "--release", "--raw-pointers")
+        result = self.run_anx(project, "run", "--runtime-profile", "--release", "--raw-pointers")
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         runs = self.runtime_profile_runs(project)
         self.assertEqual(len(runs), 1)

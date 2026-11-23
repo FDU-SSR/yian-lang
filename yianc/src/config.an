@@ -38,6 +38,7 @@ pub struct CompilerConfig {
     pub profile: bool,
     pub profile_output: Option<String>,
     pub runtime_profile_dir: Option<String>,
+    pub log_enabled: bool,
     pub log_spec: Option<String>,
     pub log_file: Option<String>,
     pub link_libraries: Vec<String>,
@@ -93,7 +94,7 @@ fn string_values(arg_matches: ArgMatches&, name: str) -> Vec<String> {
 impl CompilerConfig {
     static fn help(text: String) -> Self {
         Self(CompilerAction.Help(text), Vec<String>.new(), String.new(), false, Option<String>.None, false, false,
-            OutputKind.Exe, false, Option<String>.None, 0u8, false, false, Option<String>.None, Option<String>.None, Option<String>.None, Option<String>.None,
+            OutputKind.Exe, false, Option<String>.None, 0u8, false, false, Option<String>.None, Option<String>.None, false, Option<String>.None, Option<String>.None,
             Vec<String>.new(), Vec<String>.new(), true, true)
     }
 
@@ -132,6 +133,7 @@ impl CompilerConfig {
             _ => 0u8,
         };
         let dump = *arg_matches.get_bool("dump").unwrap().unwrap();
+        let log_enabled = *arg_matches.get_bool("log").unwrap().unwrap();
         let profile = *arg_matches.get_bool("profile").unwrap().unwrap();
         let profile_output = match arg_matches.get_string("profile-output") {
             Ok(Some(value)) => Option<String>.Some(String.from(&value)),
@@ -158,12 +160,17 @@ impl CompilerConfig {
             _ => Option<String>.None,
         };
         let profile_error = match &profile_output {
+            Some(_) if !profile => Option<String>.Some(String.from(&"error: --profile-output requires --profile\n")),
             Some(value) if value.is_empty() => Option<String>.Some(String.from(&"error: --profile-output PATH cannot be empty\n")),
             _ => Option<String>.None,
         };
         let action_error = match runtime_profile_error {
             Some(message) => Option<String>.Some(message),
-            None => match profile_error {
+            None => if !log_enabled && log_spec.is_some() {
+                Option<String>.Some(String.from(&"error: --log-spec requires --log\n"))
+            } elif !log_enabled && log_file.is_some() {
+                Option<String>.Some(String.from(&"error: --log-file requires --log\n"))
+            } else { match profile_error {
                 Some(message) => Option<String>.Some(message),
                 None => if check && target_explicit {
                     Option<String>.Some(String.from(&"error: --check does not accept --target\n"))
@@ -174,7 +181,7 @@ impl CompilerConfig {
                 } else {
                     Option<String>.None
                 },
-            },
+            } },
         };
 
         match action_error {
@@ -187,7 +194,7 @@ impl CompilerConfig {
 
         let action = if check { CompilerAction.Check } else { CompilerAction.Compile };
         Result<Self, String>.Ok(Self(action, inputs, root, arg_matches.get_string("compiler-root").unwrap().is_some(), packages, raw, ffi, target, target_explicit, output, optimization,
-            dump, profile, profile_output, runtime_profile_dir, log_spec, log_file, link_libraries, link_searches,
+            dump, profile, profile_output, runtime_profile_dir, log_enabled, log_spec, log_file, link_libraries, link_searches,
             cfg_inline, fat_check_elimination))
     }
 }
@@ -272,23 +279,27 @@ pub fn parse_args() -> CompilerConfig {
 
     parser.add_argument("profile")
     .long("profile").action(Action.StoreTrue)
-    .help("report actual stage timings");
+    .help("enable compiler stage timings");
 
     parser.add_argument("profile-output")
     .long("profile-output").metavar("PATH")
-    .help("write structured compiler profile JSON to PATH");
+    .help("write structured compiler profile JSON to PATH (requires --profile)");
 
     parser.add_argument("runtime-profile-dir")
     .long("runtime-profile-dir").metavar("PATH")
     .help("build an instrumented executable that records runtime statistics to the absolute run directory PATH");
 
+    parser.add_argument("log")
+    .long("log").action(Action.StoreTrue)
+    .help("enable compiler logging");
+
     parser.add_argument("log-spec")
     .long("log-spec")
-    .help("channel=level logging configuration");
+    .help("channel=level logging configuration (requires --log)");
 
     parser.add_argument("log-file")
     .long("log-file")
-    .help("additional logging output file");
+    .help("additional logging output file (requires --log)");
 
     parser.add_argument("link-lib")
     .long("link-lib").action(Action.Append)

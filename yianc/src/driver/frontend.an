@@ -1,4 +1,3 @@
-from yianc.analysis.session.session import AnalysisSession;
 from yianc.common.ids import SourceId;
 from yianc.common.location import SourceSpan;
 from yianc.config import CompilerConfig;
@@ -18,23 +17,12 @@ from std.core.fs import try_exists;
 from std.core.iter import Iterator, IntoIterator;
 from std.core.path import Path;
 
-fn start_profile(trace: Option<CompilerTrace&>, pass_id: str) -> u64 {
-    match trace { Some(value) => value.start_pass(pass_id, "input", pass_id, ProfileKind.Pass), None => 0u64 }
+fn start_profile(trace: CompilerTrace&, pass_id: str) -> u64 {
+    trace.start_pass(pass_id, "input", pass_id, ProfileKind.Pass)
 }
 
-fn finish_profile(trace: Option<CompilerTrace&>, pass_id: str, token: u64, success: bool) {
-    match trace {
-        Some(value) => if success { value.finish(pass_id, token); } else { value.fail(pass_id, token); },
-        None => {},
-    }
-}
-
-fn begin_timing(observer: Option<PreparationObserver&>, pass_id: str) -> u64 {
-    match observer { Some(value) => value.begin(pass_id), None => 0u64 }
-}
-
-fn finish_timing(observer: Option<PreparationObserver&>, pass_id: str, token: u64, success: bool) {
-    match observer { Some(value) => value.finish(pass_id, token, success), None => {}, }
+fn finish_profile(trace: CompilerTrace&, pass_id: str, token: u64, success: bool) {
+    if success { trace.finish(pass_id, token); } else { trace.fail(pass_id, token); }
 }
 
 fn release_paths(paths: Vec<String>&) {
@@ -49,16 +37,16 @@ fn release_paths(paths: Vec<String>&) {
 }
 
 // Run the complete frontend pass sequence on an already loaded session.
-fn prepare_session(session: FrontendSession&, allow_ffi: bool, observer: Option<PreparationObserver&>) -> Result<(), AnalysisError> {
+fn prepare_session(session: FrontendSession&, allow_ffi: bool, observer: PreparationObserver&) -> Result<(), AnalysisError> {
     // Complete each frontend stage across the ordered input set before advancing to the next.
     let index = 0u64;
     while index < session.source_count() {
         let source = SourceId(index);
-        let lex_token = begin_timing(observer, "frontend.lex");
+        let lex_token = observer.begin("frontend.lex");
         let prepared_result = session.prepare_source(source);
         match &prepared_result {
-            Ok(_) => finish_timing(observer, "frontend.lex", lex_token, true),
-            Err(_) => finish_timing(observer, "frontend.lex", lex_token, false),
+            Ok(_) => observer.finish("frontend.lex", lex_token, true),
+            Err(_) => observer.finish("frontend.lex", lex_token, false),
         }
         let prepared = match prepared_result {
             Ok(value) => value,
@@ -71,50 +59,53 @@ fn prepare_session(session: FrontendSession&, allow_ffi: bool, observer: Option<
             },
         };
         let file = session.source(source).unwrap();
-        let classify_token = begin_timing(observer, "input.classify_sources");
+        let classify_token = observer.begin("input.classify_sources");
         let permissions = session.classify(file.canonical_path(), allow_ffi);
-        finish_timing(observer, "input.classify_sources", classify_token, true);
+        observer.finish("input.classify_sources", classify_token, true);
         session.accept(prepared, permissions);
         index += 1u64;
     }
-    match observer { Some(value) => { value.stage_complete(PreparationStage.Lex, session)?; }, None => {}, }
+    observer.stage_complete(PreparationStage.Lex, session)?;
 
     index = 0u64;
     while index < session.len() {
         let unit = session.unit_at(index).unwrap();
-        let token = begin_timing(observer, "frontend.parse");
+        let token = observer.begin("frontend.parse");
         let result = unit.prepared.parse();
         let success = match &result { Ok(_) => true, Err(_) => false };
         let finished = session.finish_preparation(result, unit.source);
-        finish_timing(observer, "frontend.parse", token, success);
+        observer.finish("frontend.parse", token, success);
         finished?;
         index += 1u64;
     }
-    match observer { Some(value) => { value.stage_complete(PreparationStage.Parse, session)?; }, None => {}, }
+    observer.stage_complete(PreparationStage.Parse, session)?;
 
     index = 0u64;
     while index < session.len() {
         let unit = session.unit_at(index).unwrap();
         let file = session.source(unit.source).unwrap();
-        let token = begin_timing(observer, "frontend.desugar");
+        let token = observer.begin("frontend.desugar");
         let result = unit.prepared.desugar(file.path());
         let success = match &result { Ok(_) => true, Err(_) => false };
         let finished = session.finish_preparation(result, unit.source);
-        finish_timing(observer, "frontend.desugar", token, success);
+        observer.finish("frontend.desugar", token, success);
         finished?;
         index += 1u64;
     }
-    match observer { Some(value) => { value.stage_complete(PreparationStage.Desugar, session)?; }, None => {}, }
+    observer.stage_complete(PreparationStage.Desugar, session)?;
     Result<(), AnalysisError>.Ok(())
 }
 
 // The frontend driver owns package/source/trust setup and the frontend pass sequence.
 pub struct FrontendDriver {
     session: Option<FrontendSession>,
+    complete: bool,
+    allow_ffi: bool,
+    dump: bool,
 }
 
 impl FrontendDriver {
-    static pub fn prepare(config: CompilerConfig&, trace: Option<CompilerTrace&>) -> Result<Self, AnalysisError> {
+    static pub fn new(config: CompilerConfig&, trace: CompilerTrace&) -> Result<Self, AnalysisError> {
         let packages = match &config.packages {
             Some(path) => {
                 let token = start_profile(trace, "input.package_map");
@@ -124,7 +115,7 @@ impl FrontendDriver {
                 }
             },
             None => {
-                match trace { Some(value) => value.skip("input.package_map", "standalone compilation has no package map"), None => {}, }
+                trace.skip("input.package_map", "standalone compilation has no package map");
                 Option<PackageMap>.None
             },
         };
@@ -177,18 +168,11 @@ impl FrontendDriver {
         let accepted = false;
         defer { if !accepted { session.drop(); } };
 
-        let dumps = StageDumps(config.dump, trace);
-        let observer = if config.dump || trace.is_some() {
-            Option<PreparationObserver&>.Some(&dumps)
-        } else {
-            Option<PreparationObserver&>.None
-        };
-
-        let collect_token = begin_timing(observer, "input.collect_sources");
+        let collect_token = start_profile(trace, "input.collect_sources");
         let paths_result = collect_sources(&config.inputs);
         match &paths_result {
-            Ok(_) => finish_timing(observer, "input.collect_sources", collect_token, true),
-            Err(_) => finish_timing(observer, "input.collect_sources", collect_token, false),
+            Ok(_) => finish_profile(trace, "input.collect_sources", collect_token, true),
+            Err(_) => finish_profile(trace, "input.collect_sources", collect_token, false),
         }
         let paths = match paths_result {
             Ok(value) => value,
@@ -200,18 +184,36 @@ impl FrontendDriver {
         defer release_paths(&paths);
 
         for path in paths {
-            let token = begin_timing(observer, "input.read_sources");
+            let token = start_profile(trace, "input.read_sources");
             let result = session.load_source(path.as_str());
             match &result {
-                Ok(_) => finish_timing(observer, "input.read_sources", token, true),
-                Err(_) => finish_timing(observer, "input.read_sources", token, false),
+                Ok(_) => finish_profile(trace, "input.read_sources", token, true),
+                Err(_) => finish_profile(trace, "input.read_sources", token, false),
             }
             result?;
         }
-        prepare_session(&session, config.allow_ffi, observer)?;
-
         accepted = true;
-        Result<Self, AnalysisError>.Ok(Self(Option<FrontendSession>.Some(session)))
+        Result<Self, AnalysisError>.Ok(Self(Option<FrontendSession>.Some(session), false, config.allow_ffi, config.dump))
+    }
+
+    pub fn run(trace: CompilerTrace&) -> Result<(), AnalysisError> {
+        if self.complete {
+            return Result<(), AnalysisError>.Err(AnalysisError.internal("frontend driver has already run"));
+        }
+        let session = match self.session.take() {
+            Some(value) => value,
+            None => return Result<(), AnalysisError>.Err(AnalysisError.internal("frontend input session is not available")),
+        };
+        let accepted = false;
+        defer { if !accepted { session.drop(); } };
+
+        let dumps = StageDumps(self.dump, trace);
+        prepare_session(&session, self.allow_ffi, &dumps)?;
+
+        self.session = Option<FrontendSession>.Some(session);
+        self.complete = true;
+        accepted = true;
+        Result<(), AnalysisError>.Ok(())
     }
 
     // Source order is supplied by the caller; each buffer is copied into this owner.
@@ -224,22 +226,27 @@ impl FrontendDriver {
         for document in *documents {
             session.load_text(document.path.as_str(), document.text.as_str())?;
         }
-        prepare_session(&session, allow_ffi, Option<PreparationObserver&>.None)?;
+        let driver = Self(Option<FrontendSession>.Some(session), false, allow_ffi, false);
         accepted = true;
-        Result<Self, AnalysisError>.Ok(Self(Option<FrontendSession>.Some(session)))
+        let trace = CompilerTrace.disabled();
+        defer trace.drop();
+        driver.run(&trace)?;
+        Result<Self, AnalysisError>.Ok(driver)
     }
 
     pub fn prepared_session() -> FrontendSession& {
+        if !self.complete { @panic("E599: prepared frontend session is not available"); }
         match &self.session {
             Some(value) => value,
-            None => @panic("E599: frontend session has already been transferred"),
+            None => @panic("E599: prepared frontend session is not available"),
         }
     }
 
     pub fn take_session() -> FrontendSession {
+        if !self.complete { @panic("E599: prepared frontend session is not available"); }
         match self.session.take() {
             Some(value) => value,
-            None => @panic("E599: frontend session has already been transferred"),
+            None => @panic("E599: prepared frontend session is not available"),
         }
     }
 }

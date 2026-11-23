@@ -62,41 +62,29 @@ fn guard_site_name(site: GuardSite) -> str {
     match site { Before => "before", AfterAllocation => "after-allocation", BeforeRelease => "before-release", AfterArgumentLoad => "after-argument-load" }
 }
 
-pub struct StageDumps { pub enabled: bool, pub trace: Option<CompilerTrace&> }
+pub struct StageDumps { pub enabled: bool, pub trace: CompilerTrace& }
 
 impl PreparationObserver for StageDumps {
     pub fn begin(pass_id: str) -> u64 {
-        match self.trace {
-            Some(trace) => trace.start_pass(pass_id, "preparation", pass_id, ProfileKind.Pass),
-            None => 0u64,
-        }
+        self.trace.start_pass(pass_id, "preparation", pass_id, ProfileKind.Pass)
     }
 
     pub fn finish(pass_id: str, token: u64, success: bool) {
-        match self.trace {
-            Some(trace) => if success { trace.finish(pass_id, token); } else { trace.fail(pass_id, token); },
-            None => {},
-        }
+        if success { self.trace.finish(pass_id, token); } else { self.trace.fail(pass_id, token); }
     }
 
     pub fn stage_complete(stage: PreparationStage, session: FrontendSession&) -> Result<(), AnalysisError> {
         if !self.enabled { return Result<(), AnalysisError>.Ok(()); }
         let writes_dump = match stage { Lex | Desugar => true, Parse => false };
         if !writes_dump { return Result<(), AnalysisError>.Ok(()); }
-        let token = match self.trace {
-            Some(trace) => trace.start_pass("io.dump", "io", "stage dump", ProfileKind.Tool),
-            None => 0u64,
-        };
+        let token = self.trace.start_pass("io.dump", "io", "stage dump", ProfileKind.Tool);
         let result = match stage {
             Lex => tokens_dump(session),
             Desugar => ast_dump(session),
             Parse => Result<(), AnalysisError>.Ok(()),
         };
         let success = match &result { Ok(_) => true, Err(_) => false };
-        match self.trace {
-            Some(trace) => if success { trace.finish("io.dump", token); } else { trace.fail("io.dump", token); },
-            None => {},
-        }
+        self.finish("io.dump", token, success);
         result
     }
 }

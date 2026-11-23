@@ -1,8 +1,6 @@
 # YIAN
 
-YIAN is a statically typed programming language with a Python recovery compiler and a native compiler and package manager written in YIAN. The native tools are the daily compiler and package workflow; Python remains for the explicit cold-recovery build and the compatibility it needs.
-
-The native compiler, formatter and package manager live in the root `yianc/`, `fmt/` and `anx/` packages. Their shared JSON, TOML, LLVM, FFI and protocol libraries live under `bootstrap/`; the Python recovery compiler lives in `python/yianc/`.
+YIAN is a statically typed programming language. Its compiler, formatter and package manager are written in YIAN and live in the root `yianc/`, `fmt/` and `anx/` packages. Their shared JSON, TOML, LLVM, FFI and protocol libraries live under `bootstrap/`.
 
 ## Requirements
 
@@ -12,7 +10,7 @@ The native compiler, formatter and package manager live in the root `yianc/`, `f
 
 The installed `yianc`, `anx`, `yian-fmt`, and `yian-lsp` commands are native executables. The language server and `anx fmt` invoke the installed formatter; the language server uses the same installed toolchain resources and LLVM runtime libraries.
 
-For a fresh development environment, install the Python recovery dependency from the requirements file, then install the LLVM and native C build tools system-wide:
+For a fresh development environment, install the Python dependencies for bootstrapping from the requirements file, then install the LLVM and native C build tools system-wide:
 
 ```bash
 conda create -n yian-env python=3.12 -y
@@ -50,7 +48,7 @@ scripts/uninstall.sh --lsp-only --prefix "$HOME/.local"
 scripts/uninstall.sh --prefix "$HOME/.local"
 ```
 
-The cold bootstrap uses the Python recovery compiler once to build raw `yianc` from its fixed five-package closure, then uses staged native `yianc` to build raw `anx` and raw `yian-fmt` from their fixed seven- and six-package closures. It never selects installed `yianc`, `anx`, or `yian-fmt` from `PATH` and does not build the language server. The warm refresh freezes existing native seeds, rebuilds raw/O2 `yianc`, `anx`, `yian-fmt`, and `yian-lsp`, verifies the formatter smoke check and a stdio handshake against staged resources, and publishes the complete set transactionally.
+The cold bootstrap builds raw `yianc`, `anx` and `yian-fmt` from fixed source closures. It never selects installed `yianc`, `anx`, or `yian-fmt` from `PATH` and does not build the language server. The warm refresh freezes existing native seeds, rebuilds raw/O2 `yianc`, `anx`, `yian-fmt`, and `yian-lsp`, verifies the formatter smoke check and a stdio handshake against staged resources, and publishes the complete set transactionally.
 
 If working native `yianc` and `anx` commands are already available, refresh the full native toolchain, including the language server, without a Python runtime:
 
@@ -65,7 +63,7 @@ The standard library is not an implicit input. Include `lib/src` when compiling 
 ```bash
 yianc lib/src tests/basic/array/assign.an
 yianc -t ll lib/src tests/basic/array/assign.an -o build/assign.ll
-yianc --log-spec "main=DEBUG" lib/src tests/basic/array/assign.an
+yianc --log --log-spec "main=DEBUG" lib/src tests/basic/array/assign.an
 ```
 
 See the [compiler CLI guide](docs/compile_script.md) for targets, package maps, analysis, and diagnostics.
@@ -94,8 +92,8 @@ it with a nonempty `YIAN_FMT`, then the calling executable's directory, then `PA
 anx new myapp
 cd myapp
 anx run
-anx build profile         # Save compiler pass timings under build/profile/<run-id>/.
-anx run profile           # Build, run and save function/call-path statistics.
+anx build --profile       # Save compiler pass timings under build/profile/<run-id>/.
+anx run --runtime-profile # Build, run and save function/call-path statistics.
 anx check
 anx test
 anx fmt --check

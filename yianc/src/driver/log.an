@@ -1,0 +1,155 @@
+from yianc.config import CompilerAction, CompilerConfig;
+from std.core.convert import From;
+from std.core.fs import create_dir_all;
+from std.core.io import File, OpenMode, Write;
+from std.core.iter import Iterator, IntoIterator;
+from std.core.ops import Index;
+from std.core.path import Path;
+from std.core.process import env_var;
+
+pub enum LogLevel { Off, Error, Warn, Info, Debug, Trace }
+
+impl LogLevel {
+    fn name() -> str {
+        match self {
+            Off => "OFF",
+            Error => "ERROR",
+            Warn => "WARN",
+            Info => "INFO",
+            Debug => "DEBUG",
+            Trace => "TRACE",
+        }
+    }
+
+    fn allows(severity: Self) -> bool {
+        match self {
+            Off => false,
+            Error => severity matches Error,
+            Warn => severity matches Error | Warn,
+            Info => severity matches Error | Warn | Info,
+            Debug => severity matches Error | Warn | Info | Debug,
+            Trace => severity != Self.Off,
+        }
+    }
+}
+
+struct LogRule { channel: String, level: LogLevel, filter: String }
+impl Drop for LogRule { pub fn drop() { self.channel.drop(); self.filter.drop(); } }
+
+pub struct CompilerLog { rules: Vec<LogRule>, files: Vec<File> }
+
+fn parse_log_level(text: str) -> Option<LogLevel> {
+    let upper = String.new();
+    defer upper.drop();
+    for current in text.chars() {
+        upper.push(if u32(current) >= u32('a') && u32(current) <= u32('z') { char(u32(current) - 32) } else { current });
+    }
+    match upper.as_str() {
+        "OFF" => Option<LogLevel>.Some(LogLevel.Off),
+        "ERROR" => Option<LogLevel>.Some(LogLevel.Error),
+        "WARN" => Option<LogLevel>.Some(LogLevel.Warn),
+        "INFO" => Option<LogLevel>.Some(LogLevel.Info),
+        "DEBUG" => Option<LogLevel>.Some(LogLevel.Debug),
+        "TRACE" => Option<LogLevel>.Some(LogLevel.Trace),
+        _ => Option<LogLevel>.None,
+    }
+}
+
+fn part(text: str, begin: u64, end: u64) -> str { str.from_slice_unchecked(text.as_slice()[begin..end]) }
+
+fn environment(name: str) -> Result<Option<String>, String> {
+    match env_var(name) { Ok(value) => Result<Option<String>, String>.Ok(value), Err(problem) => { defer problem.drop(); Result<Option<String>, String>.Err(String.from(&problem.msg())) }, }
+}
+
+impl CompilerLog {
+    static pub fn new(config: CompilerConfig&) -> Result<Self, String> {
+        let log = Self(Vec<LogRule>.new(), Vec<File>.new());
+        match log.configure_logs(config, &config.action matches Check) {
+            Ok(_) => Result<Self, String>.Ok(log),
+            Err(problem) => { log.drop(); Result<Self, String>.Err(problem) },
+        }
+    }
+
+    fn configure_logs(config: CompilerConfig&, check: bool) -> Result<(), String> {
+        let spec = match &config.log_spec {
+            Some(value) => if !value.is_empty() { Option<String>.Some(String.from(&value.as_str())) } else { environment("YIAN_LOG")? },
+            None => environment("YIAN_LOG")?,
+        };
+        match &spec {
+            Some(value) => {
+                defer value.drop();
+                for entry in value.as_str().split(",") {
+                    let entry = entry.trim();
+                    if entry == "" { continue; }
+                    let split = match entry.find("@") { Some(offset) => offset, None => entry.as_slice().len(), };
+                    let declaration = part(entry, 0, split);
+                    let equal = match declaration.find("=") { Some(offset) => offset, None => return Result<(), String>.Err(String.from(&"invalid log spec: expected name=level")), };
+                    let channel = part(declaration, 0, equal).trim();
+                    let threshold = match parse_log_level(part(declaration, equal + 1, declaration.as_slice().len()).trim()) {
+                        Some(value) => value, None => return Result<(), String>.Err(String.from(&"unknown log level")),
+                    };
+                    let filter = if split < entry.as_slice().len() { part(entry, split + 1, entry.as_slice().len()).trim() } else { "" };
+                    self.rules.push(LogRule(String.from(&if channel == "" { "all" } else { channel }), threshold, String.from(&filter)));
+                }
+            },
+            None => {},
+        }
+        // Check mode has no default build log; an explicit --log-file is honored in both modes.
+        match &config.log_file {
+            Some(value) => { self.open(if value.is_empty() { "." } else { value.as_str() })?; },
+            None => { if !check { self.open("build/compile.log")?; } },
+        }
+        let file = environment("YIAN_LOG_FILE")?;
+        match &file { Some(value) => { defer value.drop(); if !value.is_empty() { self.open(value.as_str())?; } }, None => {}, }
+        Result<(), String>.Ok(())
+    }
+
+    fn open(path: str) -> Result<(), String> {
+        match Path.new(path).parent() {
+            Some(parent) => if parent.as_str() != "" {
+                match create_dir_all(parent.as_str()) { Ok(_) => {}, Err(problem) => { defer problem.drop(); return Result<(), String>.Err(String.from(&problem.msg())); }, }
+            },
+            None => {},
+        }
+        let file = match File.open(path, OpenMode.Write) {
+            Ok(value) => value, Err(problem) => { defer problem.drop(); return Result<(), String>.Err(String.from(&problem.msg())); },
+        };
+        self.files.push(file);
+        Result<(), String>.Ok(())
+    }
+
+    pub fn event(channel: str, severity: LogLevel, message: str, path: Option<str>) {
+        let threshold = LogLevel.Warn;
+        for rule in self.rules {
+            let prefix = String.from(&rule.channel.as_str());
+            defer prefix.drop();
+            prefix.push('.');
+            if rule.channel.as_str() == "all" || rule.channel.as_str() == channel || channel.starts_with(prefix.as_str()) {
+                threshold = rule.level;
+                match path { Some(value) => if !value.contains(rule.filter.as_str()) { return; }, None => {}, }
+                break;
+            }
+        }
+        if !threshold.allows(severity) { return; }
+        let text = String.from(&"[");
+        defer text.drop();
+        text.push_str(severity.name());
+        text.push_str("][");
+        text.push_str(channel);
+        text.push_str("] ");
+        text.push_str(message);
+        text.push('\n');
+        @eprint(text);
+        for file in self.files { match file.write_all(text.as_slice()) { Ok(_) => {}, Err(problem) => problem.drop(), } }
+    }
+
+}
+
+impl Drop for CompilerLog {
+    pub fn drop() {
+        for rule in self.rules { rule.drop(); }
+        for file in self.files { file.drop(); }
+        self.rules.drop();
+        self.files.drop();
+    }
+}

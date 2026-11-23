@@ -5,49 +5,17 @@
 模块上必须**成对**写目标三元组与配套的 data layout: 类型的具体布局(TargetData)、字段偏移、
 对齐填充都由 data layout 决定, 而中端优化 pass 与后端代码生成必须看到同一份。
 
-本编译器的目标固定为 `x86_64-unknown-linux-gnu`, 常量与落盘位置:
-
-- `python/yianc/codegen/llvm/base/module.py` 的 `TARGET_TRIPLE` / `TARGET_DATA_LAYOUT` 与
-  `apply_target(module)`;
-- `python/yianc/codegen/llvm/pipeline/translator.py` 与 `python/yianc/target_layout.py` 的
-  `type_size_provider`(编译期布局查询用的临时模块)都调用 `apply_target`;
-- `python/yianc/codegen/llvm/pipeline/emit.py` 在跑优化管线前再兜一道: 解析出的模块若没有
-  data layout, 就用目标机的 `target_data` 补上。
-
-优化器与后端必须使用一致布局。缺少 data layout 时，优化器计算的字段偏移与目标机布局可能不一致，
-因此目标信息在类型布局查询和目标文件发射两个入口都明确设置。
+`bootstrap/llvm/src/ir.an` 创建本机目标机，并将目标三元组和 data layout 一起写入 LLVM 模块。
+`yianc/src/codegen/session.an` 使用该布局进行类型大小查询，并检查 Linux x86-64 LP64 目标。
 
 ## 目标机与代码模型
 
-`python/yianc/codegen/llvm/pipeline/emit.py` 由目标三元组创建目标机: `Target.from_triple(...)` 之后调用
-`create_target_machine(reloc="pic", codemodel="small", opt=<O>)`。code model 必须显式给出:
-llvmlite 的默认值是 `jitdefault`, 在 64 位平台上等于 `large`, 后端于是不采用 ±2 GiB 的 PC
-相对寻址, 把每个函数地址与全局地址都经 `movabs` 物化进寄存器, 内部调用被编译成
-`call *%reg`。本编译产物是单个可执行文件或目标文件, 代码与静态数据都远小于 2 GiB, `small`
-与 clang 的默认一致: 内部调用是直接 `call`, 寻址是 RIP 相对。链接镜像若真的超过 ±2 GiB,
-失败方式是链接期重定位溢出。
+LLVM 绑定以 PIC relocation 和 small code model 创建目标机，后端代码生成级别来自优化配置。
 
 ## 指针表示（opaque pointer）
 
-数据指针在 LLVM 层统一是 opaque pointer `ptr`, 不带 pointee; pointee 信息只存在于 llvmlite 的
-`ir` 层(`ir.PointerType(pointee)` 得到 `T*`)。本编译器只在**函数指针**上保留有型指针, 其余指针
-构造都返回 `LLTypeCtx.ptr_type`(`ir.PointerType()`), 见 `codegen/llvm/base/types.py`。
-
-`MemoryEmitter` 以 YIAN 类型 ID 决定 load/store 的内存类型，并显式指定 `load` 的 `typ`。
-元素与聚合 GEP 先把地址重新定型为 opaque pointer，再指定 `source_etype`；步进由使用点的
-元素类型决定，不依赖地址在 llvmlite 中残留的 pointee 信息。
-
-`function/core.py` 的 `PrimitiveIR.bitcast` 在有型指针转 opaque pointer 时直接构造
-`CastInstr`，保证 llvmlite 侧重新定型；其他情况使用 `IRBuilder.bitcast`。
-函数指针保留 llvmlite 调用所需的函数签名；模块文本统一打印 `ptr`。
-
-指针构造不为取 pointee 而物化被指类型: `__handle_pointer` / `__handle_ref` / `__handle_slice`
-只看向 `ptr_type`, struct/enum 的 body 在 `__get_raw_type` 里一次填好。
-
-发射文本由 `codegen/llvm/base/module.py` 关闭 llvmlite 的有型指针打印
-(`ir.types.ir_layer_typed_pointers_enabled = False`), 因此模块里所有指针都是 `ptr`(`alloca`、
-全局变量也一样)。该开关只影响类型打印: llvmlite 侧的类型判定不变, 生成的机器码也不变
-。LLVM 层的类型语义使用 opaque pointer；目标布局仍由 data layout 决定。
+LLVM IR 使用 `ptr`。YIAN 的后端类型决定 load、store 和 GEP 所使用的值类型或元素类型。
+指针模式和安全义务由 CFG 记录，表示与下降规则见 [LLVM 代码生成](manual/12.llvm_codegen.md)。
 
 ## 链接性(Linkage)
 
@@ -63,10 +31,8 @@ llvmlite 的默认值是 `jitdefault`, 在 64 位平台上等于 `large`, 后端
 - `linkonce`: 表示该符号可以在多个模块中定义, 但链接器会选择其中一个定义进行链接.
 - `appending`: 用于全局变量, 表示该变量的定义会被追加到同名变量的末尾, 适用于数组等数据结构.
 
-本编译器的 `base/module.py::LLModule.declare` 把每个非入口函数标为 `internal`; 程序入口发射为
-`__yian_main`, 保持 `external`, 由 C 运行时包装的 `main` 调用。整个程序编译进同一个 module、
-交付物是单个可执行文件, 因此 YIAN 函数不构成对外 ABI。名字以 `index.` 开头的索引/检查辅助
-另加 `alwaysinline`, 使其在胖指针表示下体量变大后仍能内联。
+`yianc/src/codegen/llvm/module.an` 将普通生成函数标记为 `internal`，将程序入口发射为
+`__yian_main`。C 运行时的 `main` 调用该入口，外部 C 与运行时声明保留外部名称。
 
 ## 属性(Attribute)
 
@@ -109,16 +75,7 @@ llvmlite 的默认值是 `jitdefault`, 在 64 位平台上等于 `large`, 后端
 | `AllocSize`                | IntAttr  | 函数的返回值指向的内存块大小可以通过函数的参数计算得出                      |
 | `Memory`                   | IntAttr  | 通过位掩码指定函数对内存的访问行为                                          |
 
-本编译器按事实登记这些标注, 不把它们当作优化手段:
-
-- `base/intrinsics.py` 声明的外部函数一律加 `nounwind`, 因为 libc 的分配与随机数入口失败时
-  返回错误值而不抛异常。
-- `base/module.py` 声明的运行时入口 `__yian_runtime_fail` / `__yian_panic` 加 `cold`、`noreturn`、
-  `nounwind`; 堆池与锁表入口 `__secl_pool_alloc` / `__secl_pool_alloc_class` /
-  `__secl_pool_release` / `__secl_lock_bump_take` / `__secl_lock_release` 加 `nounwind`。
-- `llvm.memcpy.p0.p0.i64` 的两个指针实参加 `noalias`, `isvolatile` 实参加 `immarg`。
-
-据此 LLVM 的 FunctionAttrs 能为调用这些入口的 YIAN 函数推出 `nounwind`。
+YIAN 的运行时声明和插桩属性由原生 LLVM 下降及绑定设置。参见 [LLVM 代码生成](manual/12.llvm_codegen.md)。
 
 ### 参数属性(Parameter Attributes)
 
@@ -231,7 +188,7 @@ declare void @llvm.lifetime.end(ptr captures(none))
 ```
 
 这些标记供优化器推理栈对象存活范围，不执行 YIAN 的运行时撤销检查。YIAN 发射器不生成这些标记，
-其帧锁机制在 `pointer/safety.py` 中实现。
+其帧锁机制在 `yianc/src/codegen/llvm/pointer/safety.an` 中实现。
 接口见 [LLVM 22 生命周期标记](https://releases.llvm.org/22.1.0/docs/LangRef.html#llvm-lifetime-start-intrinsic)。
 
 ## 调试元数据(Debug Metadata)
@@ -252,10 +209,8 @@ YIAN 发射器使用普通浮点指令，不添加 `strictfp` 或受约束浮点
 - `malloc`, `free` 等内存分配函数
 - `llvm.expect` 用于提供分支预测信息
 
-本编译器(`python/yianc/codegen/llvm/base/intrinsics.py`)声明并使用 C 库的 `malloc`、`realloc`、
-`free`、`strlen`、`rand`, 以及 LLVM 内建 `llvm.memcpy.p0.p0.i64`、`llvm.memset.p0.i64`。
-非单字节元素的重复填充使用按元素类型特化的 `llvm.experimental.memset.pattern`；
-YIAN 的 `@memcpy` 下降到对应内建操作。
+`yianc/src/codegen/llvm/` 将内存复制、写入及尺寸查询等操作下降到 LLVM IR。
+例如枚举 place 快照使用 `llvm.memmove`，具体约束见 [LLVM 代码生成](manual/12.llvm_codegen.md)。
 
 ## LLVM 保护机制与 YIAN 检查
 

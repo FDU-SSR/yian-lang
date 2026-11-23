@@ -678,7 +678,7 @@ impl BuildProfile {
     }
 
     fn summary(build_ok: bool, exit_code: i32) -> String {
-        let output = String.from(&"anx build profile\n");
+        let output = String.from(&"anx compile profile\n");
         output.push_str("run id: ");
         output.push_str(self.run_id.as_str());
         output.push('\n');

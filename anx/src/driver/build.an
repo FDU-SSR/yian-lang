@@ -92,7 +92,7 @@ fn package_map_path(project: Project&) -> Result<PathBuf, String> {
     Result<PathBuf, String>.Ok(val=path)
 }
 
-fn load_project_for_build(start: str, profile: Option<BuildProfile&>) -> Option<Project> {
+pub fn load_project_for_build(start: str, profile: Option<BuildProfile&>) -> Option<Project> {
     let token = profile_begin(profile, "anx.project_load");
     let loaded = false;
     defer { profile_finish(profile, token, loaded); };
@@ -148,8 +148,10 @@ fn status_code(status: ExitStatus) -> i32 {
     match status { Exited(code) => code, Signaled(signal) => -signal }
 }
 
-fn compiler_command(program: str, project: Project&, target: str, level: Option<u8>, release: bool,
-    raw_pointers: bool, map_path: str, executable: Option<PathBuf>, runtime_profile_dir: Option<str>,
+pub struct CompileOptions { pub level: Option<u8>, pub release: bool, pub raw_pointers: bool, pub log: bool, pub log_spec: Option<str>, pub log_file: Option<str> }
+
+fn compiler_command(program: str, project: Project&, target: str, options: CompileOptions&,
+    map_path: str, executable: Option<PathBuf>, runtime_profile_dir: Option<str>,
     profile: Option<BuildProfile&>) -> bool {
     let command = Command.new(program);
     defer command.drop();
@@ -171,28 +173,33 @@ fn compiler_command(program: str, project: Project&, target: str, level: Option<
         Some(path) => { command.arg("-o"); command.arg(path.as_str()); path.drop(); },
         None => {},
     }
-    match level {
+    match options.level {
         Some(value) => {
             command.arg("-O");
             let text = u64(value).to_string();
             command.arg(text.as_str());
             text.drop();
         },
-        None => if release { command.arg("-O"); command.arg("3"); },
+        None => if options.release { command.arg("-O"); command.arg("3"); },
     }
-    if raw_pointers { command.arg("--raw-pointers"); }
+    if options.raw_pointers { command.arg("--raw-pointers"); }
+    if options.log {
+        command.arg("--log");
+        match options.log_spec { Some(value) => { command.arg("--log-spec"); command.arg(value); }, None => {}, }
+        match options.log_file { Some(value) => { command.arg("--log-file"); command.arg(value); }, None => {}, }
+    }
     match runtime_profile_dir {
         Some(directory) => { command.arg("--runtime-profile-dir"); command.arg(directory); },
         None => {},
     }
-    let optimization = match level { Some(value) => value, None => if release { 3u8 } else { 0u8 } };
-    let mode = if raw_pointers { "raw" } else { "fat" };
+    let optimization = match options.level { Some(value) => value, None => if options.release { 3u8 } else { 0u8 } };
+    let mode = if options.raw_pointers { "raw" } else { "fat" };
     let invocation = match profile {
         Some(value) => Option<InvocationHandle>.Some(value.begin_invocation(Option<str>.None, mode, target, optimization, program)),
         None => Option<InvocationHandle>.None,
     };
     match &invocation {
-        Some(value) => if !value.profile_path.is_empty() { command.arg("--profile-output"); command.arg(value.profile_path.as_str()); },
+        Some(value) => if !value.profile_path.is_empty() { command.arg("--profile"); command.arg("--profile-output"); command.arg(value.profile_path.as_str()); },
         None => {},
     }
     let files = project.build_files();
@@ -240,24 +247,19 @@ fn compiler_command(program: str, project: Project&, target: str, level: Option<
     status.success()
 }
 
-pub fn compile_project(start: str, target: str, level: Option<u8>, release: bool,
-    raw_pointers: bool, executable_out: Option<PathBuf>&) -> bool {
-    compile_project_profiled(start, target, level, release, raw_pointers, executable_out, Option<BuildProfile&>.None)
-}
-
-pub fn compile_project_profiled(start: str, target: str, level: Option<u8>, release: bool,
-    raw_pointers: bool, executable_out: Option<PathBuf>&, profile: Option<BuildProfile&>) -> bool {
+pub fn compile_project(start: str, target: str, options: CompileOptions&,
+    executable_out: Option<PathBuf>&, profile: Option<BuildProfile&>) -> bool {
     let loaded = load_project_for_build(start, profile);
     let project = match loaded { Some(value) => value, None => return false };
     defer project.drop();
-    compile_loaded(&project, target, level, release, raw_pointers, executable_out,
+    compile_loaded(&project, target, options, executable_out,
         Option<str>.None, Option<str>.None, profile)
 }
 
 // compile_loaded builds an already loaded root package. output_override selects the artifact
 // path, and runtime_profile_dir enables the instrumented build in the compiler.
-pub fn compile_loaded(project: Project&, target: str, level: Option<u8>, release: bool,
-    raw_pointers: bool, executable_out: Option<PathBuf>&, output_override: Option<str>,
+pub fn compile_loaded(project: Project&, target: str, options: CompileOptions&,
+    executable_out: Option<PathBuf>&, output_override: Option<str>,
     runtime_profile_dir: Option<str>, profile: Option<BuildProfile&>) -> bool {
     let compiler = match compiler_program() {
         Ok(value) => value,
@@ -292,7 +294,7 @@ pub fn compile_loaded(project: Project&, target: str, level: Option<u8>, release
         Some(path) => Option<PathBuf>.Some(PathBuf.from(path.as_str())),
         None => Option<PathBuf>.None,
     };
-    let succeeded = compiler_command(compiler.as_str(), project, target, level, release, raw_pointers,
+    let succeeded = compiler_command(compiler.as_str(), project, target, options,
         map.as_str(), command_output, runtime_profile_dir, profile);
     if !succeeded {
         match output.take() { Some(path) => path.drop(), None => {}, }

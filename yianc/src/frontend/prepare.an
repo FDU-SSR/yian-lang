@@ -30,14 +30,14 @@ pub enum PreparationStage {
     Desugar,
 }
 
-pub struct PreparationError {
+pub struct FrontendStageError {
     pub stage: PreparationStage,
     pub code: DiagnosticCode,
     pub message: String,
     pub span: Span
 }
 
-impl Drop for PreparationError {
+impl Drop for FrontendStageError {
     pub fn drop() {
         self.message.drop();
     }
@@ -63,40 +63,40 @@ impl Drop for PreparedFile {
 
 impl PreparedFile {
     // Parsing borrows tokens and transfers the completed tree into this owner only on success.
-    pub fn parse() -> Result<(), PreparationError> {
+    pub fn parse() -> Result<(), FrontendStageError> {
         let parser = Parser.new(&self.tokens);
         defer parser.drop();
         let tree = match parse_program(&parser) {
             Ok(value) => value,
             Err(error) => {
                 defer error.drop();
-                return Result<(), PreparationError>.Err(PreparationError(PreparationStage.Parse,
+                return Result<(), FrontendStageError>.Err(FrontendStageError(PreparationStage.Parse,
                     parse_code(error.message()), String.from(&error.message()), error.span()));
             },
         };
         self.tree = Option<AstTree>.Some(tree);
-        Result<(), PreparationError>.Ok(())
+        Result<(), FrontendStageError>.Ok(())
     }
 
-    pub fn desugar(path: str) -> Result<(), PreparationError> {
+    pub fn desugar(path: str) -> Result<(), FrontendStageError> {
         // Mutate the owned tree; an arena shallow copy would retain stale allocation metadata.
         match desugar(self.tree.unwrap(), path) {
-            Ok(_) => Result<(), PreparationError>.Ok(()),
+            Ok(_) => Result<(), FrontendStageError>.Ok(()),
             Err(error) => {
                 defer error.drop();
-                Result<(), PreparationError>.Err(PreparationError(PreparationStage.Desugar,
+                Result<(), FrontendStageError>.Err(FrontendStageError(PreparationStage.Desugar,
                     parse_code(error.message()), String.from(&error.message()), error.span()))
             },
         }
     }
 }
 
-pub fn prepare_file(id: SourceId, path: str, source: str, phase: FrontendPhase) -> Result<PreparedFile, PreparationError> {
+pub fn prepare_file(id: SourceId, path: str, source: str, phase: FrontendPhase) -> Result<PreparedFile, FrontendStageError> {
     let tokens = match Lexer.new(source).run() {
         Ok(value) => value,
         Err(error) => {
             defer error.drop();
-            return Result<PreparedFile, PreparationError>.Err(PreparationError(PreparationStage.Lex, lex_code(error.message()), String.from(&error.message()), error.span()));
+            return Result<PreparedFile, FrontendStageError>.Err(FrontendStageError(PreparationStage.Lex, lex_code(error.message()), String.from(&error.message()), error.span()));
         },
     };
 
@@ -110,7 +110,7 @@ pub fn prepare_file(id: SourceId, path: str, source: str, phase: FrontendPhase) 
 
     if phase == FrontendPhase.Tokens {
         transferred = true;
-        return Result<PreparedFile, PreparationError>.Ok(prepared);
+        return Result<PreparedFile, FrontendStageError>.Ok(prepared);
     }
 
     prepared.parse()?;
@@ -120,5 +120,5 @@ pub fn prepare_file(id: SourceId, path: str, source: str, phase: FrontendPhase) 
     }
 
     transferred = true;
-    Result<PreparedFile, PreparationError>.Ok(prepared)
+    Result<PreparedFile, FrontendStageError>.Ok(prepared)
 }
