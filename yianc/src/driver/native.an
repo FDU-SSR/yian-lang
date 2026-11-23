@@ -518,11 +518,11 @@ impl NativeDriver {
     }
 
     fn native_objects(directory: str, temporary: Vec<String>&, trace: Option<CompilerTrace&>) -> Result<NativeObjectSet, DriverError> {
-        let prepare_token = match &trace { Some(observer) => observer.start_pass("native.prepare", "native", "native input discovery", ProfileKind.Pass), None => 0u64, };
+        match &trace { Some(observer) => observer.start_pass("native.prepare", "native", "native input discovery", ProfileKind.Pass), None => {}, };
         let inputs_result = self.native_inputs();
         let inputs = match inputs_result {
-            Ok(value) => { match &trace { Some(observer) => observer.finish("native.prepare", prepare_token), None => {}, }; value },
-            Err(problem) => { match &trace { Some(observer) => observer.fail("native.prepare", prepare_token), None => {}, }; return Result<NativeObjectSet, DriverError>.Err(problem); },
+            Ok(value) => { match &trace { Some(observer) => observer.finish("native.prepare"), None => {}, }; value },
+            Err(problem) => { match &trace { Some(observer) => observer.fail("native.prepare"), None => {}, }; return Result<NativeObjectSet, DriverError>.Err(problem); },
         };
         defer inputs.drop();
         let objects = Vec<String>.new();
@@ -562,10 +562,10 @@ impl NativeDriver {
                 arguments.push(String.from(&source.as_str()));
                 arguments.push(String.from(&"-o"));
                 arguments.push(String.from(&output.as_str()));
-                let compile_token = match &trace { Some(observer) => observer.start_pass("native.c_shim_compile", "native", "compile LLVM native source", ProfileKind.Pass), None => 0u64, };
+                match &trace { Some(observer) => observer.start_pass("native.c_shim_compile", "native", "compile LLVM native source", ProfileKind.Pass), None => {}, };
                 match self.run(&arguments) {
-                    Ok(_) => match &trace { Some(observer) => observer.finish("native.c_shim_compile", compile_token), None => {}, },
-                    Err(problem) => { match &trace { Some(observer) => observer.fail("native.c_shim_compile", compile_token), None => {}, }; return Result<NativeObjectSet, DriverError>.Err(problem); },
+                    Ok(_) => match &trace { Some(observer) => observer.finish("native.c_shim_compile"), None => {}, },
+                    Err(problem) => { match &trace { Some(observer) => observer.fail("native.c_shim_compile"), None => {}, }; return Result<NativeObjectSet, DriverError>.Err(problem); },
                 }
                 objects.push(String.from(&output.as_str()));
                 index += 1u64;
@@ -597,10 +597,10 @@ impl NativeDriver {
             arguments.push(String.from(&source.path.as_str()));
             arguments.push(String.from(&"-o"));
             arguments.push(String.from(&output.as_str()));
-            let compile_token = match &trace { Some(observer) => observer.start_pass("native.c_shim_compile", "native", "compile package C shim", ProfileKind.Pass), None => 0u64, };
+            match &trace { Some(observer) => observer.start_pass("native.c_shim_compile", "native", "compile package C shim", ProfileKind.Pass), None => {}, };
             match self.run(&arguments) {
-                Ok(_) => match &trace { Some(observer) => observer.finish("native.c_shim_compile", compile_token), None => {}, },
-                Err(problem) => { match &trace { Some(observer) => observer.fail("native.c_shim_compile", compile_token), None => {}, }; return Result<NativeObjectSet, DriverError>.Err(problem); },
+                Ok(_) => match &trace { Some(observer) => observer.finish("native.c_shim_compile"), None => {}, },
+                Err(problem) => { match &trace { Some(observer) => observer.fail("native.c_shim_compile"), None => {}, }; return Result<NativeObjectSet, DriverError>.Err(problem); },
             }
             objects.push(String.from(&output.as_str()));
             c_index += 1u64;
@@ -611,11 +611,11 @@ impl NativeDriver {
     }
 
     fn link_flags(trace: Option<CompilerTrace&>) -> Result<Vec<String>, DriverError> {
-        let prepare_token = match &trace { Some(observer) => observer.start_pass("native.prepare", "native", "native link input discovery", ProfileKind.Pass), None => 0u64, };
+        match &trace { Some(observer) => observer.start_pass("native.prepare", "native", "native link input discovery", ProfileKind.Pass), None => {}, };
         let inputs_result = self.native_inputs();
         let inputs = match inputs_result {
-            Ok(value) => { match &trace { Some(observer) => observer.finish("native.prepare", prepare_token), None => {}, }; value },
-            Err(problem) => { match &trace { Some(observer) => observer.fail("native.prepare", prepare_token), None => {}, }; return Result<Vec<String>, DriverError>.Err(problem); },
+            Ok(value) => { match &trace { Some(observer) => observer.finish("native.prepare"), None => {}, }; value },
+            Err(problem) => { match &trace { Some(observer) => observer.fail("native.prepare"), None => {}, }; return Result<Vec<String>, DriverError>.Err(problem); },
         };
         defer inputs.drop();
         let flags = Vec<String>.new();
@@ -716,10 +716,10 @@ impl NativeDriver {
         for source in sources { arguments.push(String.from(&source.as_str())); }
         arguments.push(String.from(&"-o"));
         arguments.push(String.from(&runtime_object.as_str()));
-        let runtime_compile_token = match &trace { Some(observer) => observer.start_pass("native.runtime_compile", "native", "compile runtime C sources", ProfileKind.Pass), None => 0u64, };
+        match &trace { Some(observer) => observer.start_pass("native.runtime_compile", "native", "compile runtime C sources", ProfileKind.Pass), None => {}, };
         match self.run(&arguments) {
-            Ok(_) => match &trace { Some(observer) => observer.finish("native.runtime_compile", runtime_compile_token), None => {}, },
-            Err(problem) => { match &trace { Some(observer) => observer.fail("native.runtime_compile", runtime_compile_token), None => {}, }; return Result<Artifact, DriverError>.Err(problem); },
+            Ok(_) => match &trace { Some(observer) => observer.finish("native.runtime_compile"), None => {}, },
+            Err(problem) => { match &trace { Some(observer) => observer.fail("native.runtime_compile"), None => {}, }; return Result<Artifact, DriverError>.Err(problem); },
         }
         release_strings(&arguments);
         arguments = Vec<String>.new();
@@ -729,21 +729,21 @@ impl NativeDriver {
         arguments.push(String.from(&"rcs"));
         arguments.push(String.from(&archive.as_str()));
         arguments.push(String.from(&runtime_object.as_str()));
-        let archive_token = match &trace { Some(observer) => observer.start_pass("native.runtime_archive", "native", "archive runtime object", ProfileKind.Pass), None => 0u64, };
+        match &trace { Some(observer) => observer.start_pass("native.runtime_archive", "native", "archive runtime object", ProfileKind.Pass), None => {}, };
         match execute("llvm-ar", &arguments) {
-            Ok(archived) => { archived.drop(); match &trace { Some(observer) => observer.finish("native.runtime_archive", archive_token), None => {}, } },
-            Err(problem) => { match &trace { Some(observer) => observer.fail("native.runtime_archive", archive_token), None => {}, }; return Result<Artifact, DriverError>.Err(problem); },
+            Ok(archived) => { archived.drop(); match &trace { Some(observer) => observer.finish("native.runtime_archive"), None => {}, } },
+            Err(problem) => { match &trace { Some(observer) => observer.fail("native.runtime_archive"), None => {}, }; return Result<Artifact, DriverError>.Err(problem); },
         }
         release_strings(&arguments);
         arguments = Vec<String>.new();
 
         let native = self.native_objects(directory.as_str(), &temporary, trace)?;
         defer native.drop();
-        let flags_token = match &trace { Some(observer) => observer.start_pass("native.link_flags", "native", "resolve native link flags", ProfileKind.Pass), None => 0u64, };
+        match &trace { Some(observer) => observer.start_pass("native.link_flags", "native", "resolve native link flags", ProfileKind.Pass), None => {}, };
         let flags_result = self.link_flags(trace);
         let flags = match flags_result {
-            Ok(value) => { match &trace { Some(observer) => observer.finish("native.link_flags", flags_token), None => {}, }; value },
-            Err(problem) => { match &trace { Some(observer) => observer.fail("native.link_flags", flags_token), None => {}, }; return Result<Artifact, DriverError>.Err(problem); },
+            Ok(value) => { match &trace { Some(observer) => observer.finish("native.link_flags"), None => {}, }; value },
+            Err(problem) => { match &trace { Some(observer) => observer.fail("native.link_flags"), None => {}, }; return Result<Artifact, DriverError>.Err(problem); },
         };
         defer release_strings(&flags);
         let destination = Path.new(directory.as_str()).join("output");
@@ -772,10 +772,10 @@ impl NativeDriver {
         arguments.push(String.from(&match level { 0 => "-O0", 1 => "-O1", 2 => "-O2", _ => "-O3" }));
         arguments.push(String.from(&"-o"));
         arguments.push(String.from(&destination.as_str()));
-        let link_token = match &trace { Some(observer) => observer.start_pass("native.link", "native", "link native executable", ProfileKind.Pass), None => 0u64, };
+        match &trace { Some(observer) => observer.start_pass("native.link", "native", "link native executable", ProfileKind.Pass), None => {}, };
         match self.run(&arguments) {
-            Ok(_) => match &trace { Some(observer) => observer.finish("native.link", link_token), None => {}, },
-            Err(problem) => { match &trace { Some(observer) => observer.fail("native.link", link_token), None => {}, }; return Result<Artifact, DriverError>.Err(problem); },
+            Ok(_) => match &trace { Some(observer) => observer.finish("native.link"), None => {}, },
+            Err(problem) => { match &trace { Some(observer) => observer.fail("native.link"), None => {}, }; return Result<Artifact, DriverError>.Err(problem); },
         }
         match rename(destination.as_str(), output) {
             Ok(_) => Result<Artifact, DriverError>.Ok(Artifact(String.from(&output))),

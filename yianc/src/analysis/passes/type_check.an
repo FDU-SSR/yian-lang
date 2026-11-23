@@ -37,15 +37,15 @@ pub fn check_procedures(ctx: ResolutionContext&, options: AnalysisOptions&, diag
         }
     };
 
-    let entry_token = match options.trace {
+    match options.trace {
         Some(trace) => trace.start_pass("analysis.select_entry", "type_check", "analysis.select_entry", ProfileKind.Pass),
-        None => 0u64,
+        None => {},
     };
     let entry_result = select_entry(ctx, options);
     match options.trace {
         Some(trace) => match &entry_result {
-            Ok(_) => trace.finish("analysis.select_entry", entry_token),
-            Err(_) => trace.fail("analysis.select_entry", entry_token),
+            Ok(_) => trace.finish("analysis.select_entry"),
+            Err(_) => trace.fail("analysis.select_entry"),
         },
         None => {},
     }

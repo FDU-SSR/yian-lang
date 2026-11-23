@@ -14,8 +14,8 @@ from yianc.frontend.source import SourceManager;
 
 const EXIT_FAILURE: i32 = 1;
 
-fn fail_source_preparation(trace: CompilerTrace&, started: u64, diagnostic: Diagnostic&) -> ! {
-    trace.fail("source_preparation", started);
+fn fail_source_preparation(trace: CompilerTrace&, diagnostic: Diagnostic&) -> ! {
+    trace.fail("source_preparation");
     report(diagnostic, Option<SourceManager&>.None);
     exit(EXIT_FAILURE);
 }
@@ -35,18 +35,18 @@ fn main() {
     defer trace.drop();
     defer trace.finalize(true);
 
-    let total = trace.start_pass("compiler.total", "main", "compiler.total", ProfileKind.Stage);
+    trace.start_pass("compiler.total", "main", "compiler.total", ProfileKind.Stage);
     if !check { trace.event("main", LogLevel.Info, "compiling source inputs", Option<str>.None); }
 
-    let source_started = trace.start_pass("source_preparation", "main", "source preparation", ProfileKind.Stage);
+    trace.start_pass("source_preparation", "main", "source preparation", ProfileKind.Stage);
     let frontend = match FrontendDriver.new(&config, &trace) {
         Ok(value) => value,
-        Err(problem) => fail_source_preparation(&trace, source_started, &problem.diagnostic),
+        Err(problem) => fail_source_preparation(&trace, &problem.diagnostic),
     };
-    if let Err(problem) = frontend.run(&trace) {
-        fail_source_preparation(&trace, source_started, &problem.diagnostic);
+    if let Err(problem) = frontend.run() {
+        fail_source_preparation(&trace, &problem.diagnostic);
     }
-    trace.finish("source_preparation", source_started);
+    trace.finish("source_preparation");
 
     let middle = MiddleEndDriver.new(frontend.take_session(), config.raw_pointers);
     defer middle.drop();
@@ -77,7 +77,7 @@ fn main() {
             "native.prepare", "native.runtime_compile", "native.runtime_archive", "native.c_shim_compile", "native.link_flags", "native.link"] {
             trace.skip(*pass_id, "check stops after semantic analysis");
         }
-        trace.finish("compiler.total", total);
+        trace.finish("compiler.total");
         if !ok { exit(EXIT_FAILURE); }
         return;
     }
@@ -89,14 +89,14 @@ fn main() {
     options.verify_hir = true;
     options.sizes = Option<TypeSizeProvider&>.Some(backend.size_provider());
     options.trace = Option<CompilerTrace&>.Some(&trace);
-    let analyzed_at = trace.start_pass("semantic_analysis", "main", "semantic analysis", ProfileKind.Stage);
+    trace.start_pass("semantic_analysis", "main", "semantic analysis", ProfileKind.Stage);
     if !middle.analyze(options, config.dump) {
-        trace.fail("semantic_analysis", analyzed_at);
+        trace.fail("semantic_analysis");
         exit(EXIT_FAILURE);
     }
-    trace.finish("semantic_analysis", analyzed_at);
+    trace.finish("semantic_analysis");
 
     let ok = backend.compile(&config, middle.output(), Option<CompilerTrace&>.Some(&trace));
-    trace.finish("compiler.total", total);
+    trace.finish("compiler.total");
     if !ok { exit(EXIT_FAILURE); }
 }

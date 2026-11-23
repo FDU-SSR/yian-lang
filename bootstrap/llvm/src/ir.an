@@ -1043,9 +1043,9 @@ pub(ffi) ffi fn try_module_ir(session: IrSession&) -> Result<Vec<u8>, Vec<u8>> {
 
 pub(ffi) ffi fn try_module_ir_observed(session: IrSession&, observer: Option<OperationObserver&>) -> Result<Vec<u8>, Vec<u8>> {
     checked_session(session);
-    let token = operation_begin(observer, OperationKind.SerializeIr);
+    operation_begin(observer, OperationKind.SerializeIr);
     let success = false;
-    defer operation_end(observer, OperationKind.SerializeIr, token, success);
+    defer operation_end(observer, OperationKind.SerializeIr, success);
     let message = LLVMPrintModuleToString(session.module);
     if message == @ffi_null<c_char>() {
         return Result<Vec<u8>, Vec<u8>>.Err(msg=error_bytes("LLVM module printing failed"));
@@ -1069,9 +1069,9 @@ pub(ffi) ffi fn try_module_bitcode(session: IrSession&) -> Result<Vec<u8>, Vec<u
 
 pub(ffi) ffi fn try_module_bitcode_observed(session: IrSession&, observer: Option<OperationObserver&>) -> Result<Vec<u8>, Vec<u8>> {
     checked_session(session);
-    let token = operation_begin(observer, OperationKind.SerializeBitcode);
+    operation_begin(observer, OperationKind.SerializeBitcode);
     let success = false;
-    defer operation_end(observer, OperationKind.SerializeBitcode, token, success);
+    defer operation_end(observer, OperationKind.SerializeBitcode, success);
     let buffer = LLVMWriteBitcodeToMemoryBuffer(session.module);
     if buffer == @ffi_null<LLVMOpaqueMemoryBuffer>() {
         return Result<Vec<u8>, Vec<u8>>.Err(msg=error_bytes("LLVM bitcode emission failed"));
@@ -1095,27 +1095,27 @@ pub(ffi) ffi fn optimize_session_observed(session: IrSession&, observer: Option<
     verify_observed(session, observer, OperationKind.VerifyAfterOptimization)
 }
 
-fn operation_begin(observer: Option<OperationObserver&>, operation: OperationKind) -> u64 {
-    match observer { Some(value) => value.begin(operation), None => 0u64 }
+fn operation_begin(observer: Option<OperationObserver&>, operation: OperationKind) {
+    match observer { Some(value) => value.begin(operation), None => {}, }
 }
 
-fn operation_end(observer: Option<OperationObserver&>, operation: OperationKind, token: u64, success: bool) {
-    match observer { Some(value) => value.end(operation, token, success), None => {}, }
+fn operation_end(observer: Option<OperationObserver&>, operation: OperationKind, success: bool) {
+    match observer { Some(value) => value.end(operation, success), None => {}, }
 }
 
 ffi fn verify_observed(session: IrSession&, observer: Option<OperationObserver&>, operation: OperationKind) -> Result<bool, Vec<u8>> {
-    let token = operation_begin(observer, operation);
+    operation_begin(observer, operation);
     let success = false;
-    defer operation_end(observer, operation, token, success);
+    defer operation_end(observer, operation, success);
     let result = verify_module(session)?;
     success = true;
     Result<bool, Vec<u8>>.Ok(val=result)
 }
 
 ffi fn optimize_observed(session: IrSession&, observer: Option<OperationObserver&>) -> Result<(), Vec<u8>> {
-    let token = operation_begin(observer, OperationKind.Optimize);
+    operation_begin(observer, OperationKind.Optimize);
     let success = false;
-    defer operation_end(observer, OperationKind.Optimize, token, success);
+    defer operation_end(observer, OperationKind.Optimize, success);
     let pipeline = match session.optimization_level {
         1u8 => checked_c_string("default<O1>"),
         2u8 => checked_c_string("default<O2>"),
@@ -1162,9 +1162,9 @@ pub(ffi) ffi fn module_assembly_observed(session: IrSession&, observer: Option<O
 
 ffi fn module_native_observed(session: IrSession&, assembly: bool, observer: Option<OperationObserver&>) -> Result<Vec<u8>, Vec<u8>> {
     optimize_session_observed(session, observer)?;
-    let token = operation_begin(observer, OperationKind.EmitNative);
+    operation_begin(observer, OperationKind.EmitNative);
     let success = false;
-    defer operation_end(observer, OperationKind.EmitNative, token, success);
+    defer operation_end(observer, OperationKind.EmitNative, success);
     let output = @ffi_null<LLVMOpaqueMemoryBuffer>();
     let emit_message = @ffi_null<c_char>();
     let emit_status = LLVMTargetMachineEmitToMemoryBuffer(

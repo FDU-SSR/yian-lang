@@ -87,13 +87,13 @@ impl Drop for Emission {
     pub fn drop() { self.bytes.drop(); }
 }
 
-fn start_profile(trace: Option<CompilerTrace&>, pass_id: str) -> u64 {
-    match trace { Some(value) => value.start_pass(pass_id, "backend", pass_id, ProfileKind.Pass), None => 0u64 }
+fn start_profile(trace: Option<CompilerTrace&>, pass_id: str) {
+    match trace { Some(value) => value.start_pass(pass_id, "backend", pass_id, ProfileKind.Pass), None => {}, }
 }
 
-fn end_profile(trace: Option<CompilerTrace&>, pass_id: str, token: u64, success: bool) {
+fn end_profile(trace: Option<CompilerTrace&>, pass_id: str, success: bool) {
     match trace {
-        Some(value) => if success { value.finish(pass_id, token); } else { value.fail(pass_id, token); },
+        Some(value) => if success { value.finish(pass_id); } else { value.fail(pass_id); },
         None => {},
     }
 }
@@ -111,9 +111,9 @@ impl BackendSession {
     }
 
     static pub fn new_observed(analysis: AnalysisSession&, options: BackendOptions, trace: Option<CompilerTrace&>) -> Result<Self, CodegenError> {
-        let token = start_profile(trace, "backend.initialize");
+        start_profile(trace, "backend.initialize");
         let success = false;
-        defer end_profile(trace, "backend.initialize", token, success);
+        defer end_profile(trace, "backend.initialize", success);
         if options.raw_pointers != analysis.raw_pointers || options.optimization > 3u8 {
             return Result<Self, CodegenError>.Err(CodegenError.invalid("inconsistent backend configuration"));
         }

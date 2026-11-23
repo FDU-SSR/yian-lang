@@ -17,12 +17,12 @@ from std.core.fs import try_exists;
 from std.core.iter import Iterator, IntoIterator;
 from std.core.path import Path;
 
-fn start_profile(trace: CompilerTrace&, pass_id: str) -> u64 {
-    trace.start_pass(pass_id, "input", pass_id, ProfileKind.Pass)
+fn start_profile(trace: CompilerTrace&, pass_id: str) {
+    trace.start_pass(pass_id, "input", pass_id, ProfileKind.Pass);
 }
 
-fn finish_profile(trace: CompilerTrace&, pass_id: str, token: u64, success: bool) {
-    if success { trace.finish(pass_id, token); } else { trace.fail(pass_id, token); }
+fn finish_profile(trace: CompilerTrace&, pass_id: str, success: bool) {
+    if success { trace.finish(pass_id); } else { trace.fail(pass_id); }
 }
 
 fn release_paths(paths: Vec<String>&) {
@@ -42,11 +42,11 @@ fn prepare_session(session: FrontendSession&, allow_ffi: bool, observer: Prepara
     let index = 0u64;
     while index < session.source_count() {
         let source = SourceId(index);
-        let lex_token = observer.begin("frontend.lex");
+        observer.begin("frontend.lex");
         let prepared_result = session.prepare_source(source);
         match &prepared_result {
-            Ok(_) => observer.finish("frontend.lex", lex_token, true),
-            Err(_) => observer.finish("frontend.lex", lex_token, false),
+            Ok(_) => observer.finish("frontend.lex", true),
+            Err(_) => observer.finish("frontend.lex", false),
         }
         let prepared = match prepared_result {
             Ok(value) => value,
@@ -59,9 +59,9 @@ fn prepare_session(session: FrontendSession&, allow_ffi: bool, observer: Prepara
             },
         };
         let file = session.source(source).unwrap();
-        let classify_token = observer.begin("input.classify_sources");
+        observer.begin("input.classify_sources");
         let permissions = session.classify(file.canonical_path(), allow_ffi);
-        observer.finish("input.classify_sources", classify_token, true);
+        observer.finish("input.classify_sources", true);
         session.accept(prepared, permissions);
         index += 1u64;
     }
@@ -70,11 +70,11 @@ fn prepare_session(session: FrontendSession&, allow_ffi: bool, observer: Prepara
     index = 0u64;
     while index < session.len() {
         let unit = session.unit_at(index).unwrap();
-        let token = observer.begin("frontend.parse");
+        observer.begin("frontend.parse");
         let result = unit.prepared.parse();
         let success = match &result { Ok(_) => true, Err(_) => false };
         let finished = session.finish_preparation(result, unit.source);
-        observer.finish("frontend.parse", token, success);
+        observer.finish("frontend.parse", success);
         finished?;
         index += 1u64;
     }
@@ -84,11 +84,11 @@ fn prepare_session(session: FrontendSession&, allow_ffi: bool, observer: Prepara
     while index < session.len() {
         let unit = session.unit_at(index).unwrap();
         let file = session.source(unit.source).unwrap();
-        let token = observer.begin("frontend.desugar");
+        observer.begin("frontend.desugar");
         let result = unit.prepared.desugar(file.path());
         let success = match &result { Ok(_) => true, Err(_) => false };
         let finished = session.finish_preparation(result, unit.source);
-        observer.finish("frontend.desugar", token, success);
+        observer.finish("frontend.desugar", success);
         finished?;
         index += 1u64;
     }
@@ -99,6 +99,7 @@ fn prepare_session(session: FrontendSession&, allow_ffi: bool, observer: Prepara
 // The frontend driver owns package/source/trust setup and the frontend pass sequence.
 pub struct FrontendDriver {
     session: Option<FrontendSession>,
+    trace: CompilerTrace&,
     complete: bool,
     allow_ffi: bool,
     dump: bool,
@@ -108,10 +109,10 @@ impl FrontendDriver {
     static pub fn new(config: CompilerConfig&, trace: CompilerTrace&) -> Result<Self, AnalysisError> {
         let packages = match &config.packages {
             Some(path) => {
-                let token = start_profile(trace, "input.package_map");
+                start_profile(trace, "input.package_map");
                 match PackageMap.load(path.as_str()) {
-                    Ok(value) => { finish_profile(trace, "input.package_map", token, true); Option<PackageMap>.Some(value) },
-                    Err(problem) => { finish_profile(trace, "input.package_map", token, false); return Result<Self, AnalysisError>.Err(problem); },
+                    Ok(value) => { finish_profile(trace, "input.package_map", true); Option<PackageMap>.Some(value) },
+                    Err(problem) => { finish_profile(trace, "input.package_map", false); return Result<Self, AnalysisError>.Err(problem); },
                 }
             },
             None => {
@@ -124,11 +125,11 @@ impl FrontendDriver {
             if !packages_transferred { match &packages { Some(value) => value.drop(), None => {}, } }
         };
         let map = match &packages { Some(value) => Option<PackageMap&>.Some(value), None => Option<PackageMap&>.None, };
-        let roots_token = start_profile(trace, "input.source_roots");
+        start_profile(trace, "input.source_roots");
         let roots_result = source_roots(config, map);
         match &roots_result {
-            Ok(_) => finish_profile(trace, "input.source_roots", roots_token, true),
-            Err(_) => finish_profile(trace, "input.source_roots", roots_token, false),
+            Ok(_) => finish_profile(trace, "input.source_roots", true),
+            Err(_) => finish_profile(trace, "input.source_roots", false),
         }
         let roots = roots_result?;
         defer roots.drop();
@@ -168,11 +169,11 @@ impl FrontendDriver {
         let accepted = false;
         defer { if !accepted { session.drop(); } };
 
-        let collect_token = start_profile(trace, "input.collect_sources");
+        start_profile(trace, "input.collect_sources");
         let paths_result = collect_sources(&config.inputs);
         match &paths_result {
-            Ok(_) => finish_profile(trace, "input.collect_sources", collect_token, true),
-            Err(_) => finish_profile(trace, "input.collect_sources", collect_token, false),
+            Ok(_) => finish_profile(trace, "input.collect_sources", true),
+            Err(_) => finish_profile(trace, "input.collect_sources", false),
         }
         let paths = match paths_result {
             Ok(value) => value,
@@ -184,19 +185,19 @@ impl FrontendDriver {
         defer release_paths(&paths);
 
         for path in paths {
-            let token = start_profile(trace, "input.read_sources");
+            start_profile(trace, "input.read_sources");
             let result = session.load_source(path.as_str());
             match &result {
-                Ok(_) => finish_profile(trace, "input.read_sources", token, true),
-                Err(_) => finish_profile(trace, "input.read_sources", token, false),
+                Ok(_) => finish_profile(trace, "input.read_sources", true),
+                Err(_) => finish_profile(trace, "input.read_sources", false),
             }
             result?;
         }
         accepted = true;
-        Result<Self, AnalysisError>.Ok(Self(Option<FrontendSession>.Some(session), false, config.allow_ffi, config.dump))
+        Result<Self, AnalysisError>.Ok(Self(Option<FrontendSession>.Some(session), trace, false, config.allow_ffi, config.dump))
     }
 
-    pub fn run(trace: CompilerTrace&) -> Result<(), AnalysisError> {
+    pub fn run() -> Result<(), AnalysisError> {
         if self.complete {
             return Result<(), AnalysisError>.Err(AnalysisError.internal("frontend driver has already run"));
         }
@@ -207,7 +208,7 @@ impl FrontendDriver {
         let accepted = false;
         defer { if !accepted { session.drop(); } };
 
-        let dumps = StageDumps(self.dump, trace);
+        let dumps = StageDumps(self.dump, self.trace);
         prepare_session(&session, self.allow_ffi, &dumps)?;
 
         self.session = Option<FrontendSession>.Some(session);
@@ -218,7 +219,7 @@ impl FrontendDriver {
 
     // Source order is supplied by the caller; each buffer is copied into this owner.
     static pub fn prepare_documents(documents: Vec<SourceDocument>&, trust: SourceTrust,
-        packages: Option<PackageMap>, allow_ffi: bool) -> Result<Self, AnalysisError> {
+        packages: Option<PackageMap>, allow_ffi: bool, trace: CompilerTrace&) -> Result<Self, AnalysisError> {
         let session = FrontendSession.new(trust, packages);
         let accepted = false;
         defer { if !accepted { session.drop(); } };
@@ -226,11 +227,9 @@ impl FrontendDriver {
         for document in *documents {
             session.load_text(document.path.as_str(), document.text.as_str())?;
         }
-        let driver = Self(Option<FrontendSession>.Some(session), false, allow_ffi, false);
+        let driver = Self(Option<FrontendSession>.Some(session), trace, false, allow_ffi, false);
         accepted = true;
-        let trace = CompilerTrace.disabled();
-        defer trace.drop();
-        driver.run(&trace)?;
+        driver.run()?;
         Result<Self, AnalysisError>.Ok(driver)
     }
 

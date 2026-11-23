@@ -32,23 +32,23 @@ pub struct MiddleEndDriver {
     output: Option<AnalysisOutput>,
 }
 
-fn start_stage(options: AnalysisOptions&, pass_id: str, stage: AnalysisStage) -> u64 {
+fn start_stage(options: AnalysisOptions&, pass_id: str, stage: AnalysisStage) {
     match options.trace {
         Some(trace) => trace.start_pass(pass_id, stage.name(), pass_id, ProfileKind.Pass),
-        None => 0,
-    }
-}
-
-fn finish_stage(options: AnalysisOptions&, pass_id: str, started: u64, success: bool) {
-    match options.trace {
-        Some(trace) => if success { trace.finish(pass_id, started); } else { trace.fail(pass_id, started); },
         None => {},
     }
 }
 
-fn at_stage(result: Result<(), AnalysisError>, pass_id: str, stage: AnalysisStage, options: AnalysisOptions&, started: u64) -> Result<(), AnalysisError> {
+fn finish_stage(options: AnalysisOptions&, pass_id: str, success: bool) {
+    match options.trace {
+        Some(trace) => if success { trace.finish(pass_id); } else { trace.fail(pass_id); },
+        None => {},
+    }
+}
+
+fn at_stage(result: Result<(), AnalysisError>, pass_id: str, stage: AnalysisStage, options: AnalysisOptions&) -> Result<(), AnalysisError> {
     let success = match &result { Ok(_) => true, Err(_) => false };
-    finish_stage(options, pass_id, started, success);
+    finish_stage(options, pass_id, success);
     match result { Ok(_) => Result<(), AnalysisError>.Ok(()), Err(problem) => Result<(), AnalysisError>.Err(problem.with_stage(stage)) }
 }
 
@@ -92,44 +92,44 @@ impl MiddleEndDriver {
         let completed = false;
         defer { session.complete_analysis(completed); };
 
-        let started = start_stage(&options, "analysis.restricted", AnalysisStage.Restricted);
-        at_stage(check_restricted(session), "analysis.restricted", AnalysisStage.Restricted, &options, started)?;
-        let context_started = start_stage(&options, "analysis.context", AnalysisStage.Resolve);
+        start_stage(&options, "analysis.restricted", AnalysisStage.Restricted);
+        at_stage(check_restricted(session), "analysis.restricted", AnalysisStage.Restricted, &options)?;
+        start_stage(&options, "analysis.context", AnalysisStage.Resolve);
         let context_result = ResolutionContext.new(session, options.sizes);
         match &context_result {
-            Ok(_) => finish_stage(&options, "analysis.context", context_started, true),
-            Err(_) => finish_stage(&options, "analysis.context", context_started, false),
+            Ok(_) => finish_stage(&options, "analysis.context", true),
+            Err(_) => finish_stage(&options, "analysis.context", false),
         }
         let context = context_result?;
         defer context.drop();
-        let declaration_token = start_stage(&options, "analysis.collect_declarations", AnalysisStage.Resolve);
-        at_stage(collect_declarations(&context), "analysis.collect_declarations", AnalysisStage.Resolve, &options, declaration_token)?;
-        let import_token = start_stage(&options, "analysis.resolve_imports", AnalysisStage.Resolve);
-        at_stage(resolve_imports(&context), "analysis.resolve_imports", AnalysisStage.Resolve, &options, import_token)?;
-        let definition_token = start_stage(&options, "analysis.resolve_definitions", AnalysisStage.Resolve);
-        at_stage(resolve_definitions(&context), "analysis.resolve_definitions", AnalysisStage.Resolve, &options, definition_token)?;
-        let impl_token = start_stage(&options, "analysis.resolve_impls", AnalysisStage.Resolve);
-        at_stage(resolve_impls(&context), "analysis.resolve_impls", AnalysisStage.Resolve, &options, impl_token)?;
-        let automatic_token = start_stage(&options, "analysis.register_automatic", AnalysisStage.Resolve);
-        at_stage(register_automatic(&context), "analysis.register_automatic", AnalysisStage.Resolve, &options, automatic_token)?;
-        let constant_token = start_stage(&options, "analysis.evaluate_constants", AnalysisStage.Resolve);
-        at_stage(evaluate_constants(&context), "analysis.evaluate_constants", AnalysisStage.Resolve, &options, constant_token)?;
-        let finalize_token = start_stage(&options, "analysis.finalize_types", AnalysisStage.Finalize);
-        at_stage(finalize_types(&context), "analysis.finalize_types", AnalysisStage.Finalize, &options, finalize_token)?;
-        let check_impl_token = start_stage(&options, "analysis.check_impls", AnalysisStage.Resolve);
-        at_stage(check_impls(&context), "analysis.check_impls", AnalysisStage.Resolve, &options, check_impl_token)?;
-        let validate_token = start_stage(&options, "analysis.validate_declarations", AnalysisStage.Resolve);
-        at_stage(validate_declarations(&context), "analysis.validate_declarations", AnalysisStage.Resolve, &options, validate_token)?;
+        start_stage(&options, "analysis.collect_declarations", AnalysisStage.Resolve);
+        at_stage(collect_declarations(&context), "analysis.collect_declarations", AnalysisStage.Resolve, &options)?;
+        start_stage(&options, "analysis.resolve_imports", AnalysisStage.Resolve);
+        at_stage(resolve_imports(&context), "analysis.resolve_imports", AnalysisStage.Resolve, &options)?;
+        start_stage(&options, "analysis.resolve_definitions", AnalysisStage.Resolve);
+        at_stage(resolve_definitions(&context), "analysis.resolve_definitions", AnalysisStage.Resolve, &options)?;
+        start_stage(&options, "analysis.resolve_impls", AnalysisStage.Resolve);
+        at_stage(resolve_impls(&context), "analysis.resolve_impls", AnalysisStage.Resolve, &options)?;
+        start_stage(&options, "analysis.register_automatic", AnalysisStage.Resolve);
+        at_stage(register_automatic(&context), "analysis.register_automatic", AnalysisStage.Resolve, &options)?;
+        start_stage(&options, "analysis.evaluate_constants", AnalysisStage.Resolve);
+        at_stage(evaluate_constants(&context), "analysis.evaluate_constants", AnalysisStage.Resolve, &options)?;
+        start_stage(&options, "analysis.finalize_types", AnalysisStage.Finalize);
+        at_stage(finalize_types(&context), "analysis.finalize_types", AnalysisStage.Finalize, &options)?;
+        start_stage(&options, "analysis.check_impls", AnalysisStage.Resolve);
+        at_stage(check_impls(&context), "analysis.check_impls", AnalysisStage.Resolve, &options)?;
+        start_stage(&options, "analysis.validate_declarations", AnalysisStage.Resolve);
+        at_stage(validate_declarations(&context), "analysis.validate_declarations", AnalysisStage.Resolve, &options)?;
         let report_value = AnalysisReport.new();
         for warning in context.warnings { report_value.diagnostics.push(*warning); }
         context.warnings.clear();
         let report_transferred = false;
         defer { if !report_transferred { report_value.drop(); } };
-        let procedure_token = start_stage(&options, "analysis.check_procedures", AnalysisStage.TypeCheck);
+        start_stage(&options, "analysis.check_procedures", AnalysisStage.TypeCheck);
         let checked = check_procedures(&context, &options, &report_value.diagnostics);
         match &checked {
-            Ok(_) => finish_stage(&options, "analysis.check_procedures", procedure_token, true),
-            Err(_) => finish_stage(&options, "analysis.check_procedures", procedure_token, false),
+            Ok(_) => finish_stage(&options, "analysis.check_procedures", true),
+            Err(_) => finish_stage(&options, "analysis.check_procedures", false),
         }
         let output = match checked {
             Ok(value) => value,
@@ -141,11 +141,11 @@ impl MiddleEndDriver {
                 output.drop();
             }
         };
-        let normalize_token = start_stage(&options, "analysis.normalize_address_storage", AnalysisStage.TypeCheck);
+        start_stage(&options, "analysis.normalize_address_storage", AnalysisStage.TypeCheck);
         let normalized = normalize_address_storage(&context, &output);
         match &normalized {
-            Ok(_) => finish_stage(&options, "analysis.normalize_address_storage", normalize_token, true),
-            Err(_) => finish_stage(&options, "analysis.normalize_address_storage", normalize_token, false),
+            Ok(_) => finish_stage(&options, "analysis.normalize_address_storage", true),
+            Err(_) => finish_stage(&options, "analysis.normalize_address_storage", false),
         }
         match normalized {
             Ok(_) => {},
@@ -153,11 +153,11 @@ impl MiddleEndDriver {
         }
         // Successful output is concretely typed regardless of the optional HIR verifier.
         if report_value.ok() {
-            let finalize_token = start_stage(&options, "analysis.finalize_hir_types", AnalysisStage.TypeCheck);
+            start_stage(&options, "analysis.finalize_hir_types", AnalysisStage.TypeCheck);
             let finalized = finalize_hir_types(&context, &output);
             match &finalized {
-                Ok(_) => finish_stage(&options, "analysis.finalize_hir_types", finalize_token, true),
-                Err(_) => finish_stage(&options, "analysis.finalize_hir_types", finalize_token, false),
+                Ok(_) => finish_stage(&options, "analysis.finalize_hir_types", true),
+                Err(_) => finish_stage(&options, "analysis.finalize_hir_types", false),
             }
             match finalized {
                 Ok(_) => {},
@@ -166,22 +166,22 @@ impl MiddleEndDriver {
         }
         // A callee failure leaves a partial call graph. It is never exported to the backend.
         if report_value.ok() && options.verify_hir {
-            let token = start_stage(&options, "analysis.verify_hir", AnalysisStage.TypeCheck);
-            at_stage(verify_hir(&context, &output), "analysis.verify_hir", AnalysisStage.TypeCheck, &options, token)?;
+            start_stage(&options, "analysis.verify_hir", AnalysisStage.TypeCheck);
+            at_stage(verify_hir(&context, &output), "analysis.verify_hir", AnalysisStage.TypeCheck, &options)?;
         } else {
             match options.trace { Some(trace) => trace.skip("analysis.verify_hir", "disabled or earlier diagnostics prevent HIR verification"), None => {}, }
         }
-        let coverage_token = start_stage(&options, "analysis.check_coverage", AnalysisStage.Coverage);
-        at_stage(check_coverage(&context, &output, options.recover, &report_value.diagnostics), "analysis.check_coverage", AnalysisStage.Coverage, &options, coverage_token)?;
+        start_stage(&options, "analysis.check_coverage", AnalysisStage.Coverage);
+        at_stage(check_coverage(&context, &output, options.recover, &report_value.diagnostics), "analysis.check_coverage", AnalysisStage.Coverage, &options)?;
         for warning in output.warnings { report_value.diagnostics.push(*warning); }
         output.warnings.clear();
 
         for procedure in output.procedures {
-            let token = start_stage(&options, "analysis.check_assignment", AnalysisStage.Assignment);
+            start_stage(&options, "analysis.check_assignment", AnalysisStage.Assignment);
             let checked_assignment = check_assignment(&context, procedure);
             match &checked_assignment {
-                Ok(_) => finish_stage(&options, "analysis.check_assignment", token, true),
-                Err(_) => finish_stage(&options, "analysis.check_assignment", token, false),
+                Ok(_) => finish_stage(&options, "analysis.check_assignment", true),
+                Err(_) => finish_stage(&options, "analysis.check_assignment", false),
             }
             match checked_assignment {
                 Ok(_) => {},

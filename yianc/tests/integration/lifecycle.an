@@ -12,6 +12,7 @@ from json.parse import parse;
 from std.core.ops import Index;
 from yianc.analysis.session.session import AnalysisSession;
 from yianc.driver.frontend import FrontendDriver;
+from yianc.driver.trace import CompilerTrace;
 from yianc.driver.middle import MiddleEndDriver;
 from yianc.analysis.session.output import AnalysisOptions;
 from yianc.diagnostics.model import AnalysisErrorKind;
@@ -115,10 +116,13 @@ fn check_strict_lifecycle(raw: bool) {
     documents.push(SourceDocument(path=String.from(&"/tmp/yian-native-strict-lifecycle.an"),
         text=String.from(&"struct Record { field: i32 }\nfn helper(value: Record) -> Record { value }\nconst SIZE: u64 = 8;\nfn main() { helper(Record(1)); }\n")));
     defer release_documents(&documents);
-    let frontend = match FrontendDriver.prepare_documents(&documents, trust(), Option<PackageMap>.None, false) {
+    let trace = CompilerTrace.disabled();
+    defer trace.drop();
+    let frontend = match FrontendDriver.prepare_documents(&documents, trust(), Option<PackageMap>.None, false, &trace) {
         Ok(value) => value,
         Err(error) => { error.drop(); @panic("strict preparation failed"); },
     };
+    defer frontend.drop();
     let driver = MiddleEndDriver.new(frontend.take_session(), raw);
     defer driver.drop();
     let report = match driver.run(AnalysisOptions.new()) {
@@ -152,10 +156,13 @@ fn strict_analysis_reports_first_error() {
     documents.push(SourceDocument(path=String.from(&"/tmp/yian-native-strict-error.an"),
         text=String.from(&"fn bad_one() { let value: i32 = true; }\nfn bad_two() { let value: bool = \"wrong\"; }\nfn main() {}\n")));
     defer release_documents(&documents);
-    let frontend = match FrontendDriver.prepare_documents(&documents, trust(), Option<PackageMap>.None, false) {
+    let trace = CompilerTrace.disabled();
+    defer trace.drop();
+    let frontend = match FrontendDriver.prepare_documents(&documents, trust(), Option<PackageMap>.None, false, &trace) {
         Ok(value) => value,
         Err(error) => { error.drop(); @panic("strict error fixture preparation failed"); },
     };
+    defer frontend.drop();
     let driver = MiddleEndDriver.new(frontend.take_session(), false);
     defer driver.drop();
     match driver.run(AnalysisOptions.new()) {

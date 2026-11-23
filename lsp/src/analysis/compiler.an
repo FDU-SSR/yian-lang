@@ -2,6 +2,7 @@ from yianc.analysis.session.session import AnalysisSession;
 from yianc.analysis.session.output import AnalysisOptions, AnalysisOutput;
 from yianc.codegen.session import BackendOptions, BackendSession;
 from yianc.driver.frontend import FrontendDriver;
+from yianc.driver.trace import CompilerTrace;
 from yianc.driver.middle import MiddleEndDriver;
 from yianc.analysis.constant.evaluate import TypeSizeProvider;
 from yianc.common.location import SourceSpan;
@@ -77,11 +78,14 @@ fn failure_from_error(error: AnalysisError, session: Option<AnalysisSession&>) -
 // Strict analysis runs once at its normal semantic boundary and never enters CFG or LLVM emission.
 pub fn analyze(documents: Vec<SourceDocument>&, trust: SourceTrust, packages: Option<PackageMap>,
     raw_pointers: bool, allow_ffi: bool) -> Result<CompilerAnalysis, CompilerFailure> {
-    let frontend = match FrontendDriver.prepare_documents(documents, trust, packages, allow_ffi) {
+    let trace = CompilerTrace.disabled();
+    defer trace.drop();
+    let frontend = match FrontendDriver.prepare_documents(documents, trust, packages, allow_ffi, &trace) {
         Ok(value) => value,
         Err(error) => return Result<CompilerAnalysis, CompilerFailure>.Err(
             failure_from_error(error, Option<AnalysisSession&>.None)),
     };
+    defer frontend.drop();
     let middle = MiddleEndDriver.new(frontend.take_session(), raw_pointers);
     let transferred = false;
     defer { if !transferred { middle.drop(); } };

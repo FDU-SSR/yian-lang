@@ -1,5 +1,6 @@
 from yianc.analysis.session.session import AnalysisSession;
 from yianc.driver.frontend import FrontendDriver;
+from yianc.driver.trace import CompilerTrace;
 from yianc.driver.middle import MiddleEndDriver;
 from yianc.analysis.session.output import AnalysisOptions;
 from yianc.analysis.ty.queries import struct_fields;
@@ -25,10 +26,13 @@ fn prepare(source: str, path: str) -> MiddleEndDriver {
     let documents = Vec<SourceDocument>.new();
     documents.push(SourceDocument(path=String.from(&path), text=String.from(&source)));
     defer release_documents(&documents);
-    let frontend = match FrontendDriver.prepare_documents(&documents, trust(), Option<PackageMap>.None, false) {
+    let trace = CompilerTrace.disabled();
+    defer trace.drop();
+    let frontend = match FrontendDriver.prepare_documents(&documents, trust(), Option<PackageMap>.None, false, &trace) {
         Ok(value) => value,
         Err(error) => { error.drop(); @panic("strict fixture preparation failed"); },
     };
+    defer frontend.drop();
     MiddleEndDriver.new(frontend.take_session(), IS_RAW_MODE)
 }
 

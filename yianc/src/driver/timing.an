@@ -30,10 +30,9 @@ impl CompilerTiming {
         Option<Self>.Some(Self(ProfileRecorder.new(), Vec<Timing>.new(), output.is_none(), output, target, config.optimization, config.raw_pointers))
     }
 
-    pub fn begin(pass_id: str, kind: ProfileKind) -> u64 { self.recorder.begin(pass_id, kind) }
-    pub fn end(name: str, started: u64, success: bool) {
-        if started == 0u64 { return; }
-        match self.recorder.end(started, success) {
+    pub fn begin(pass_id: str, kind: ProfileKind) { self.recorder.begin(pass_id, kind); }
+    pub fn end(name: str, success: bool) {
+        match self.recorder.end(name, success) {
             Some(elapsed) if self.terminal => self.timings.push(Timing(String.from(&name), elapsed)),
             _ => {},
         }

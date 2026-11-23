@@ -32,8 +32,8 @@ pub struct SourcePermissions {
 
 // Observers borrow the partial frontend owner synchronously; preparation never retains them.
 pub trait PreparationObserver {
-    fn begin(pass_id: str) -> u64 { 0u64 }
-    fn finish(pass_id: str, token: u64, success: bool) {}
+    fn begin(pass_id: str) {}
+    fn finish(pass_id: str, success: bool) {}
     fn stage_complete(stage: PreparationStage, session: FrontendSession&) -> Result<(), AnalysisError>;
 }
 

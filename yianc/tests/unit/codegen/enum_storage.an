@@ -6,6 +6,7 @@
 from yianc.analysis.session.output import AnalysisOptions, AnalysisOutput;
 from yianc.analysis.session.session import AnalysisSession;
 from yianc.driver.frontend import FrontendDriver;
+from yianc.driver.trace import CompilerTrace;
 from yianc.driver.middle import MiddleEndDriver;
 from yianc.analysis.ty.model import AccessMode, AggregateDefinition, DefinitionBody, DefinitionHeader, EnumDefinition, EnumVariant, NominalKind, StructField, TypeData;
 from yianc.codegen.cfg.ids import BlockId, FunctionId, ValueId;
@@ -323,10 +324,13 @@ fn main() {
     documents.push(SourceDocument(path=String.from(&"/tmp/enum-storage-probe.an"),
         text=String.from(&"fn main() {}\n")));
     defer release_documents(&documents);
-    let frontend = match FrontendDriver.prepare_documents(&documents, trust(), Option<PackageMap>.None, false) {
+    let trace = CompilerTrace.disabled();
+    defer trace.drop();
+    let frontend = match FrontendDriver.prepare_documents(&documents, trust(), Option<PackageMap>.None, false, &trace) {
         Ok(value) => value,
         Err(error) => { error.drop(); @panic("enum storage probe preparation failed"); },
     };
+    defer frontend.drop();
     let driver = MiddleEndDriver.new(frontend.take_session(), false);
     defer driver.drop();
     let report = match driver.run(AnalysisOptions.new()) {

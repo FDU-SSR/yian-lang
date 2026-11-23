@@ -10,6 +10,6 @@ pub enum OperationKind {
 // This synchronous observer does not retain LLVM values or introduce a
 // dependency from the LLVM support package back to yianc.
 pub trait OperationObserver {
-    fn begin(operation: OperationKind) -> u64;
-    fn end(operation: OperationKind, token: u64, success: bool);
+    fn begin(operation: OperationKind);
+    fn end(operation: OperationKind, success: bool);
 }

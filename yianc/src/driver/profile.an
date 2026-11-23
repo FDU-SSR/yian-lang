@@ -29,7 +29,7 @@ impl Drop for PassTiming {
 }
 
 struct ActiveSpan {
-    pub token: u64,
+    pub suppressed_id: Option<String>,
     pub timing: u64,
     pub started_ns: i64,
     pub child_ns: u64,
@@ -48,7 +48,6 @@ pub struct ProfileRecorder {
     active: Vec<ActiveSpan>,
     not_run: Vec<NotRun>,
     telemetry_errors: Vec<String>,
-    next_token: u64,
     state: u8,
 }
 
@@ -59,7 +58,7 @@ fn release_strings(values: Vec<String>&) {
 
 impl ProfileRecorder {
     static pub fn new() -> Self {
-        Self(Vec<PassTiming>.new(), Vec<ActiveSpan>.new(), Vec<NotRun>.new(), Vec<String>.new(), 1u64, 0u8)
+        Self(Vec<PassTiming>.new(), Vec<ActiveSpan>.new(), Vec<NotRun>.new(), Vec<String>.new(), 0u8)
     }
 
     fn error(message: str) {
@@ -67,7 +66,39 @@ impl ProfileRecorder {
         if self.state == 0u8 { self.state = 1u8; }
     }
 
-    pub fn begin(pass_id: str, kind: ProfileKind) -> u64 {
+    fn suppress(pass_id: str) -> bool {
+        let suppressed = false;
+        for span in self.active {
+            match &span.suppressed_id {
+                Some(_) => suppressed = true,
+                None => {
+                    if self.timings[span.timing].pass_id.as_str() == pass_id {
+                        let message = String.from(&"duplicate active profile span: ");
+                        message.push_str(pass_id);
+                        self.error(message.as_str());
+                        message.drop();
+                        self.timings[span.timing].incomplete = true;
+                        suppressed = true;
+                    }
+                },
+            }
+        }
+        if suppressed {
+            let index = self.active.len();
+            while index > 0u64 {
+                index -= 1u64;
+                if self.active[index].suppressed_id.is_none() {
+                    self.timings[self.active[index].timing].incomplete = true;
+                    break;
+                }
+            }
+            self.active.push(ActiveSpan(Option<String>.Some(String.from(&pass_id)), 0u64, 0i64, 0u64, false));
+        }
+        suppressed
+    }
+
+    pub fn begin(pass_id: str, kind: ProfileKind) {
+        if self.suppress(pass_id) { return; }
         let now = match monotonic_now() {
             Ok(value) => Option<i64>.Some(value.nanoseconds()),
             Err(problem) => {
@@ -79,12 +110,17 @@ impl ProfileRecorder {
                 Option<i64>.None
             },
         };
-        self.begin_at(pass_id, kind, now)
+        self.begin_record(pass_id, kind, now);
     }
 
     // Explicit timestamps keep accounting testable without sleeping or changing
     // the production clock. None represents a clock read failure.
-    pub fn begin_at(pass_id: str, kind: ProfileKind, now: Option<i64>) -> u64 {
+    pub fn begin_at(pass_id: str, kind: ProfileKind, now: Option<i64>) {
+        if self.suppress(pass_id) { return; }
+        self.begin_record(pass_id, kind, now);
+    }
+
+    fn begin_record(pass_id: str, kind: ProfileKind, now: Option<i64>) {
         let parent = match self.active.last() {
             Some(span) => Option<u64>.Some(span.timing),
             None => Option<u64>.None,
@@ -112,14 +148,13 @@ impl ProfileRecorder {
             Some(value) if value >= 0i64 => (value, true),
             _ => { self.timings[timing_index].incomplete = true; self.state = 2u8; (0i64, false) },
         };
-        if self.next_token == 0u64 { self.next_token = 1u64; }
-        let token = self.next_token;
-        self.next_token += 1u64;
-        self.active.push(ActiveSpan(token, timing_index, started_ns, 0u64, measured));
-        token
+        self.active.push(ActiveSpan(Option<String>.None, timing_index, started_ns, 0u64, measured));
     }
 
-    pub fn end(token: u64, success: bool) -> Option<u64> {
+    pub fn end(pass_id: str, success: bool) -> Option<u64> {
+        if !self.active.is_empty() && self.active[self.active.len() - 1u64].suppressed_id.is_some() {
+            return self.end_at(pass_id, success, Option<i64>.None);
+        }
         let now = match monotonic_now() {
             Ok(value) => Option<i64>.Some(value.nanoseconds()),
             Err(problem) => {
@@ -131,21 +166,36 @@ impl ProfileRecorder {
                 Option<i64>.None
             },
         };
-        self.end_at(token, success, now)
+        self.end_at(pass_id, success, now)
     }
 
-    pub fn end_at(token: u64, success: bool, now: Option<i64>) -> Option<u64> {
-        if token == 0u64 || self.active.is_empty() {
+    pub fn end_at(pass_id: str, success: bool, now: Option<i64>) -> Option<u64> {
+        if self.active.is_empty() {
             self.error("profile span stack is empty");
             return Option<u64>.None;
         }
         let last = self.active.len() - 1u64;
-        if self.active[last].token != token {
+        let matches_id = match &self.active[last].suppressed_id {
+            Some(value) => value.as_str() == pass_id,
+            None => self.timings[self.active[last].timing].pass_id.as_str() == pass_id,
+        };
+        if !matches_id {
             self.error("profile spans ended out of order");
-            self.timings[self.active[last].timing].incomplete = true;
+            let index = self.active.len();
+            while index > 0u64 {
+                index -= 1u64;
+                if self.active[index].suppressed_id.is_none() {
+                    self.timings[self.active[index].timing].incomplete = true;
+                    break;
+                }
+            }
             return Option<u64>.None;
         }
         let span = *self.active.pop().unwrap();
+        match &span.suppressed_id {
+            Some(value) => { value.drop(); return Option<u64>.None; },
+            None => {},
+        }
         if !success { self.timings[span.timing].failed_calls += 1u64; }
         match now {
             Some(ended) if span.measured && span.started_ns >= 0i64 && ended >= span.started_ns => {
@@ -197,8 +247,19 @@ impl ProfileRecorder {
         if !self.active.is_empty() {
             while !self.active.is_empty() {
                 let span = *self.active.last().unwrap();
-                self.end(span.token, false);
-                self.timings[span.timing].incomplete = true;
+                match &span.suppressed_id {
+                    Some(value) => {
+                        let id = String.from(&value.as_str());
+                        self.end(id.as_str(), false);
+                        id.drop();
+                    },
+                    None => {
+                        let id = String.from(&self.timings[span.timing].pass_id.as_str());
+                        self.end(id.as_str(), false);
+                        id.drop();
+                        self.timings[span.timing].incomplete = true;
+                    },
+                }
             }
             if self.state == 0u8 { self.state = 1u8; }
         }
@@ -377,6 +438,7 @@ impl Drop for ProfileRecorder {
         for timing in self.timings { timing.drop(); }
         for item in self.not_run { item.drop(); }
         release_strings(&self.telemetry_errors);
+        for span in self.active { match &span.suppressed_id { Some(value) => value.drop(), None => {}, } }
         self.timings.drop(); self.active.drop(); self.not_run.drop();
     }
 }

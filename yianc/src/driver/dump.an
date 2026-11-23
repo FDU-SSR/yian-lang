@@ -65,26 +65,26 @@ fn guard_site_name(site: GuardSite) -> str {
 pub struct StageDumps { pub enabled: bool, pub trace: CompilerTrace& }
 
 impl PreparationObserver for StageDumps {
-    pub fn begin(pass_id: str) -> u64 {
-        self.trace.start_pass(pass_id, "preparation", pass_id, ProfileKind.Pass)
+    pub fn begin(pass_id: str) {
+        self.trace.start_pass(pass_id, "preparation", pass_id, ProfileKind.Pass);
     }
 
-    pub fn finish(pass_id: str, token: u64, success: bool) {
-        if success { self.trace.finish(pass_id, token); } else { self.trace.fail(pass_id, token); }
+    pub fn finish(pass_id: str, success: bool) {
+        if success { self.trace.finish(pass_id); } else { self.trace.fail(pass_id); }
     }
 
     pub fn stage_complete(stage: PreparationStage, session: FrontendSession&) -> Result<(), AnalysisError> {
         if !self.enabled { return Result<(), AnalysisError>.Ok(()); }
         let writes_dump = match stage { Lex | Desugar => true, Parse => false };
         if !writes_dump { return Result<(), AnalysisError>.Ok(()); }
-        let token = self.trace.start_pass("io.dump", "io", "stage dump", ProfileKind.Tool);
+        self.trace.start_pass("io.dump", "io", "stage dump", ProfileKind.Tool);
         let result = match stage {
             Lex => tokens_dump(session),
             Desugar => ast_dump(session),
             Parse => Result<(), AnalysisError>.Ok(()),
         };
         let success = match &result { Ok(_) => true, Err(_) => false };
-        self.finish("io.dump", token, success);
+        self.finish("io.dump", success);
         result
     }
 }

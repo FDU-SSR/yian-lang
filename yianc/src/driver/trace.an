@@ -18,15 +18,15 @@ impl CompilerTrace {
     pub fn event(channel: str, severity: LogLevel, message: str, path: Option<str>) {
         match &self.log { Some(log) => log.event(channel, severity, message, path), None => {}, }
     }
-    pub fn start(channel: str, name: str) -> u64 { self.start_pass(name, channel, name, ProfileKind.Stage) }
-    pub fn start_pass(pass_id: str, channel: str, name: str, kind: ProfileKind) -> u64 {
+    pub fn start(channel: str, name: str) { self.start_pass(name, channel, name, ProfileKind.Stage); }
+    pub fn start_pass(pass_id: str, channel: str, name: str, kind: ProfileKind) {
         if kind == ProfileKind.Stage { self.event(channel, LogLevel.Debug, name, Option<str>.None); }
-        match &self.timing { Some(timing) => timing.begin(pass_id, kind), None => 0u64, }
+        match &self.timing { Some(timing) => timing.begin(pass_id, kind), None => {}, }
     }
-    pub fn finish(name: str, started: u64) { self.end_pass(name, started, true); }
-    pub fn fail(name: str, started: u64) { self.end_pass(name, started, false); }
-    fn end_pass(name: str, started: u64, success: bool) {
-        match &self.timing { Some(timing) => timing.end(name, started, success), None => {}, }
+    pub fn finish(name: str) { self.end_pass(name, true); }
+    pub fn fail(name: str) { self.end_pass(name, false); }
+    fn end_pass(name: str, success: bool) {
+        match &self.timing { Some(timing) => timing.end(name, success), None => {}, }
     }
     pub fn skip(pass_id: str, reason: str) { match &self.timing { Some(timing) => timing.skip(pass_id, reason), None => {}, } }
     pub fn report() { match &self.timing { Some(timing) => timing.report(), None => {}, } }
@@ -40,7 +40,7 @@ impl Drop for CompilerTrace {
 }
 
 impl OperationObserver for CompilerTrace {
-    pub fn begin(operation: OperationKind) -> u64 {
+    pub fn begin(operation: OperationKind) {
         let pass_id = match operation {
             VerifyBeforeOptimization => "llvm.verify_before_optimization",
             Optimize => "llvm.optimize",
@@ -49,10 +49,10 @@ impl OperationObserver for CompilerTrace {
             SerializeIr => "llvm.serialize_ir",
             SerializeBitcode => "llvm.serialize_bitcode",
         };
-        self.start_pass(pass_id, "llvm", pass_id, ProfileKind.Pass)
+        self.start_pass(pass_id, "llvm", pass_id, ProfileKind.Pass);
     }
 
-    pub fn end(operation: OperationKind, token: u64, success: bool) {
+    pub fn end(operation: OperationKind, success: bool) {
         let pass_id = match operation {
             VerifyBeforeOptimization => "llvm.verify_before_optimization",
             Optimize => "llvm.optimize",
@@ -61,6 +61,6 @@ impl OperationObserver for CompilerTrace {
             SerializeIr => "llvm.serialize_ir",
             SerializeBitcode => "llvm.serialize_bitcode",
         };
-        self.end_pass(pass_id, token, success);
+        self.end_pass(pass_id, success);
     }
 }

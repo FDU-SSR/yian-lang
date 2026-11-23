@@ -99,6 +99,8 @@ yianc --profile --profile-output build/profile/compiler.json lib/src tests/basic
 `work_finished_at_ns` 记录编译工作结束、profile 序列化开始前的 monotonic 时间；anx 用它关闭子进程等待区间，
 因此 JSON/文本序列化和写盘时间不计入 `build_total_ns`。
 
+计时阶段的配对错误通过统计状态和错误字段记录，不改变编译结果。
+
 计时覆盖输入收集/读取、词法/解析/desugar、语义解析与检查、地址存储归一化、HIR 验证/覆盖/赋值、CFG
 lower/验证/清理/check insertion、LLVM lowering/优化前后验证/优化/native emission 或 IR/bitcode 序列化，
 以及 runtime、C shim、链接参数、最终链接和产物发布。优化等级 `-O0` 不运行 LLVM 优化；`--check` 在语义分析后结束，未执行项标为 `not_run`，不会伪造零耗时成功。原生链接阶段仅在 `exe` 目标运行。
