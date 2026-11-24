@@ -1,9 +1,9 @@
 from yianc.analysis.session.session import AnalysisSession;
 from yianc.analysis.session.output import AnalysisOptions, AnalysisOutput;
 from yianc.codegen.session import BackendOptions, BackendSession;
-from yianc.driver.frontend import FrontendDriver;
-from yianc.driver.trace import CompilerTrace;
-from yianc.driver.middle import MiddleEndDriver;
+from yianc.frontend.driver import FrontendDriver;
+from yianc.telemetry.trace import CompilerTrace;
+from yianc.analysis.driver import MiddleEndDriver;
 from yianc.analysis.constant.evaluate import TypeSizeProvider;
 from yianc.diagnostics.model import UserDiagnostic, DiagnosticReporter;
 from yianc.frontend.source import SourceDocument, SourceMap, SourceTable;

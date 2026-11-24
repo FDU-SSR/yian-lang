@@ -1,7 +1,7 @@
 from yianc.package.model import PackageMap;
 from yianc.package.provenance import within;
-from yianc.driver.trace import CompilerTrace;
-from yianc.driver.profile import ProfileKind;
+from yianc.telemetry.trace import CompilerTrace;
+from yianc.telemetry.profile import ProfileKind;
 from yianc.diagnostics.model import DiagnosticCode, DiagnosticLocation, UserDiagnostic;
 from std.collections.hash_set import HashSet;
 from std.collections.sort import sort_by;
@@ -267,8 +267,8 @@ fn is_regular_archive(path: str) -> bool {
     let header: u8[8] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8];
     match file.read_exact(header.as_slice()) {
         Ok(_) => header[0] == b'!' && header[1] == b'<' && header[2] == b'a' &&
-            header[3] == b'r' && header[4] == b'c' && header[5] == b'h' &&
-            header[6] == b'>' && header[7] == b'\n',
+        header[3] == b'r' && header[4] == b'c' && header[5] == b'h' &&
+        header[6] == b'>' && header[7] == b'\n',
         Err(problem) => { problem.drop(); false },
     }
 }

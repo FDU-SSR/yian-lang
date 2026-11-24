@@ -3,8 +3,8 @@ from yianc.analysis.constant.evaluate import TypeSizeProvider;
 from yianc.codegen.types import BackendTypes;
 from yianc.codegen.error import CodegenError;
 from yianc.config import OutputKind;
-from yianc.driver.trace import CompilerTrace;
-from yianc.driver.profile import ProfileKind;
+from yianc.telemetry.trace import CompilerTrace;
+from yianc.telemetry.profile import ProfileKind;
 from llvm.core import llvm_version;
 from llvm.object import Module;
 

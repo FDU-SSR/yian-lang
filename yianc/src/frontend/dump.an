@@ -1,0 +1,80 @@
+from yianc.common.ids import UnitId;
+from yianc.diagnostics.model import DiagnosticCode, DiagnosticLocation;
+from yianc.diagnostics.output import OutputError;
+from yianc.frontend.ast.format import AstFormatter;
+from yianc.frontend.observe import append_token_file;
+from yianc.frontend.prepare import PreparationStage;
+from yianc.frontend.session import FrontendSession, PreparationObserver;
+from yianc.json_output import write_json;
+from yianc.telemetry.profile import ProfileKind;
+from yianc.telemetry.trace import CompilerTrace;
+from json.write import Writer;
+from std.core.convert import From;
+from std.core.fs import create_dir_all;
+from std.core.iter import Iterator, IntoIterator;
+
+fn output_error(path: str, message: str) -> OutputError {
+    OutputError(String.from(&message), DiagnosticCode.OutputIo, DiagnosticLocation.File(String.from(&path)))
+}
+
+pub struct StageDumps { pub enabled: bool, pub trace: CompilerTrace& }
+
+impl PreparationObserver for StageDumps {
+    pub fn begin(pass_id: str) {
+        self.trace.start_pass(pass_id, "preparation", pass_id, ProfileKind.Pass);
+    }
+
+    pub fn finish(pass_id: str, success: bool) {
+        if success { self.trace.finish(pass_id); } else { self.trace.fail(pass_id); }
+    }
+
+    pub fn stage_complete(stage: PreparationStage, session: FrontendSession&) -> Result<(), OutputError> {
+        if !self.enabled { return Result<(), OutputError>.Ok(()); }
+        let writes_dump = match stage { Lex | Desugar => true, Parse => false };
+        if !writes_dump { return Result<(), OutputError>.Ok(()); }
+        self.trace.start_pass("io.dump", "io", "stage dump", ProfileKind.Tool);
+        let result = match stage {
+            Lex => tokens_dump(session),
+            Desugar => ast_dump(session),
+            Parse => Result<(), OutputError>.Ok(()),
+        };
+        let success = match &result { Ok(_) => true, Err(_) => false };
+        self.finish("io.dump", success);
+        result
+    }
+}
+
+fn tokens_dump(session: FrontendSession&) -> Result<(), OutputError> {
+    match create_dir_all("build") {
+        Ok(_) => {},
+        Err(problem) => { defer problem.drop(); return Result<(), OutputError>.Err(output_error("build", problem.msg())); },
+    }
+    let tokens = Writer.with_max_depth(512u64);
+    defer tokens.drop();
+    tokens.begin_array();
+    for index in 0u64..session.len() {
+        let unit = session.unit(UnitId(index)).unwrap();
+        let source = session.source(unit.id);
+        append_token_file(&tokens, source.path(), &unit.prepared.tokens);
+    }
+    tokens.end_array();
+    write_json(&tokens, "build/tokens.txt")
+}
+
+fn ast_dump(session: FrontendSession&) -> Result<(), OutputError> {
+    let ast = Writer.with_max_depth(512u64);
+    defer ast.drop();
+    ast.begin_array();
+    for index in 0u64..session.len() {
+        let unit = session.unit(UnitId(index)).unwrap();
+        let source = session.source(unit.id);
+        ast.begin_object();
+        ast.key("path");
+        ast.write_string(source.path());
+        ast.key("ast");
+        AstFormatter.new(&ast).append_program(unit.prepared.tree.unwrap().root);
+        ast.end_object();
+    }
+    ast.end_array();
+    write_json(&ast, "build/ast.txt")
+}

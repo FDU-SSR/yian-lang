@@ -5,9 +5,9 @@ from yianc.analysis.resolution.context import ResolutionContext;
 from yianc.analysis.constant.evaluate import TypeSizeProvider;
 from yianc.analysis.session.output import AnalysisOptions, AnalysisOutput, AnalyzedProcedure;
 from yianc.analysis.session.session import AnalysisSession;
-from yianc.driver.frontend import FrontendDriver;
-from yianc.driver.trace import CompilerTrace;
-from yianc.driver.middle import MiddleEndDriver;
+from yianc.frontend.driver import FrontendDriver;
+from yianc.telemetry.trace import CompilerTrace;
+from yianc.analysis.driver import MiddleEndDriver;
 from yianc.analysis.ty.model import AccessMode, AggregateDefinition, CallableDefinition, DefinitionBody,
 DefinitionHeader, NominalKind, Parameter, StructField;
 from yianc.analysis.ty.store import BOOL_TYPE_ID, ERROR_TYPE_ID, I32_TYPE_ID, NEVER_TYPE_ID, U64_TYPE_ID, VOID_TYPE_ID;

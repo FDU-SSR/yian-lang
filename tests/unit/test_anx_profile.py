@@ -225,32 +225,32 @@ class AnxProfileTests(_ProfileFixture):
         source.write_text(
             f'''from anx.driver.profile import BuildProfile;
 from std.core.env import exit;
-from yianc.driver.profile import ProfileKind, ProfileRecorder;
+from yianc.telemetry.profile import ProfileKind, ProfileRecorder;
 
 fn main() {{
     let recorder = ProfileRecorder.new();
-    let parent = recorder.begin_at("fixture.parent", ProfileKind.Stage, Option<i64>.Some(100i64));
-    let child = recorder.begin_at("fixture.child", ProfileKind.Pass, Option<i64>.Some(130i64));
-    recorder.end_at(child, true, Option<i64>.Some(160i64));
-    recorder.end_at(parent, true, Option<i64>.Some(200i64));
+    recorder.begin_at("fixture.parent", ProfileKind.Stage, Option<i64>.Some(100i64));
+    recorder.begin_at("fixture.child", ProfileKind.Pass, Option<i64>.Some(130i64));
+    recorder.end_at("fixture.child", true, Option<i64>.Some(160i64));
+    recorder.end_at("fixture.parent", true, Option<i64>.Some(200i64));
     match recorder.write_report({parent_report_literal}, true, "check", 0u8, false) {{
-        Ok(_) => {{}}, Err(problem) => {{ problem.drop(); exit(31i32); }},
+        Ok(_) => {{}}, Err(problem) => {{ exit(31i32); }},
     }}
     recorder.drop();
 
     let failed = ProfileRecorder.new();
-    let failed_span = failed.begin_at("fixture.failed", ProfileKind.Pass, Option<i64>.Some(500i64));
-    failed.end_at(failed_span, false, Option<i64>.Some(510i64));
+    failed.begin_at("fixture.failed", ProfileKind.Pass, Option<i64>.Some(500i64));
+    failed.end_at("fixture.failed", false, Option<i64>.Some(510i64));
     match failed.write_report({failure_report_literal}, false, "check", 0u8, false) {{
-        Ok(_) => {{}}, Err(problem) => {{ problem.drop(); exit(32i32); }},
+        Ok(_) => {{}}, Err(problem) => {{ exit(32i32); }},
     }}
     failed.drop();
 
     let clock = ProfileRecorder.new();
-    let clock_span = clock.begin_at("fixture.clock", ProfileKind.Pass, Option<i64>.None);
-    clock.end_at(clock_span, false, Option<i64>.None);
+    clock.begin_at("fixture.clock", ProfileKind.Pass, Option<i64>.None);
+    clock.end_at("fixture.clock", false, Option<i64>.None);
     match clock.write_report({clock_report_literal}, false, "check", 0u8, false) {{
-        Ok(_) => {{}}, Err(problem) => {{ problem.drop(); exit(33i32); }},
+        Ok(_) => {{}}, Err(problem) => {{ exit(33i32); }},
     }}
     clock.drop();
 
@@ -298,7 +298,7 @@ fn main() {{
             for path in recipe.source_files
             if path.is_relative_to(ROOT / "lib" / "src")
             or path.is_relative_to(ROOT / "bootstrap" / "json" / "src")
-            or path in {ROOT / "anx" / "src" / "driver" / "profile.an", ROOT / "yianc" / "src" / "driver" / "profile.an"}
+            or path in {ROOT / "anx" / "src" / "driver" / "profile.an", ROOT / "yianc" / "src" / "telemetry" / "profile.an"}
         ]
         input_sources.append(source)
         executable = self.root / "profile probe"
@@ -346,7 +346,7 @@ fn main() {{
             report_io_failure.returncode, 0,
             report_io_failure.stdout + report_io_failure.stderr,
         )
-        self.assertIn("[profile] warning:", report_io_failure.stderr)
+        self.assertIn("warning[W601]: [profile] could not write report:", report_io_failure.stderr)
 
         parent = _read_json(compiler_parent_report)
         parent_passes = _by_pass(parent["timings"])
@@ -399,12 +399,12 @@ fn main() {
     let line = match reader.read_line() {
         Ok(Some(value)) => value,
         Ok(None) => String.new(),
-        Err(problem) => { problem.drop(); @panic("stdin failed"); },
+        Err(problem) => { @panic("stdin failed"); },
     };
     defer line.drop();
     let cwd = match current_dir() {
         Ok(value) => value,
-        Err(problem) => { problem.drop(); @panic("cwd unavailable"); },
+        Err(problem) => { @panic("cwd unavailable"); },
     };
     defer cwd.drop();
     print("business:");

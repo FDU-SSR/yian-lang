@@ -2,14 +2,14 @@ from yianc.analysis.session.output import AnalysisOptions;
 from yianc.analysis.constant.evaluate import TypeSizeProvider;
 from yianc.codegen.session import BackendOptions;
 from yianc.config import CompilerAction, CompilerConfig, parse_args;
-from yianc.driver.backend import BackendDriver;
-from yianc.driver.dump import hir_dump;
-from yianc.driver.frontend import FrontendDriver;
-from yianc.driver.middle import MiddleEndDriver;
-from yianc.driver.profile import ProfileKind;
-from yianc.driver.report import report;
-from yianc.driver.trace import CompilerTrace;
-from yianc.driver.log import LogLevel;
+from yianc.codegen.driver import BackendDriver;
+from yianc.analysis.dump import hir_dump;
+from yianc.frontend.driver import FrontendDriver;
+from yianc.analysis.driver import MiddleEndDriver;
+from yianc.telemetry.profile import ProfileKind;
+from yianc.diagnostics.report import report;
+from yianc.telemetry.trace import CompilerTrace;
+from yianc.telemetry.log import LogLevel;
 from yianc.frontend.source import SourceTable;
 from std.core.io import Stderr, Write;
 
@@ -120,8 +120,6 @@ fn main() {
             match &error.usage { Some(value) => @eprint(value.as_str()), None => {}, }
             report(&error, &empty);
             let status = error.status;
-            error.drop();
-            empty.drop();
             exit(status);
         },
     };
@@ -131,9 +129,6 @@ fn main() {
         Ok(value) => value,
         Err(error) => {
             report(&error, &empty);
-            error.drop();
-            config.drop();
-            empty.drop();
             exit(EXIT_FAILURE);
         },
     };
@@ -146,9 +141,6 @@ fn main() {
         }
     }
     if status != 0 {
-        trace.drop();
-        config.drop();
-        empty.drop();
         exit(status);
     }
 }

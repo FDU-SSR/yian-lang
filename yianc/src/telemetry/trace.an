@@ -1,7 +1,7 @@
 from yianc.config import CompilerConfig;
-from yianc.driver.log import CompilerLog, LogLevel, LogConfigError;
-from yianc.driver.timing import CompilerTiming, ProfileWarning;
-from yianc.driver.profile import ProfileKind;
+from yianc.telemetry.log import CompilerLog, LogLevel, LogConfigError;
+from yianc.telemetry.timing import CompilerTiming, ProfileWarning;
+from yianc.telemetry.profile import ProfileKind;
 from llvm.observation import OperationKind, OperationObserver;
 
 pub struct CompilerTrace { log: Option<CompilerLog>, timing: Option<CompilerTiming> }
@@ -9,10 +9,12 @@ pub struct CompilerTrace { log: Option<CompilerLog>, timing: Option<CompilerTimi
 impl CompilerTrace {
     static pub fn disabled() -> Self { Self(Option<CompilerLog>.None, Option<CompilerTiming>.None) }
     static pub fn new(config: CompilerConfig&) -> Result<Self, LogConfigError> {
-        let log = if config.log_enabled { match CompilerLog.new(config) {
-            Ok(value) => Option<CompilerLog>.Some(value),
-            Err(problem) => return Result<Self, LogConfigError>.Err(problem),
-        } } else { Option<CompilerLog>.None };
+        let log = if config.log_enabled {
+            match CompilerLog.new(config) {
+                Ok(value) => Option<CompilerLog>.Some(value),
+                Err(problem) => return Result<Self, LogConfigError>.Err(problem),
+            }
+        } else { Option<CompilerLog>.None };
         Result<Self, LogConfigError>.Ok(Self(log, CompilerTiming.from_config(config)))
     }
     pub fn event(channel: str, severity: LogLevel, message: str, path: Option<str>) {

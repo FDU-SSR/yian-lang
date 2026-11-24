@@ -14,14 +14,14 @@ from yianc.codegen.cfg.passes.options import CfgPassOptions;
 from yianc.codegen.lowering.context import lower_module;
 from yianc.codegen.llvm.module import LlvmLowering;
 from yianc.codegen.error import CodegenError;
-from yianc.driver.dump import cfg_dump;
-from yianc.driver.native import NativeDriver, DriverError;
-from yianc.driver.paths import runtime_root;
-from yianc.driver.profile import ProfileKind;
+from yianc.codegen.dump import cfg_dump, ir_dump;
+from yianc.codegen.native import NativeDriver, DriverError;
+from yianc.roots import runtime_root;
+from yianc.telemetry.profile import ProfileKind;
 from yianc.diagnostics.model import DiagnosticCode, DiagnosticLocation, UserDiagnostic;
 from yianc.diagnostics.output import OutputError;
 from yianc.frontend.input import InputError;
-from yianc.driver.trace import CompilerTrace;
+from yianc.telemetry.trace import CompilerTrace;
 from yianc.frontend.text import is_alphanumeric;
 from yianc.common.ids import UnitId;
 from llvm.observation import OperationObserver;
@@ -86,7 +86,7 @@ fn verify_structure_observed(cfg: CfgModule&, trace: Option<CompilerTrace&>) -> 
     defer end_profile(trace, "cfg.verify_structure", success);
     verify_structure(cfg)?;
     success = true;
-    Result<(), CodegenError>.Ok(val= ())
+    Result<(), CodegenError>.Ok(val=())
 }
 
 fn cleanup_observed(cfg: CfgModule&, trace: Option<CompilerTrace&>) -> Result<(), CodegenError> {
@@ -95,7 +95,7 @@ fn cleanup_observed(cfg: CfgModule&, trace: Option<CompilerTrace&>) -> Result<()
     defer end_profile(trace, "cfg.cleanup", success);
     cleanup(cfg)?;
     success = true;
-    Result<(), CodegenError>.Ok(val= ())
+    Result<(), CodegenError>.Ok(val=())
 }
 
 fn inline_observed(cfg: CfgModule&, types: BackendTypes&, options: CfgPassOptions, trace: Option<CompilerTrace&>) -> Result<(), CodegenError> {
@@ -104,7 +104,7 @@ fn inline_observed(cfg: CfgModule&, types: BackendTypes&, options: CfgPassOption
     defer end_profile(trace, "cfg.inline", success);
     inline_cfg(cfg, types, options)?;
     success = true;
-    Result<(), CodegenError>.Ok(val= ())
+    Result<(), CodegenError>.Ok(val=())
 }
 
 fn prepare_safety_observed(cfg: CfgModule&, types: BackendTypes&, trace: Option<CompilerTrace&>) -> Result<(), CodegenError> {
@@ -113,7 +113,7 @@ fn prepare_safety_observed(cfg: CfgModule&, types: BackendTypes&, trace: Option<
     defer end_profile(trace, "cfg.prepare_safety", success);
     prepare_safety(cfg, types)?;
     success = true;
-    Result<(), CodegenError>.Ok(val= ())
+    Result<(), CodegenError>.Ok(val=())
 }
 
 fn eliminate_observed(cfg: CfgModule&, types: BackendTypes&, options: CfgPassOptions, trace: Option<CompilerTrace&>) -> Result<(), CodegenError> {
@@ -122,7 +122,7 @@ fn eliminate_observed(cfg: CfgModule&, types: BackendTypes&, options: CfgPassOpt
     defer end_profile(trace, "cfg.eliminate_checks", success);
     eliminate_checks(cfg, types, options)?;
     success = true;
-    Result<(), CodegenError>.Ok(val= ())
+    Result<(), CodegenError>.Ok(val=())
 }
 
 fn verify_cfg_observed(cfg: CfgModule&, types: BackendTypes&, trace: Option<CompilerTrace&>) -> Result<(), CodegenError> {
@@ -131,7 +131,7 @@ fn verify_cfg_observed(cfg: CfgModule&, types: BackendTypes&, trace: Option<Comp
     defer end_profile(trace, "cfg.verify", success);
     verify_cfg(cfg, types)?;
     success = true;
-    Result<(), CodegenError>.Ok(val= ())
+    Result<(), CodegenError>.Ok(val=())
 }
 
 fn finish_analysis_observed(types: BackendTypes&, trace: Option<CompilerTrace&>) {
@@ -150,7 +150,7 @@ fn lower_llvm(analysis: AnalysisSession&, types: BackendTypes&, module: Module&,
     defer lowering.drop();
     lowering.lower(cfg)?;
     success = true;
-    Result<(), CodegenError>.Ok(val= ())
+    Result<(), CodegenError>.Ok(val=())
 }
 
 fn fail_publish(trace: Option<CompilerTrace&>) {
@@ -321,8 +321,10 @@ impl BackendDriver {
             for current in library.as_str().chars() {
                 if !is_alphanumeric(current) && !"_+.-".contains_char(current) { valid = false; }
             }
-            if !valid { return Result<(), BackendCompileError>.Err(BackendCompileError.Output(
-                OutputError(String.from(&"invalid --link-lib name"), DiagnosticCode.CommandLine, DiagnosticLocation.Global))); }
+            if !valid {
+                return Result<(), BackendCompileError>.Err(BackendCompileError.Output(
+                    OutputError(String.from(&"invalid --link-lib name"), DiagnosticCode.CommandLine, DiagnosticLocation.Global)));
+            }
         }
         match trace { Some(value) => value.start_pass("cfg_pipeline", "cfg", "HIR to CFG", ProfileKind.Stage), None => {}, };
         let destination_path = destination(config, self.session.analysis_session());
@@ -378,14 +380,12 @@ impl BackendDriver {
             };
             defer ir.drop();
             match trace { Some(value) => value.start_pass("io.dump", "io", "LLVM IR dump", ProfileKind.Tool), None => {}, };
-            match write("build/ir.ll", ir.as_slice()) {
+            match ir_dump(&ir) {
                 Ok(_) => match trace { Some(observer) => observer.finish("io.dump"), None => {}, },
                 Err(problem) => {
                     match trace { Some(observer) => observer.fail("io.dump"), None => {}, }
                     match trace { Some(observer) => observer.fail("llvm_pipeline"), None => {}, }
-                    let error = output_error("build/ir.ll", problem.msg());
-                    problem.drop();
-                    return Result<(), BackendCompileError>.Err(error);
+                    return Result<(), BackendCompileError>.Err(BackendCompileError.Output(problem));
                 },
             }
         }

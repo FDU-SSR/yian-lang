@@ -1,0 +1,112 @@
+from yianc.analysis.hir.node import HirNode;
+from yianc.analysis.hir.pattern import PatternNode;
+from yianc.analysis.hir.traversal import HirVisitor, walk_expr;
+from yianc.analysis.session.output import AnalysisOutput;
+from yianc.analysis.session.session import AnalysisSession;
+from yianc.common.ids import HirId, PatternId;
+from yianc.common.traversal import WalkControl;
+from yianc.diagnostics.model import AnalysisError;
+from yianc.diagnostics.output import OutputError;
+from yianc.json_output import write_json;
+from json.write import Writer;
+from std.core.fmt import ToString;
+from std.core.iter import Iterator, IntoIterator;
+
+struct HirDump {
+    output: Writer&,
+}
+
+impl HirVisitor for HirDump {
+    pub fn enter_expr(id: HirId, node: HirNode&) -> Result<WalkControl, AnalysisError> {
+        self.output.begin_object();
+        self.output.key("id");
+        self.output.write_u64(id.index);
+        self.output.key("kind");
+        self.output.write_string(node.kind.name());
+        self.output.key("type");
+        self.output.write_u64(node.type_id.index);
+        self.output.key("place");
+        self.output.write_bool(node.is_place);
+        self.output.key("source");
+        self.output.write_u64(node.span.unit.index);
+        node.span.span.write_json(self.output);
+        match &node.kind {
+            IntLiteral(value) => { self.output.key("bits"); self.output.write_u64(value.raw_bits()); },
+            FloatLiteral(value) => {
+                let text = value.to_string();
+                defer text.drop();
+                self.output.key("value");
+                self.output.write_string(text.as_str());
+            },
+            BoolLiteral(value) => { self.output.key("value"); self.output.write_bool(*value); },
+            CharLiteral(value) => { self.output.key("value"); self.output.write_u64(u64(*value)); },
+            StrLiteral(value) => { self.output.key("name"); self.output.write_u64(value.index); },
+            Var(symbol) => { self.output.key("symbol"); self.output.write_u64(symbol.index); },
+            Call(value) => { self.output.key("callee"); self.output.write_u64(value.func.index); },
+            MethodCall(value) => { self.output.key("callee"); self.output.write_u64(value.method_id.index); },
+            Builtin(value) => { self.output.key("builtin"); self.output.write_string(value.kind.spelling()); },
+            Binary(value) => { self.output.key("operator"); self.output.write_string(value.op.spelling()); },
+            Unary(value) => { self.output.key("operator"); self.output.write_string(value.op.spelling()); },
+            _ => {},
+        }
+        self.output.key("children");
+        self.output.begin_array();
+        Result<WalkControl, AnalysisError>.Ok(WalkControl.Continue)
+    }
+
+    pub fn leave_expr(id: HirId, node: HirNode&) -> Result<(), AnalysisError> {
+        self.output.end_array();
+        self.output.end_object();
+        Result<(), AnalysisError>.Ok(())
+    }
+
+    pub fn enter_pattern(id: PatternId, node: PatternNode&) -> Result<WalkControl, AnalysisError> {
+        self.output.begin_object();
+        self.output.key("pattern");
+        self.output.write_u64(id.index);
+        self.output.key("kind");
+        self.output.write_string(node.kind.name());
+        self.output.key("type");
+        self.output.write_u64(node.type_id.index);
+        self.output.key("source");
+        self.output.write_u64(node.span.unit.index);
+        node.span.span.write_json(self.output);
+        self.output.key("children");
+        self.output.begin_array();
+        Result<WalkControl, AnalysisError>.Ok(WalkControl.Continue)
+    }
+
+    pub fn leave_pattern(id: PatternId, node: PatternNode&) -> Result<(), AnalysisError> {
+        self.output.end_array();
+        self.output.end_object();
+        Result<(), AnalysisError>.Ok(())
+    }
+}
+
+pub fn hir_dump(session: AnalysisSession&, result: AnalysisOutput&) -> Result<(), OutputError> {
+    let output = Writer.with_max_depth(512u64);
+    defer output.drop();
+    let visitor = HirDump(&output);
+    output.begin_array();
+    for procedure in result.procedures {
+        output.begin_object();
+        output.key("definition");
+        output.write_u64(procedure.definition.index);
+        output.key("callable");
+        output.write_u64(procedure.type_id.index);
+        output.key("unit");
+        output.write_u64(procedure.unit.index);
+        output.key("parameters");
+        output.begin_array();
+        for parameter in procedure.parameters { output.write_u64(parameter.index); }
+        output.end_array();
+        output.key("root");
+        match walk_expr(&session.hir, procedure.root, &visitor) {
+            Ok(_) => {},
+            Err(problem) => { @panic("invalid HIR while dumping"); },
+        }
+        output.end_object();
+    }
+    output.end_array();
+    write_json(&output, "build/hir.txt")
+}

@@ -1,5 +1,5 @@
 from yianc.config import CompilerAction, CompilerConfig, OutputKind;
-from yianc.driver.profile import ProfileRecorder, ProfileKind;
+from yianc.telemetry.profile import ProfileRecorder, ProfileKind;
 from yianc.diagnostics.model import DiagnosticCode, DiagnosticLocation, UserDiagnostic;
 from std.core.convert import From;
 from std.core.fmt import ToString;

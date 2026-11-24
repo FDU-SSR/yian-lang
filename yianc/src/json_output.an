@@ -1,0 +1,22 @@
+from json.write import Writer;
+from yianc.diagnostics.model import DiagnosticCode, DiagnosticLocation;
+from yianc.diagnostics.output import OutputError;
+from std.core.convert import From;
+from std.core.fs import write_string;
+
+// The caller owns the writer and its pending JSON document; this only publishes it.
+pub fn write_json(output: Writer&, path: str) -> Result<(), OutputError> {
+    let text = match output.finish() {
+        Ok(value) => value,
+        Err(_) => @panic("stage dump exceeds JSON writer limits"),
+    };
+    defer text.drop();
+    match write_string(path, text.as_str()) {
+        Ok(value) => Result<(), OutputError>.Ok(value),
+        Err(problem) => {
+            defer problem.drop();
+            Result<(), OutputError>.Err(OutputError(String.from(&problem.msg()), DiagnosticCode.OutputIo,
+                DiagnosticLocation.File(String.from(&path))))
+        },
+    }
+}

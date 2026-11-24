@@ -4,7 +4,7 @@ from yianc.diagnostics.model import DiagnosticCode, DiagnosticLocation;
 from yianc.frontend.input import InputError;
 from std.core.convert import From;
 from yianc.package.provenance import normalize_path;
-from yianc.driver.host import associated_root;
+from yianc.host import associated_root;
 from std.core.iter import Iterator, IntoIterator;
 from std.core.path import Path, PathBuf;
 from std.core.process import env_var;

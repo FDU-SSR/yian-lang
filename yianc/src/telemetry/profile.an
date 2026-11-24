@@ -274,15 +274,22 @@ impl ProfileRecorder {
         writer.begin_array();
         for timing in self.timings {
             writer.begin_object();
-            writer.key("pass_id"); writer.write_string(timing.pass_id.as_str());
+            writer.key("pass_id");
+            writer.write_string(timing.pass_id.as_str());
             writer.key("parent");
             match timing.parent { Some(value) => writer.write_u64(value), None => writer.write_null(), }
-            writer.key("kind"); writer.write_string(timing.kind.name());
-            writer.key("calls"); writer.write_u64(timing.calls);
-            writer.key("duration_ns"); writer.write_u64(timing.duration_ns);
-            writer.key("self_ns"); writer.write_u64(timing.self_ns);
-            writer.key("failed_calls"); writer.write_u64(timing.failed_calls);
-            writer.key("incomplete"); writer.write_bool(timing.incomplete);
+            writer.key("kind");
+            writer.write_string(timing.kind.name());
+            writer.key("calls");
+            writer.write_u64(timing.calls);
+            writer.key("duration_ns");
+            writer.write_u64(timing.duration_ns);
+            writer.key("self_ns");
+            writer.write_u64(timing.self_ns);
+            writer.key("failed_calls");
+            writer.write_u64(timing.failed_calls);
+            writer.key("incomplete");
+            writer.write_bool(timing.incomplete);
             writer.end_object();
         }
         writer.end_array();
@@ -293,8 +300,10 @@ impl ProfileRecorder {
         writer.begin_array();
         for item in self.not_run {
             writer.begin_object();
-            writer.key("pass_id"); writer.write_string(item.pass_id.as_str());
-            writer.key("reason"); writer.write_string(item.reason.as_str());
+            writer.key("pass_id");
+            writer.write_string(item.pass_id.as_str());
+            writer.key("reason");
+            writer.write_string(item.reason.as_str());
             writer.end_object();
         }
         writer.end_array();
@@ -312,15 +321,22 @@ impl ProfileRecorder {
         let writer = Writer.new();
         defer writer.drop();
         writer.begin_object();
-        writer.key("format"); writer.write_u64(1u64);
-        writer.key("kind"); writer.write_string("yianc-profile");
-        writer.key("ok"); writer.write_bool(ok);
-        writer.key("target"); writer.write_string(target);
-        writer.key("optimization"); writer.write_u64(u64(optimization));
-        writer.key("pointer_mode"); writer.write_string(if raw_pointers { "raw" } else { "fat" });
+        writer.key("format");
+        writer.write_u64(1u64);
+        writer.key("kind");
+        writer.write_string("yianc-profile");
+        writer.key("ok");
+        writer.write_bool(ok);
+        writer.key("target");
+        writer.write_string(target);
+        writer.key("optimization");
+        writer.write_u64(u64(optimization));
+        writer.key("pointer_mode");
+        writer.write_string(if raw_pointers { "raw" } else { "fat" });
         writer.key("work_finished_at_ns");
         match work_finished_at_ns { Some(value) => writer.write_i64(value), None => writer.write_null(), }
-        writer.key("profiling_state"); writer.write_string(self.state_name());
+        writer.key("profiling_state");
+        writer.write_string(self.state_name());
         self.append_timings(&writer);
         self.append_not_run(&writer);
         self.append_errors(&writer);
@@ -344,13 +360,21 @@ impl ProfileRecorder {
 
     fn summary(ok: bool, target: str, optimization: u8, raw_pointers: bool) -> String {
         let output = String.from(&"YIAN compiler profile\n");
-        output.push_str("outcome: "); output.push_str(if ok { "ok\n" } else { "failed\n" });
-        output.push_str("target: "); output.push_str(target); output.push('\n');
+        output.push_str("outcome: ");
+        output.push_str(if ok { "ok\n" } else { "failed\n" });
+        output.push_str("target: ");
+        output.push_str(target);
+        output.push('\n');
         output.push_str("optimization: ");
-        let level = u64(optimization).to_string(); defer level.drop();
-        output.push_str(level.as_str()); output.push('\n');
-        output.push_str("pointer mode: "); output.push_str(if raw_pointers { "raw\n" } else { "fat\n" });
-        output.push_str("profile state: "); output.push_str(self.state_name()); output.push('\n');
+        let level = u64(optimization).to_string();
+        defer level.drop();
+        output.push_str(level.as_str());
+        output.push('\n');
+        output.push_str("pointer mode: ");
+        output.push_str(if raw_pointers { "raw\n" } else { "fat\n" });
+        output.push_str("profile state: ");
+        output.push_str(self.state_name());
+        output.push('\n');
         output.push_str("duration is inclusive; self excludes direct child spans.\n");
         for timing in self.timings {
             let depth = 0u64;
@@ -360,20 +384,32 @@ impl ProfileRecorder {
                 parent = self.timings[index].parent;
             }
             for _ in 0u64..depth { output.push_str("  "); }
-            output.push_str(timing.pass_id.as_str()); output.push_str(" calls=");
-            let calls = timing.calls.to_string(); defer calls.drop(); output.push_str(calls.as_str());
+            output.push_str(timing.pass_id.as_str());
+            output.push_str(" calls=");
+            let calls = timing.calls.to_string();
+            defer calls.drop();
+            output.push_str(calls.as_str());
             output.push_str(" total_ms=");
-            let duration = Self.milliseconds(timing.duration_ns); defer duration.drop(); output.push_str(duration.as_str());
+            let duration = Self.milliseconds(timing.duration_ns);
+            defer duration.drop();
+            output.push_str(duration.as_str());
             output.push_str(" self_ms=");
-            let own = Self.milliseconds(timing.self_ns); defer own.drop(); output.push_str(own.as_str());
+            let own = Self.milliseconds(timing.self_ns);
+            defer own.drop();
+            output.push_str(own.as_str());
             output.push_str(" failed=");
-            let failed = timing.failed_calls.to_string(); defer failed.drop(); output.push_str(failed.as_str());
+            let failed = timing.failed_calls.to_string();
+            defer failed.drop();
+            output.push_str(failed.as_str());
             if timing.incomplete { output.push_str(" incomplete"); }
             output.push('\n');
         }
         for item in self.not_run {
-            output.push_str("not_run: "); output.push_str(item.pass_id.as_str()); output.push_str(" (");
-            output.push_str(item.reason.as_str()); output.push_str(")\n");
+            output.push_str("not_run: ");
+            output.push_str(item.pass_id.as_str());
+            output.push_str(" (");
+            output.push_str(item.reason.as_str());
+            output.push_str(")\n");
         }
         for message in self.telemetry_errors { output.push_str("warning: "); output.push_str(message.as_str()); output.push('\n'); }
         output
@@ -439,6 +475,8 @@ impl Drop for ProfileRecorder {
         for item in self.not_run { item.drop(); }
         release_strings(&self.telemetry_errors);
         for span in self.active { match &span.suppressed_id { Some(value) => value.drop(), None => {}, } }
-        self.timings.drop(); self.active.drop(); self.not_run.drop();
+        self.timings.drop();
+        self.active.drop();
+        self.not_run.drop();
     }
 }

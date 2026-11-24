@@ -1,6 +1,6 @@
 from yianc.common.ids import DefId, TypeId, SymbolId, HirId, UnitId, NameId;
 from yianc.analysis.constant.evaluate import TypeSizeProvider;
-from yianc.driver.trace import CompilerTrace;
+from yianc.telemetry.trace import CompilerTrace;
 from yianc.common.location import SourceSpan;
 from yianc.diagnostics.model import DiagnosticCode, DiagnosticLocation, UserDiagnostic;
 from std.core.convert import From;
