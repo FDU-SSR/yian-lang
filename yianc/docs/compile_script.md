@@ -428,6 +428,6 @@ python3 runtime/build.py --asan     # ASan/UBSan self-tests.
 | 文件 | 说明 |
 | --- | --- |
 | `yianc/src/main.an`、`yianc/src/config.an` | 编译器命令行与驱动入口 |
-| `yianc/src/driver/trace.an` | 日志和计时入口 |
+| `yianc/src/telemetry/trace.an` | 日志和计时入口 |
 | `fmt/src/` | 独立格式化器 |
 | `runtime/` | C 运行时 |

@@ -105,11 +105,12 @@ Native pipeline:
 
 | Location | Responsibility |
 | --- | --- |
-| `yianc/src/{main.an,driver/}` | Frontend/middle-end/backend drivers, CLI, dumps, profiling and linking. |
-| `yianc/src/frontend/` | Source/session ownership, lexer/parser, AST, desugaring and traversal. |
-| `yianc/src/analysis/` | Session/output, resolution, types, symbols/definitions, HIR, constants, lowering and checking passes. |
-| `yianc/src/codegen/` | CFG, LLVM lowering and pointer-check enforcement. |
-| `yianc/src/{common,diagnostics,package}/` | IDs/positions, owned diagnostics, package-map validation/provenance. |
+| `yianc/src/{main.an,config.an}` | CLI parsing, stage sequencing and the process exit path. |
+| `yianc/src/telemetry/`, `yianc/src/{host.an,roots.an}` | Logging/timing/profile recording; host resource and source/runtime root resolution. |
+| `yianc/src/frontend/` | Input preparation, source/session ownership, lexer/parser, AST, desugaring, traversal and stage dumps; `driver.an` composes the stage. |
+| `yianc/src/analysis/` | Session/output, resolution, types, symbols/definitions, HIR, constants, lowering, checking passes and HIR dump; `driver.an` owns the pass sequence. |
+| `yianc/src/codegen/` | CFG, LLVM lowering, pointer-check enforcement, native linking and stage dumps; `driver.an` owns emission and publication. |
+| `yianc/src/{common,diagnostics,package}/` | IDs/positions, owned diagnostics and stderr reporting, package-map validation/provenance. |
 | `anx/src/{manifest,project,driver}/` | TOML manifests, layouts/dependencies/ownership, command/test drivers. |
 | `fmt/`, `lsp/`, `ide-support/` | Standalone formatter, native stdio LSP, VS Code extension. |
 | `lib/src/` | Core types, containers, numeric operations, I/O, paths, processes and FFI helpers. |

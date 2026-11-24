@@ -1,43 +1,36 @@
 # yianc 编码规范
 
-本规范适用于 `yianc/src/`、`yianc/tests/` 和 `yianc/native/` 中的新增与修改代码。
-它补充命名、模块边界、所有权和错误处理约定；空白、缩进、括号与注释放置以
-[`yian-fmt` 的布局规则](../../docs/manual/28.formatter.md) 为准，两者的要求冲突时先修正代码，再修正本文档。
+本规范适用于此项目中的 YIAN 代码, 它补充命名、模块边界、所有权和错误处理约定.
 
-## 1. 提交前检查
+## 1. 文件与模块
 
-- 对所有改动的 `.an` 文件运行 `yian-fmt --check <file>`；需要写回时使用 `yian-fmt -w <file>`。
-- 运行与改动直接相关的 `yianc --check` 或单个测试入口，不默认执行整个包或整个仓库的测试。
-- 检查本文档及 `yianc/docs/` 中受影响的契约、签名和命令示例。
-- 不提交 `yianc/build/` 中的产物；构建产物由工具生成。
-
-## 2. 文件与模块
-
-### 2.1 按职责放置代码
+### 1.1 按职责放置代码
 
 `yianc/src/` 的目录边界对应编译阶段和依赖方向：
 
-| 目录 | 职责 |
-|------|------|
-| `frontend/` | 源码会话、词法、语法、AST、去糖和遍历 |
-| `analysis/` | 解析、类型、符号、HIR、常量求值、lowering 和检查 pass |
-| `codegen/` | CFG、LLVM lowering 和指针安全检查 |
-| `driver/` | 前端/中端/后端驱动、CLI、输出、运行时链接和观测 |
-| `common/` | 会话内 ID、源码位置等不依赖分析或 codegen 的基础类型 |
-| `diagnostics/` | 诊断模型、渲染和输出，不依赖具体编译阶段 |
-| `package/` | 包图校验与来源信任，不依赖 AST 或 HIR |
+| 目录           | 职责                                                  |
+| -------------- | ----------------------------------------------------- |
+| `frontend/`    | 输入准备、源码会话、词法、语法、AST、去糖、遍历与转储 |
+| `analysis/`    | 解析、类型、符号、HIR、常量求值、lowering、检查与转储 |
+| `codegen/`     | CFG、LLVM lowering、指针安全检查、原生链接与转储      |
+| `telemetry/`   | 日志、计时与 profile 记录                             |
+| `common/`      | 会话内 ID、源码位置等不依赖分析或 codegen 的基础类型  |
+| `diagnostics/` | 诊断模型、渲染和 stderr 输出                          |
+| `package/`     | 包图校验与来源信任，不依赖 AST 或 HIR                 |
+| `host.an`、`roots.an` | 主机资源定位、标准库源码根与运行时资源根       |
 
 依赖方向从底层到上层：
 
 ```text
-common → frontend → analysis → codegen → driver
-diagnostics 与 package 可被需要它的阶段使用，但不反向依赖具体阶段
+common → frontend → analysis → codegen
+host/roots、telemetry、diagnostics 与 package 可被需要它的阶段使用
 ```
 
 `common` 不依赖 `analysis`，`package/` 不依赖 AST/HIR，诊断模型不依赖渲染。
+每个阶段的 `driver.an` 是阶段组合根，阶段内部模块不导入它；`main.an` 是唯一组合三个阶段驱动的入口。
 新增模块先确定它属于哪个阶段；不要为了复用把阶段专属类型放进 `common`。
 
-### 2.2 一个文件一个主要职责
+### 1.2 一个文件一个主要职责
 
 文件名描述职责，不用 `utils.an`、`helpers.an` 或 `misc.an` 收纳无关逻辑。
 同一目录的文件按编译顺序和概念分组，例如 `analysis/lowering/` 按表达式类别拆分。
@@ -63,7 +56,7 @@ impl Drop for AssignmentChecker { ... }
 - 不使用的 import 立即删除，不保留“以后可能用到”的导入。
 - 不使用统一的文件头模板；需要说明模块契约时直接写注释，不写 `Expected output` 一类的测试头。
 
-### 2.3 公开边界
+### 1.3 公开边界
 
 - 只有跨模块使用的声明加 `pub`；模块内部实现保持默认可见性。
 - 导出类型时同时导出调用者需要的构造函数和查询方法；不要让调用者直接修改内部字段来绕过不变量。
@@ -74,16 +67,16 @@ impl Drop for AssignmentChecker { ... }
   分开，不混在同一块。
 - 不使用横幅注释（`// ====`）分隔 impl 或方法组；类型声明、`impl` 块和空行已经表达分组。
 
-## 3. 命名
+## 2. 命名
 
-| 类别 | 风格 | 示例 |
-|------|------|------|
-| struct、enum、trait | `PascalCase` | `TypeStore`、`AnalysisSession`、`UserDiagnostic` |
-| enum 变体 | `PascalCase` | `Source`、`NotAType`、`TypeMismatch` |
-| 函数、方法、字段、局部变量 | `snake_case` | `parse_program`、`source_root`、`deferred` |
-| 常量 | `UPPER_SNAKE_CASE` | `VOID_TYPE_ID`、`EXIT_FAILURE` |
-| 类型参数 | 单个大写字母或短 `PascalCase` | `T`、`E`、`K`、`V` |
-| 会话内 ID | `PascalCase` + `Id` 后缀 | `UnitId`、`TypeId`、`HirId`、`BlockId` |
+| 类别                       | 风格                          | 示例                                             |
+| -------------------------- | ----------------------------- | ------------------------------------------------ |
+| struct、enum、trait        | `PascalCase`                  | `TypeStore`、`AnalysisSession`、`UserDiagnostic` |
+| enum 变体                  | `PascalCase`                  | `Source`、`NotAType`、`TypeMismatch`             |
+| 函数、方法、字段、局部变量 | `snake_case`                  | `parse_program`、`source_root`、`deferred`       |
+| 常量                       | `UPPER_SNAKE_CASE`            | `VOID_TYPE_ID`、`EXIT_FAILURE`                   |
+| 类型参数                   | 单个大写字母或短 `PascalCase` | `T`、`E`、`K`、`V`                               |
+| 会话内 ID                  | `PascalCase` + `Id` 后缀      | `UnitId`、`TypeId`、`HirId`、`BlockId`           |
 
 - 缩写按词处理，写 `HirId`、`CfgModule`、`LlvmLowering`、`AstArena`；已有名称如 `NativeLLVM`
   保持原样，不为统一大写而批量重命名。
@@ -94,9 +87,9 @@ impl Drop for AssignmentChecker { ... }
   `with_max_depth`），不要用无意义的 `create` 或 `make`。
 - 诊断码和消息属于用户可见契约，不按命名风格改写；诊断码定义集中在 `DiagnosticCode`。
 
-## 4. 类型声明
+## 3. 类型声明
 
-### 4.1 struct
+### 3.1 struct
 
 多字段 struct 通常每行一个字段，字段按构造/语义顺序排列：
 
@@ -127,16 +120,16 @@ pub struct AnalysisOptions {
 }
 ```
 
-### 4.2 enum 与 trait
+### 3.2 enum 与 trait
 
 - enum 变体按语义顺序排列；短小且无载荷的变体可以放在一行，带字段或需要注释的变体每行一个。
 - 模式匹配覆盖所有变体；确实只关心部分变体时显式写 `_ => {}`，不要依赖隐式忽略。
 - trait 的方法先声明必需方法，再提供默认方法。默认实现只在语义确实通用时添加。
 - 阶段错误按变体携带足够的位置和消息；需要分类时增加枚举变体，不用消息字符串保存错误类别。
 
-## 5. 函数与控制流
+## 4. 函数与控制流
 
-### 5.1 函数形状
+### 4.1 函数形状
 
 - 函数参数和返回类型写完整类型，不用推断替代公开签名。
 - 前置条件和快速失败放在函数开头，使用 guard clause 减少嵌套：
@@ -175,12 +168,12 @@ match result {
 
 - 不使用 `return` 隐藏多个出口；需要提前退出时用 guard clause，正常路径保留尾表达式或单一 `return`。
 
-### 5.2 函数长度
+### 4.2 函数长度
 
 - 一个函数只完成一个阶段职责。解析、类型检查、诊断构造和资源释放通常不应混在同一函数中。
 - 超过一屏仍难以命名的函数，按阶段边界拆成私有函数；拆分点使用有意义的名称，而不是 `part1`、`helper`。
 
-### 5.3 变量与表达式
+### 4.3 变量与表达式
 
 - 变量在首次使用附近声明，并尽量用有意义的初始值；不要先声明一大组变量再逐个赋值。
 - 类型不能由上下文确定、或字面量需要固定位宽时写显式类型，例如 `let index: u64 = 0;`。
@@ -188,9 +181,9 @@ match result {
   临时提升为长期字段，除非其所有者保证生命周期。
 - 长表达式按子表达式绑定局部名称，名称说明中间结果的含义；不要用 `a`、`b`、`tmp` 堆积难以审查的链式调用。
 
-## 6. 所有权与资源
+## 5. 所有权与资源
 
-### 6.1 借用与拥有
+### 5.1 借用与拥有
 
 - 参数和字段需要借用时写 `T&`；返回借用值时在注释中说明它依赖哪个所有者。
 - `Option<T&>` 表示可选的借用；不要用空指针或哨兵值表达“没有值”。
@@ -198,7 +191,7 @@ match result {
   指向临时值的 `str`。
 - 原始指针只用于 C ABI、运行时存储或底层容器实现；普通编译器逻辑使用引用、数组、切片和显式 ID。
 
-### 6.2 显式释放
+### 5.2 显式释放
 
 YIAN 的赋值、传参和返回都是浅复制，不自动释放来源值。每个资源只有一个显式所有者：
 
@@ -241,7 +234,9 @@ defer { if !accepted { root.drop(); } };
 accepted = true;
 ```
 
-### 6.3 稳定地址与容器
+- 通过 `exit`、`@panic` 等非自然方式结束程序时不执行任何资源释放：不要在这些调用前手动 `drop()`；进程终止后由操作系统回收资源。正常返回和可恢复错误仍按本节规则释放。
+
+### 5.3 稳定地址与容器
 
 - `Arena<T>` 用于需要稳定地址、按 ID 索引的记录；分配后地址不变。
 - `Vec`、`HashMap`、`HashSet` 的扩容或结构修改会使旧引用/迭代器失效。跨扩容保存的记录使用 arena，
@@ -249,9 +244,9 @@ accepted = true;
 - 不要在遍历 `HashMap`/`HashSet` 时做结构修改。
 - 结构类型的驻留键在插入后不可变；不要用已插入的键继续修改值。
 
-## 7. 错误、诊断与 panic
+## 6. 错误、诊断与 panic
 
-### 7.1 用户错误
+### 6.1 用户错误
 
 - 可恢复的用户错误通过 `Result<T, E>` 返回，使用 `?` 传播；不要用 panic 处理输入错误、类型错误或 I/O 错误。
 - 每个阶段定义具体的错误类型，并实现 `UserDiagnostic` 与 `Drop`：
@@ -282,7 +277,7 @@ impl Drop for CodegenError {
 - 可恢复警告通过同步的 `DiagnosticReporter` 报告；致命错误沿 `Result` 返回 `main`。
 - 不要根据诊断消息文本判断错误类别；需要分类时增加枚举变体或诊断码。
 
-### 7.2 内部不变量
+### 6.2 内部不变量
 
 - `@panic` 只用于调用者无法恢复的内部不变量违反，例如会话状态错误或无效的会话内 ID。
 - panic 消息说明被破坏的不变量，不写用户操作建议：
@@ -296,7 +291,7 @@ None => @panic("invalid type ID")
 - `.unwrap()` 只用于构造后必然成功的查询或测试夹具；用户输入路径使用 `match`、`?` 或显式错误转换。
 - 不可达分支使用 `@panic` 或明确的 `Result` 错误，不用返回默认值掩盖问题。
 
-## 8. 注释与文档
+## 7. 注释与文档
 
 - 代码注释和诊断消息使用英文；用户文档与 `yianc/docs/` 使用中文。
 - 注释解释所有权、前置条件、生命周期和跨模块边界，不复述代码本身：
@@ -317,7 +312,7 @@ pub fn primitive(data: TypeData) -> Result<TypeId, AnalysisError> { ... }
   不把临时说明留在产品代码中。
 - 文档和注释描述当前事实；链接使用仓库内稳定路径，不依赖临时计划或提案编号。
 
-## 9. 排版
+## 8. 排版
 
 `yian-fmt` 是排版的唯一权威。以下规则概括它对本仓库代码的稳定输出：
 
@@ -338,7 +333,7 @@ yian-fmt --check yianc/src/main.an
 yian-fmt -w yianc/src/main.an
 ```
 
-## 10. 字面量与数值
+## 9. 字面量与数值
 
 - 类型标注或上下文已经决定类型时省略数字后缀：
 
@@ -351,7 +346,7 @@ const EXIT_FAILURE: i32 = 1;
 - 位掩码和 ABI 常量使用十六进制；计数和索引使用十进制。
 - 不为了去掉后缀而改变类型或运算结果。
 
-## 11. 测试代码
+## 10. 测试代码
 
 测试位于 `yianc/tests/`，按被测模块分目录：
 
@@ -379,7 +374,7 @@ assert generic != another_generic: "generic binders have distinct declaration id
 - 不写“测试测试框架”的元测试；测试运行器、用例选择和期望文件处理由人工审查。
 - 测试代码也遵循本规范的命名、所有权和注释要求；测试数据可以包含中文或其他语言，以覆盖真实输入。
 
-## 12. 文档同步
+## 11. 文档同步
 
 - 修改编译阶段、公开类型、命令行选项、诊断码或资源契约时，更新 `yianc/docs/` 中的对应章节。
 - 编译器文档只描述原生 `yianc`；不把 Python 恢复编译器的 CLI、API 或实现写进产品文档。

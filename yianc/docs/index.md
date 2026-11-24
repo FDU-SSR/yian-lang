@@ -11,8 +11,8 @@ LLVM 代码生成和原生链接。
 
 | 章 | 标题 | 对应源文件 |
 |----|------|-----------|
-| [01](dev/01.pipeline.md) | 编译管线概览 | `yianc/src/main.an`、`yianc/src/driver/` |
-| [02](dev/02.frontend.md) | 前端 | `yianc/src/frontend/`、`yianc/src/driver/frontend.an` |
+| [01](dev/01.pipeline.md) | 编译管线概览 | `yianc/src/main.an`、`yianc/src/{frontend,analysis,codegen}/driver.an` |
+| [02](dev/02.frontend.md) | 前端 | `yianc/src/frontend/`（含 `driver.an`、`dump.an`） |
 | [03](dev/03.desugar.md) | AST 去糖 | `yianc/src/frontend/desugar.an` |
 | [04](dev/04.resolve.md) | 全局符号解析 | `yianc/src/analysis/resolution/` |
 
@@ -38,7 +38,7 @@ LLVM 代码生成和原生链接。
 
 | 章 | 标题 | 对应源文件 |
 |----|------|-----------|
-| [13](dev/13.log.md) | 日志系统 | `yianc/src/driver/trace.an` |
+| [13](dev/13.log.md) | 日志系统 | `yianc/src/telemetry/` |
 | [14](dev/14.cli_build.md) | CLI 与构建 | `yianc/src/main.an`、`yianc/src/config.an` |
 | [15](dev/15.stdlib.md) | 标准库架构 | `lib/` |
 | [16](dev/16.assign_semantics.md) | 赋值语义实现 | `yianc/src/analysis/lowering/operations.an` |
