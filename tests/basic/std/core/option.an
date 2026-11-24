@@ -38,6 +38,21 @@ fn main() {
     let opt4: Option<i32> = Option<i32>.Some(77);
     assert *opt4.unwrap() == 77: "unwrap should return the inner value";
 
+    // as_ref — borrow the payload without copying it
+    let opt7: Option<i32> = Option<i32>.Some(78);
+    let borrowed: Option<i32&> = opt7.as_ref();
+    assert borrowed.is_some(): "as_ref of Some should be Some";
+    assert **borrowed.unwrap() == 78: "as_ref should expose the payload";
+    **borrowed.unwrap() = 79;
+    assert *opt7.unwrap() == 79: "writes through the borrowed payload reach the original";
+    let opt8: Option<i32> = Option<i32>.None;
+    assert opt8.as_ref().is_none(): "as_ref of None should be None";
+
+    // as_ref also accepts an existing Option reference (`Option<T>&`)
+    let opt9: Option<i32> = Option<i32>.Some(80);
+    let opt9_ref: Option<i32>& = &opt9;
+    assert **opt9_ref.as_ref().unwrap() == 80: "as_ref should accept an Option reference";
+
     // Ordinary enum assignment copies the active payload and preserves the source.
     let opt5: Option<i32> = Option<i32>.Some(55);
     let opt6 = opt5;

@@ -40,6 +40,14 @@ impl<T> Option<T> {
         }
     }
 
+    // Borrow the payload: convert a reference to the Option into an Option of a payload reference.
+    pub fn as_ref() -> Option<T&> {
+        match self {
+            None => Option<T&>.None,
+            Some(val) => Option<T&>.Some(val),
+        }
+    }
+
     // Take the value out of the Option, leaving None in its place.
     pub fn take() -> Option<T> {
         match self {
