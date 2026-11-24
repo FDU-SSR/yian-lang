@@ -1,5 +1,17 @@
 from lsp.analysis.fingerprint import sha256;
-from yianc.frontend.source import SourceDocument;
+
+// One editor or disk document before compilation; load_text resolves its canonical path.
+pub struct SourceDocument {
+    pub path: String,
+    pub text: String,
+}
+
+impl Drop for SourceDocument {
+    pub fn drop() {
+        self.path.drop();
+        self.text.drop();
+    }
+}
 
 struct InputFileIdentity {
     path: String,
@@ -28,21 +40,21 @@ impl InputIdentity {
             files.push(InputFileIdentity(
                 path=String.from(&document.path.as_str()),
                 content_sha256=digest,
-            ));
+                ));
         }
         Self(configuration=String.from(&configuration), files=files)
     }
 
     pub fn same_key(other: InputIdentity&) -> bool {
         if self.configuration.as_str() != other.configuration.as_str() ||
-            self.files.len() != other.files.len() {
+        self.files.len() != other.files.len() {
             return false;
         }
         let index = 0u64;
         while index < self.files.len() {
             if self.files[index].path.as_str() != other.files[index].path.as_str() ||
-                self.files[index].content_sha256.as_str() !=
-                    other.files[index].content_sha256.as_str() {
+            self.files[index].content_sha256.as_str() !=
+            other.files[index].content_sha256.as_str() {
                 return false;
             }
             index += 1u64;

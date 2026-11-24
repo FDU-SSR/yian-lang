@@ -7,8 +7,6 @@ from yianc.codegen.driver import BackendDriver;
 from yianc.config import CompilerAction, parse_args;
 from yianc.diagnostics.report import report;
 from yianc.frontend.driver import FrontendDriver;
-from yianc.frontend.source import SourceTable;
-from yianc.package.model import PackageMap;
 from yianc.preprocess import load_packages, build_trust, collect_sources;
 from yianc.telemetry.log import LogLevel;
 from yianc.telemetry.profile import ProfileKind;
@@ -20,8 +18,6 @@ const EXIT_FAILURE: i32 = 1;
 fn main() {
     let config = parse_args();
     defer config.drop();
-    let empty = SourceTable.new();
-    defer empty.drop();
     let trace = CompilerTrace.new(&config);
     defer trace.drop();
 
@@ -31,26 +27,22 @@ fn main() {
 
     trace.start_pass("source_preparation", "main", "source preparation", ProfileKind.Stage);
     let packages = load_packages(&config, &trace);
-    let package_ref = match &packages {
-        Some(value) => Option<PackageMap&>.Some(value),
-        None => Option<PackageMap&>.None,
-    };
-    let trust = build_trust(&config, &trace, package_ref);
+    let trust = build_trust(&config, &trace, packages.as_ref());
     let input_sources = collect_sources(&config, &trace);
 
     let frontend = FrontendDriver.new(input_sources, config.dump, &trace);
     defer frontend.drop();
-    match frontend.run() {
-        Ok(_) => {},
+    let session = match frontend.run() {
+        Ok(value) => value,
         Err(problem) => {
             trace.fail("source_preparation");
             report(&problem, frontend.source_table());
             exit(EXIT_FAILURE);
         },
-    }
+    };
     trace.finish("source_preparation");
 
-    let middle = MiddleEndDriver.new(frontend.take_session(), config.raw_pointers, trust, packages, config.allow_ffi);
+    let middle = MiddleEndDriver.new(session, config.raw_pointers, trust, packages, config.allow_ffi);
     defer middle.drop();
     let sources = middle.analysis_session().frontend().source_table();
     let runtime_profile_dir = match &config.runtime_profile_dir { Some(value) => Option<str>.Some(value.as_str()), None => Option<str>.None };
@@ -118,7 +110,7 @@ fn main() {
         }
     }
     match trace.finalize(true) {
-        Some(warning) => { report(&warning, &empty); warning.drop(); },
+        Some(warning) => { report(&warning, sources); warning.drop(); },
         None => {},
     }
 }

@@ -1,7 +1,8 @@
-from yianc.frontend.source import SourceTable, SourceMap, collect_sources;
-from std.core.fs import create_dir_all, write_string, write, remove_file, remove_dir;
+from yianc.frontend.source import SourceFile, SourceTable, SourceMap, collect_sources, read_source;
+from yianc.common.ids import UnitId;
+from yianc.diagnostics.model import UserDiagnostic;
+from std.core.fs import create_dir_all, write_string, write, remove_file, remove_dir, resolve;
 from std.core.io import IoErrorKind;
-from std.core.ops import Index;
 
 fn release_strings(values: Vec<String>&) {
     let index = 0u64;
@@ -15,39 +16,50 @@ fn main() {
     write_string("/tmp/yian-bootstrap-sources/a.an", "fn a() { let s = \"中😀\"; }").unwrap();
     write_string("/tmp/yian-bootstrap-sources/ignored.txt", "ignored").unwrap();
     write_string("/tmp/yian-bootstrap-sources/nested/b.an", "fn b() {}").unwrap();
-    let inputs = Vec<String>.new(); defer release_strings(&inputs);
+    let inputs = Vec<String>.new();
+    defer release_strings(&inputs);
     inputs.push(String.from(&"/tmp/yian-bootstrap-sources/z.an"));
     inputs.push(String.from(&root));
-    let paths = *collect_sources(&inputs).unwrap(); defer release_strings(&paths);
+    let paths = *collect_sources(&inputs).unwrap();
+    defer release_strings(&paths);
     assert paths.len() == 4u64: "root order preserves explicit file plus recursive sources";
     assert paths[0].as_str() == "/tmp/yian-bootstrap-sources/z.an": "explicit root first";
     assert paths[1].as_str() == "/tmp/yian-bootstrap-sources/a.an": "directory sorted first";
     assert paths[2].as_str() == "/tmp/yian-bootstrap-sources/nested/b.an": "nested source";
     assert paths[3].as_str() == "/tmp/yian-bootstrap-sources/z.an": "directory sorted last";
-    let sources = SourceTable.new(); defer sources.drop();
-    let id = *sources.load(paths[1].as_str()).unwrap();
-    assert sources.file(id).text().contains("中😀"): "UTF-8 source";
-    match sources.load_text(paths[1].as_str(), "different") {
-        Err(error) => { assert error.kind() == IoErrorKind.InvalidInput: "conflicting overlay"; error.drop(); },
-        Ok(_) => @panic("conflicting overlay accepted"),
-    }
-    let original = *sources.load(paths[0].as_str()).unwrap();
+    let sources = match SourceTable.from_paths(&paths) {
+        Ok(value) => value,
+        Err(error) => { defer error.drop(); @panic("disk source load failed"); },
+    };
+    defer sources.drop();
+    assert sources.len() == 3u64: "duplicate canonical inputs share one unit";
+    assert sources.file(UnitId(0u64)).text() == "fn z() {}": "first unique source";
+    assert sources.file(UnitId(1u64)).text().contains("中😀"): "UTF-8 source";
     write_string("/tmp/yian-bootstrap-sources/z.an", "changed").unwrap();
-    let alias = *sources.load("/tmp/yian-bootstrap-sources/./z.an").unwrap();
-    assert alias.index == original.index && sources.file(original).text() == "fn z() {}":
-    "a duplicate disk path reuses the original input";
-    let mixed = SourceTable.new(); defer mixed.drop();
-    let overlay = *mixed.load_text(paths[1].as_str(), "overlay").unwrap();
-    match mixed.load(paths[1].as_str()) {
-        Err(error) => { assert error.kind() == IoErrorKind.InvalidInput: "conflicting disk input"; error.drop(); },
-        Ok(_) => @panic("conflicting disk input accepted"),
+    assert sources.file(UnitId(0u64)).text() == "fn z() {}":
+    "the table retains the first read of a source";
+
+    let first_path = match resolve(paths[1].as_str()) {
+        Ok(value) => value,
+        Err(error) => { error.drop(); @panic("could not resolve first fixture path"); },
+    };
+    let second_path = match resolve(paths[1].as_str()) {
+        Ok(value) => value,
+        Err(error) => { error.drop(); @panic("could not resolve second fixture path"); },
+    };
+    let duplicate_files = Vec<SourceFile>.new();
+    duplicate_files.push(SourceFile.new(first_path, String.from(&"overlay")));
+    duplicate_files.push(SourceFile.new(second_path, String.from(&"different")));
+    match SourceTable.from_files(duplicate_files) {
+        Err(error) => {
+            assert error.message().contains("conflicting"): "conflicting in-memory inputs rejected";
+            error.drop();
+        },
+        Ok(_) => @panic("conflicting in-memory inputs accepted"),
     }
-    write_string(paths[1].as_str(), "overlay").unwrap();
-    let matching = *mixed.load(paths[1].as_str()).unwrap();
-    assert matching.index == overlay.index: "matching disk and in-memory inputs share an ID";
     let bad: u8[1] = [255u8];
     write("/tmp/yian-bootstrap-sources/bad.an", bad.as_slice()).unwrap();
-    match sources.load("/tmp/yian-bootstrap-sources/bad.an") {
+    match read_source("/tmp/yian-bootstrap-sources/bad.an") {
         Err(error) => {
             defer error.drop();
             assert error.kind() == IoErrorKind.InvalidData: "invalid source encoding";
@@ -55,7 +67,8 @@ fn main() {
         },
         Ok(_) => @panic("invalid source accepted"),
     }
-    let absent = Vec<String>.new(); defer release_strings(&absent);
+    let absent = Vec<String>.new();
+    defer release_strings(&absent);
     absent.push(String.from(&"/tmp/yian-bootstrap-sources/absent"));
     match collect_sources(&absent) {
         Err(error) => {

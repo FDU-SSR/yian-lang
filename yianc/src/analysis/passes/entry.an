@@ -76,7 +76,7 @@ pub fn select_entry(ctx: ResolutionContext&, options: AnalysisOptions&) -> Resul
                 let index = 0u64;
                 while index < ctx.session.len() {
                     let unit = *ctx.session.unit(UnitId(index)).unwrap();
-                    if ctx.session.source(unit.id).canonical_path() == entry {
+                    if ctx.session.source(unit.id).path() == entry {
                         return match main_in(ctx, unit.id) {
                             Some(declaration) => register(ctx, declaration),
                             None => {

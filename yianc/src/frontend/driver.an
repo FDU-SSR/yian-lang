@@ -88,49 +88,38 @@ fn prepare_session(session: FrontendSession&, observer: PreparationObserver&) ->
 pub struct FrontendDriver {
     session: Option<FrontendSession>,
     trace: CompilerTrace&,
-    complete: bool,
     attempted: bool,
     dump: bool,
 }
 
 impl FrontendDriver {
     static pub fn new(sources: SourceTable, dump: bool, trace: CompilerTrace&) -> Self {
-        Self(Option<FrontendSession>.Some(FrontendSession.new(sources)), trace, false, false, dump)
+        Self(Option<FrontendSession>.Some(FrontendSession.new(sources)), trace, false, dump)
     }
 
-    pub fn run() -> Result<(), FrontendError> {
+    // The prepared session is the result; a failed run keeps it for source_table() reporting.
+    pub fn run() -> Result<FrontendSession, FrontendError> {
         if self.attempted { @panic("frontend driver has already run"); }
         self.attempted = true;
-        let session = match &self.session {
-            Some(value) => value,
-            None => @panic("frontend input session is not available"),
-        };
         let dumps = StageDumps(self.dump, self.trace);
-        prepare_session(session, &dumps)?;
-        self.complete = true;
-        Result<(), FrontendError>.Ok(())
+        {
+            let session = match &self.session {
+                Some(value) => value,
+                None => @panic("frontend input session is not available"),
+            };
+            prepare_session(session, &dumps)?;
+        }
+        match self.session.take() {
+            Some(value) => Result<FrontendSession, FrontendError>.Ok(value),
+            None => @panic("prepared frontend session is not available"),
+        }
     }
 
+    // Valid only after a failed run; success transfers the table to the returned session.
     pub fn source_table() -> SourceTable& {
         match &self.session {
             Some(value) => value.source_table(),
             None => @panic("frontend input session is not available"),
-        }
-    }
-
-    pub fn prepared_session() -> FrontendSession& {
-        if !self.complete { @panic("prepared frontend session is not available"); }
-        match &self.session {
-            Some(value) => value,
-            None => @panic("prepared frontend session is not available"),
-        }
-    }
-
-    pub fn take_session() -> FrontendSession {
-        if !self.complete { @panic("prepared frontend session is not available"); }
-        match self.session.take() {
-            Some(value) => value,
-            None => @panic("prepared frontend session is not available"),
         }
     }
 }

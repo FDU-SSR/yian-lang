@@ -1,6 +1,7 @@
 from std.core.path import PathBuf;
-from std.collections.hash_map import HashMap;
 from yianc.common.ids import UnitId;
+from yianc.diagnostics.model import DiagnosticCode, DiagnosticLocation;
+from yianc.input_error import InputError;
 from std.collections.sort import sort_by;
 from std.core.convert import From;
 from std.core.fs import Directory, DirEntryKind, metadata, read_to_string, canonicalize, resolve;
@@ -64,16 +65,10 @@ impl AddAssign<Span, Span> for Span {
 }
 
 pub struct SourceFile {
-    path: String,
+    // Disk input is newline-normalized; in-memory input keeps the caller's text.
     text: String,
-    canonical: PathBuf,
-    disk_loaded: bool,
-}
-
-// An in-memory input owns its path and text until a preparation call copies both into its session.
-pub struct SourceDocument {
-    pub path: String,
-    pub text: String,
+    // Canonical source path, used as identity and by diagnostics, dumps and output naming.
+    path: PathBuf,
 }
 
 pub struct SourceCollectionError {
@@ -89,26 +84,18 @@ fn collection_error(path: str, error: IoError) -> SourceCollectionError {
     SourceCollectionError(String.from(&path), error)
 }
 
-impl Drop for SourceDocument {
-    pub fn drop() {
-        self.path.drop();
-        self.text.drop();
-    }
-}
-
 impl SourceFile {
-    pub fn path() -> str { return self.path.as_str(); }
+    static pub fn new(path: PathBuf, text: String) -> Self { Self(text, path) }
 
-    pub fn canonical_path() -> str { self.canonical.as_str() }
+    pub fn path() -> str { self.path.as_str() }
 
     pub fn text() -> str { return self.text.as_str(); }
 }
 
 impl Drop for SourceFile {
     pub fn drop() {
-        self.path.drop();
         self.text.drop();
-        self.canonical.drop();
+        self.path.drop();
     }
 }
 
@@ -117,72 +104,92 @@ pub trait SourceMap {
 }
 
 pub struct SourceTable {
-    files: HashMap<UnitId, SourceFile>,
-    paths: HashMap<str, UnitId>,
+    // UnitId is the storage key; duplicate paths are resolved by scanning file metadata.
+    files: Vec<SourceFile>,
 }
 
 impl SourceTable {
     static pub fn new() -> Self {
-        Self(HashMap<UnitId, SourceFile>.new(), HashMap<str, UnitId>.new())
+        Self(Vec<SourceFile>.new())
+    }
+
+    // Load every yianc input once; duplicate canonical paths are skipped before reading.
+    static pub fn from_paths(paths: Vec<String>&) -> Result<Self, SourceCollectionError> {
+        let files = Vec<SourceFile>.new();
+        let accepted = false;
+        defer { if !accepted { release_files(&files); } };
+        for path in *paths {
+            let canonical = match canonicalize(path.as_str()) {
+                Ok(value) => value,
+                Err(error) => return Result<Self, SourceCollectionError>.Err(collection_error(path.as_str(), error)),
+            };
+            let duplicate = false;
+            let current = 0u64;
+            while current < files.len() {
+                if files[current].path() == canonical.as_str() {
+                    duplicate = true;
+                    break;
+                }
+                current += 1u64;
+            }
+            if duplicate {
+                canonical.drop();
+                continue;
+            }
+            let text = match read_source(path.as_str()) {
+                Ok(value) => value,
+                Err(error) => {
+                    canonical.drop();
+                    return Result<Self, SourceCollectionError>.Err(collection_error(path.as_str(), error));
+                },
+            };
+            files.push(SourceFile(text, canonical));
+        }
+        accepted = true;
+        Result<Self, SourceCollectionError>.Ok(Self(files))
+    }
+
+    // Build the immutable table from caller-owned source files; duplicate conflicts are rejected.
+    static pub fn from_files(files: Vec<SourceFile>) -> Result<Self, InputError> {
+        let index = 0u64;
+        while index < files.len() {
+            let next = index + 1u64;
+            while next < files.len() {
+                if files[index].path() == files[next].path() && files[index].text() != files[next].text() {
+                    let path = String.from(&files[index].path());
+                    let release = 0u64;
+                    while release < files.len() { files[release].drop(); release += 1u64; }
+                    files.drop();
+                    return Result<Self, InputError>.Err(InputError(DiagnosticCode.Source,
+                        DiagnosticLocation.File(path), String.from(&"conflicting source text for path")));
+                }
+                next += 1u64;
+            }
+            index += 1u64;
+        }
+        let accepted = Vec<SourceFile>.new();
+        while files.len() > 0 {
+            let source = files.remove(0u64);
+            let duplicate = false;
+            let current = 0u64;
+            while current < accepted.len() {
+                if accepted[current].path() == source.path() {
+                    duplicate = true;
+                    break;
+                }
+                current += 1u64;
+            }
+            if duplicate { source.drop(); } else { accepted.push(source); }
+        }
+        Result<Self, InputError>.Ok(Self(accepted))
     }
 
     pub fn len() -> u64 { self.files.len() }
-
-    pub fn load(path: str) -> Result<UnitId, IoError> {
-        let canonical = canonicalize(path)?;
-        let canonical_text = canonical.as_str();
-        match self.paths.get(&canonical_text) {
-            Some(existing) => {
-                let id = *existing;
-                if self.file(id).disk_loaded {
-                    canonical.drop();
-                    return Result<UnitId, IoError>.Ok(id);
-                }
-            },
-            None => {},
-        }
-        let text = match read_source(path) {
-            Ok(value) => value,
-            Err(error) => {
-                canonical.drop();
-                return Result<UnitId, IoError>.Err(error);
-            },
-        };
-        self.add(SourceFile(String.from(&path), text, canonical, true))
-    }
-
-    pub fn load_text(path: str, text: str) -> Result<UnitId, IoError> {
-        let canonical = resolve(path)?;
-        let display = String.from(&canonical.as_str());
-        self.add(SourceFile(display, String.from(&text), canonical, false))
-    }
-
-    fn add(file: SourceFile) -> Result<UnitId, IoError> {
-        let path = file.canonical_path();
-        match self.paths.get(&path) {
-            Some(existing) => {
-                let id = *existing;
-                let same = self.file(id).text() == file.text();
-                let disk_loaded = file.disk_loaded;
-                file.drop();
-                if same {
-                    if disk_loaded { self.file(id).disk_loaded = true; }
-                    return Result<UnitId, IoError>.Ok(id);
-                }
-                return Result<UnitId, IoError>.Err(IoError.new(IoErrorKind.InvalidInput, "conflicting source text for path"));
-            },
-            None => {},
-        }
-        let id = UnitId(self.files.len());
-        self.paths.insert(path, id);
-        self.files.insert(id, file);
-        Result<UnitId, IoError>.Ok(id)
-    }
 }
 
 impl SourceMap for SourceTable {
     pub fn file(unit: UnitId) -> SourceFile& {
-        match self.files.get(&unit) {
+        match self.files.as_slice().get(unit.index) {
             Some(file) => file,
             None => @panic("invalid source unit ID"),
         }
@@ -191,10 +198,9 @@ impl SourceMap for SourceTable {
 
 impl Drop for SourceTable {
     pub fn drop() {
-        self.paths.drop();
         let index: u64 = 0;
         while index < self.files.len() {
-            self.file(UnitId(index)).drop();
+            self.files[index].drop();
             index += 1;
         }
         self.files.drop();
@@ -312,7 +318,7 @@ fn collect_dir(path: str, paths: Vec<String>&) -> Result<(), SourceCollectionErr
         }
     }
 
-    Result<(), SourceCollectionError>.Ok(val= ())
+    Result<(), SourceCollectionError>.Ok(val=())
 }
 
 fn release_paths(paths: Vec<String>&) {
@@ -323,6 +329,11 @@ fn release_paths(paths: Vec<String>&) {
         index += 1u64;
     }
     paths.drop();
+}
+
+fn release_files(files: Vec<SourceFile>&) {
+    for file in *files { file.drop(); }
+    files.drop();
 }
 
 // Preserve command-line root order and sort files within each directory; release collected paths on failure.

@@ -90,7 +90,6 @@ pub fn build_trust(config: CompilerConfig&, trace: CompilerTrace&, packages: Opt
 }
 
 pub fn collect_sources(config: CompilerConfig&, trace: CompilerTrace&) -> SourceTable {
-    let sources = SourceTable.new();
     start_profile(trace, "input.collect_sources");
     let paths_result = collect_source_paths(&config.inputs);
     finish_profile(trace, "input.collect_sources", match &paths_result { Ok(_) => true, Err(_) => false });
@@ -100,15 +99,12 @@ pub fn collect_sources(config: CompilerConfig&, trace: CompilerTrace&) -> Source
             DiagnosticLocation.File(String.from(&error.path.as_str())), String.from(&error.error.msg()))),
     };
     defer release_paths(&paths);
-    for path in paths {
-        start_profile(trace, "input.read_sources");
-        let result = sources.load(path.as_str());
-        finish_profile(trace, "input.read_sources", match &result { Ok(_) => true, Err(_) => false });
-        match result {
-            Ok(_) => {},
-            Err(error) => exit_with_error(trace, InputError(DiagnosticCode.Source,
-                DiagnosticLocation.File(String.from(&path.as_str())), String.from(&error.msg()))),
-        }
+    start_profile(trace, "input.read_sources");
+    let read_result = SourceTable.from_paths(&paths);
+    finish_profile(trace, "input.read_sources", match &read_result { Ok(_) => true, Err(_) => false });
+    match read_result {
+        Ok(value) => value,
+        Err(error) => exit_with_error(trace, InputError(DiagnosticCode.Source,
+            DiagnosticLocation.File(String.from(&error.path.as_str())), String.from(&error.error.msg()))),
     }
-    sources
 }

@@ -1,3 +1,4 @@
+from std.core.fs import resolve;
 from yianc.analysis.session.session import AnalysisSession;
 from yianc.frontend.driver import FrontendDriver;
 from yianc.telemetry.trace import CompilerTrace;
@@ -6,27 +7,24 @@ from yianc.analysis.session.output import AnalysisOptions;
 from yianc.analysis.ty.queries import struct_fields;
 from yianc.common.ids import TypeId;
 from yianc.diagnostics.model import AnalysisError, DiagnosticReporter, UserDiagnostic;
-from yianc.frontend.source import SourceDocument, SourceTable;
+from yianc.frontend.source import SourceFile, SourceTable;
 from yianc.package.model import PackageMap;
 from yianc.package.provenance import SourceTrust;
 
 struct IgnoreDiagnostics {}
 impl DiagnosticReporter for IgnoreDiagnostics { pub fn report(diagnostic: UserDiagnostic&) {} }
 
-fn release_documents(documents: Vec<SourceDocument>&) {
-    for document in *documents { document.drop(); }
-    documents.drop();
-}
-
-fn load_sources(documents: Vec<SourceDocument>&) -> SourceTable {
-    let sources = SourceTable.new();
-    for document in *documents {
-        match sources.load_text(document.path.as_str(), document.text.as_str()) {
-            Ok(_) => {},
-            Err(error) => { error.drop(); @panic("fixture source load failed"); },
-        }
+fn load_source(path: str, text: str) -> SourceTable {
+    let canonical = match resolve(path) {
+        Ok(value) => value,
+        Err(error) => { error.drop(); @panic("fixture source path resolution failed"); },
+    };
+    let files = Vec<SourceFile>.new();
+    files.push(SourceFile.new(canonical, String.from(&text)));
+    match SourceTable.from_files(files) {
+        Ok(value) => value,
+        Err(error) => { error.drop(); @panic("fixture source load failed"); },
     }
-    sources
 }
 
 fn trust() -> SourceTrust {
@@ -37,15 +35,15 @@ fn trust() -> SourceTrust {
 }
 
 fn prepare(source: str, path: str) -> MiddleEndDriver {
-    let documents = Vec<SourceDocument>.new();
-    documents.push(SourceDocument(path=String.from(&path), text=String.from(&source)));
-    defer release_documents(&documents);
     let trace = CompilerTrace.disabled();
     defer trace.drop();
-    let frontend = FrontendDriver.new(load_sources(&documents), false, &trace);
+    let frontend = FrontendDriver.new(load_source(path, source), false, &trace);
     defer frontend.drop();
-    match frontend.run() { Ok(_) => {}, Err(error) => { error.drop(); @panic("strict fixture preparation failed"); }, }
-    MiddleEndDriver.new(frontend.take_session(), IS_RAW_MODE, trust(), Option<PackageMap>.None, false)
+    let session = match frontend.run() {
+        Ok(value) => value,
+        Err(error) => { error.drop(); @panic("strict fixture preparation failed"); },
+    };
+    MiddleEndDriver.new(session, IS_RAW_MODE, trust(), Option<PackageMap>.None, false)
 }
 
 fn analyze_success(source: str, path: str) -> AnalysisSession {

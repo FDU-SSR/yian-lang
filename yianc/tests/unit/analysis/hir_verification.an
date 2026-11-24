@@ -1,3 +1,4 @@
+from std.core.fs import resolve;
 from yianc.analysis.hir.node import Block, HirKind, HirNode;
 from yianc.analysis.passes.hir_verification_cache import HirVerificationCache, HirVerificationObserver;
 from yianc.analysis.passes.verify_hir import verify_hir_observed;
@@ -15,7 +16,7 @@ from yianc.analysis.ty.validation import validate_concrete_value;
 from yianc.common.ids import DefId, HirId, NameId, SymbolId, TypeId, UnitId;
 from yianc.common.location import SourceSpan;
 from yianc.diagnostics.model import AnalysisError, AnalysisErrorKind, DiagnosticLocation, DiagnosticReporter, UserDiagnostic;
-from yianc.frontend.source import Position, SourceDocument, SourceTable, Span;
+from yianc.frontend.source import SourceFile, Position, SourceTable, Span;
 from yianc.package.model import PackageMap;
 from yianc.package.provenance import SourceTrust;
 from std.collections.hash_map import HashMap;
@@ -71,20 +72,17 @@ fn trust() -> SourceTrust {
     }
 }
 
-fn release_documents(documents: Vec<SourceDocument>&) {
-    for document in *documents { document.drop(); }
-    documents.drop();
-}
-
-fn load_sources(documents: Vec<SourceDocument>&) -> SourceTable {
-    let sources = SourceTable.new();
-    for document in *documents {
-        match sources.load_text(document.path.as_str(), document.text.as_str()) {
-            Ok(_) => {},
-            Err(error) => { error.drop(); @panic("fixture source load failed"); },
-        }
+fn load_source(path: str, text: str) -> SourceTable {
+    let canonical = match resolve(path) {
+        Ok(value) => value,
+        Err(error) => { error.drop(); @panic("fixture source path resolution failed"); },
+    };
+    let files = Vec<SourceFile>.new();
+    files.push(SourceFile.new(canonical, String.from(&text)));
+    match SourceTable.from_files(files) {
+        Ok(value) => value,
+        Err(error) => { error.drop(); @panic("fixture source load failed"); },
     }
-    sources
 }
 
 fn definition(session: AnalysisSession&, name_text: str, kind: NominalKind, location: SourceSpan, generics: Vec<TypeId>) -> DefId {
@@ -468,15 +466,15 @@ fn shared_break_output(session: AnalysisSession&, context: ResolutionContext&, o
 }
 
 fn prepare(source: str, path: str) -> MiddleEndDriver {
-    let documents = Vec<SourceDocument>.new();
-    documents.push(SourceDocument(path=String.from(&path), text=String.from(&source)));
-    defer release_documents(&documents);
     let trace = CompilerTrace.disabled();
     defer trace.drop();
-    let frontend = FrontendDriver.new(load_sources(&documents), false, &trace);
+    let frontend = FrontendDriver.new(load_source(path, source), false, &trace);
     defer frontend.drop();
-    match frontend.run() { Ok(_) => {}, Err(error) => { error.drop(); @panic("probe preparation failed"); }, }
-    MiddleEndDriver.new(frontend.take_session(), false, trust(), Option<PackageMap>.None, false)
+    let session = match frontend.run() {
+        Ok(value) => value,
+        Err(error) => { error.drop(); @panic("probe preparation failed"); },
+    };
+    MiddleEndDriver.new(session, false, trust(), Option<PackageMap>.None, false)
 }
 
 fn analyze(driver: MiddleEndDriver&) -> AnalysisOutput {

@@ -1,10 +1,11 @@
 from lsp.analysis.fingerprint import sha256;
+from lsp.analysis.inputs import SourceDocument;
 from lsp.analysis.query_index import QueryDecl, QueryFileSpec, QueryOccurrence, QuerySnapshot;
 from lsp.analysis.source_index import DeclKind;
 from yianc.codegen.session import TargetIdentity, target_identity;
 from yianc.diagnostics.model import DiagnosticCode;
 from lsp.analysis.diagnostic import LspDiagnostic;
-from yianc.frontend.source import Position, SourceDocument, Span;
+from yianc.frontend.source import Position, Span;
 from json.value import Object, Number, Value;
 from json.write import stringify;
 from json.parse import parse;
@@ -65,7 +66,7 @@ pub fn gather_identity(raw_pointers: bool) -> Result<CacheIdentity, String> {
         data_layout=String.from(&target.data_layout()),
         llvm_version=version_text(major, minor, patch),
         raw_pointers=raw_pointers,
-    ))
+        ))
 }
 
 // The cache lives inside the root package's build directory. It is never an
@@ -358,9 +359,9 @@ fn build_cache(identity: CacheIdentity&, config_sha256: str, documents: Vec<Sour
         record.insert("stdlib", Value.Boolean(file.stdlib));
         let module = file.module_name();
         record.insert("module", match module {
-            Some(value) => Value.String(String.from(&value)),
-            None => Value.Null,
-        });
+                Some(value) => Value.String(String.from(&value)),
+                None => Value.Null,
+            });
         let tokens = file.tokens();
         let token_values = Vec<Value>.new();
         for token in *tokens { token_values.push(Value.Number(Number.Unsigned(*token))); }
@@ -496,15 +497,24 @@ pub fn load(path: str, identity: CacheIdentity&, config_sha256: str,
     if !cache_matches_inputs(root, documents) { return Option<QuerySnapshot>.None; }
 
     let decls = match parse_decls(root) { Ok(value) => value, Err(problem) => { problem.drop(); return Option<QuerySnapshot>.None; } };
-    let occurrences = match parse_occurrences(root) { Ok(value) => value, Err(problem) => { problem.drop(); for item in decls { item.drop(); } decls.drop(); return Option<QuerySnapshot>.None; } };
-    let warnings = match parse_warnings(root) { Ok(value) => value, Err(problem) => {
-        problem.drop();
-        for item in decls { item.drop(); }
-        decls.drop();
-        for item in occurrences { item.drop(); }
-        occurrences.drop();
-        return Option<QuerySnapshot>.None;
-    } };
+    let occurrences = match parse_occurrences(root) {
+        Ok(value) => value, Err(problem) => {
+            problem.drop();
+            for item in decls { item.drop(); }
+            decls.drop();
+            return Option<QuerySnapshot>.None;
+        }
+    };
+    let warnings = match parse_warnings(root) {
+        Ok(value) => value, Err(problem) => {
+            problem.drop();
+            for item in decls { item.drop(); }
+            decls.drop();
+            for item in occurrences { item.drop(); }
+            occurrences.drop();
+            return Option<QuerySnapshot>.None;
+        }
+    };
     let specs = match build_specs(root, documents) {
         Some(value) => value,
         None => {

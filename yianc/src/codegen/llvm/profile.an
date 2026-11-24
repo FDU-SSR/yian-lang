@@ -105,7 +105,7 @@ impl LlvmLowering {
 
     fn descriptor(type_id: TypeId, id: u64) -> Result<ProfileDescriptor, CodegenError> {
         let required = self.session.types.require(type_id)?;
-        let(definition, arguments) = match required {
+        let (definition, arguments) = match required {
             Nominal(definition, arguments) => (*definition, arguments),
             _ => @panic("runtime profile callable is not nominal"),
         };
@@ -114,7 +114,7 @@ impl LlvmLowering {
             None => @panic("runtime profile callable definition is missing"),
         };
         let header = record.header();
-        let source_path = String.from(&self.session.source(header.span.unit).canonical_path());
+        let source_path = String.from(&self.session.source(header.span.unit).path());
         let package = String.new();
         let module = String.from(&source_path.as_str());
         let source_root = String.new();
@@ -207,7 +207,7 @@ impl LlvmLowering {
     // prepare_profile assigns stable per-build IDs, emits the read-only descriptor
     // table and config, declares the runtime hooks, and constrains the profiled bodies.
     pub fn prepare_profile(cfg: CfgModule&) -> Result<(), CodegenError> {
-        if !self.profile_enabled() { return Result<(), CodegenError>.Ok(val= ()) }
+        if !self.profile_enabled() { return Result<(), CodegenError>.Ok(val=()) }
         let descriptors = Vec<ProfileDescriptor>.new();
         defer release_descriptors(&descriptors);
         let index = 0u64;
@@ -303,7 +303,7 @@ impl LlvmLowering {
             declared.add_string_attribute("disable-tail-calls", "true");
             body_index += 1u64;
         }
-        Result<(), CodegenError>.Ok(val= ())
+        Result<(), CodegenError>.Ok(val=())
     }
 }
 
@@ -311,12 +311,12 @@ impl FunctionLowering {
     fn profile_hook(enter: bool) -> Result<(), CodegenError> {
         let id = match self.owner.profile_id(self.cfg.callable) {
             Some(value) => value,
-            None => return Result<(), CodegenError>.Ok(val= ()),
+            None => return Result<(), CodegenError>.Ok(val=()),
         };
         let hook = if enter { self.owner.profile_enter_hook() } else { self.owner.profile_leave_hook() };
         let function = match hook {
             Some(value) => value,
-            None => return Result<(), CodegenError>.Ok(val= ()),
+            None => return Result<(), CodegenError>.Ok(val=()),
         };
         let parameters = Vec<IrType>.new();
         defer parameters.drop();
@@ -326,7 +326,7 @@ impl FunctionLowering {
         defer arguments.drop();
         arguments.push(self.owner.module.const_int(self.owner.module.int_type(64u32), id));
         self.builder.call(signature, function.value(), arguments.as_slice(), "");
-        Result<(), CodegenError>.Ok(val= ())
+        Result<(), CodegenError>.Ok(val=())
     }
 
     pub fn call_profile_enter() -> Result<(), CodegenError> {

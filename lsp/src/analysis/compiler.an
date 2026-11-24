@@ -6,12 +6,14 @@ from yianc.telemetry.trace import CompilerTrace;
 from yianc.analysis.driver import MiddleEndDriver;
 from yianc.analysis.constant.evaluate import TypeSizeProvider;
 from yianc.diagnostics.model import DiagnosticCode, DiagnosticLocation, UserDiagnostic, DiagnosticReporter;
-from yianc.frontend.source import SourceDocument, SourceMap, SourceTable;
+from yianc.frontend.source import SourceFile, SourceMap, SourceTable;
+from lsp.analysis.inputs import SourceDocument;
 from yianc.input_error import InputError;
 from yianc.package.model import PackageMap;
 from yianc.package.provenance import SourceTrust;
 from lsp.analysis.diagnostic import LspDiagnostic;
 from std.core.convert import From;
+from std.core.fs import resolve;
 from std.core.iter import Iterator, IntoIterator;
 
 // Output refers to session records and is released before the session.
@@ -33,6 +35,11 @@ impl CompilerAnalysis {
 fn release_diagnostics(values: Vec<LspDiagnostic>&) {
     for value in *values { value.drop(); }
     values.drop();
+}
+
+fn release_files(files: Vec<SourceFile>&) {
+    for file in *files { file.drop(); }
+    files.drop();
 }
 
 impl Drop for CompilerAnalysis {
@@ -91,12 +98,12 @@ pub fn analyze(documents: Vec<SourceDocument>&, trust: SourceTrust, packages: Op
             match &packages { Some(value) => value.drop(), None => {}, }
         }
     };
-    let input_sources = SourceTable.new();
-    let sources_moved = false;
-    defer { if !sources_moved { input_sources.drop(); } };
+    let files = Vec<SourceFile>.new();
+    let files_transferred = false;
+    defer { if !files_transferred { release_files(&files); } };
     for document in *documents {
-        match input_sources.load_text(document.path.as_str(), document.text.as_str()) {
-            Ok(_) => {},
+        let canonical = match resolve(document.path.as_str()) {
+            Ok(value) => value,
             Err(error) => {
                 defer error.drop();
                 let diagnosis = InputError(DiagnosticCode.Source,
@@ -106,19 +113,33 @@ pub fn analyze(documents: Vec<SourceDocument>&, trust: SourceTrust, packages: Op
                 defer empty.drop();
                 return Result<CompilerAnalysis, CompilerFailure>.Err(CompilerFailure.single(&diagnosis, &empty));
             },
-        }
+        };
+        files.push(SourceFile.new(canonical, String.from(&document.text.as_str())));
     }
+    let built = SourceTable.from_files(files);
+    files_transferred = true;
+    let input_sources = match built {
+        Ok(value) => value,
+        Err(diagnosis) => {
+            defer diagnosis.drop();
+            let empty = SourceTable.new();
+            defer empty.drop();
+            return Result<CompilerAnalysis, CompilerFailure>.Err(CompilerFailure.single(&diagnosis, &empty));
+        },
+    };
+    let sources_moved = false;
+    defer { if !sources_moved { input_sources.drop(); } };
     let frontend = FrontendDriver.new(input_sources, false, &trace);
     sources_moved = true;
     defer frontend.drop();
-    match frontend.run() {
-        Ok(_) => {},
+    let prepared = match frontend.run() {
+        Ok(value) => value,
         Err(error) => {
             defer error.drop();
             return Result<CompilerAnalysis, CompilerFailure>.Err(CompilerFailure.single(&error, frontend.source_table()));
         },
-    }
-    let middle = MiddleEndDriver.new(frontend.take_session(), raw_pointers, trust, packages, allow_ffi);
+    };
+    let middle = MiddleEndDriver.new(prepared, raw_pointers, trust, packages, allow_ffi);
     inputs_transferred = true;
     defer middle.drop();
     let sources = middle.analysis_session().frontend().source_table();

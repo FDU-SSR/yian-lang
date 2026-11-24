@@ -1,3 +1,4 @@
+from std.core.fs import resolve;
 // CFG contract probe for the enum place operations.
 //
 // The probe builds a valid graph with EnumInitAt, EnumTagAt, EnumFieldAt and
@@ -18,7 +19,7 @@ from yianc.codegen.types import BackendTypes;
 from yianc.common.ids import DefId, NameId, TypeId, UnitId;
 from yianc.common.location import SourceSpan;
 from yianc.diagnostics.model import DiagnosticReporter, UserDiagnostic;
-from yianc.frontend.source import Position, SourceDocument, SourceTable, Span;
+from yianc.frontend.source import SourceFile, Position, SourceTable, Span;
 from yianc.package.model import PackageMap;
 from yianc.package.provenance import SourceTrust;
 from llvm.object import Module;
@@ -42,20 +43,17 @@ fn trust() -> SourceTrust {
     }
 }
 
-fn release_documents(documents: Vec<SourceDocument>&) {
-    for document in *documents { document.drop(); }
-    documents.drop();
-}
-
-fn load_sources(documents: Vec<SourceDocument>&) -> SourceTable {
-    let sources = SourceTable.new();
-    for document in *documents {
-        match sources.load_text(document.path.as_str(), document.text.as_str()) {
-            Ok(_) => {},
-            Err(error) => { error.drop(); @panic("fixture source load failed"); },
-        }
+fn load_source(path: str, text: str) -> SourceTable {
+    let canonical = match resolve(path) {
+        Ok(value) => value,
+        Err(error) => { error.drop(); @panic("fixture source path resolution failed"); },
+    };
+    let files = Vec<SourceFile>.new();
+    files.push(SourceFile.new(canonical, String.from(&text)));
+    match SourceTable.from_files(files) {
+        Ok(value) => value,
+        Err(error) => { error.drop(); @panic("fixture source load failed"); },
     }
-    sources
 }
 
 fn definition(session: AnalysisSession&, name_text: str, kind: NominalKind, location: SourceSpan, generics: Vec<TypeId>) -> DefId {
@@ -321,16 +319,15 @@ fn check_tag_type(session: AnalysisSession&, fixture: Fixture&, location: Source
 
 // The probe document supplies the session; the hand-built CFG is the tested graph.
 fn probe_driver() -> MiddleEndDriver {
-    let documents = Vec<SourceDocument>.new();
-    documents.push(SourceDocument(path=String.from(&"/tmp/enum-storage-probe.an"),
-        text=String.from(&"fn main() {}\n")));
-    defer release_documents(&documents);
     let trace = CompilerTrace.disabled();
     defer trace.drop();
-    let frontend = FrontendDriver.new(load_sources(&documents), false, &trace);
+    let frontend = FrontendDriver.new(load_source("/tmp/enum-storage-probe.an", "fn main() {}\n"), false, &trace);
     defer frontend.drop();
-    match frontend.run() { Ok(_) => {}, Err(error) => { error.drop(); @panic("enum storage probe preparation failed"); }, }
-    MiddleEndDriver.new(frontend.take_session(), false, trust(), Option<PackageMap>.None, false)
+    let session = match frontend.run() {
+        Ok(value) => value,
+        Err(error) => { error.drop(); @panic("enum storage probe preparation failed"); },
+    };
+    MiddleEndDriver.new(session, false, trust(), Option<PackageMap>.None, false)
 }
 
 // One malformed graph per process; the invariant panic terminates the child.

@@ -91,7 +91,7 @@ impl AnalysisSession {
         let index = 0u64;
         while index < count {
             let unit = UnitId(index);
-            let canonical = self.frontend.source(unit).canonical_path();
+            let canonical = self.frontend.source(unit).path();
             let stdlib = self.trust.is_stdlib(canonical);
             let restricted = self.trust.allows_restricted(canonical);
             let ffi = stdlib || self.allow_ffi;

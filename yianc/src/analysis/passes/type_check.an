@@ -18,7 +18,7 @@ fn root_unit(ctx: ResolutionContext&, unit: UnitId) -> bool {
     let record = *ctx.session.unit(unit).unwrap();
 
     match ctx.session.package_map() {
-        Some(packages) => match packages.package_of(ctx.session.source(record.id).canonical_path()) {
+        Some(packages) => match packages.package_of(ctx.session.source(record.id).path()) {
             Some(owner) => match packages.root_name() {
                 Some(name) => owner.name.as_str() == name, None => true
             },

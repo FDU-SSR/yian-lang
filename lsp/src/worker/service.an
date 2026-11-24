@@ -8,6 +8,7 @@ from json.write import Writer;
 from lsp.analysis.snapshot import Snapshot;
 from lsp.analysis.cache import CacheIdentity, cache_path, gather_identity, load as cache_load, publish as cache_publish;
 from lsp.analysis.fingerprint import sha256;
+from lsp.analysis.inputs import SourceDocument;
 from lsp.analysis.query_index import QuerySnapshot;
 from lsp.analysis.source_index import DeclKind;
 from lsp.config import Config;
@@ -22,7 +23,7 @@ from std.core.text import LineIndex;
 from std.core.time import monotonic_now;
 from yianc.diagnostics.model import Severity;
 from lsp.analysis.diagnostic import LspDiagnostic;
-from yianc.frontend.source import Span, collect_sources, SourceDocument;
+from yianc.frontend.source import Span, collect_sources;
 from yianc.package.model import PackageMap;
 from yianc.package.provenance import SourceTrust;
 from yianc.frontend.lex.token import KeywordKind, TokenPayload;
@@ -213,8 +214,11 @@ fn query_file(query: QuerySnapshot&, uri: str) -> Result<u64, WorkerFailure> {
     defer path.drop();
     let target = match resolve(path.as_str()) {
         Ok(value) => value,
-        Err(problem) => { problem.drop(); return Result<u64, WorkerFailure>.Err(
-            WorkerFailure.new(-32602i64, "text document URI cannot be resolved")); },
+        Err(problem) => {
+            problem.drop();
+            return Result<u64, WorkerFailure>.Err(
+                WorkerFailure.new(-32602i64, "text document URI cannot be resolved"));
+        },
     };
     defer target.drop();
     match query.file_for_path(target.as_str()) {
@@ -570,9 +574,9 @@ fn semantic_tokens_value(query: QuerySnapshot&, file: u64) -> Value {
 
 fn position_in_range(range: Range&, line: u64, character: u64) -> bool {
     let after_start = range.start.line < line ||
-        (range.start.line == line && range.start.character <= character);
+    (range.start.line == line && range.start.character <= character);
     let before_end = line < range.end.line ||
-        (line == range.end.line && character <= range.end.character);
+    (line == range.end.line && character <= range.end.character);
     after_start && before_end
 }
 
@@ -876,7 +880,7 @@ fn primary_open_inputs(open: Vec<OpenInput>&, routes: WorkspaceUnits&) -> Vec<Op
 fn append_open_paths(paths: Vec<PathBuf>&, open: Vec<OpenInput>&) {
     for input in *open {
         if input.path.as_str().ends_with(".an") &&
-            !contains_path(paths, input.path.as_str()) {
+        !contains_path(paths, input.path.as_str()) {
             paths.push(PathBuf.from(input.path.as_str()));
         }
     }
@@ -1410,9 +1414,9 @@ impl WorkerState {
         let analyze_primary = refresh_all || selected_unit.as_str() == "primary";
         if analyze_primary {
             let primary_paths = collect_input_paths(match &self.project {
-                Some(value) => Option<Project&>.Some(value),
-                None => Option<Project&>.None,
-            })?;
+                    Some(value) => Option<Project&>.Some(value),
+                    None => Option<Project&>.None,
+                })?;
             defer release_paths(&primary_paths);
             let primary_open = primary_open_inputs(&open, &self.routes);
             defer release_open_inputs(&primary_open);
@@ -1421,169 +1425,169 @@ impl WorkerState {
             defer release_documents(&primary_documents);
 
             if self.project.is_some() || self.project_invalid {
-            let key = "primary";
-            let unit_revision_value = match unit_revisions {
-                Some(values) => unit_revision(values, key, revision),
-                None => revision,
-            };
-            let reuse_kind = "failed";
-            let strict_analysis = false;
-            let ready = false;
-            let strict_ns = 0i64;
-            let source_ns = 0i64;
-            let semantic_ns = 0i64;
-            let query_ns = 0i64;
-            let cache_state = "disabled";
-            let diagnostics = if self.project_invalid {
-                match self.primary_snapshot.take() { Some(previous) => previous.drop(), None => {}, }
-                project_diagnostic_groups(&primary_open, &self.project_diagnostics)
-            } else {
-                let package_identity = String.new();
-                defer package_identity.drop();
-                let package_map = match &self.project {
-                    Some(project) => {
-                        let encoded = package_map_json(project);
-                        defer encoded.drop();
-                        package_identity.push_str(encoded.as_str());
-                        let document = match parse(encoded.as_str()) {
-                            Ok(value) => value,
-                            Err(_) => return Result<Value, String>.Err(failure("could not encode the package map")),
-                        };
-                        defer document.drop();
-                        match PackageMap.from_document(&document) {
-                            Ok(value) => Option<PackageMap>.Some(value),
-                            Err(error) => { error.drop(); return Result<Value, String>.Err(failure("could not load the package map")); },
-                        }
-                    },
-                    None => Option<PackageMap>.None,
+                let key = "primary";
+                let unit_revision_value = match unit_revisions {
+                    Some(values) => unit_revision(values, key, revision),
+                    None => revision,
                 };
-                let manifest_paths = self.routes.primary_manifest_paths();
-                defer release_string_paths(&manifest_paths);
-                let configuration_identity = match semantic_input_identity("primary", "primary",
-                    self.raw_pointers, self.std_root.as_str(), package_identity.as_str(), &manifest_paths) {
-                    Ok(value) => value,
-                    Err(message) => {
-                        match package_map { Some(value) => value.drop(), None => {}, }
-                        return Result<Value, String>.Err(message);
-                    },
-                };
-                let config_digest = sha256(configuration_identity.as_str().as_slice());
-                defer config_digest.drop();
-                let previous = self.primary_snapshot.take();
-                let reused = match &previous {
-                    Some(snapshot) => snapshot.same_inputs(configuration_identity.as_str(), &primary_documents),
-                    None => false,
-                };
-                let snapshot = if reused {
-                    match package_map { Some(value) => value.drop(), None => {}, }
-                    match previous {
-                        Some(value) => {
-                            value.rebind_revision(unit_revision_value, topology);
-                            value
-                        },
-                        None => return Result<Value, String>.Err(failure("reusable primary snapshot disappeared")),
-                    }
+                let reuse_kind = "failed";
+                let strict_analysis = false;
+                let ready = false;
+                let strict_ns = 0i64;
+                let source_ns = 0i64;
+                let semantic_ns = 0i64;
+                let query_ns = 0i64;
+                let cache_state = "disabled";
+                let diagnostics = if self.project_invalid {
+                    match self.primary_snapshot.take() { Some(previous) => previous.drop(), None => {}, }
+                    project_diagnostic_groups(&primary_open, &self.project_diagnostics)
                 } else {
-                    match previous { Some(value) => value.drop(), None => {}, }
-                    let loaded = match &self.cache_identity {
-                        Some(identity) => match self.primary_cache_path() {
-                            Some(path) => {
-                                let found = cache_load(path.as_str(), identity, config_digest.as_str(),
-                                    &primary_documents);
-                                path.drop();
-                                match found {
-                                    Some(query) => { cache_state = "disk"; Option<QuerySnapshot>.Some(query) },
-                                    None => { cache_state = "miss"; Option<QuerySnapshot>.None },
-                                }
-                            },
-                            None => Option<QuerySnapshot>.None,
-                        },
-                        None => Option<QuerySnapshot>.None,
-                    };
-                    match loaded {
-                        Some(query) => {
-                            match package_map { Some(value) => value.drop(), None => {}, }
-                            Snapshot.restored(unit_revision_value, topology,
-                                configuration_identity.as_str(), &primary_documents, query)
-                        },
-                        None => {
-                            let trust = match SourceTrust.new(self.std_root.as_str()) {
+                    let package_identity = String.new();
+                    defer package_identity.drop();
+                    let package_map = match &self.project {
+                        Some(project) => {
+                            let encoded = package_map_json(project);
+                            defer encoded.drop();
+                            package_identity.push_str(encoded.as_str());
+                            let document = match parse(encoded.as_str()) {
                                 Ok(value) => value,
-                                Err(error) => {
-                                    error.drop();
-                                    match package_map { Some(value) => value.drop(), None => {}, }
-                                    configuration_identity.drop();
-                                    return Result<Value, String>.Err(failure(
-                                        "could not classify standard-library sources"));
-                                },
+                                Err(_) => return Result<Value, String>.Err(failure("could not encode the package map")),
                             };
-                            match Snapshot.analyze(unit_revision_value, topology, configuration_identity.as_str(),
-                                &primary_documents, trust, package_map, self.raw_pointers, false, self.std_root.as_str()) {
-                                Ok(value) => value,
-                                Err(message) => { configuration_identity.drop(); return Result<Value, String>.Err(message); },
+                            defer document.drop();
+                            match PackageMap.from_document(&document) {
+                                Ok(value) => Option<PackageMap>.Some(value),
+                                Err(error) => { error.drop(); return Result<Value, String>.Err(failure("could not load the package map")); },
                             }
                         },
-                    }
-                };
-                configuration_identity.drop();
-                if reused {
-                    reuse_kind = if snapshot.ready() { "memory" } else { "failed_memory" };
-                } elif cache_state == "disk" {
-                    strict_analysis = false;
-                    full_analysis = false;
-                    reuse_kind = "disk";
-                } else {
-                    strict_analysis = true;
-                    full_analysis = true;
-                    reuse_kind = "analyzed";
-                }
-                let result = snapshot_diagnostics(&snapshot, &primary_open, self.project_diagnostics.clone());
-                let groups = diagnostics_from_result(result);
-                ready = snapshot.ready();
-                if !ready { all_ready = false; }
-                strict_ns = if strict_analysis { snapshot.strict_analysis_ns() } else { 0i64 };
-                source_ns = if strict_analysis && ready { snapshot.source_index_ns() } else { 0i64 };
-                semantic_ns = if strict_analysis && ready { snapshot.semantic_index_ns() } else { 0i64 };
-                query_ns = if strict_analysis && ready { snapshot.query_index_ns() } else { 0i64 };
-                if ready && !self.project_invalid && cache_state != "disk" {
-                    match self.primary_cache_path() {
-                        Some(path) => {
-                            match &self.cache_identity {
-                                Some(identity) => {
-                                    let overlays = overlay_documents(&primary_open);
-                                    defer release_documents(&overlays);
-                                    match snapshot.query() {
-                                        Some(query) => {
-                                            match cache_publish(path.as_str(), identity, config_digest.as_str(),
-                                                &primary_documents, &overlays, query) {
-                                                Ok(true) => { cache_state = "published"; },
-                                                Ok(false) => { cache_state = "ineligible"; },
-                                                Err(message) => {
-                                                    report_cache_error(message.as_str());
-                                                    message.drop();
-                                                    cache_state = "write_failed";
-                                                },
-                                            }
-                                        },
-                                        None => {},
+                        None => Option<PackageMap>.None,
+                    };
+                    let manifest_paths = self.routes.primary_manifest_paths();
+                    defer release_string_paths(&manifest_paths);
+                    let configuration_identity = match semantic_input_identity("primary", "primary",
+                        self.raw_pointers, self.std_root.as_str(), package_identity.as_str(), &manifest_paths) {
+                        Ok(value) => value,
+                        Err(message) => {
+                            match package_map { Some(value) => value.drop(), None => {}, }
+                            return Result<Value, String>.Err(message);
+                        },
+                    };
+                    let config_digest = sha256(configuration_identity.as_str().as_slice());
+                    defer config_digest.drop();
+                    let previous = self.primary_snapshot.take();
+                    let reused = match &previous {
+                        Some(snapshot) => snapshot.same_inputs(configuration_identity.as_str(), &primary_documents),
+                        None => false,
+                    };
+                    let snapshot = if reused {
+                        match package_map { Some(value) => value.drop(), None => {}, }
+                        match previous {
+                            Some(value) => {
+                                value.rebind_revision(unit_revision_value, topology);
+                                value
+                            },
+                            None => return Result<Value, String>.Err(failure("reusable primary snapshot disappeared")),
+                        }
+                    } else {
+                        match previous { Some(value) => value.drop(), None => {}, }
+                        let loaded = match &self.cache_identity {
+                            Some(identity) => match self.primary_cache_path() {
+                                Some(path) => {
+                                    let found = cache_load(path.as_str(), identity, config_digest.as_str(),
+                                        &primary_documents);
+                                    path.drop();
+                                    match found {
+                                        Some(query) => { cache_state = "disk"; Option<QuerySnapshot>.Some(query) },
+                                        None => { cache_state = "miss"; Option<QuerySnapshot>.None },
                                     }
                                 },
-                                None => {},
-                            }
-                            path.drop();
-                        },
-                        None => {},
+                                None => Option<QuerySnapshot>.None,
+                            },
+                            None => Option<QuerySnapshot>.None,
+                        };
+                        match loaded {
+                            Some(query) => {
+                                match package_map { Some(value) => value.drop(), None => {}, }
+                                Snapshot.restored(unit_revision_value, topology,
+                                    configuration_identity.as_str(), &primary_documents, query)
+                            },
+                            None => {
+                                let trust = match SourceTrust.new(self.std_root.as_str()) {
+                                    Ok(value) => value,
+                                    Err(error) => {
+                                        error.drop();
+                                        match package_map { Some(value) => value.drop(), None => {}, }
+                                        configuration_identity.drop();
+                                        return Result<Value, String>.Err(failure(
+                                            "could not classify standard-library sources"));
+                                    },
+                                };
+                                match Snapshot.analyze(unit_revision_value, topology, configuration_identity.as_str(),
+                                    &primary_documents, trust, package_map, self.raw_pointers, false, self.std_root.as_str()) {
+                                    Ok(value) => value,
+                                    Err(message) => { configuration_identity.drop(); return Result<Value, String>.Err(message); },
+                                }
+                            },
+                        }
+                    };
+                    configuration_identity.drop();
+                    if reused {
+                        reuse_kind = if snapshot.ready() { "memory" } else { "failed_memory" };
+                    } elif cache_state == "disk" {
+                        strict_analysis = false;
+                        full_analysis = false;
+                        reuse_kind = "disk";
+                    } else {
+                        strict_analysis = true;
+                        full_analysis = true;
+                        reuse_kind = "analyzed";
                     }
-                }
-                self.primary_snapshot = Option<Snapshot>.Some(snapshot);
-                if !ready && reused { reuse_kind = "failed_memory"; }
-                groups
-            };
-            if self.project_invalid { all_ready = false; }
-            append_diagnostic_groups(&all_diagnostics, &diagnostics);
-            unit_results.push(unit_result(key, unit_revision_value, ready, strict_analysis,
-                reuse_kind, strict_ns, source_ns, semantic_ns, query_ns, cache_state, &diagnostics));
-            diagnostics.drop();
+                    let result = snapshot_diagnostics(&snapshot, &primary_open, self.project_diagnostics.clone());
+                    let groups = diagnostics_from_result(result);
+                    ready = snapshot.ready();
+                    if !ready { all_ready = false; }
+                    strict_ns = if strict_analysis { snapshot.strict_analysis_ns() } else { 0i64 };
+                    source_ns = if strict_analysis && ready { snapshot.source_index_ns() } else { 0i64 };
+                    semantic_ns = if strict_analysis && ready { snapshot.semantic_index_ns() } else { 0i64 };
+                    query_ns = if strict_analysis && ready { snapshot.query_index_ns() } else { 0i64 };
+                    if ready && !self.project_invalid && cache_state != "disk" {
+                        match self.primary_cache_path() {
+                            Some(path) => {
+                                match &self.cache_identity {
+                                    Some(identity) => {
+                                        let overlays = overlay_documents(&primary_open);
+                                        defer release_documents(&overlays);
+                                        match snapshot.query() {
+                                            Some(query) => {
+                                                match cache_publish(path.as_str(), identity, config_digest.as_str(),
+                                                    &primary_documents, &overlays, query) {
+                                                    Ok(true) => { cache_state = "published"; },
+                                                    Ok(false) => { cache_state = "ineligible"; },
+                                                    Err(message) => {
+                                                        report_cache_error(message.as_str());
+                                                        message.drop();
+                                                        cache_state = "write_failed";
+                                                    },
+                                                }
+                                            },
+                                            None => {},
+                                        }
+                                    },
+                                    None => {},
+                                }
+                                path.drop();
+                            },
+                            None => {},
+                        }
+                    }
+                    self.primary_snapshot = Option<Snapshot>.Some(snapshot);
+                    if !ready && reused { reuse_kind = "failed_memory"; }
+                    groups
+                };
+                if self.project_invalid { all_ready = false; }
+                append_diagnostic_groups(&all_diagnostics, &diagnostics);
+                unit_results.push(unit_result(key, unit_revision_value, ready, strict_analysis,
+                    reuse_kind, strict_ns, source_ns, semantic_ns, query_ns, cache_state, &diagnostics));
+                diagnostics.drop();
             }
         }
         if analyze_primary && self.project.is_none() && !self.project_invalid {
@@ -1681,7 +1685,7 @@ impl WorkerState {
             if !reused { full_analysis = true; }
         }
         if !refresh_all && !selected_standalone_found &&
-            selected_unit.as_str().starts_with("file:") {
+        selected_unit.as_str().starts_with("file:") {
             self.remove_standalone_unit(selected_unit.as_str());
         }
         let analysis_finished_ns = timing_now_ns();
@@ -1748,8 +1752,11 @@ impl WorkerState {
         defer path.drop();
         let normalized = match resolve(path.as_str()) {
             Ok(value) => value,
-            Err(problem) => { problem.drop(); return Result<Value, WorkerFailure>.Err(
-                WorkerFailure.new(-32602i64, "text document URI cannot be resolved")); },
+            Err(problem) => {
+                problem.drop();
+                return Result<Value, WorkerFailure>.Err(
+                    WorkerFailure.new(-32602i64, "text document URI cannot be resolved"));
+            },
         };
         defer normalized.drop();
         let primary_route = self.routes.is_primary_path(normalized.as_str());

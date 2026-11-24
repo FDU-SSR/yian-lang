@@ -1,10 +1,9 @@
-from lsp.analysis.inputs import InputIdentity;
+from lsp.analysis.inputs import InputIdentity, SourceDocument;
 from lsp.analysis.compiler import CompilerAnalysis, CompilerFailure, analyze as compiler_analyze;
 from lsp.analysis.query_index import QuerySnapshot;
 from lsp.analysis.semantic_index import SemanticIndex, build as build_semantic;
 from lsp.analysis.source_index import SourceIndex;
 from lsp.analysis.diagnostic import LspDiagnostic;
-from yianc.frontend.source import SourceDocument;
 from yianc.package.model import PackageMap;
 from yianc.package.provenance import SourceTrust;
 from std.core.time import monotonic_now;
@@ -59,7 +58,7 @@ fn same_document_text(left: Vec<SourceDocument>&, right: Vec<SourceDocument>&) -
     let index = 0u64;
     while index < left.len() {
         if left[index].path.as_str() != right[index].path.as_str() ||
-            left[index].text.as_str() != right[index].text.as_str() {
+        left[index].text.as_str() != right[index].text.as_str() {
             return false;
         }
         index += 1u64;

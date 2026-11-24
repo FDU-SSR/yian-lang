@@ -1,9 +1,10 @@
 from lsp.analysis.compiler import CompilerAnalysis;
+from lsp.analysis.inputs import SourceDocument;
 from lsp.analysis.source_index import DeclKind, SourceIndex;
 from yianc.common.ids import UnitId;
 from lsp.analysis.diagnostic import LspDiagnostic;
 from yianc.frontend.lex.token import KeywordKind, TokenPayload;
-from yianc.frontend.source import SourceDocument, Span;
+from yianc.frontend.source import Span;
 from std.collections.hash_map import HashMap;
 from std.core.path import Path;
 from std.core.text import LineIndex;
@@ -241,7 +242,7 @@ fn sort_decl_order(order: Vec<u64>&, decls: Vec<QueryDecl>&) {
         let current = order[cursor];
         let insertion = cursor;
         while insertion != 0u64 &&
-            before(start_key(decls[current].span), start_key(decls[order[insertion - 1u64]].span)) {
+        before(start_key(decls[current].span), start_key(decls[order[insertion - 1u64]].span)) {
             order[insertion] = order[insertion - 1u64];
             insertion -= 1u64;
         }
@@ -256,8 +257,8 @@ fn sort_occurrence_order(order: Vec<u64>&, occurrences: Vec<QueryOccurrence>&) {
         let current = order[cursor];
         let insertion = cursor;
         while insertion != 0u64 &&
-            before(start_key(occurrences[current].span),
-                start_key(occurrences[order[insertion - 1u64]].span)) {
+        before(start_key(occurrences[current].span),
+            start_key(occurrences[order[insertion - 1u64]].span)) {
             order[insertion] = order[insertion - 1u64];
             insertion -= 1u64;
         }
@@ -682,8 +683,8 @@ impl QuerySnapshot {
                 Some(current) => {
                     let current_span = self.decls[*current].span;
                     if contains(start_key(current_span), end_key(current_span), point) &&
-                        declaration.span.start.row == row &&
-                        declaration.span.start.column <= column {
+                    declaration.span.start.row == row &&
+                    declaration.span.start.column <= column {
                         let current_length = current_span.end.column - current_span.start.column;
                         let candidate_length = declaration.span.end.column - declaration.span.start.column;
                         if candidate_length <= current_length {
@@ -759,7 +760,7 @@ impl QuerySnapshot {
         let cursor = 0u64;
         while cursor < documents.len() {
             if documents[cursor].path.as_str() != self.files[cursor].path.as_str() ||
-                documents[cursor].text.as_str() != self.files[cursor].text.as_str() {
+            documents[cursor].text.as_str() != self.files[cursor].text.as_str() {
                 return false;
             }
             cursor += 1u64;
