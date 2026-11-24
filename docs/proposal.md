@@ -1,7 +1,7 @@
 # YIAN 设计概览
 
 本文概述语言、编译器与工具链的设计。具体规则以
-[语法说明](grammar/index.md)、[编译器手册](manual/index.md)、[anx 手册](anx/index.md) 和
+[语法说明](grammar/index.md)、[编译器开发文档](../yianc/docs/index.md)、[anx 手册](anx/index.md) 和
 [内存安全说明](security.md) 为准。
 
 ## 语言与编译器
@@ -47,7 +47,7 @@ fat 模式的指针携带边界与生命周期元数据，并在内存访问时�
 `bootstrap/llvm` 提供它们所需的数据、C ABI 与 LLVM 22 支持。
 
 `scripts/bootstrap_toolchain.sh` 分阶段构建 raw `yianc`、`anx` 和 `yian-fmt`。语言服务器
-`lsp/` 可由纯原生 warm 刷新入口与三个原生命令一起构建；cold 入口构建 `yianc`、`anx` 和 `yian-fmt`，不构建 LSP。warm 路径固定现有原生 seed，校验 formatter 冒烟、完整 staging 和 LSP 握手后事务发布，不调用 Python。自举包结构、构建入口与 CLI 见[自举编译器手册](manual/30.bootstrap.md)。
+`lsp/` 可由纯原生 warm 刷新入口与三个原生命令一起构建；cold 入口构建 `yianc`、`anx` 和 `yian-fmt`，不构建 LSP。warm 路径固定现有原生 seed，校验 formatter 冒烟、完整 staging 和 LSP 握手后事务发布，不调用 Python。自举包结构、构建入口与 CLI 见[自举编译器手册](../yianc/docs/dev/21.bootstrap.md)。
 
 ## 内存安全机制的边界
 

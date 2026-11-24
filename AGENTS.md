@@ -15,16 +15,20 @@ recovery; maintain only the compatibility that recovery needs.
 
 ## Planning and execution
 
-[.agent/PLANS.md](.agent/PLANS.md) is authoritative for planning, execution,
-acceptance, recovery and templates. Its protocols take precedence over
-conflicting repository engineering rules; nonconflicting rules remain in
-force. User instructions and platform permissions retain their precedence.
+`.agent/PLANS.md` is inactive unless the user explicitly instructs you to follow
+it. Do not adopt its planning, execution, acceptance, recovery or template
+protocol by default, and do not create or update `.agent/plans/` records merely
+because a task is large or crosses modules. An ordinary implementation, fix,
+migration or verification request is not such an instruction; a request for a
+plan, investigation or design also does not activate the protocol unless the
+user names it or asks to follow it. Rules stated directly in this guide,
+including the local verification policy and reporting statuses, remain in force
+independently of that file.
 
-- Use the full protocol for complex tasks. Simple, self-contained edits need no plan directory. Do not create fictional tasks or empty plan placeholders.
-- A planning request authorizes investigation and plan documents, not business implementation. `DECISION_COMPLETE` describes plan maturity. Execute when requested; the protocols do not choose models or switch client modes.
-- Store stable requirements, design, decisions and acceptance in `.agent/plans/<task-name>/PLAN.md`. Store dynamic status, verification evidence and recovery instructions only in its sibling `PROGRESS.md`. Do not depend on chat history or maintain competing completion trackers.
-- Enumerate **every** added, changed or removed public data structure, interface and semantic contract in PLAN: real path/symbol, before/after definitions, fields/signatures/generics, ownership/lifetime/error/invariant contracts, consumers, compatibility/migration, implementation tasks and acceptance IDs. Explicitly state and justify when there are no public changes.
-- Changes to confirmed requirements, semantics, core design, public contracts, compatibility or acceptance standards need the decision required by the protocol. Make ordinary engineering choices within the established contract autonomously; do not ask again about choices already authorized.
+- Act directly on the user's request within this guide. Simple, self-contained edits need no plan. For larger work, track the steps in the session and proceed; do not stop at a plan unless the user asked for one.
+- If the user explicitly requests the `.agent/PLANS.md` protocol, follow it for that task only. Its rules then take precedence over conflicting repository engineering rules; user instructions and platform permissions retain their precedence. Do not extend that protocol to later tasks without a new explicit request.
+- For changes that add, change or remove public data structures, interfaces or semantic contracts, identify the real paths and symbols, before/after definitions, owners, consumers, compatibility effects and error behavior, then report them with the change. Keep the inventory proportional to the task; it does not require a PLAN document.
+- Changes to confirmed requirements, semantics, core design, public contracts, compatibility or acceptance standards require user confirmation. Make ordinary engineering choices within the established contract autonomously; do not ask again about choices already authorized.
 
 ## Strict Local Verification Policy
 
@@ -36,8 +40,8 @@ broader operation. Command examples describe capabilities, not authorization.
 - Default to a minimal probe, one or a few directly relevant existing tests, or low-cost local static checks. Before each run, identify the property, minimal input, expected result and pass condition; inspect actual selection and indirect setup, build and test effects.
 - Select an exact file, function or case. A module/package selector, substring filter, `--no-run`, or wrapper can still perform broad or expensive work. Use the smallest integration probe for cross-module behavior. Reuse fixtures and valid evidence; keep probes fast, independent and proportional to risk.
 - Project-wide suites, full module/package/workspace tests, full regressions, batch integration/end-to-end tests, large unrelated selections and long project-wide builds/checks need explicit user authorization. This includes equivalent scripts, CI commands and collections of independent probes.
-- “Execute the plan,” “continue,” “complete acceptance,” passing/failing local checks and multiple affected modules do not themselves authorize batch work. Separate local verification from extended verification; record the user's specific authorization and scope before an extended operation.
-- Follow implement → local probe/test → analyze → fix → update progress. Reduce failures and rerun affected checks; do not broaden testing for diagnosis or repeat unaffected passing checks. Reuse still-valid evidence at task, milestone and final acceptance; no automatic fresh run is required.
+- “Continue,” “complete acceptance,” passing/failing local checks and multiple affected modules do not themselves authorize batch work. Separate local verification from extended verification; record the user's specific authorization and scope before an extended operation.
+- Follow implement → local probe/test → analyze → fix → record the result. Reduce failures and rerun affected checks; do not broaden testing for diagnosis or repeat unaffected passing checks. Reuse still-valid evidence when closing the task; no automatic fresh run is required.
 - If extended verification is indispensable, explain the need and request authorization once. Pending authorization, record it as unexecuted, disclose the risk and continue independent work. Unrun batch checks do not fail default local acceptance unless the user explicitly requires them.
 - Never weaken assertions, bless outputs or change expectations merely to pass. Expected runtime failures are not necessarily analysis rejections. A declaration that builds without instantiation is not runtime evidence for its generic instances; Python success does not verify native behavior.
 
@@ -51,17 +55,17 @@ Record implementation and verification separately:
 | `UNVERIFIED` | Necessary verification is missing or invalid. |
 | `BLOCKED` | Work cannot proceed; record the cause and release condition. |
 
-Check task acceptance before closure, milestone acceptance before dependent
-milestones, and final acceptance before the final commit or report. Report
-executed checks, static review, required gaps and unrun extended verification
-separately. Local evidence never establishes full-regression success.
+Check the user's acceptance conditions before closure and before the final
+commit or report. Report executed checks, static review, required gaps and
+unrun extended verification separately. Local evidence never establishes
+full-regression success.
 
 ## Environment and tool identity
 
 The supported environment is Linux, Python 3.12+ and LLVM 22: clang and LLVM
 tools plus llvmlite 0.49 for cold recovery. Dependencies are declared in
 `python/requirements.txt` and `python/pyproject.toml`. Installation details:
-[bootstrap manual](docs/manual/30.bootstrap.md),
+[bootstrap manual](yianc/docs/dev/21.bootstrap.md),
 [installation guide](docs/anx/06.install.md).
 
 | Entry | Purpose and effects |
@@ -88,7 +92,7 @@ conda run --no-capture-output -n yian-env yian-fmt --check yianc/src/main.an
 ```
 
 - Native `yianc --check` runs frontend/middle-end checks through HIR validation, coverage and definite assignment; it accepts no target/output/native-link options. Compilation targets are `exe` (default), `ll` and `bc`. Checks need no `main` but validate one when present; compilation needs an entry. Use explicit `-o` paths when names matter. `-t ll` emits unoptimized IR.
-- `--dump` observes tokens/AST/HIR/CFG/IR as stages complete (through HIR for `--check`). Native `--profile --profile-output PATH` writes JSON and a `.txt` summary. `--runtime-profile-dir` needs an absolute path and an `exe` build. Details: [compiler CLI](docs/compile_script.md).
+- `--dump` observes tokens/AST/HIR/CFG/IR as stages complete (through HIR for `--check`). Native `--profile --profile-output PATH` writes JSON and a `.txt` summary. `--runtime-profile-dir` needs an absolute path and an `exe` build. Details: [compiler CLI](yianc/docs/compile_script.md).
 - Formatting belongs to `yian-fmt` in `fmt/`. `anx fmt` and LSP select it through nonempty `YIAN_FMT`, their executable's directory, then PATH. Native `yianc` rejects `--format`, `--format-check`, `-w`, `--write`, `--analyze`, `--json` and `--frontend-json`. See [formatter contracts](docs/manual/28.formatter.md).
 - Use `scripts/bootstrap_toolchain.sh` for explicit cold recovery. Update/check the recovery implementation only when changed sources or contracts participate in that workflow.
 - `anx/` owns `package.anx`, dependency graphs and the v2/v3 compiler package map. Maps with `nativeC` or `nativeRoots` use v3; other maps retain v2. Native `yianc` accepts both. Preserve the v2 package-map input used by cold recovery. Build/check/run/test select nonempty `YIANC`, otherwise PATH `yianc`; the canonical file must be executable ELF. There is no shell/Python fallback. `[dev-dependencies]` is visible only to `anx test`; `lib` packages use `check`/`test` without an executable build. See [anx](docs/anx/index.md) and [the package-map contract](docs/manual/23.anx_graph.md).
@@ -113,7 +117,7 @@ Native pipeline:
 | `bootstrap/` | JSON/JSON-RPC/LSP/TOML and LLVM/FFI support packages; LLVM 22 bindings and C shims. |
 | `python/` | Explicit cold recovery and its dependencies. |
 | `tests/`, `scripts/`, `bench/`, `cve/` | Compiler fixtures, orchestration, measurements and separate vulnerability witnesses. |
-| `docs/grammar/`, `docs/manual/`, `docs/anx/` | Language, implementation and tooling guides; site configured by `mkdocs_cn.yml`. |
+| `yianc/docs/`, `docs/grammar/`, `docs/manual/`, `docs/anx/` | Compiler implementation, language, remaining toolchain and package-manager guides; site configured by `mkdocs_cn.yml`. |
 
 ## Compiler invariants
 
@@ -171,7 +175,7 @@ Native pipeline:
 - Python follows strict Pyright (`python/pyproject.toml`): avoid `Any`, `object` and `hasattr()`, keep imports at file top and preserve handler-map dispatch in type checking/LLVM translation. Private functions, constants, methods, attributes and nested helpers use `__`. A module-level private referenced inside a class uses `_` when name mangling would break lookup; names defined/used within that class still use `__`.
 - User-facing language documentation is Chinese; this guide is English. Code comments/docstrings are English, including tests/examples. Keep user-visible text/test data in their intended language, with this directory rule: **all text in `cve/` and `bench/` is English**, including READMEs, comments, docstrings, messages and JSON notes; do not add Chinese text there.
 - Compiler documentation describes native `yianc` only. Omit the Python recovery compiler's CLI, APIs and implementation from product and developer documentation. Installation guides may describe the cold bootstrap script and its prerequisites.
-- Product/implementation docs, comments, docstrings and commit messages state current facts in a neutral voice. No change history, defect stories, plans, promises or comparisons with an earlier state. Explain hazards as properties of the current design. `.agent/PLANS.md` and `.agent/plans/` are operational exceptions and may contain history, future work and checkpoints.
+- Product/implementation docs, comments, docstrings and commit messages state current facts in a neutral voice. No change history, defect stories, plans, promises or comparisons with an earlier state. Explain hazards as properties of the current design. When the user explicitly requests the `.agent/PLANS.md` protocol, that file and `.agent/plans/` are operational exceptions and may contain history, future work and checkpoints.
 - Product docs/comments must stand alone: no dependency on temporary plans, proposals, TODO/bug/review notes or their rule numbers. State the fact directly; links to persistent documentation are allowed. Protocol/operational documents may link plans, progress and stable IDs but must support independent execution/recovery. Fix existing violations when touching their surrounding text.
 - Verify documentation against source, manifests and command semantics. Documented/planned features are not implementation evidence. There is no repository CI or installed project pre-commit hook.
 

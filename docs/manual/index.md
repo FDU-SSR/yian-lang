@@ -1,40 +1,14 @@
-# Yian 开发文档
+# Yian 工具链开发文档
 
-本文档描述 Yian 工具链的内部实现。01–19 章记录原生 `yianc` 的实现，20–25 章介绍原生包管理器 `anx`；
-26–29 章覆盖分析、语言服务器、格式化器与 FFI，30 章介绍以 YIAN 编写的原生工具链：
+本目录收录原生包管理器 `anx`、语言服务器和格式化器的内部实现文档。
+原生编译器 `yianc` 的开发文档位于 [yianc/docs](../../yianc/docs/index.md)。
 
-- **原生 yianc 编译器**（01–19）记录编译管线、诊断和源码结构。
-- **原生 anx 包管理器**（20–25）：YIAN 项目模型、清单与诊断、依赖图与 `build/pkg.json` 契约、CLI、
+各章保留其稳定编号，便于 anx、语言服务器和格式化器文档按章号交叉引用。
+
+- **原生 anx 包管理器**（20–25）：YIAN 项目模型、清单与诊断、依赖图与 `build/pkg.json` 契约、CLI，
   以及项目测试驱动。
-- **分析接口与语言服务器**（26–27）：编译器分析会话与位置/引用模型，以及 `lsp/` 中的原生
-  协议服务、调度与分发。
+- **语言服务器**（27）：`lsp/` 中的原生协议服务、调度与分发。
 - **格式化器**（28）：独立 `yian-fmt` 命令的源码排版规则、注释与空行的恢复、五条不变式与三个入口。
-- **FFI**（29）：C ABI 声明与封送的编译路径、包权限和原生链接。
-- **自举编译器与原生工具链**（30）：YIAN 实现的完整编译器、原生 anx 与 JSON/TOML/LLVM 支持库。
-
-## 目录 · 编译器
-
-| 章 | 标题 | 对应源文件 |
-|----|------|-----------|
-| [01](01.pipeline.md) | 编译管线概览 | `yianc/src/main.an`、`yianc/src/driver/` |
-| [02](02.frontend.md) | 前端 | `yianc/src/frontend/`、`yianc/src/driver/frontend.an` |
-| [03](03.desugar.md) | AST 去糖 | `yianc/src/frontend/desugar.an` |
-| [04](04.resolve.md) | 全局符号解析 | `yianc/src/analysis/resolution/` |
-| [05](05.type_system.md) | 类型系统 | `yianc/src/analysis/ty/` |
-| [06](06.lower_expr.md) | 表达式 Lowering | `yianc/src/analysis/lowering/` |
-| [07](07.lower_call.md) | 调用 Lowering | `yianc/src/analysis/lowering/calls.an`、`methods.an` |
-| [08](08.hir.md) | HIR IR | `yianc/src/analysis/hir/` |
-| [09](09.type_check.md) | 类型检查 | `yianc/src/analysis/passes/type_check.an` |
-| [10](10.cfg_ir.md) | CFG IR | `yianc/src/codegen/cfg/model.an` |
-| [11](11.cfg_builder.md) | CFG 构建 | `yianc/src/codegen/lowering/`、`yianc/src/codegen/cfg/passes/` |
-| [12](12.llvm_codegen.md) | LLVM 代码生成 | `yianc/src/codegen/llvm/` |
-| [13](13.log.md) | 日志系统 | `yianc/src/driver/trace.an` |
-| [14](14.cli_build.md) | CLI 与构建 | `yianc/src/main.an`、`yianc/src/config.an` |
-| [15](15.stdlib.md) | 标准库架构 | `lib/` |
-| [16](16.assign_semantics.md) | 赋值语义实现 | `yianc/src/analysis/lowering/operations.an` |
-| [17](17.impl_registry.md) | Impl 注册与查找 | `yianc/src/analysis/ty/impl_registry.an` |
-| [18](18.error_handling.md) | 错误处理 | `yianc/src/diagnostics/` |
-| [19](19.coding_style.md) | 编码规范 | YIAN 代码风格 |
 
 ## 目录 · anx 包管理器
 
@@ -47,14 +21,16 @@
 | [24](24.anx_cli.md) | CLI 与标准库定位 | `anx/src/main.an`、`project/paths.an` |
 | [25](25.anx_tests.md) | anx 项目测试与仓库 fixtures | `anx/src/driver/test.an`、`scripts/run_tests.py` |
 
-## 目录 · 分析接口与语言服务器
+## 目录 · 语言服务器与格式化器
 
 | 章 | 标题 | 对应源文件 |
 |----|------|-----------|
-| [26](26.analysis_interface.md) | 分析接口 | `yianc/src/analysis/session/`、`lsp/src/analysis/` |
 | [27](27.language_server.md) | 语言服务器 | `lsp/`、`ide-support/vscode/` |
 | [28](28.formatter.md) | 格式化器 | `fmt/`、`anx/src/driver/formatter.an`、`lsp/src/formatting.an` |
-| [29](29.ffi.md) | FFI 编译与链接 | `yianc/src/`、`anx/src/project/package_map.an` |
-| [30](30.bootstrap.md) | 自举编译器与原生工具链 | `yianc/`、`anx/`、`bootstrap/json/`、`bootstrap/toml/`、`bootstrap/jsonrpc/`、`bootstrap/lsp_protocol/`、`bootstrap/ffi/`、`bootstrap/llvm/` |
 
-> 用户视角的用法见 [anx 用户指南](../anx/index.md)。原生编译器选项见[编译器命令行手册](../compile_script.md)。
+## 相关文档
+
+- 编译器实现、编码规范与命令行参考：[yianc/docs](../../yianc/docs/index.md)
+- 语言语法与标准库：[语言参考](../grammar/index.md)
+- 用户视角的包管理用法：[anx 用户指南](../anx/index.md)
+- 内存安全机制：[内存安全说明](../security.md)

@@ -66,7 +66,7 @@ yianc -t ll lib/src tests/basic/array/assign.an -o build/assign.ll
 yianc --log --log-spec "main=DEBUG" lib/src tests/basic/array/assign.an
 ```
 
-See the [compiler CLI guide](docs/compile_script.md) for targets, package maps, analysis, and diagnostics.
+See the [compiler CLI guide](yianc/docs/compile_script.md) for targets, package maps, analysis, and diagnostics.
 
 ## Format sources
 
@@ -132,7 +132,8 @@ case with `python scripts/run_cve.py --case CVE-2021-33304`; `--list` and
 - [C-to-YIAN syntax rewriting rules](docs/c-to-yian.md)
 - [Language reference](docs/grammar/index.md)
 - [anx guide](docs/anx/index.md)
-- [Developer manual](docs/manual/index.md)
+- [Compiler developer manual](yianc/docs/index.md)
+- [Toolchain developer manual](docs/manual/index.md)
 - [Language-server installation and manual verification](docs/manual/27.language_server.md)
 - [Quick start](docs/grammar/00.quick_start.md)
 - [Language and tooling overview](docs/proposal.md)

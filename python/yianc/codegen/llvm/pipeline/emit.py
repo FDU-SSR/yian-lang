@@ -81,8 +81,7 @@ class Emitter:
             if target_machine is not None and not llvm_mod.data_layout:
                 # Emission ensures the triple; apply_target installs the matching layout. As a fallback, set data layout
                 # when missing, since middle-end passes otherwise fold field offsets using an empty layout
-                # while the backend uses the target layout, making read/write offsets inconsistent. See
-                # docs/llvm_note.md for target triples and data layouts.
+                # while the backend uses the target layout, making read/write offsets inconsistent.
                 llvm_mod.data_layout = str(target_machine.target_data)
             if opt_level > 0:
                 # speed_level is the -O level used by LLVMPY_buildPerModuleDefaultPipeline

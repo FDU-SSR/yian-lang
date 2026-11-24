@@ -29,7 +29,7 @@ scripts/setup_llvm_toolchain.sh          # Install missing native tools; require
 scripts/setup_llvm_toolchain.sh --check  # Report installed versions.
 ```
 
-原生工具链的安装见[安装与环境](anx/06.install.md)。
+原生工具链的安装见[安装与环境](../../docs/anx/06.install.md)。
 
 链接阶段使用的 C 编译器按 `$YIAN_CC` → `clang` → `cc` 选择，不隐式回落到带版本号的 `clang-18`/`clang-20`：
 
@@ -107,7 +107,7 @@ lower/验证/清理/check insertion、LLVM lowering/优化前后验证/优化/na
 `--check` 和编译模式都将 `input.source_roots`、`input.collect_sources` 等输入准备计时归入 `source_preparation` 阶段。
 
 `--profile-output` 可用于编译模式与 `--check`；编译报告的目标为 `"exe"`、`"ll"` 或 `"bc"`，检查报告的目标为 `"check"`。报告写入失败作为 `W601` 非致命警告经统一诊断输出，不改变原编译结果；编译失败时不发布报告。`anx build --profile` 用该接口保存每次 compiler 调用的独立明细并生成命令级报告；命令选项见
-[anx CLI](anx/03.cli.md)。`anx run --profile` 在启动产物前发布编译报告；运行时统计使用下节的插桩接口。
+[anx CLI](../../docs/anx/03.cli.md)。`anx run --profile` 在启动产物前发布编译报告；运行时统计使用下节的插桩接口。
 
 ### 2.5.1 `--runtime-profile-dir PATH` — 运行时插桩构建
 
@@ -129,7 +129,7 @@ profiling session 将 `MergeFunctions` 设为 `false`；优化级别仍按 `-O`/
 配置结构含 ABI 版本、报告目录、run id、程序绝对路径、指针模式、优化级别、描述符数量和描述符指针。
 所有字符串是 UTF-8 字节切片，带显式长度，不需要 NUL 结尾。报告目录由运行环境创建；collector 在
 `main` 正常返回后写 `profile.json` 与 `summary.txt`。格式、计时口径和正常返回保证见
-[anx CLI 的 `run --runtime-profile`](anx/03.cli.md)。report 目录缺失、时钟或分配故障属于 profiling 故障边界，
+[anx CLI 的 `run --runtime-profile`](../../docs/anx/03.cli.md)。report 目录缺失、时钟或分配故障属于 profiling 故障边界，
 不改变普通编译或既有安全错误协议；普通编译既不定义 collector，也不引用插桩符号。
 
 ### 2.6 `--packages` — 包名导入解析
@@ -254,7 +254,7 @@ yian-fmt --stdin --stdin-filepath label.an < main.an
 `yian-fmt` 只做词法与语法分析，再按规范化空白、换行与注释位置重新发射。文件模式无法格式化的文件
 打印 `skip <path>: cannot be formatted` 并继续处理；退出码 2 优先于 3，差异检查为 1。stdin 模式只
 输出格式化文本。`anx fmt` 与语言服务器通过子进程调用同一命令。完整契约见
-[格式化器](manual/28.formatter.md)。
+[格式化器](../../docs/manual/28.formatter.md)。
 
 ### 2.12 `--allow-ffi` / `--link-lib` / `--link-search` — FFI 与原生链接
 
@@ -264,7 +264,7 @@ yianc --allow-ffi --link-lib m --link-search /path/to/libs lib/src main.an
 
 `--allow-ffi` 只授予独立编译源码 FFI 权限；包模式的权限由各包的 `ffi` 字段决定。`--link-lib NAME` 和 `--link-search DIR` 可重复，分别向生成可执行文件时的链接命令加入 `-lNAME` 和 `-LDIR`。它们只在 `-t exe` 的最终链接步骤使用；`-t ll` 与 `-t bc` 保留外部符号。编译器会拒绝非法库名。
 
-声明 `[native.llvm]` 的包使用 LLVM 22 的 `llvm-config` 确定组件及系统库参数，要求 Linux x86-64 LP64 环境和 x86-64 Linux C 链接器。`[native.c]` 的 shim 使用 `-O2 -fPIC -std=c11` 和所属包的 include dirs；所有程序、运行时和 shim 对象先链接，之后按可达包顺序将显式归档放入一个 linker group。没有 LLVM 声明时不查询 `llvm-config`。`-t exe` 编译并链接包内 native 输入、YIAN 运行时及所需系统库。语言层的 C ABI 限制与封送操作见 [FFI 参考](grammar/17.ffi.md)。
+声明 `[native.llvm]` 的包使用 LLVM 22 的 `llvm-config` 确定组件及系统库参数，要求 Linux x86-64 LP64 环境和 x86-64 Linux C 链接器。`[native.c]` 的 shim 使用 `-O2 -fPIC -std=c11` 和所属包的 include dirs；所有程序、运行时和 shim 对象先链接，之后按可达包顺序将显式归档放入一个 linker group。没有 LLVM 声明时不查询 `llvm-config`。`-t exe` 编译并链接包内 native 输入、YIAN 运行时及所需系统库。语言层的 C ABI 限制与封送操作见 [FFI 参考](../../docs/grammar/17.ffi.md)。
 
 ### 2.13 前端观察
 

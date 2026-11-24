@@ -25,7 +25,6 @@ from yianc.runtime_error import RuntimeErrorCode, runtime_error_message
 # fold offsets without ABI alignment, while the backend uses the target layout. Reads and writes can then
 # use different offsets, such as a u64 after an enum with a 4-byte tag and an 8-byte pointer:
 # the empty layout gives 12 and the target gives 16, silently reading incorrect values at -O1 or higher.
-# See docs/llvm_note.md for the relationship between target triples and data layouts.
 TARGET_TRIPLE = "x86_64-unknown-linux-gnu"
 TARGET_DATA_LAYOUT = "e-m:e-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-f80:128-n8:16:32:64-S128"
 
