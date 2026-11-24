@@ -4,7 +4,7 @@ from yianc.diagnostics.output import OutputError;
 from yianc.frontend.ast.format import AstFormatter;
 from yianc.frontend.observe import append_token_file;
 from yianc.frontend.prepare import PreparationStage;
-from yianc.frontend.session import FrontendSession, PreparationObserver;
+from yianc.frontend.preparation import FrontendPreparation, PreparationObserver;
 from yianc.json_output import write_json;
 from yianc.telemetry.profile import ProfileKind;
 from yianc.telemetry.trace import CompilerTrace;
@@ -28,14 +28,14 @@ impl PreparationObserver for StageDumps {
         if success { self.trace.finish(pass_id); } else { self.trace.fail(pass_id); }
     }
 
-    pub fn stage_complete(stage: PreparationStage, session: FrontendSession&) -> Result<(), OutputError> {
+    pub fn stage_complete(stage: PreparationStage, preparation: FrontendPreparation&) -> Result<(), OutputError> {
         if !self.enabled { return Result<(), OutputError>.Ok(()); }
         let writes_dump = match stage { Lex | Desugar => true, Parse => false };
         if !writes_dump { return Result<(), OutputError>.Ok(()); }
         self.trace.start_pass("io.dump", "io", "stage dump", ProfileKind.Tool);
         let result = match stage {
-            Lex => tokens_dump(session),
-            Desugar => ast_dump(session),
+            Lex => tokens_dump(preparation),
+            Desugar => ast_dump(preparation),
             Parse => Result<(), OutputError>.Ok(()),
         };
         let success = match &result { Ok(_) => true, Err(_) => false };
@@ -44,7 +44,7 @@ impl PreparationObserver for StageDumps {
     }
 }
 
-fn tokens_dump(session: FrontendSession&) -> Result<(), OutputError> {
+fn tokens_dump(preparation: FrontendPreparation&) -> Result<(), OutputError> {
     match create_dir_all("build") {
         Ok(_) => {},
         Err(problem) => { defer problem.drop(); return Result<(), OutputError>.Err(output_error("build", problem.msg())); },
@@ -52,27 +52,29 @@ fn tokens_dump(session: FrontendSession&) -> Result<(), OutputError> {
     let tokens = Writer.with_max_depth(512u64);
     defer tokens.drop();
     tokens.begin_array();
-    for index in 0u64..session.len() {
-        let unit = session.unit(UnitId(index)).unwrap();
-        let source = session.source(unit.id);
-        append_token_file(&tokens, source.path(), &unit.prepared.tokens);
+    for index in 0u64..preparation.len() {
+        let unit = UnitId(index);
+        let staged = preparation.unit(unit).unwrap();
+        let source = preparation.source(unit);
+        append_token_file(&tokens, source.path(), &staged.tokens);
     }
     tokens.end_array();
     write_json(&tokens, "build/tokens.txt")
 }
 
-fn ast_dump(session: FrontendSession&) -> Result<(), OutputError> {
+fn ast_dump(preparation: FrontendPreparation&) -> Result<(), OutputError> {
     let ast = Writer.with_max_depth(512u64);
     defer ast.drop();
     ast.begin_array();
-    for index in 0u64..session.len() {
-        let unit = session.unit(UnitId(index)).unwrap();
-        let source = session.source(unit.id);
+    for index in 0u64..preparation.len() {
+        let unit = UnitId(index);
+        let staged = preparation.unit(unit).unwrap();
+        let source = preparation.source(unit);
         ast.begin_object();
         ast.key("path");
         ast.write_string(source.path());
         ast.key("ast");
-        AstFormatter.new(&ast).append_program(unit.prepared.tree.unwrap().root);
+        AstFormatter.new(&ast).append_program(staged.tree.unwrap().root);
         ast.end_object();
     }
     ast.end_array();

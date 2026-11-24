@@ -26,7 +26,7 @@ CFG 和 LLVM IR，并按 `-t` 输出可执行文件、`.ll` 或 `.bc`。可执�
 
 安装后的 `yianc` 是原生 ELF，运行时不依赖 Python。
 
-`yianc` 的库接口供 `fmt/` 和 `lsp/` 复用词法、语法、AST、诊断和前端会话；格式化器与语言服务器
+`yianc` 的库接口供 `fmt/` 和 `lsp/` 复用词法、语法、AST、诊断和前端单元表；格式化器与语言服务器
 不链接一个独立的编译器进程来获得这些能力。
 
 ## 源码结构
@@ -37,7 +37,7 @@ CFG 和 LLVM IR，并按 `-t` 输出可执行文件、`.ll` 或 `.bc`。可执�
 | `src/config.an` | 命令行解析与编译器配置 |
 | `src/preprocess.an`、`src/input_error.an` | 包图加载、源码根/信任准备、源码收集和输入诊断 |
 | `src/frontend/driver.an`、`src/analysis/driver.an`、`src/codegen/driver.an` | 各阶段的组合入口：pass 顺序、CFG/LLVM 与发布 |
-| `src/frontend/` | 源码会话、词法、语法、AST、去糖、遍历和前端转储 |
+| `src/frontend/` | 源码/单元表、词法、语法、AST、去糖、遍历和前端转储 |
 | `src/analysis/` | 权限分类、解析、类型、符号、HIR、常量求值、lowering、检查 pass 和 HIR 转储 |
 | `src/codegen/` | CFG、LLVM lowering、指针安全检查、原生链接和阶段转储 |
 | `src/telemetry/` | 日志、计时与 profile 记录 |
@@ -90,7 +90,7 @@ yian-fmt -w yianc/src/main.an
 ## 测试
 
 编译器测试位于 `yianc/tests/`：`unit/` 覆盖词法、语法、AST、去糖、类型存储、HIR 验证、
-常量和 codegen；`integration/` 覆盖前端会话、源码、生命周期和端到端行为。
+常量和 codegen；`integration/` 覆盖前端单元表、源码、生命周期和端到端行为。
 
 包测试由原生 `anx` 驱动：
 

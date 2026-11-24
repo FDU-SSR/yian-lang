@@ -184,6 +184,10 @@ impl SourceTable {
         Result<Self, InputError>.Ok(Self(accepted))
     }
 
+    // Move every file out in UnitId order. The table is empty afterwards; the
+    // receiving owner releases the files and a drained table must not be queried.
+    pub fn take_files() -> Vec<SourceFile> { self.files.take() }
+
     pub fn len() -> u64 { self.files.len() }
 }
 

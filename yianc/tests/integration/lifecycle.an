@@ -1,4 +1,5 @@
 from std.core.fs import resolve;
+from yianc.common.ids import UnitId;
 from yianc.frontend.lex.lexer import Lexer;
 from yianc.frontend.lex.token import drop_tokens;
 from yianc.frontend.parse.state import Parser;
@@ -7,7 +8,7 @@ from yianc.frontend.desugar import desugar;
 from yianc.frontend.ast.format import AstFormatter;
 from yianc.frontend.ast.node import Identifier;
 from yianc.frontend.ast.traversal import AstVisitor, walk_program;
-from yianc.frontend.source import SourceFile, SourceTable;
+from yianc.frontend.source import SourceFile, SourceMap, SourceTable;
 from json.write import Writer;
 from json.parse import parse;
 from std.core.env import args;
@@ -232,6 +233,43 @@ fn strict_analysis_reports_first_error() {
     }
 }
 
+// The frontend hands over one completed unit per source, indexed by UnitId.
+fn unit_table_contract() {
+    let trace = CompilerTrace.disabled();
+    defer trace.drop();
+    let first_path = match resolve("/tmp/yian-native-unit-table-first.an") {
+        Ok(value) => value,
+        Err(error) => { error.drop(); @panic("fixture source path resolution failed"); },
+    };
+    let second_path = match resolve("/tmp/yian-native-unit-table-second.an") {
+        Ok(value) => value,
+        Err(error) => { error.drop(); @panic("fixture source path resolution failed"); },
+    };
+    let files = Vec<SourceFile>.new();
+    files.push(SourceFile.new(first_path, String.from(&"fn first() {}\n")));
+    files.push(SourceFile.new(second_path, String.from(&"fn second() {}\n")));
+    let sources = match SourceTable.from_files(files) {
+        Ok(value) => value,
+        Err(error) => { error.drop(); @panic("fixture source load failed"); },
+    };
+    let frontend = FrontendDriver.new(sources, false, &trace);
+    defer frontend.drop();
+    let table = match frontend.run() {
+        Ok(value) => value,
+        Err(error) => { error.drop(); @panic("fixture preparation failed"); },
+    };
+    defer table.drop();
+    let first = UnitId(0u64);
+    let second = UnitId(1u64);
+    assert table.len() == 2u64: "the table holds one unit per source";
+    assert table[first].id.index == 0u64: "the first unit keeps its ID";
+    assert table[second].id.index == 1u64: "the second unit keeps its ID";
+    assert table[first].tokens.len() > 0u64: "the first unit keeps its tokens";
+    assert table[first].tree.root.data.items.len() == 1u64: "the first unit keeps its AST";
+    assert table.file(first).text() == "fn first() {}\n": "the table serves the first source";
+    assert table.file(second).text() == "fn second() {}\n": "the table serves the second source";
+}
+
 fn main() {
     let arguments = args();
     if arguments.len() > 1u64 && arguments[1].as_str() == "--repeat-analysis" {
@@ -247,4 +285,5 @@ fn main() {
     unfinished_parser();
     strict_analysis_lifecycle();
     strict_analysis_reports_first_error();
+    unit_table_contract();
 }

@@ -51,7 +51,7 @@ pub fn check_restricted(session: AnalysisSession&) -> Result<(), AnalysisError> 
 
         if !session.allows_restricted(unit.id) {
             let visitor = RestrictedVisitor(unit.id);
-            match try_walk_program<AnalysisError>(unit.prepared.tree.unwrap().root, &visitor) {
+            match try_walk_program<AnalysisError>(unit.tree.root, &visitor) {
                 Ok(_) => {},
                 Err(error) => return Result<(), AnalysisError>.Err(error.with_stage(AnalysisStage.Restricted)),
             }

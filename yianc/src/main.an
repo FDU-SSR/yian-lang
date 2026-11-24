@@ -16,39 +16,42 @@ from std.core.io import Stderr, Write;
 const EXIT_FAILURE: i32 = 1;
 
 fn main() {
+    // Parse command line arguments
     let config = parse_args();
     defer config.drop();
+    let check = &config.action matches Check;
+
+    // Initialize the compiler trace for telemetry and profiling
     let trace = CompilerTrace.new(&config);
     defer trace.drop();
-
-    let check = &config.action matches Check;
     trace.start_pass("compiler.total", "main", "compiler.total", ProfileKind.Stage);
     if !check { trace.event("main", LogLevel.Info, "compiling source inputs", Option<str>.None); }
 
+    // Load packages, build trust, and collect source files
     trace.start_pass("source_preparation", "main", "source preparation", ProfileKind.Stage);
     let packages = load_packages(&config, &trace);
     let trust = build_trust(&config, &trace, packages.as_ref());
-    let input_sources = collect_sources(&config, &trace);
+    let sources = collect_sources(&config, &trace);
 
-    let frontend = FrontendDriver.new(input_sources, config.dump, &trace);
+    // Run the frontend driver
+    let frontend = FrontendDriver.new(sources, config.dump, &trace);
     defer frontend.drop();
-    let session = match frontend.run() {
+    let units = match frontend.run() {
         Ok(value) => value,
         Err(problem) => {
             trace.fail("source_preparation");
-            report(&problem, frontend.source_table());
+            report(&problem, &sources);
             exit(EXIT_FAILURE);
         },
     };
     trace.finish("source_preparation");
 
-    let middle = MiddleEndDriver.new(session, config.raw_pointers, trust, packages, config.allow_ffi);
+    let middle = MiddleEndDriver.new(units, config.raw_pointers, trust, packages, config.allow_ffi);
     defer middle.drop();
-    let sources = middle.analysis_session().frontend().source_table();
     let runtime_profile_dir = match &config.runtime_profile_dir { Some(value) => Option<str>.Some(value.as_str()), None => Option<str>.None };
     let backend = match BackendDriver.new(middle.analysis_session(), BackendOptions(config.raw_pointers, config.optimization, runtime_profile_dir, config.cfg_inline, config.fat_check_elimination), Option<CompilerTrace&>.Some(&trace)) {
         Ok(value) => value,
-        Err(problem) => { report(&problem, sources); exit(EXIT_FAILURE); },
+        Err(problem) => { report(&problem, &units); exit(EXIT_FAILURE); },
     };
     defer backend.drop();
 
@@ -61,11 +64,11 @@ fn main() {
     options.trace = Option<CompilerTrace&>.Some(&trace);
 
     trace.start_pass("semantic_analysis", "main", "semantic analysis", ProfileKind.Stage);
-    let output = match middle.run_cli(options, sources) {
+    let output = match middle.run_cli(options, &units) {
         Ok(value) => value,
         Err(problem) => {
             trace.fail("semantic_analysis");
-            report(&problem, sources);
+            report(&problem, &units);
             exit(EXIT_FAILURE);
         },
     };
@@ -76,7 +79,7 @@ fn main() {
         match &output {
             Some(value) => match hir_dump(middle.analysis_session(), value) {
                 Ok(_) => {},
-                Err(problem) => { report(&problem, sources); exit(EXIT_FAILURE); },
+                Err(problem) => { report(&problem, &units); exit(EXIT_FAILURE); },
             },
             None => {},
         }
@@ -98,7 +101,7 @@ fn main() {
         match result {
             Ok(_) => {},
             Err(error) => {
-                report(&error, sources);
+                report(&error, &units);
                 match &error {
                     Native(problem) => match Stderr.new().write_all(problem.stderr.as_slice()) {
                         Ok(_) => {}, Err(write_error) => write_error.drop(),
@@ -110,7 +113,7 @@ fn main() {
         }
     }
     match trace.finalize(true) {
-        Some(warning) => { report(&warning, sources); warning.drop(); },
+        Some(warning) => { report(&warning, &units); warning.drop(); },
         None => {},
     }
 }

@@ -143,7 +143,8 @@ pub fn resolve_imports(ctx: ResolutionContext&) -> Result<(), AnalysisError> {
 
         while index < ctx.session.len() {
             let unit = UnitId(index);
-            let root = ctx.session.unit(unit).unwrap().prepared.tree.unwrap().root;
+            let record = *ctx.session.unit(unit).unwrap();
+            let root = record.tree.root;
 
             for item in root.data.items {
                 match &item.data {
@@ -225,12 +226,12 @@ fn inject_prelude(ctx: ResolutionContext&) -> Result<(), AnalysisError> {
                 filename.push_str(".an");
                 let destination = match find_unit(ctx, filename.as_str()) {
                     Some(id) => id,
-                    None => return Result<(), AnalysisError>.Err(ctx.error(unit, record.prepared.tree.unwrap().root.span, DiagnosticCode.Undefined, "prelude module is absent from compilation inputs")),
+                    None => return Result<(), AnalysisError>.Err(ctx.error(unit, record.tree.root.span, DiagnosticCode.Undefined, "prelude module is absent from compilation inputs")),
                 };
                 // Explicit imports, including aliases, suppress the corresponding prelude import.
                 let explicit = false;
 
-                for item in record.prepared.tree.unwrap().root.data.items {
+                for item in record.tree.root.data.items {
                     match &item.data {
                         Import(_, target, alias, _) => {
                             let binding = match alias { Some(value) => value.data.name.as_str(), None => target.data.name.as_str() };
@@ -254,7 +255,7 @@ fn inject_prelude(ctx: ResolutionContext&) -> Result<(), AnalysisError> {
                 }
 
                 if redundant {
-                    for item in record.prepared.tree.unwrap().root.data.items {
+                    for item in record.tree.root.data.items {
                         match &item.data {
                             Import(_, target, alias, _) => {
                                 let binding = match alias { Some(value) => value.data.name.as_str(), None => target.data.name.as_str() };
@@ -272,8 +273,8 @@ fn inject_prelude(ctx: ResolutionContext&) -> Result<(), AnalysisError> {
                 }
 
                 if !explicit && bound.is_none() {
-                    if !bind_import(ctx, unit, destination, entry[1], entry[1], record.prepared.tree.unwrap().root.span)? {
-                        return Result<(), AnalysisError>.Err(ctx.error(unit, record.prepared.tree.unwrap().root.span, DiagnosticCode.Undefined, "prelude symbol is missing"));
+                    if !bind_import(ctx, unit, destination, entry[1], entry[1], record.tree.root.span)? {
+                        return Result<(), AnalysisError>.Err(ctx.error(unit, record.tree.root.span, DiagnosticCode.Undefined, "prelude symbol is missing"));
                     }
                 }
             }

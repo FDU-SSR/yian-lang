@@ -21,8 +21,8 @@ from yianc.diagnostics.model import AnalysisError, AnalysisErrorKind, AnalysisSt
 from yianc.telemetry.profile import ProfileKind;
 from yianc.diagnostics.render import render;
 from yianc.diagnostics.report import report;
-from yianc.frontend.source import SourceTable;
-from yianc.frontend.session import FrontendSession;
+from yianc.frontend.source import SourceMap;
+from yianc.frontend.unit import UnitTable;
 from yianc.package.model import PackageMap;
 from yianc.package.provenance import SourceTrust;
 from std.core.iter import Iterator, IntoIterator;
@@ -53,7 +53,7 @@ fn at_stage(result: Result<(), AnalysisError>, pass_id: str, stage: AnalysisStag
 }
 
 struct CliReporter {
-    sources: SourceTable&,
+    sources: SourceMap&,
     immediate: bool,
     pending: String,
 }
@@ -69,9 +69,9 @@ impl DiagnosticReporter for CliReporter {
 }
 
 impl MiddleEndDriver {
-    static pub fn new(frontend: FrontendSession, raw_pointers: bool, trust: SourceTrust,
+    static pub fn new(units: UnitTable, raw_pointers: bool, trust: SourceTrust,
         packages: Option<PackageMap>, allow_ffi: bool) -> Self {
-        Self(Option<AnalysisSession>.Some(AnalysisSession.new(frontend, raw_pointers, trust, packages, allow_ffi)))
+        Self(Option<AnalysisSession>.Some(AnalysisSession.new(units, raw_pointers, trust, packages, allow_ffi)))
     }
 
     pub fn analysis_session() -> AnalysisSession& {
@@ -88,7 +88,7 @@ impl MiddleEndDriver {
         }
     }
 
-    pub fn run_cli(options: AnalysisOptions, sources: SourceTable&) -> Result<Option<AnalysisOutput>, AnalysisError> {
+    pub fn run_cli(options: AnalysisOptions, sources: SourceMap&) -> Result<Option<AnalysisOutput>, AnalysisError> {
         let reporter = CliReporter(sources, options.recover, String.new());
         defer reporter.pending.drop();
         let result = self.run(options, &reporter);

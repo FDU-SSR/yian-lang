@@ -1,0 +1,65 @@
+from yianc.common.ids import UnitId;
+from yianc.frontend.source import SourceFile, SourceMap;
+from yianc.frontend.lex.token import Token, drop_tokens;
+from yianc.frontend.ast.arena import AstTree;
+from std.core.iter import Iterator, IntoIterator;
+from std.core.ops import Index;
+
+// A completed compilation unit owns its source, its tokens and its desugared AST.
+pub struct UnitData {
+    pub id: UnitId,
+    pub source: SourceFile,
+    pub tokens: Vec<Token>,
+    pub tree: AstTree,
+}
+
+impl Drop for UnitData {
+    pub fn drop() {
+        self.tree.drop();
+        drop_tokens(&self.tokens);
+        self.source.drop();
+    }
+}
+
+// UnitId is the storage key; the frontend appends every completed unit once, in input order.
+pub struct UnitTable {
+    units: Vec<UnitData>,
+}
+
+impl UnitTable {
+    static pub fn new() -> Self {
+        Self(Vec<UnitData>.new())
+    }
+
+    // The next index must equal the ID; only the frontend builds the table.
+    pub fn add(id: UnitId, source: SourceFile, tokens: Vec<Token>, tree: AstTree) {
+        if id.index != self.units.len() { @panic("invalid unit table order"); }
+        self.units.push(UnitData(id, source, tokens, tree));
+    }
+
+    pub fn get(id: UnitId) -> Option<UnitData&> {
+        self.units.as_slice().get(id.index)
+    }
+
+    pub fn len() -> u64 { self.units.len() }
+}
+
+impl Index<UnitId, UnitData&> for UnitTable {
+    pub fn index(id: UnitId&) -> UnitData& {
+        if id.index >= self.units.len() { @panic("invalid source unit ID"); }
+        return &self.units[id.index];
+    }
+}
+
+impl SourceMap for UnitTable {
+    pub fn file(unit: UnitId) -> SourceFile& {
+        return &self[unit].source;
+    }
+}
+
+impl Drop for UnitTable {
+    pub fn drop() {
+        for unit in *self.units { unit.drop(); }
+        self.units.drop();
+    }
+}

@@ -607,7 +607,8 @@ fn field_write(checker: ExprChecker&, span: Span, library: FormatLibrary&, recei
 
 // The synthetic pattern nodes live in the current unit's arena for the duration of the analysis.
 fn ok_pattern(checker: ExprChecker&, span: Span, expected: TypeId) -> Result<PatternId, AnalysisError> {
-    let tree = checker.ctx.session.unit(checker.unit).unwrap().prepared.tree.unwrap();
+    let unit = *checker.ctx.session.unit(checker.unit).unwrap();
+    let tree = &unit.tree;
     let name = tree.arena.alloc_identifier(IdentifierData(name=String.from(&"Ok"), synthetic=true), span);
     let values = Vec<Pattern&>.new();
     values.push(tree.arena.alloc_pattern(PatternData.WildcardPattern, span));
@@ -617,7 +618,8 @@ fn ok_pattern(checker: ExprChecker&, span: Span, expected: TypeId) -> Result<Pat
 }
 
 fn error_pattern(checker: ExprChecker&, span: Span, expected: TypeId, symbol_name: str) -> Result<PatternId, AnalysisError> {
-    let tree = checker.ctx.session.unit(checker.unit).unwrap().prepared.tree.unwrap();
+    let unit = *checker.ctx.session.unit(checker.unit).unwrap();
+    let tree = &unit.tree;
     let variant = tree.arena.alloc_identifier(IdentifierData(name=String.from(&"Err"), synthetic=true), span);
     let binding = tree.arena.alloc_identifier(IdentifierData(name=String.from(&symbol_name), synthetic=true), span);
     let values = Vec<Pattern&>.new();

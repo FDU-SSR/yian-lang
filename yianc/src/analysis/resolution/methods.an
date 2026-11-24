@@ -183,7 +183,8 @@ pub fn resolve_impls(ctx: ResolutionContext&) -> Result<(), AnalysisError> {
 
     while index < ctx.session.len() {
         let unit = UnitId(index);
-        let root = ctx.session.unit(unit).unwrap().prepared.tree.unwrap().root;
+        let record = *ctx.session.unit(unit).unwrap();
+        let root = record.tree.root;
 
         for item in root.data.items {
             resolve_impl(ctx, unit, *item)?;

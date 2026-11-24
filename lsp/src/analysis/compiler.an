@@ -132,27 +132,28 @@ pub fn analyze(documents: Vec<SourceDocument>&, trust: SourceTrust, packages: Op
     let frontend = FrontendDriver.new(input_sources, false, &trace);
     sources_moved = true;
     defer frontend.drop();
-    let prepared = match frontend.run() {
+    let units = match frontend.run() {
         Ok(value) => value,
         Err(error) => {
             defer error.drop();
             return Result<CompilerAnalysis, CompilerFailure>.Err(CompilerFailure.single(&error, frontend.source_table()));
         },
     };
-    let middle = MiddleEndDriver.new(prepared, raw_pointers, trust, packages, allow_ffi);
+    // Argument passing is a shallow copy: the middle-end session owns this table,
+    // and the local handle remains valid for diagnostics while that session lives.
+    let middle = MiddleEndDriver.new(units, raw_pointers, trust, packages, allow_ffi);
     inputs_transferred = true;
     defer middle.drop();
-    let sources = middle.analysis_session().frontend().source_table();
     let backend_value = match BackendSession.new(middle.analysis_session(), BackendOptions(raw_pointers, 0u8, Option<str>.None, true, true)) {
         Ok(value) => value,
         Err(error) => {
             defer error.drop();
-            return Result<CompilerAnalysis, CompilerFailure>.Err(CompilerFailure.single(&error, sources));
+            return Result<CompilerAnalysis, CompilerFailure>.Err(CompilerFailure.single(&error, &units));
         },
     };
     let backend = Option<BackendSession>.Some(backend_value);
     defer { match backend.take() { Some(value) => value.drop(), None => {}, } };
-    let reporter = LspReporter(sources, Vec<LspDiagnostic>.new());
+    let reporter = LspReporter(&units, Vec<LspDiagnostic>.new());
     let transferred = false;
     defer { if !transferred { release_diagnostics(&reporter.warnings); } };
     let options = AnalysisOptions.new();
@@ -166,7 +167,7 @@ pub fn analyze(documents: Vec<SourceDocument>&, trust: SourceTrust, packages: Op
         Ok(None) => @panic("strict analysis returned no output"),
         Err(error) => {
             defer error.drop();
-            return Result<CompilerAnalysis, CompilerFailure>.Err(CompilerFailure.single(&error, sources));
+            return Result<CompilerAnalysis, CompilerFailure>.Err(CompilerFailure.single(&error, &units));
         },
     };
     match backend.take() { Some(value) => value.drop(), None => {}, }

@@ -74,7 +74,8 @@ pub fn register_automatic(ctx: ResolutionContext&) -> Result<(), AnalysisError> 
                 }
 
                 let span = declaration.item.span;
-                let tree = ctx.session.unit(declaration.unit).unwrap().prepared.tree.unwrap();
+                let unit_data = *ctx.session.unit(declaration.unit).unwrap();
+                let tree = &unit_data.tree;
                 let arms = Vec<MatchArm&>.new();
 
                 for variant in *variants {

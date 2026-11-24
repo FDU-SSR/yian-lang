@@ -154,8 +154,8 @@ pub fn collect_declarations(ctx: ResolutionContext&) -> Result<(), AnalysisError
 
     while unit_index < ctx.session.len() {
         let unit = UnitId(unit_index);
-        let prepared = *ctx.session.unit(unit).unwrap();
-        let root = prepared.prepared.tree.unwrap().root;
+        let record = *ctx.session.unit(unit).unwrap();
+        let root = record.tree.root;
 
         for item in root.data.items {
             collect_item(ctx, unit, *item, &empty)?;

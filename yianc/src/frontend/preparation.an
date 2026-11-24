@@ -1,0 +1,91 @@
+from yianc.common.ids import UnitId;
+from yianc.diagnostics.output import OutputError;
+from yianc.frontend.prepare import FrontendPhase, PreparedFile, FrontendStageError, PreparationStage, prepare_file;
+from yianc.frontend.source import SourceFile, SourceMap, SourceTable;
+from yianc.frontend.unit import UnitTable;
+from yianc.frontend.ast.arena import AstTree;
+from std.core.iter import Iterator, IntoIterator;
+
+// Observers borrow the partial preparation synchronously; preparation never retains them.
+pub trait PreparationObserver {
+    fn begin(pass_id: str) {}
+    fn finish(pass_id: str, success: bool) {}
+    fn stage_complete(stage: PreparationStage, preparation: FrontendPreparation&) -> Result<(), OutputError>;
+}
+
+// This owner keeps every source and staged token/tree for one frontend run.
+// It is not the frontend result: run() moves those resources into a completed UnitTable.
+pub struct FrontendPreparation {
+    sources: SourceTable,
+    units: Vec<PreparedFile>,
+}
+
+impl FrontendPreparation {
+    static pub fn new(sources: SourceTable) -> Self {
+        Self(sources, Vec<PreparedFile>.new())
+    }
+
+    pub fn prepare_source(unit: UnitId) -> Result<PreparedFile, FrontendStageError> {
+        let file = self.sources.file(unit);
+        prepare_file(unit, file.path(), file.text(), FrontendPhase.Tokens)
+    }
+
+    // A lexed file transfers here in the same order as the frozen source table.
+    pub fn accept(id: UnitId, prepared: PreparedFile) {
+        if id.index != self.units.len() { @panic("invalid prepared unit order"); }
+        self.sources.file(id);
+        self.units.push(prepared);
+    }
+
+    pub fn unit(id: UnitId) -> Option<PreparedFile&> {
+        self.units.as_slice().get(id.index)
+    }
+
+    pub fn source(id: UnitId) -> SourceFile& {
+        self.sources.file(id)
+    }
+
+    pub fn len() -> u64 { self.units.len() }
+    pub fn source_count() -> u64 { self.sources.len() }
+    pub fn source_table() -> SourceTable& { &self.sources }
+
+    pub fn finish_preparation(result: Result<(), FrontendStageError>, unit: UnitId) -> Result<(), FrontendStageError> {
+        self.sources.file(unit);
+        result
+    }
+
+    // Move every source and staged token/tree into the completed table. The
+    // preparation is empty afterwards and is released by its owner.
+    pub fn finish() -> UnitTable {
+        if self.units.len() != self.sources.len() {
+            @panic("prepared unit count does not match the source table");
+        }
+        let files = self.sources.take_files();
+        let completed = UnitTable.new();
+        let count = self.units.len();
+        let index = 0u64;
+        while index < count {
+            let prepared = self.units.remove(0u64);
+            let source = files.remove(0u64);
+            let tokens = prepared.tokens.take();
+            let tree = match &prepared.tree {
+                Some(value) => *value,
+                None => @panic("prepared unit is missing its AST"),
+            };
+            prepared.tree = Option<AstTree>.None;
+            prepared.drop();
+            completed.add(UnitId(index), source, tokens, tree);
+            index += 1u64;
+        }
+        files.drop();
+        completed
+    }
+}
+
+impl Drop for FrontendPreparation {
+    pub fn drop() {
+        for unit in *self.units { unit.drop(); }
+        self.units.drop();
+        self.sources.drop();
+    }
+}

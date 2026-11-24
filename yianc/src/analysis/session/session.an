@@ -8,8 +8,8 @@ from yianc.analysis.symbol.model import SymbolKind;
 from yianc.analysis.ty.impl_registry import ImplRegistry;
 from yianc.analysis.ty.store import TypeStore;
 from yianc.diagnostics.model import AnalysisError;
-from yianc.frontend.session import CompilationUnit, FrontendSession;
-from yianc.frontend.source import SourceFile;
+from yianc.frontend.unit import UnitData, UnitTable;
+from yianc.frontend.source import SourceFile, SourceMap;
 from yianc.package.model import PackageMap;
 from yianc.package.provenance import SourceTrust;
 from std.core.iter import Iterator, IntoIterator;
@@ -27,9 +27,9 @@ struct SourcePermissions {
     allows_ffi: bool,
 }
 
-// The middle-end owner composes the completed frontend owner and keeps all semantic data.
+// The middle-end owner receives the completed frontend table and keeps all semantic data.
 pub struct AnalysisSession {
-    frontend: FrontendSession,
+    units: UnitTable,
     trust: SourceTrust,
     packages: Option<PackageMap>,
     allow_ffi: bool,
@@ -47,28 +47,24 @@ pub struct AnalysisSession {
 }
 
 impl AnalysisSession {
-    static pub fn new(frontend: FrontendSession, raw_pointers: bool, trust: SourceTrust,
+    static pub fn new(units: UnitTable, raw_pointers: bool, trust: SourceTrust,
         packages: Option<PackageMap>, allow_ffi: bool) -> Self {
-        Self(frontend, trust, packages, allow_ffi, Vec<SourcePermissions>.new(), false,
+        Self(units, trust, packages, allow_ffi, Vec<SourcePermissions>.new(), false,
             NameInterner.new(), TypeStore.new(), SymbolStore.new(), HirStore.new(),
             DefinitionRegistry.new(), DefinitionWorklist.new(), ImplRegistry.new(),
             raw_pointers, AnalysisPhase.Prepared)
     }
 
-    pub fn frontend() -> FrontendSession& {
-        &self.frontend
-    }
-
-    pub fn unit(id: UnitId) -> Option<CompilationUnit&> {
-        self.frontend.unit(id)
+    pub fn unit(id: UnitId) -> Option<UnitData&> {
+        self.units.get(id)
     }
 
     pub fn source(id: UnitId) -> SourceFile& {
-        self.frontend.source(id)
+        self.units.file(id)
     }
 
     pub fn len() -> u64 {
-        self.frontend.len()
+        self.units.len()
     }
 
     pub fn package_map() -> Option<PackageMap&> {
@@ -82,16 +78,16 @@ impl AnalysisSession {
         self.trust.stdlib_root()
     }
 
-    // Permissions belong to the analysis session; the frontend only owns sources and ASTs.
+    // Permissions belong to the analysis session; the completed table owns sources, tokens and ASTs.
     pub fn classify_sources() -> Result<(), AnalysisError> {
         if self.permissions_ready { @panic("source permissions have already been classified"); }
         if self.phase != AnalysisPhase.Analyzing { @panic("analysis session is not analyzing"); }
         self.permissions_ready = true;
-        let count = self.frontend.len();
+        let count = self.units.len();
         let index = 0u64;
         while index < count {
             let unit = UnitId(index);
-            let canonical = self.frontend.source(unit).path();
+            let canonical = self.units.file(unit).path();
             let stdlib = self.trust.is_stdlib(canonical);
             let restricted = self.trust.allows_restricted(canonical);
             let ffi = stdlib || self.allow_ffi;
@@ -162,6 +158,6 @@ impl Drop for AnalysisSession {
         self.symbols.drop();
         self.types.drop();
         self.names.drop();
-        self.frontend.drop();
+        self.units.drop();
     }
 }

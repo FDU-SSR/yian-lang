@@ -10,7 +10,7 @@
 
 | 目录           | 职责                                                  |
 | -------------- | ----------------------------------------------------- |
-| `frontend/`    | 源码会话、词法、语法、AST、去糖、遍历与转储 |
+| `frontend/`    | 源码/单元表、词法、语法、AST、去糖、遍历与转储 |
 | `analysis/`    | 权限分类、解析、类型、符号、HIR、常量求值、lowering、检查与转储 |
 | `codegen/`     | CFG、LLVM lowering、指针安全检查、原生链接与转储      |
 | `telemetry/`   | 日志、计时与 profile 记录                             |
@@ -360,7 +360,7 @@ yianc/tests/unit/desugar/       去糖
 yianc/tests/unit/analysis/      类型存储与 HIR 验证
 yianc/tests/unit/codegen/       CFG/表示
 yianc/tests/unit/constant/      常量求值
-yianc/tests/integration/        前端会话、源码、生命周期和端到端行为
+yianc/tests/integration/        前端单元表、源码、生命周期和端到端行为
 ```
 
 - 入口使用 `fn main()`；一个文件聚焦一个模块或一组紧密相关的行为。
