@@ -1,0 +1,75 @@
+from yianc.analysis.constant.integer import cast_integer, checked_cast_integer, checked_untyped;
+from yianc.analysis.constant.integer import compare, integer_binary, integer_fits, integer_unary, magnitude, normalized;
+from yianc.analysis.constant.value import ConstEvalError, IntegerValue, IntegerWidth;
+from yianc.frontend.ast.operator import BinaryOperator, UnaryOperator;
+
+fn main() {
+    let maximum = *checked_untyped(0xFFFFFFFFFFFFFFFFu64, false).unwrap();
+    assert magnitude(maximum) == 0xFFFFFFFFFFFFFFFFu64: "untyped maximum magnitude";
+    assert !maximum.is_negative(): "untyped maximum is positive";
+
+    let minimum = *checked_untyped(0x8000000000000000u64, true).unwrap();
+    assert minimum.is_negative(): "minimum negative untyped constant";
+    assert magnitude(minimum) == 0x8000000000000000u64: "minimum magnitude";
+
+    match integer_binary(BinaryOperator.Add, maximum, IntegerValue.untyped(1u64, false)) {
+        Ok(_) => @panic("untyped addition overflow was accepted"),
+        Err(error) => assert error == ConstEvalError.Overflow: "untyped addition reports overflow",
+    }
+    match checked_untyped(0x8000000000000001u64, true) {
+        Ok(_) => @panic("negative untyped overflow was accepted"),
+        Err(error) => assert error == ConstEvalError.Overflow: "negative limit is checked",
+    }
+
+    let signed_max = normalized(0x7FFFFFFFFFFFFFFFu64, IntegerWidth.W64, true);
+    match integer_binary(BinaryOperator.Add, signed_max, IntegerValue.untyped(1u64, false)) {
+        Ok(_) => @panic("signed addition overflow was accepted"),
+        Err(error) => assert error == ConstEvalError.Overflow: "signed overflow is checked",
+    }
+
+    let unsigned_max = normalized(0xFFu64, IntegerWidth.W8, false);
+    match integer_binary(BinaryOperator.Add, unsigned_max, IntegerValue.untyped(1u64, false)) {
+        Ok(_) => @panic("unsigned addition overflow was accepted"),
+        Err(error) => assert error == ConstEvalError.Overflow: "unsigned overflow is checked",
+    }
+
+    assert integer_fits(IntegerValue.untyped(255u64, false), 8u32, false): "u8 maximum fits";
+    assert !integer_fits(IntegerValue.untyped(256u64, false), 8u32, false): "u8 overflow does not fit";
+    assert integer_fits(IntegerValue.untyped(128u64, true), 8u32, true): "i8 minimum fits";
+    assert !integer_fits(IntegerValue.untyped(128u64, false), 8u32, true): "i8 maximum+1 does not fit";
+
+    let narrow = *checked_cast_integer(IntegerValue.untyped(255u64, false), IntegerWidth.W8, false).unwrap();
+    assert narrow.raw_bits() == 255u64: "checked cast keeps u8 maximum";
+    match checked_cast_integer(IntegerValue.untyped(256u64, false), IntegerWidth.W8, false) {
+        Ok(_) => @panic("narrowing overflow was accepted"),
+        Err(error) => assert error == ConstEvalError.Overflow: "narrowing cast reports overflow",
+    }
+    let wrapped = cast_integer(IntegerValue.untyped(256u64, false), IntegerWidth.W8, false);
+    assert wrapped.raw_bits() == 0u64: "unchecked cast truncates bits";
+
+    assert compare(IntegerValue.untyped(1u64, true), IntegerValue.untyped(1u64, false)) == -1: "negative compare";
+    assert compare(IntegerValue.untyped(1u64, false), IntegerValue.untyped(1u64, false)) == 0: "equal compare";
+
+    let quotient = *integer_binary(BinaryOperator.Div, IntegerValue.untyped(7u64, false), IntegerValue.untyped(2u64, false)).unwrap();
+    assert quotient.raw_bits() == 3u64: "integer division";
+    let remainder = *integer_binary(BinaryOperator.Mod, IntegerValue.untyped(7u64, false), IntegerValue.untyped(2u64, false)).unwrap();
+    assert remainder.raw_bits() == 1u64: "integer remainder";
+    match integer_binary(BinaryOperator.Div, IntegerValue.untyped(1u64, false), IntegerValue.untyped(0u64, false)) {
+        Ok(_) => @panic("division by zero was accepted"),
+        Err(error) => assert error == ConstEvalError.DivisionByZero: "division by zero is checked",
+    }
+
+    let shifted = *integer_binary(BinaryOperator.Shl, IntegerValue.untyped(1u64, false), IntegerValue.untyped(4u64, false)).unwrap();
+    assert shifted.raw_bits() == 16u64: "left shift";
+    match integer_binary(BinaryOperator.Shl, IntegerValue.untyped(1u64, false), IntegerValue.untyped(64u64, false)) {
+        Ok(_) => @panic("oversized shift was accepted"),
+        Err(error) => assert error == ConstEvalError.Overflow: "oversized shift reports overflow",
+    }
+    match integer_binary(BinaryOperator.Shr, IntegerValue.untyped(8u64, false), IntegerValue.untyped(1u64, true)) {
+        Ok(_) => @panic("negative shift was accepted"),
+        Err(error) => assert error == ConstEvalError.NegativeShift: "negative shift is checked",
+    }
+
+    let inverted = *integer_unary(UnaryOperator.BitNot, IntegerValue.untyped(0u64, false)).unwrap();
+    assert compare(inverted, IntegerValue.untyped(1u64, true)) == 0: "bitwise not identity";
+}
