@@ -1,6 +1,8 @@
 from yianc.config import CompilerConfig;
 from yianc.package.model import PackageMap;
-from yianc.diagnostics.model import AnalysisError;
+from yianc.diagnostics.model import DiagnosticCode, DiagnosticLocation;
+from yianc.frontend.input import InputError;
+from std.core.convert import From;
 from yianc.package.provenance import normalize_path;
 from yianc.driver.host import associated_root;
 from std.core.iter import Iterator, IntoIterator;
@@ -12,18 +14,18 @@ pub struct SourceRoots {
 }
 
 impl SourceRoots {
-    static fn from_checkout(path: str) -> Result<Self, AnalysisError> {
+    static fn from_checkout(path: str) -> Result<Self, InputError> {
         let checkout = normalize_path(path)?;
         defer checkout.drop();
         let joined = checkout.as_path().join("lib/src");
         defer joined.drop();
         let standard_library = normalize_path(joined.as_str())?;
-        Result<Self, AnalysisError>.Ok(Self(standard_library))
+        Result<Self, InputError>.Ok(Self(standard_library))
     }
 
-    static fn from_library(path: str) -> Result<Self, AnalysisError> {
+    static fn from_library(path: str) -> Result<Self, InputError> {
         let library = normalize_path(path)?;
-        Result<Self, AnalysisError>.Ok(Self(library))
+        Result<Self, InputError>.Ok(Self(library))
     }
 }
 
@@ -31,7 +33,7 @@ impl Drop for SourceRoots {
     pub fn drop() { self.standard_library.drop(); }
 }
 
-pub fn source_roots(config: CompilerConfig&, packages: Option<PackageMap&>) -> Result<SourceRoots, AnalysisError> {
+pub fn source_roots(config: CompilerConfig&, packages: Option<PackageMap&>) -> Result<SourceRoots, InputError> {
     match packages {
         Some(map) => match map.find("std") {
             Some(package) => return SourceRoots.from_library(package.source_root.as_str()),
@@ -43,7 +45,7 @@ pub fn source_roots(config: CompilerConfig&, packages: Option<PackageMap&>) -> R
     for name in ["YIAN_LIB", "YIAN_ROOT"] {
         let path = match env_var(*name) {
             Ok(value) => value,
-            Err(problem) => { defer problem.drop(); return Result<SourceRoots, AnalysisError>.Err(AnalysisError.internal(problem.msg())); },
+            Err(problem) => { defer problem.drop(); return Result<SourceRoots, InputError>.Err(InputError(DiagnosticCode.Source, DiagnosticLocation.Global, String.from(&problem.msg()))); },
         };
         match &path {
             Some(value) => {
@@ -61,7 +63,7 @@ pub fn source_roots(config: CompilerConfig&, packages: Option<PackageMap&>) -> R
 }
 
 // Runtime resources are independent of the package map's standard-library source root.
-pub fn runtime_root(config: CompilerConfig&) -> Result<PathBuf, AnalysisError> {
+pub fn runtime_root(config: CompilerConfig&) -> Result<PathBuf, InputError> {
     if config.root_explicit { return normalize_path(config.compiler_root.as_str()); }
     let root = associated_root()?;
     defer root.drop();

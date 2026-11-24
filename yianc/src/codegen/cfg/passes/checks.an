@@ -28,7 +28,7 @@ fn access_kind(function: CfgFunction&, types: BackendTypes&, address: ValueId) -
         }
         return Result<AccessKind, CodegenError>.Ok(AccessKind.Reference);
     }
-    Result<AccessKind, CodegenError>.Err(CodegenError.invalid("cyclic CFG address provenance"))
+    @panic("cyclic CFG address provenance")
 }
 
 // Fat accesses are canonical live and bounds obligations; references never carry bounds.
@@ -143,7 +143,7 @@ pub fn expected_checks(function: CfgFunction&, types: BackendTypes&, instruction
 // Each access receives its own checks. Calls, releases and joins never share a cached live fact.
 pub fn insert_checks(module: CfgModule&, types: BackendTypes&) -> Result<(), CodegenError> {
     if module.safety_stage != SafetyStage.Neutral {
-        return Result<(), CodegenError>.Err(CodegenError.invalid("check insertion requires a neutral graph"));
+        @panic("check insertion requires a neutral graph");
     }
     for function_index in 0u64..module.len() {
         let function = *module.function(FunctionId(function_index)).unwrap();

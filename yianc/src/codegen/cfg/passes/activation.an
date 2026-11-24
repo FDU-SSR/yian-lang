@@ -148,7 +148,7 @@ fn collect_module(module: CfgModule&, types: BackendTypes&) -> Result<TypeSet, C
 
 fn bind_representations(module: CfgModule&, types: BackendTypes&) -> Result<(), CodegenError> {
     if !module.representations.is_empty() {
-        return Result<(), CodegenError>.Err(CodegenError.invalid("CFG representations are already populated"));
+        @panic("CFG representations are already populated");
     }
     let set = collect_module(module, types)?;
     defer set.drop();
@@ -185,7 +185,7 @@ fn scope_needs_lock(function: CfgFunction&, types: BackendTypes&) -> Result<Vec<
 
 fn plan_function(function: CfgFunction&, types: BackendTypes&) -> Result<(), CodegenError> {
     match &function.fat_plan {
-        Some(_) => return Result<(), CodegenError>.Err(CodegenError.invalid("CFG fat plan is already populated")),
+        Some(_) => @panic("CFG fat plan is already populated"),
         None => {},
     }
     let needs = scope_needs_lock(function, types)?;
@@ -389,7 +389,7 @@ fn insert_guards(module: CfgModule&, types: BackendTypes&) -> Result<(), Codegen
 // Fat activation fixes representations, frame plans, safety checks, and guarded templates.
 pub fn prepare_safety(module: CfgModule&, types: BackendTypes&) -> Result<(), CodegenError> {
     if module.safety_stage != SafetyStage.Neutral {
-        return Result<(), CodegenError>.Err(CodegenError.invalid("safety preparation requires a neutral CFG"));
+        @panic("safety preparation requires a neutral CFG");
     }
     bind_representations(module, types)?;
     for function_index in 0u64..module.len() {
@@ -413,18 +413,18 @@ fn verify_representations(module: CfgModule&, types: BackendTypes&) -> Result<()
     let expected = 0u64;
     for index in 0u64..set.seen.len() { if set.seen[index] { expected += 1u64; } }
     if module.representations.len() != expected {
-        return Result<(), CodegenError>.Err(CodegenError.invalid("CFG representation table is incomplete"));
+        @panic("CFG representation table is incomplete");
     }
     let position = 0u64;
     for index in 0u64..set.seen.len() {
         if !set.seen[index] { continue; }
         let entry = module.representations[position];
         if entry.type_id.index != index {
-            return Result<(), CodegenError>.Err(CodegenError.invalid("CFG representation order is not canonical"));
+            @panic("CFG representation order is not canonical");
         }
         let classified = classify_representation(store, entry.type_id, types.raw_pointers())?;
         if classified != entry.representation {
-            return Result<(), CodegenError>.Err(CodegenError.invalid("CFG representation disagrees with the classifier"));
+            @panic("CFG representation disagrees with the classifier");
         }
         types.representation(entry.type_id)?;
         position += 1u64;
@@ -442,20 +442,20 @@ pub fn verify_activation(module: CfgModule&, types: BackendTypes&) -> Result<(),
         match &function.fat_plan {
             Some(plan) => {
                 if types.raw_pointers() {
-                    return Result<(), CodegenError>.Err(CodegenError.invalid("raw CFG has a fat plan"));
+                    @panic("raw CFG has a fat plan");
                 }
                 if plan.scopes.len() != function.scopes.len() || plan.scopes.len() != needs.len() {
-                    return Result<(), CodegenError>.Err(CodegenError.invalid("CFG fat plan scope count is inconsistent"));
+                    @panic("CFG fat plan scope count is inconsistent");
                 }
                 for index in 0u64..needs.len() {
                     if plan.scopes[index].needs_lock != needs[index] {
-                        return Result<(), CodegenError>.Err(CodegenError.invalid("CFG fat plan lock decision is inconsistent"));
+                        @panic("CFG fat plan lock decision is inconsistent");
                     }
                 }
             },
             None => {
                 if !types.raw_pointers() {
-                    return Result<(), CodegenError>.Err(CodegenError.invalid("fat CFG has no frame plan"));
+                    @panic("fat CFG has no frame plan");
                 }
             },
         }
@@ -464,11 +464,11 @@ pub fn verify_activation(module: CfgModule&, types: BackendTypes&) -> Result<(),
                 let guards = expected_guards(function, types, instruction)?;
                 defer guards.drop();
                 if guards.len() != instruction.guards.len() {
-                    return Result<(), CodegenError>.Err(CodegenError.invalid("CFG operation guards are incomplete"));
+                    @panic("CFG operation guards are incomplete");
                 }
                 for index in 0u64..guards.len() {
                     if !same_guard(&guards[index], &instruction.guards[index]) {
-                        return Result<(), CodegenError>.Err(CodegenError.invalid("CFG operation guard disagrees with activation"));
+                        @panic("CFG operation guard disagrees with activation");
                     }
                 }
             }
@@ -480,7 +480,7 @@ pub fn verify_activation(module: CfgModule&, types: BackendTypes&) -> Result<(),
 // Prepared graphs still carry every safety check and no live proof.
 pub fn verify_prepared(module: CfgModule&, types: BackendTypes&) -> Result<(), CodegenError> {
     if module.safety_stage != SafetyStage.Prepared {
-        return Result<(), CodegenError>.Err(CodegenError.invalid("prepared verification requires a prepared CFG"));
+        @panic("prepared verification requires a prepared CFG");
     }
     verify_activation(module, types)?;
     for function_index in 0u64..module.len() {
@@ -488,21 +488,21 @@ pub fn verify_prepared(module: CfgModule&, types: BackendTypes&) -> Result<(), C
         for block_index in 0u64..function.block_count() {
             for instruction in function.block(BlockId(block_index))?.instructions {
                 match &instruction.operation {
-                    SafetyPoint => return Result<(), CodegenError>.Err(CodegenError.invalid("prepared CFG carries a safety point")),
+                    SafetyPoint => @panic("prepared CFG carries a safety point"),
                     _ => {},
                 }
                 let checks = expected_checks(function, types, instruction)?;
                 defer checks.drop();
                 if checks.len() != instruction.checks.len() {
-                    return Result<(), CodegenError>.Err(CodegenError.invalid("CFG safety checks are incomplete"));
+                    @panic("CFG safety checks are incomplete");
                 }
                 for index in 0u64..checks.len() {
                     if !same_check(&checks[index], &instruction.checks[index]) {
-                        return Result<(), CodegenError>.Err(CodegenError.invalid("CFG safety check disagrees with activation"));
+                        @panic("CFG safety check disagrees with activation");
                     }
                 }
                 if !instruction.live_proofs.is_empty() {
-                    return Result<(), CodegenError>.Err(CodegenError.invalid("prepared CFG carries live proofs"));
+                    @panic("prepared CFG carries live proofs");
                 }
             }
         }

@@ -90,7 +90,7 @@ impl Lowering {
                 known = true;
             }
         }
-        if !known { return Result<(), CodegenError>.Err(CodegenError.invalid("checked enum initializer has an invalid discriminant")); }
+        if !known { @panic("checked enum initializer has an invalid discriminant"); }
 
         let evaluated = Vec<ValueId>.new();
         defer evaluated.drop();
@@ -119,13 +119,13 @@ impl Lowering {
                     }
                     match found {
                         Some(value) => fields.push(value),
-                        None => return Result<(), CodegenError>.Err(CodegenError.invalid("checked enum payload has a missing field")),
+                        None => @panic("checked enum payload has a missing field"),
                     }
                 }
             },
             None => {
                 if !evaluated.is_empty() {
-                    return Result<(), CodegenError>.Err(CodegenError.invalid("checked unit variant has payload arguments"));
+                    @panic("checked unit variant has payload arguments");
                 }
             },
         }

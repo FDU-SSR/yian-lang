@@ -99,7 +99,7 @@ impl FunctionLowering {
                 return Result<Option<TypeId>, CodegenError>.Ok(variant.payload);
             }
         }
-        Result<Option<TypeId>, CodegenError>.Err(CodegenError.invalid("enum place operation has an invalid discriminant"))
+        @panic("enum place operation has an invalid discriminant")
     }
 
     // The tag word and the inactive payload area keep their previous zero initialization.
@@ -121,7 +121,7 @@ impl FunctionLowering {
         if fields.is_empty() { return Result<(), CodegenError>.Ok(()); }
         let payload_type = match self.payload_type(enumeration, discriminant)? {
             Some(value) => value,
-            None => return Result<(), CodegenError>.Err(CodegenError.invalid("enum initializer has no payload type")),
+            None => @panic("enum initializer has no payload type"),
         };
         let native_payload = types.value_type(payload_type)?;
         let index = 0u64;
@@ -152,7 +152,7 @@ impl FunctionLowering {
         if types.is_zst(type_id)? { return Result<IrValue, CodegenError>.Ok(module.const_null(native)); }
         let payload_type = match self.payload_type(enumeration, discriminant)? {
             Some(value) => value,
-            None => return Result<IrValue, CodegenError>.Err(CodegenError.invalid("enum field read has no payload type")),
+            None => @panic("enum field read has no payload type"),
         };
         let source = self.cfg.value(address)?.type_id;
         let base = self.memory_address(source, self.get(address)?)?;

@@ -1,4 +1,5 @@
 from yianc.config import CompilerAction, CompilerConfig;
+from yianc.diagnostics.model import DiagnosticCode, DiagnosticLocation, UserDiagnostic;
 from std.core.convert import From;
 from std.core.fs import create_dir_all;
 from std.core.io import File, OpenMode, Write;
@@ -8,6 +9,14 @@ from std.core.path import Path;
 from std.core.process import env_var;
 
 pub enum LogLevel { Off, Error, Warn, Info, Debug, Trace }
+
+pub struct LogConfigError { pub message: String }
+impl UserDiagnostic for LogConfigError {
+    pub fn message() -> String { String.from(&self.message.as_str()) }
+    pub fn location() -> DiagnosticLocation { DiagnosticLocation.Global }
+    pub fn code() -> DiagnosticCode { DiagnosticCode.LogConfiguration }
+}
+impl Drop for LogConfigError { pub fn drop() { self.message.drop(); } }
 
 impl LogLevel {
     fn name() -> str {
@@ -62,11 +71,11 @@ fn environment(name: str) -> Result<Option<String>, String> {
 }
 
 impl CompilerLog {
-    static pub fn new(config: CompilerConfig&) -> Result<Self, String> {
+    static pub fn new(config: CompilerConfig&) -> Result<Self, LogConfigError> {
         let log = Self(Vec<LogRule>.new(), Vec<File>.new());
         match log.configure_logs(config, &config.action matches Check) {
-            Ok(_) => Result<Self, String>.Ok(log),
-            Err(problem) => { log.drop(); Result<Self, String>.Err(problem) },
+            Ok(_) => Result<Self, LogConfigError>.Ok(log),
+            Err(problem) => { log.drop(); Result<Self, LogConfigError>.Err(LogConfigError(problem)) },
         }
     }
 

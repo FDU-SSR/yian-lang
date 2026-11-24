@@ -23,7 +23,7 @@ fn query_budget(session: AnalysisSession&, target: TypeId, trait_id: TypeId) -> 
     session.types.require(trait_id)?;
     let count = session.types.len();
     if count > (0xFFFFFFFFFFFFFFFFu64 - 1u64) / 2u64 {
-        return Result<u64, AnalysisError>.Err(AnalysisError.internal("trait query budget exceeds the target range"));
+        @panic("trait query budget exceeds the target range");
     }
     Result<u64, AnalysisError>.Ok(count * 2u64 + 1u64)
 }
@@ -159,7 +159,7 @@ fn solve_trait(session: AnalysisSession&, target: TypeId, trait_id: TypeId, oute
             return Result<bool, AnalysisError>.Ok(true);
         }
     }
-    Result<bool, AnalysisError>.Err(AnalysisError.internal("selected trait candidate has no inference solution"))
+    @panic("selected trait candidate has no inference solution")
 }
 
 struct MethodCandidate {
@@ -174,9 +174,9 @@ fn trait_description(session: AnalysisSession&, trait_id: TypeId, target: TypeId
     let definition = match session.types.require(trait_id)? {
         Nominal(id, _) => match session.types.definition(*id) {
             Some(value) => value,
-            None => return Result<String, AnalysisError>.Err(AnalysisError.internal("trait diagnostic has an invalid definition ID")),
+            None => @panic("trait diagnostic has an invalid definition ID"),
         },
-        _ => return Result<String, AnalysisError>.Err(AnalysisError.internal("trait diagnostic requires a nominal trait")),
+        _ => @panic("trait diagnostic requires a nominal trait"),
     };
     let message = String.from(&"trait '");
     message.push_str(session.names.text(definition.header().name));
@@ -288,7 +288,7 @@ pub fn lookup_method_with_generics(ctx: ResolutionContext&, target: TypeId, name
                 let header = *ctx.session.types.definition(*definition).unwrap();
                 let body = match ctx.session.types.complete_definition(*definition)? {
                     Method(value) => value,
-                    _ => return Result<TypeId, AnalysisError>.Err(AnalysisError.internal("method registry contains a non-method")),
+                    _ => @panic("method registry contains a non-method"),
                 };
 
                 match explicit {

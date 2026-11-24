@@ -13,9 +13,9 @@ fn find_unit(ctx: ResolutionContext&, path: str) -> Option<UnitId> {
 
     while index < ctx.session.len() {
         let id = UnitId(index);
-        let source = ctx.session.unit(id).unwrap().source;
+        let source = id;
 
-        if ctx.session.source(source).unwrap().canonical_path() == path {
+        if ctx.session.source(source).canonical_path() == path {
             return Option<UnitId>.Some(id);
         }
 
@@ -31,7 +31,7 @@ fn target_unit(ctx: ResolutionContext&, unit: UnitId, paths: Vec<Identifier&>&, 
         return Result<UnitId, AnalysisError>.Err(ctx.error(unit, span, DiagnosticCode.Undefined, "empty import path"));
     }
 
-    let source = *ctx.session.source(ctx.session.unit(unit).unwrap().source).unwrap();
+    let source = *ctx.session.source(unit);
     let first = paths[0].data.name.as_str();
     let path = PathBuf.new();
     defer path.drop();

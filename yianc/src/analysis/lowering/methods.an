@@ -122,9 +122,9 @@ impl ExprChecker {
                     match self.ctx.session.types.require(*trait_id)? {
                         Nominal(definition, _) => match self.ctx.session.types.complete_definition(*definition)? {
                             Trait(methods) => {},
-                            _ => return Result<HirId, AnalysisError>.Err(AnalysisError.internal("trait object has a non-trait type")),
+                            _ => @panic("trait object has a non-trait type"),
                         },
-                        _ => return Result<HirId, AnalysisError>.Err(AnalysisError.internal("trait object identity is not nominal")),
+                        _ => @panic("trait object identity is not nominal"),
                     };
                     let result = self.dynamic_method(span, name_span, receiver_id, *trait_id, name, &values)?;
 
@@ -145,7 +145,7 @@ impl ExprChecker {
                     break;
                 },
                 Err(problem) => {
-                    if static_call && problem.diagnostic.code == DiagnosticCode.NoSuchMethod {
+                    if static_call && problem.code == DiagnosticCode.NoSuchMethod {
                         let message = String.from(&"Unknown static method call '");
                         defer message.drop();
                         message.push_str(spelling);

@@ -9,7 +9,7 @@ from yianc.analysis.ty.callable import store_signature;
 from yianc.analysis.ty.display import stored_type_text;
 from yianc.analysis.ty.model import DefinitionBody, NominalKind, StructField, EnumVariant;
 from yianc.analysis.ty.store import TypeStore;
-from yianc.common.ids import DefId, HirId, NameId, PatternId, SourceId, SymbolId, TypeId, UnitId;
+from yianc.common.ids import DefId, HirId, NameId, PatternId, SymbolId, TypeId, UnitId;
 from yianc.common.location import SourceSpan;
 from yianc.common.traversal import WalkControl;
 from yianc.diagnostics.model import AnalysisError;
@@ -26,10 +26,10 @@ impl Drop for SemanticIndex {
     pub fn drop() {}
 }
 
-fn unit_source(session: AnalysisSession&, unit: UnitId) -> Option<SourceId> {
+fn unit_source(session: AnalysisSession&, unit: UnitId) -> Option<UnitId> {
     match session.unit(unit) {
-        Some(value) => Option<SourceId>.Some(value.source),
-        None => Option<SourceId>.None,
+        Some(value) => Option<UnitId>.Some(value.id),
+        None => Option<UnitId>.None,
     }
 }
 
@@ -79,7 +79,7 @@ fn definition_target(session: AnalysisSession&, index: SourceIndex&, type_id: Ty
     };
     let header = record.header();
     match definition_symbol_span(session, definition) {
-        Some(span) => match index.find_decl_at_span(span.source, span) {
+        Some(span) => match index.find_decl_at_span(span.unit, span) {
             Some(value) => return Option<u64>.Some(value),
             None => {},
         },
@@ -228,7 +228,7 @@ fn displayable_type(types: TypeStore&, type_id: TypeId, depth: u64) -> bool {
 }
 
 fn member_decl(index: SourceIndex&, span: SourceSpan, kind: DeclKind) -> Option<u64> {
-    index.find_decl_exact(span.source, span, kind)
+    index.find_decl_exact(span.unit, span, kind)
 }
 
 fn enrich_definitions(session: AnalysisSession&, index: SourceIndex&) {
@@ -333,9 +333,9 @@ fn enrich_symbols(session: AnalysisSession&, index: SourceIndex&) {
         cursor += 1u64;
         if symbol.span.is_none() { continue; }
         let span = *symbol.span.unwrap();
-        let found = match index.find_decl_at_span(span.source, span) {
+        let found = match index.find_decl_at_span(span.unit, span) {
             Some(value) => Option<u64>.Some(value),
-            None => index.find_decl_by_symbol_span(span.source, span),
+            None => index.find_decl_by_symbol_span(span.unit, span),
         };
         if found.is_none() { continue; }
         let target = *found.unwrap();
@@ -386,7 +386,7 @@ impl SemanticCollector {
             None => return Option<u64>.None,
         };
         match &symbol.span {
-            Some(span) => self.index.find_decl_at_span(span.source, *span),
+            Some(span) => self.index.find_decl_at_span(span.unit, *span),
             None => Option<u64>.None,
         }
     }
@@ -400,7 +400,7 @@ impl SemanticCollector {
             Some(value) => Option<String>.Some(stored_type_text(&self.session.types, &self.session.names, value)),
             None => Option<String>.None,
         };
-        self.index.add_occurrence(span.source, span, Option<u64>.Some(id), kind, declaration,
+        self.index.add_occurrence(span.unit, span, Option<u64>.Some(id), kind, declaration,
             type_id, type_text, signature, false);
         self.semantic.reference_count += 1u64;
         self.index.mark_value_covered(span);
@@ -408,7 +408,7 @@ impl SemanticCollector {
 
     fn add_member_use(use_span: SourceSpan, declaration: SourceSpan, kind: DeclKind,
         type_id: Option<TypeId>, signature: Option<String>) {
-        let target = self.index.find_decl_exact(declaration.source, declaration, kind);
+        let target = self.index.find_decl_exact(declaration.unit, declaration, kind);
         self.add(target, use_span, type_id, signature, false);
     }
 

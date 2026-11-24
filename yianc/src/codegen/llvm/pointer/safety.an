@@ -105,7 +105,7 @@ impl FunctionLowering {
         if self.owner.types.raw_pointers() { return Result<IrValue, CodegenError>.Ok(self.integer(LITERAL_WORD)); }
         let state = match self.frames[scope.index] {
             Some(value) => value,
-            None => return Result<IrValue, CodegenError>.Err(CodegenError.invalid("local address has no frame word slot")),
+            None => @panic("local address has no frame word slot"),
         };
         let module = self.owner.module;
         let integer = module.int_type(64u32);
@@ -194,7 +194,7 @@ impl FunctionLowering {
         let element = match self.owner.session.types.require(type_id)? {
             Slice(element) => self.owner.types.value_type(*element)?,
             Str => module.int_type(8u32),
-            _ => return Result<(), CodegenError>.Err(CodegenError.invalid("view check has no element type")),
+            _ => @panic("view check has no element type"),
         };
         let span = self.checked_byte_extent(self.view_length(value), module.abi_size(element), 0xFFFFFFFFFFFFFFFFu64, "S002")?;
         let empty = self.builder.icmp(IntCompare.Eq, span, self.integer(0u64), "");

@@ -46,11 +46,11 @@ impl DefinitionWorklist {
     pub fn finish(type_id: TypeId, failed: bool) -> Result<(), AnalysisError> {
         let state = match self.states.get(&type_id) {
             Some(value) => value,
-            None => return Result<(), AnalysisError>.Err(AnalysisError.internal("unknown work item")),
+            None => @panic("unknown work item"),
         };
 
         if *state != WorkState.Checking {
-            return Result<(), AnalysisError>.Err(AnalysisError.internal("work item is not being checked"));
+            @panic("work item is not being checked");
         };
 
         *state = if failed {

@@ -19,7 +19,7 @@ pub fn scalar(types: BackendTypes&, type_id: TypeId) -> Result<ScalarKind, Codeg
         CScalar(kind) => Result<ScalarKind, CodegenError>.Ok(ScalarKind.Integer(kind.bits(), kind.is_signed())),
         Float(bits) => Result<ScalarKind, CodegenError>.Ok(ScalarKind.Float(*bits)),
         Pointer(_) | Reference(_) | CPointer(_) | FunctionPointer(_, _) | Nominal(_, _) => Result<ScalarKind, CodegenError>.Ok(ScalarKind.Pointer),
-        _ => Result<ScalarKind, CodegenError>.Err(CodegenError.invalid("type has no scalar LLVM operation")),
+        _ => @panic("type has no scalar LLVM operation"),
     }
 }
 
@@ -57,7 +57,7 @@ pub fn binary(builder: Builder&, types: BackendTypes&, module: Module&, op: Bina
         match op {
             Add => BinaryOp.Fadd, Sub => BinaryOp.Fsub, Mul => BinaryOp.Fmul,
             Div => BinaryOp.Fdiv, Mod => BinaryOp.Frem,
-            _ => return Result<IrValue, CodegenError>.Err(CodegenError.invalid("invalid floating-point CFG operator")),
+            _ => @panic("invalid floating-point CFG operator"),
         }
     } else {
         match op {
@@ -66,7 +66,7 @@ pub fn binary(builder: Builder&, types: BackendTypes&, module: Module&, op: Bina
             Mod => if signed { BinaryOp.Srem } else { BinaryOp.Urem },
             BitAnd => BinaryOp.And, BitOr => BinaryOp.Or, BitXor => BinaryOp.Xor,
             Shl => BinaryOp.Shl, Shr => if signed { BinaryOp.Ashr } else { BinaryOp.Lshr },
-            _ => return Result<IrValue, CodegenError>.Err(CodegenError.invalid("invalid integer CFG operator")),
+            _ => @panic("invalid integer CFG operator"),
         }
     };
     Result<IrValue, CodegenError>.Ok(builder.binary(instruction, left, right, ""))
@@ -80,7 +80,7 @@ pub fn unary(builder: Builder&, types: BackendTypes&, op: UnaryOperator,
             _ => builder.neg(value, ""),
         },
         BitNot | LogicalNot => builder.not(value, ""),
-        _ => return Result<IrValue, CodegenError>.Err(CodegenError.invalid("invalid scalar unary CFG operator")),
+        _ => @panic("invalid scalar unary CFG operator"),
     };
     Result<IrValue, CodegenError>.Ok(result)
 }
@@ -94,10 +94,10 @@ pub fn cast(builder: Builder&, types: BackendTypes&, module: Module&,
     let source_char = match types.semantic_store().require(source)? { Char => true, _ => false, };
     let target_char = match types.semantic_store().require(target)? { Char => true, _ => false, };
     if (source_bool || source_char) && (match to { Float(_) => true, _ => false, }) {
-        return Result<IrValue, CodegenError>.Err(CodegenError.invalid("runtime cast to float requires an integer or float source"));
+        @panic("runtime cast to float requires an integer or float source");
     }
     if target_char && (match from { Float(_) => true, _ => false, }) {
-        return Result<IrValue, CodegenError>.Err(CodegenError.invalid("runtime cast from float to char is not supported"));
+        @panic("runtime cast from float to char is not supported");
     }
     let native = types.value_type(target)?;
     let op = match &from {
@@ -132,12 +132,12 @@ pub fn cast(builder: Builder&, types: BackendTypes&, module: Module&,
                 if *bits == *width { return Result<IrValue, CodegenError>.Ok(value); }
                 if *bits < *width { CastOp.Fptrunc } else { CastOp.Fpext }
             },
-            Pointer => return Result<IrValue, CodegenError>.Err(CodegenError.invalid("float cannot cast to pointer")),
+            Pointer => @panic("float cannot cast to pointer"),
         },
         Pointer => match &to {
             Pointer => return Result<IrValue, CodegenError>.Ok(value),
             Integer(_, _) => CastOp.Ptrtoint,
-            Float(_) => return Result<IrValue, CodegenError>.Err(CodegenError.invalid("pointer cannot cast to float")),
+            Float(_) => @panic("pointer cannot cast to float"),
         },
     };
     Result<IrValue, CodegenError>.Ok(builder.cast(op, value, native, ""))

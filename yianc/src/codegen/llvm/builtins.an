@@ -73,7 +73,7 @@ impl FunctionLowering {
             RuntimeFail => {
                 let code = match &self.cfg.value(args[0])?.kind {
                     Bytes(name) => self.owner.session.names.text(*name),
-                    _ => return Result<IrValue, CodegenError>.Err(CodegenError.invalid("runtime failure has no constant code")),
+                    _ => @panic("runtime failure has no constant code"),
                 };
                 // The caller emits the HIR never terminator after this noreturn call.
                 let text = failure_message(code);
@@ -117,7 +117,7 @@ impl FunctionLowering {
                 self.checked(self.builder.binary(BinaryOp.And, ordered, bounded, ""), "S001")?;
                 let element = match self.owner.session.types.require(source_type)? {
                     Slice(element) => *element,
-                    _ => return Result<IrValue, CodegenError>.Err(CodegenError.invalid("slice_range requires a slice")),
+                    _ => @panic("slice_range requires a slice"),
                 };
                 let data = self.pointer_data(source_type, source)?;
                 let word = self.pointer_word(source_type, source)?;
@@ -229,7 +229,7 @@ impl FunctionLowering {
                     allocated
                 }
             },
-            _ => return Result<IrValue, CodegenError>.Err(CodegenError.invalid("LLVM builtin lowering is unavailable")),
+            _ => @panic("LLVM builtin lowering is unavailable"),
         };
         Result<IrValue, CodegenError>.Ok(result)
     }

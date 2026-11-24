@@ -195,7 +195,7 @@ impl ExprChecker {
         }
 
         if op == BinaryOperator.In || op == BinaryOperator.Range {
-            return Result<HirId, AnalysisError>.Err(AnalysisError.internal("range and membership operators must be desugared before lowering"));
+            @panic("range and membership operators must be desugared before lowering");
         }
 
         lhs = self.coerce(lhs, common)?;

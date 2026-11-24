@@ -15,14 +15,16 @@ from yianc.codegen.cfg.passes.checks import insert_checks;
 from yianc.codegen.cfg.verify import verify_cfg;
 from yianc.codegen.error import CodegenError;
 from yianc.codegen.types import BackendTypes;
-from yianc.common.ids import DefId, NameId, SourceId, TypeId, UnitId;
+from yianc.common.ids import DefId, NameId, TypeId, UnitId;
 from yianc.common.location import SourceSpan;
-from yianc.diagnostics.model import Diagnostic, DiagnosticLocation;
+from yianc.diagnostics.model import DiagnosticReporter, UserDiagnostic;
 from yianc.frontend.source import Position, SourceDocument, Span;
 from yianc.package.model import PackageMap;
 from yianc.package.provenance import SourceTrust;
 from llvm.object import Module;
 from std.collections.hash_map import HashMap;
+from std.core.env import args;
+from std.core.process import Command, ExitStatus;
 
 struct Fixture {
     packet: TypeId,
@@ -54,18 +56,14 @@ fn field(session: AnalysisSession&, name_text: str, type_id: TypeId, index: u64,
     StructField(session.names.intern(name_text), type_id, AccessMode.Private, index, Option<SourceSpan>.Some(location))
 }
 
-fn same_location(diagnostic: Diagnostic&, location: SourceSpan) -> bool {
-    match &diagnostic.location {
-        Some(DiagnosticLocation.Source(actual)) => actual.source == location.source
-        && actual.span.start.row == location.span.start.row
-        && actual.span.start.column == location.span.start.column
-        && actual.span.end.row == location.span.end.row
-        && actual.span.end.column == location.span.end.column,
-        Some(DiagnosticLocation.Detached(_, actual)) => actual.start.row == location.span.start.row
-        && actual.start.column == location.span.start.column
-        && actual.end.row == location.span.end.row
-        && actual.end.column == location.span.end.column,
-        None => false,
+struct IgnoreDiagnostics {}
+impl DiagnosticReporter for IgnoreDiagnostics { pub fn report(diagnostic: UserDiagnostic&) {} }
+
+// The malformed graph must stop at its invariant check rather than return a value.
+fn reject(result: Result<(), CodegenError>, label: str) {
+    match result {
+        Ok(_) => @panic(label),
+        Err(error) => { error.drop(); @panic(label); },
     }
 }
 
@@ -125,7 +123,8 @@ struct Skeleton {
 
 fn skeleton(session: AnalysisSession&, fixture: Fixture&, location: SourceSpan) -> Skeleton {
     let module = dyn Module.new("enum-storage-probe", 0u8);
-    let types = BackendTypes.new(&session.types, &*module, false);
+    // The probe checks the generic access obligations, which raw mode attaches per access.
+    let types = BackendTypes.new(&session.types, &*module, true);
     let function = CfgFunction.new(fixture.packet, fixture.nothing, Vec<TypeId>.new());
     let cfg = CfgModule.new(&session.types, Option<TypeId>.None);
     let entry = function.add_block();
@@ -158,17 +157,6 @@ fn finish(session: AnalysisSession&, fixture: Fixture&, skeleton: Skeleton&) -> 
     verify_cfg(&skeleton.cfg, &skeleton.types)
 }
 
-fn expect_rejection(result: Result<(), CodegenError>, location: SourceSpan, expected: str, label: str) {
-    match result {
-        Err(error) => {
-            assert error.diagnostic.message.as_str().contains(expected): label;
-            assert same_location(&error.diagnostic, location): label;
-            error.drop();
-        },
-        Ok(_) => @panic(label),
-    }
-}
-
 fn check_valid(session: AnalysisSession&, fixture: Fixture&, location: SourceSpan) {
     let values = skeleton(session, fixture, location);
     defer release(&values);
@@ -196,13 +184,14 @@ fn check_valid(session: AnalysisSession&, fixture: Fixture&, location: SourceSpa
         Ok(_) => {},
         Err(error) => { error.drop(); @panic("the valid graph could not register its function"); },
     }
-    match insert_checks(&values.cfg, &values.types) {
-        Ok(_) => {},
-        Err(error) => { error.drop(); @panic("the valid graph rejected check insertion"); },
-    }
+    // Structural and SSA contract holds before any safety checks are attached.
     match verify_cfg(&values.cfg, &values.types) {
         Ok(_) => {},
         Err(error) => { error.drop(); @panic("the valid enum place graph was rejected"); },
+    }
+    match insert_checks(&values.cfg, &values.types) {
+        Ok(_) => {},
+        Err(error) => { error.drop(); @panic("the valid graph rejected check insertion"); },
     }
 
     let function = *values.cfg.function(FunctionId(0u64)).unwrap();
@@ -269,7 +258,7 @@ fn check_wrong_pointee(session: AnalysisSession&, fixture: Fixture&, location: S
     fields.push(count);
     effect(values.entry, &values.function, location,
         Operation.EnumInitAt(values.integer_address, fixture.packet, 1u64, fields));
-    expect_rejection(finish(session, fixture, &values), location, "inconsistent", "a non-enum destination is rejected");
+    reject(finish(session, fixture, &values), "a non-enum destination is rejected");
 }
 
 fn check_invalid_variant(session: AnalysisSession&, fixture: Fixture&, location: SourceSpan) {
@@ -277,7 +266,7 @@ fn check_invalid_variant(session: AnalysisSession&, fixture: Fixture&, location:
     defer release(&values);
     effect(values.entry, &values.function, location,
         Operation.EnumInitAt(values.packet_address, fixture.packet, 7u64, Vec<ValueId>.new()));
-    expect_rejection(finish(session, fixture, &values), location, "invalid discriminant", "an unknown discriminant is rejected");
+    reject(finish(session, fixture, &values), "an unknown discriminant is rejected");
 }
 
 fn check_invalid_field_type(session: AnalysisSession&, fixture: Fixture&, location: SourceSpan) {
@@ -290,7 +279,7 @@ fn check_invalid_field_type(session: AnalysisSession&, fixture: Fixture&, locati
     fields.push(number);
     effect(values.entry, &values.function, location,
         Operation.EnumInitAt(values.packet_address, fixture.packet, 1u64, fields));
-    expect_rejection(finish(session, fixture, &values), location, "inconsistent", "a swapped payload field is rejected");
+    reject(finish(session, fixture, &values), "a swapped payload field is rejected");
 }
 
 fn check_unit_fields(session: AnalysisSession&, fixture: Fixture&, location: SourceSpan) {
@@ -300,7 +289,7 @@ fn check_unit_fields(session: AnalysisSession&, fixture: Fixture&, location: Sou
     fields.push(values.function.add_value(fixture.integer, ValueKind.Integer(7u64)));
     effect(values.entry, &values.function, location,
         Operation.EnumInitAt(values.packet_address, fixture.packet, 0u64, fields));
-    expect_rejection(finish(session, fixture, &values), location, "unit variant", "payload fields on a unit variant are rejected");
+    reject(finish(session, fixture, &values), "payload fields on a unit variant are rejected");
 }
 
 fn check_field_on_unit(session: AnalysisSession&, fixture: Fixture&, location: SourceSpan) {
@@ -308,7 +297,7 @@ fn check_field_on_unit(session: AnalysisSession&, fixture: Fixture&, location: S
     defer release(&values);
     append(values.entry, &values.function, location, Option<TypeId>.Some(fixture.integer),
         Operation.EnumFieldAt(values.packet_address, fixture.packet, 0u64, 0u64));
-    expect_rejection(finish(session, fixture, &values), location, "no payload", "a field read on a unit variant is rejected");
+    reject(finish(session, fixture, &values), "a field read on a unit variant is rejected");
 }
 
 fn check_tag_type(session: AnalysisSession&, fixture: Fixture&, location: SourceSpan) {
@@ -316,42 +305,111 @@ fn check_tag_type(session: AnalysisSession&, fixture: Fixture&, location: Source
     defer release(&values);
     append(values.entry, &values.function, location, Option<TypeId>.Some(fixture.integer),
         Operation.EnumTagAt(values.packet_address, fixture.packet));
-    expect_rejection(finish(session, fixture, &values), location, "tag place type", "a signed tag result is rejected");
+    reject(finish(session, fixture, &values), "a signed tag result is rejected");
 }
 
-fn main() {
+// The probe document supplies the session; the hand-built CFG is the tested graph.
+fn probe_driver() -> MiddleEndDriver {
     let documents = Vec<SourceDocument>.new();
     documents.push(SourceDocument(path=String.from(&"/tmp/enum-storage-probe.an"),
         text=String.from(&"fn main() {}\n")));
     defer release_documents(&documents);
     let trace = CompilerTrace.disabled();
     defer trace.drop();
-    let frontend = match FrontendDriver.prepare_documents(&documents, trust(), Option<PackageMap>.None, false, &trace) {
+    let frontend = match FrontendDriver.from_documents(&documents, trust(), Option<PackageMap>.None, false, &trace) {
         Ok(value) => value,
         Err(error) => { error.drop(); @panic("enum storage probe preparation failed"); },
     };
     defer frontend.drop();
-    let driver = MiddleEndDriver.new(frontend.take_session(), false);
+    match frontend.run() { Ok(_) => {}, Err(error) => { error.drop(); @panic("enum storage probe preparation failed"); }, }
+    MiddleEndDriver.new(frontend.take_session(), false)
+}
+
+// One malformed graph per process; the invariant panic terminates the child.
+fn run_negative(index: u64) {
+    let driver = probe_driver();
     defer driver.drop();
-    let report = match driver.run(AnalysisOptions.new()) {
-        Ok(value) => value,
+    let reporter = IgnoreDiagnostics();
+    let output = match driver.run(AnalysisOptions.new(), &reporter) {
+        Ok(Some(value)) => value,
+        Ok(None) => @panic("enum storage probe analysis produced no output"),
         Err(error) => { error.drop(); @panic("enum storage probe analysis failed"); },
     };
-    let output = match report.output.take() {
-        Some(value) => value,
-        None => { report.drop(); @panic("enum storage probe analysis produced no output"); },
+    defer output.drop();
+    let session = driver.analysis_session();
+    let location = SourceSpan(UnitId(0u64), Span(Position(0u64, 0u64), Position(0u64, 0u64)));
+    let fixture = build_types(session, location);
+    match index {
+        0u64 => check_wrong_pointee(session, &fixture, location),
+        1u64 => check_invalid_variant(session, &fixture, location),
+        2u64 => check_invalid_field_type(session, &fixture, location),
+        3u64 => check_unit_fields(session, &fixture, location),
+        4u64 => check_field_on_unit(session, &fixture, location),
+        _ => check_tag_type(session, &fixture, location),
+    }
+}
+
+// Run one selectable negative branch in a child process so the invariant panic
+// stays outside this process while its raw stderr and status are asserted.
+fn assert_child_panic(flag: str, expected: str) {
+    let arguments = args();
+    let program = String.from(&arguments[0].as_str());
+    defer program.drop();
+    let command = Command.new(program.as_str());
+    defer command.drop();
+    command.arg(flag);
+    let output = match command.output() {
+        Ok(value) => value,
+        Err(error) => { error.drop(); @panic("could not start the isolation child"); },
     };
-    report.drop();
+    defer output.drop();
+    match output.status {
+        ExitStatus.Exited(code) => assert code == 1i32: "an internal invariant exits with status 1",
+        ExitStatus.Signaled(_) => @panic("an internal invariant was reported as a signal"),
+    };
+    let text = match str.from_slice(output.stderr.as_slice()) {
+        Some(value) => value,
+        None => @panic("isolation child stderr is not UTF-8"),
+    };
+    assert text.contains("yian: panic: "): "an internal invariant reports the panic prefix";
+    assert text.contains(expected): "an internal invariant reports its reason";
+    for argument in arguments { argument.drop(); }
+    arguments.drop();
+}
+
+fn main() {
+    let arguments = args();
+    if arguments.len() > 1u64 {
+        let flag = arguments[1].as_str();
+        if flag == "--wrong-pointee" { run_negative(0u64); return; }
+        if flag == "--invalid-variant" { run_negative(1u64); return; }
+        if flag == "--invalid-field-type" { run_negative(2u64); return; }
+        if flag == "--unit-fields" { run_negative(3u64); return; }
+        if flag == "--field-on-unit" { run_negative(4u64); return; }
+        if flag == "--tag-type" { run_negative(5u64); return; }
+    }
+    for argument in arguments { argument.drop(); }
+    arguments.drop();
+
+    let driver = probe_driver();
+    defer driver.drop();
+    let reporter = IgnoreDiagnostics();
+    let output = match driver.run(AnalysisOptions.new(), &reporter) {
+        Ok(Some(value)) => value,
+        Ok(None) => @panic("enum storage probe analysis produced no output"),
+        Err(error) => { error.drop(); @panic("enum storage probe analysis failed"); },
+    };
     defer output.drop();
     let session = driver.analysis_session();
 
-    let location = SourceSpan(SourceId(0u64), Span(Position(0u64, 0u64), Position(0u64, 0u64)));
+    let location = SourceSpan(UnitId(0u64), Span(Position(0u64, 0u64), Position(0u64, 0u64)));
     let fixture = build_types(session, location);
     check_valid(session, &fixture, location);
-    check_wrong_pointee(session, &fixture, location);
-    check_invalid_variant(session, &fixture, location);
-    check_invalid_field_type(session, &fixture, location);
-    check_unit_fields(session, &fixture, location);
-    check_field_on_unit(session, &fixture, location);
-    check_tag_type(session, &fixture, location);
+
+    assert_child_panic("--wrong-pointee", "CFG operand type is inconsistent");
+    assert_child_panic("--invalid-variant", "CFG enum place operation has an invalid discriminant");
+    assert_child_panic("--invalid-field-type", "CFG operand type is inconsistent");
+    assert_child_panic("--unit-fields", "CFG unit variant initializer has fields");
+    assert_child_panic("--field-on-unit", "CFG enum field read has no payload");
+    assert_child_panic("--tag-type", "CFG enum tag place type is invalid");
 }

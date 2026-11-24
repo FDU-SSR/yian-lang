@@ -370,7 +370,7 @@ fn predecessors(function: CfgFunction&) -> Result<Vec<Vec<BlockId>>, CodegenErro
                 },
                 _ => {},
             },
-            None => return Result<Vec<Vec<BlockId>>, CodegenError>.Err(CodegenError.invalid("CFG block has no terminator")),
+            None => @panic("CFG block has no terminator"),
         }
         for destination in destinations {
             function.block(*destination)?;
@@ -642,7 +642,7 @@ fn find_loops(function: CfgFunction&, rows: Vec<Vec<BlockId>>&, dominance: Domin
                 },
                 _ => {},
             },
-            None => return Result<Vec<LoopInfo>, CodegenError>.Err(CodegenError.invalid("CFG block has no terminator")),
+            None => @panic("CFG block has no terminator"),
         }
         for destination in destinations {
             let header = *destination;
@@ -842,7 +842,7 @@ fn apply_block_decisions(function: CfgFunction&, block_id: BlockId,
     let instruction_index = 0u64;
     for instruction in function.block(block_id)?.instructions {
         if instruction_index >= decisions.len() {
-            return Result<(), CodegenError>.Err(CodegenError.invalid("elimination decision table is incomplete"));
+            @panic("elimination decision table is incomplete");
         }
         let checks = Vec<SafetyCheck>.new();
         let proofs = Vec<LiveProof>.new();
@@ -971,21 +971,21 @@ fn verify_safety_point(function: CfgFunction&, types: BackendTypes&, rows: Vec<V
     dominance: Dominance&, block_id: BlockId, instruction: Instruction&, stable: HashMap<LocalId, ValueId>&,
     loads: HashMap<ValueId, ValueId>&, instruction_index: u64) -> Result<(), CodegenError> {
     if !instruction.live_proofs.is_empty() {
-        return Result<(), CodegenError>.Err(CodegenError.invalid("safety point carries a live proof"));
+        @panic("safety point carries a live proof");
     }
     if instruction.checks.is_empty() { return Result<(), CodegenError>.Ok(()); }
     for check_index in 0u64..instruction.checks.len() {
         match &instruction.checks[check_index] {
             Live(_, _) => {},
-            _ => return Result<(), CodegenError>.Err(CodegenError.invalid("safety point carries a non-live check")),
+            _ => @panic("safety point carries a non-live check"),
         }
     }
     let header = match &*function.block(block_id)?.terminator.unwrap() {
         Jump(destination) => *destination,
-        _ => return Result<(), CodegenError>.Err(CodegenError.invalid("safety point block does not fall through to a loop header")),
+        _ => @panic("safety point block does not fall through to a loop header"),
     };
     if header.index == 0u64 {
-        return Result<(), CodegenError>.Err(CodegenError.invalid("safety point cannot precede the entry block"));
+        @panic("safety point cannot precede the entry block");
     }
     let loops = find_loops(function, rows, dominance)?;
     defer drop_loops(&loops);
@@ -994,7 +994,7 @@ fn verify_safety_point(function: CfgFunction&, types: BackendTypes&, rows: Vec<V
         if loop_record.header == header && loop_record.preheader == block_id { found_loop = true; }
     }
     if !found_loop {
-        return Result<(), CodegenError>.Err(CodegenError.invalid("safety point is not a natural-loop preheader"));
+        @panic("safety point is not a natural-loop preheader");
     }
     for check_index in 0u64..instruction.checks.len() {
         let check = instruction.checks[check_index];
@@ -1002,20 +1002,20 @@ fn verify_safety_point(function: CfgFunction&, types: BackendTypes&, rows: Vec<V
             Live(address, _) => {
                 let record = function.value(*address)?;
                 if !is_address_type(types, record.type_id)? || !is_fat_address(types, record.type_id)? {
-                    return Result<(), CodegenError>.Err(CodegenError.invalid("safety point address is not a fat pointer or reference"));
+                    @panic("safety point address is not a fat pointer or reference");
                 }
                 match &record.kind {
                     Temporary(block, position) => {
                         if *block == block_id {
                             if *position >= instruction_index {
-                                return Result<(), CodegenError>.Err(CodegenError.invalid("safety point address is not available before the point"));
+                                @panic("safety point address is not available before the point");
                             }
                         } elif !dominance.dominates(*block, block_id)? {
-                            return Result<(), CodegenError>.Err(CodegenError.invalid("safety point address does not dominate the point"));
+                            @panic("safety point address does not dominate the point");
                         }
                     },
                     Parameter(_) => {},
-                    _ => return Result<(), CodegenError>.Err(CodegenError.invalid("safety point address has no stable definition")),
+                    _ => @panic("safety point address has no stable definition"),
                 }
                 let word = word_of(function, *address, stable, loads);
                 let found_check = false;
@@ -1037,7 +1037,7 @@ fn verify_safety_point(function: CfgFunction&, types: BackendTypes&, rows: Vec<V
                     if !pure { scanning = false; }
                 }
                 if !found_check {
-                    return Result<(), CodegenError>.Err(CodegenError.invalid("safety point has no matching header check"));
+                    @panic("safety point has no matching header check");
                 }
             },
             _ => {},
@@ -1083,7 +1083,7 @@ fn verify_block(function: CfgFunction&, types: BackendTypes&, block_id: BlockId,
         let kept = 0u64;
         while expected_index < expected.len() || actual_index < instruction.checks.len() {
             if expected_index >= expected.len() {
-                return Result<VerifyResult, CodegenError>.Err(CodegenError.invalid("optimized CFG has an extra safety check"));
+                @panic("optimized CFG has an extra safety check");
             }
             let matched = actual_index < instruction.checks.len()
                 && same_check(&expected[expected_index], &instruction.checks[actual_index]);
@@ -1103,12 +1103,12 @@ fn verify_block(function: CfgFunction&, types: BackendTypes&, block_id: BlockId,
             match &expected[expected_index] {
                 Live(address, _) => {
                     if proof_index >= proofs.len() {
-                        return Result<VerifyResult, CodegenError>.Err(CodegenError.invalid("optimized CFG removed a live check without a proof"));
+                        @panic("optimized CFG removed a live check without a proof");
                     }
                     let proof = proofs[proof_index];
                     proof_index += 1u64;
                     if proof.address != *address {
-                        return Result<VerifyResult, CodegenError>.Err(CodegenError.invalid("live proof address disagrees with the removed check"));
+                        @panic("live proof address disagrees with the removed check");
                     }
                     let word = word_of(function, *address, stable, loads);
                     let witness = match state.get(&word) {
@@ -1121,21 +1121,21 @@ fn verify_block(function: CfgFunction&, types: BackendTypes&, block_id: BlockId,
                     match witness {
                         Some(value) => {
                             if !witness_dominates(&value, dominance, block_id, instruction_index, kept)? {
-                                return Result<VerifyResult, CodegenError>.Err(CodegenError.invalid("live proof witness does not dominate the removed check"));
+                                @panic("live proof witness does not dominate the removed check");
                             }
                             if !same_location(&proof.witness, &value) {
-                                return Result<VerifyResult, CodegenError>.Err(CodegenError.invalid("live proof witness disagrees with the dominating fact"));
+                                @panic("live proof witness disagrees with the dominating fact");
                             }
                         },
-                        None => return Result<VerifyResult, CodegenError>.Err(CodegenError.invalid("optimized CFG removed a live check without a dominating witness")),
+                        None => @panic("optimized CFG removed a live check without a dominating witness"),
                     }
                     expected_index += 1u64;
                 },
-                _ => return Result<VerifyResult, CodegenError>.Err(CodegenError.invalid("optimized CFG is missing a required safety check")),
+                _ => @panic("optimized CFG is missing a required safety check"),
             }
         }
         if proof_index != proofs.len() {
-            return Result<VerifyResult, CodegenError>.Err(CodegenError.invalid("optimized CFG carries an unused live proof"));
+            @panic("optimized CFG carries an unused live proof");
         }
         apply_effects(&instruction.operation, summaries, &state);
         match &instruction.operation {
@@ -1226,15 +1226,15 @@ fn verify_exact(function: CfgFunction&, types: BackendTypes&) -> Result<(), Code
             let checks = expected_checks(function, types, instruction)?;
             defer checks.drop();
             if checks.len() != instruction.checks.len() {
-                return Result<(), CodegenError>.Err(CodegenError.invalid("restored CFG safety checks are incomplete"));
+                @panic("restored CFG safety checks are incomplete");
             }
             for index in 0u64..checks.len() {
                 if !same_check(&checks[index], &instruction.checks[index]) {
-                    return Result<(), CodegenError>.Err(CodegenError.invalid("restored CFG safety check disagrees with activation"));
+                    @panic("restored CFG safety check disagrees with activation");
                 }
             }
             if !instruction.live_proofs.is_empty() {
-                return Result<(), CodegenError>.Err(CodegenError.invalid("restored CFG carries live proofs"));
+                @panic("restored CFG carries live proofs");
             }
         }
     }
@@ -1244,11 +1244,11 @@ fn verify_exact(function: CfgFunction&, types: BackendTypes&) -> Result<(), Code
 // Elimination only removes Live checks; every other check and every operation guard stays.
 pub fn eliminate_checks(module: CfgModule&, types: BackendTypes&, options: CfgPassOptions) -> Result<(), CodegenError> {
     if module.safety_stage != SafetyStage.Prepared {
-        return Result<(), CodegenError>.Err(CodegenError.invalid("check elimination requires a prepared graph"));
+        @panic("check elimination requires a prepared graph");
     }
     if options.eliminate {
         if !types.representation_bound() {
-            return Result<(), CodegenError>.Err(CodegenError.invalid("check elimination requires bound representations"));
+            @panic("check elimination requires bound representations");
         }
         let summaries = compute_summaries(module)?;
         defer summaries.drop();
@@ -1269,7 +1269,7 @@ pub fn eliminate_checks(module: CfgModule&, types: BackendTypes&, options: CfgPa
 
 pub fn verify_optimized(module: CfgModule&, types: BackendTypes&) -> Result<(), CodegenError> {
     if module.safety_stage != SafetyStage.Optimized {
-        return Result<(), CodegenError>.Err(CodegenError.invalid("optimized verification requires an optimized CFG"));
+        @panic("optimized verification requires an optimized CFG");
     }
     verify_activation(module, types)?;
     let summaries = compute_summaries(module)?;

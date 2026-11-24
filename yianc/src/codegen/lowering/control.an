@@ -149,7 +149,7 @@ impl Lowering {
 
     pub fn break_value(node: HirNode&, value: Option<HirId>) -> Result<ValueId, CodegenError> {
         if self.loops.is_empty() {
-            return Result<ValueId, CodegenError>.Err(CodegenError.invalid("break has no CFG loop"));
+            @panic("break has no CFG loop");
         }
         let index = self.loops.len() - 1;
         let depth = self.loops[index].cleanup_depth;
@@ -168,7 +168,7 @@ impl Lowering {
 
     pub fn continue_value(node: HirNode&) -> Result<ValueId, CodegenError> {
         if self.loops.is_empty() {
-            return Result<ValueId, CodegenError>.Err(CodegenError.invalid("continue has no CFG loop"));
+            @panic("continue has no CFG loop");
         }
         let index = self.loops.len() - 1;
         let depth = self.loops[index].cleanup_depth;

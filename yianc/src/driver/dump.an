@@ -9,7 +9,9 @@ from yianc.codegen.representation import PointerRepresentation;
 from yianc.codegen.error import CodegenError;
 from yianc.common.ids import UnitId, HirId, PatternId;
 from yianc.common.traversal import WalkControl;
-from yianc.diagnostics.model import AnalysisError;
+from yianc.diagnostics.model import AnalysisError, DiagnosticCode, DiagnosticLocation;
+from yianc.diagnostics.output import OutputError;
+from std.core.convert import From;
 from yianc.frontend.prepare import PreparationStage;
 from yianc.driver.trace import CompilerTrace;
 from yianc.driver.profile import ProfileKind;
@@ -22,18 +24,21 @@ from std.core.fs import create_dir_all, write_string;
 from std.core.iter import Iterator, IntoIterator;
 from std.core.ops import Index;
 
-fn save(output: Writer&, path: str) -> Result<(), AnalysisError> {
+fn output_error(path: str, message: str) -> OutputError {
+    OutputError(String.from(&message), DiagnosticCode.OutputIo, DiagnosticLocation.File(String.from(&path)))
+}
+
+fn save(output: Writer&, path: str) -> Result<(), OutputError> {
     let text = match output.finish() {
         Ok(value) => value,
-        Err(_) => return Result<(), AnalysisError>.Err(AnalysisError.internal("stage dump exceeds JSON writer limits")),
+        Err(_) => @panic("stage dump exceeds JSON writer limits"),
     };
     defer text.drop();
     match write_string(path, text.as_str()) {
-        Ok(value) => Result<(), AnalysisError>.Ok(value),
-        Err(problem) => { defer problem.drop(); Result<(), AnalysisError>.Err(AnalysisError.internal(problem.msg())) },
+        Ok(value) => Result<(), OutputError>.Ok(value),
+        Err(problem) => { defer problem.drop(); Result<(), OutputError>.Err(output_error(path, problem.msg())) },
     }
 }
-
 
 fn stage_name(stage: SafetyStage) -> str {
     match stage { Neutral => "neutral", Prepared => "prepared", Optimized => "optimized" }
@@ -73,15 +78,15 @@ impl PreparationObserver for StageDumps {
         if success { self.trace.finish(pass_id); } else { self.trace.fail(pass_id); }
     }
 
-    pub fn stage_complete(stage: PreparationStage, session: FrontendSession&) -> Result<(), AnalysisError> {
-        if !self.enabled { return Result<(), AnalysisError>.Ok(()); }
+    pub fn stage_complete(stage: PreparationStage, session: FrontendSession&) -> Result<(), OutputError> {
+        if !self.enabled { return Result<(), OutputError>.Ok(()); }
         let writes_dump = match stage { Lex | Desugar => true, Parse => false };
-        if !writes_dump { return Result<(), AnalysisError>.Ok(()); }
+        if !writes_dump { return Result<(), OutputError>.Ok(()); }
         self.trace.start_pass("io.dump", "io", "stage dump", ProfileKind.Tool);
         let result = match stage {
             Lex => tokens_dump(session),
             Desugar => ast_dump(session),
-            Parse => Result<(), AnalysisError>.Ok(()),
+            Parse => Result<(), OutputError>.Ok(()),
         };
         let success = match &result { Ok(_) => true, Err(_) => false };
         self.finish("io.dump", success);
@@ -89,30 +94,30 @@ impl PreparationObserver for StageDumps {
     }
 }
 
-fn tokens_dump(session: FrontendSession&) -> Result<(), AnalysisError> {
+fn tokens_dump(session: FrontendSession&) -> Result<(), OutputError> {
     match create_dir_all("build") {
         Ok(_) => {},
-        Err(problem) => { defer problem.drop(); return Result<(), AnalysisError>.Err(AnalysisError.internal(problem.msg())); },
+        Err(problem) => { defer problem.drop(); return Result<(), OutputError>.Err(output_error("build", problem.msg())); },
     }
     let tokens = Writer.with_max_depth(512u64);
     defer tokens.drop();
     tokens.begin_array();
     for index in 0u64..session.len() {
         let unit = session.unit(UnitId(index)).unwrap();
-        let source = session.source(unit.source).unwrap();
+        let source = session.source(unit.id);
         append_token_file(&tokens, source.path(), &unit.prepared.tokens);
     }
     tokens.end_array();
     save(&tokens, "build/tokens.txt")
 }
 
-fn ast_dump(session: FrontendSession&) -> Result<(), AnalysisError> {
+fn ast_dump(session: FrontendSession&) -> Result<(), OutputError> {
     let ast = Writer.with_max_depth(512u64);
     defer ast.drop();
     ast.begin_array();
     for index in 0u64..session.len() {
         let unit = session.unit(UnitId(index)).unwrap();
-        let source = session.source(unit.source).unwrap();
+        let source = session.source(unit.id);
         ast.begin_object();
         ast.key("path");
         ast.write_string(source.path());
@@ -140,7 +145,7 @@ impl HirVisitor for HirDump {
         self.output.key("place");
         self.output.write_bool(node.is_place);
         self.output.key("source");
-        self.output.write_u64(node.span.source.index);
+        self.output.write_u64(node.span.unit.index);
         node.span.span.write_json(self.output);
         match &node.kind {
             IntLiteral(value) => { self.output.key("bits"); self.output.write_u64(value.raw_bits()); },
@@ -181,7 +186,7 @@ impl HirVisitor for HirDump {
         self.output.key("type");
         self.output.write_u64(node.type_id.index);
         self.output.key("source");
-        self.output.write_u64(node.span.source.index);
+        self.output.write_u64(node.span.unit.index);
         node.span.span.write_json(self.output);
         self.output.key("children");
         self.output.begin_array();
@@ -195,7 +200,7 @@ impl HirVisitor for HirDump {
     }
 }
 
-pub fn hir_dump(session: AnalysisSession&, result: AnalysisOutput&) -> Result<(), AnalysisError> {
+pub fn hir_dump(session: AnalysisSession&, result: AnalysisOutput&) -> Result<(), OutputError> {
     let output = Writer.with_max_depth(512u64);
     defer output.drop();
     let visitor = HirDump(&output);
@@ -213,14 +218,17 @@ pub fn hir_dump(session: AnalysisSession&, result: AnalysisOutput&) -> Result<()
         for parameter in procedure.parameters { output.write_u64(parameter.index); }
         output.end_array();
         output.key("root");
-        walk_expr(&session.hir, procedure.root, &visitor)?;
+        match walk_expr(&session.hir, procedure.root, &visitor) {
+            Ok(_) => {},
+            Err(problem) => { problem.drop(); @panic("invalid HIR while dumping"); },
+        }
         output.end_object();
     }
     output.end_array();
     save(&output, "build/hir.txt")
 }
 
-pub fn cfg_dump(module: CfgModule&) -> Result<(), CodegenError> {
+pub fn cfg_dump(module: CfgModule&) -> Result<(), OutputError> {
     let output = Writer.with_max_depth(512u64);
     defer output.drop();
     output.begin_array();
@@ -242,7 +250,7 @@ pub fn cfg_dump(module: CfgModule&) -> Result<(), CodegenError> {
         output.key("scopes");
         output.begin_array();
         for scope_index in 0u64..function.scopes.len() {
-            let scope = function.scope(ScopeId(scope_index))?;
+            let scope = match function.scope(ScopeId(scope_index)) { Ok(value) => value, Err(problem) => { problem.drop(); @panic("invalid CFG while dumping"); }, };
             output.begin_object();
             output.key("id");
             output.write_u64(scope_index);
@@ -272,7 +280,7 @@ pub fn cfg_dump(module: CfgModule&) -> Result<(), CodegenError> {
         output.key("values");
         output.begin_array();
         for index in 0u64..function.value_count() {
-            let value = function.value(ValueId(index))?;
+            let value = match function.value(ValueId(index)) { Ok(value) => value, Err(problem) => { problem.drop(); @panic("invalid CFG while dumping"); }, };
             output.begin_object();
             output.key("id");
             output.write_u64(index);
@@ -304,7 +312,7 @@ pub fn cfg_dump(module: CfgModule&) -> Result<(), CodegenError> {
         output.key("blocks");
         output.begin_array();
         for index in 0u64..function.block_count() {
-            let block = function.block(BlockId(index))?;
+            let block = match function.block(BlockId(index)) { Ok(value) => value, Err(problem) => { problem.drop(); @panic("invalid CFG while dumping"); }, };
             output.begin_object();
             output.key("block");
             output.write_u64(index);
@@ -435,6 +443,5 @@ pub fn cfg_dump(module: CfgModule&) -> Result<(), CodegenError> {
         output.end_object();
     }
     output.end_array();
-    save(&output, "build/cfg.txt")?;
-    Result<(), CodegenError>.Ok(())
+    save(&output, "build/cfg.txt")
 }

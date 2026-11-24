@@ -106,7 +106,7 @@ lower/验证/清理/check insertion、LLVM lowering/优化前后验证/优化/na
 以及 runtime、C shim、链接参数、最终链接和产物发布。优化等级 `-O0` 不运行 LLVM 优化；`--check` 在语义分析后结束，未执行项标为 `not_run`，不会伪造零耗时成功。原生链接阶段仅在 `exe` 目标运行。
 `--check` 和编译模式都将 `input.source_roots`、`input.collect_sources` 等输入准备计时归入 `source_preparation` 阶段。
 
-`--profile-output` 可用于编译模式与 `--check`；编译报告的目标为 `"exe"`、`"ll"` 或 `"bc"`，检查报告的目标为 `"check"`。报告写入失败只打印警告，不改变原编译结果。`anx build --profile` 用该接口保存每次 compiler 调用的独立明细并生成命令级报告；命令选项见
+`--profile-output` 可用于编译模式与 `--check`；编译报告的目标为 `"exe"`、`"ll"` 或 `"bc"`，检查报告的目标为 `"check"`。报告写入失败作为 `W601` 非致命警告经统一诊断输出，不改变原编译结果；编译失败时不发布报告。`anx build --profile` 用该接口保存每次 compiler 调用的独立明细并生成命令级报告；命令选项见
 [anx CLI](anx/03.cli.md)。`anx run --profile` 在启动产物前发布编译报告；运行时统计使用下节的插桩接口。
 
 ### 2.5.1 `--runtime-profile-dir PATH` — 运行时插桩构建
@@ -216,7 +216,10 @@ yianc --check lib/src main.an
 
 运行前端与中端：词法、语法、desugar、名称与类型解析、类型检查、编译期分支选择、模式覆盖与
 definite-assignment 检查；不进入 CFG/LLVM，不生成编译器产物。诊断以文本写到 stderr；退出码
-`0` 表示成功，`1` 表示有错误；只有警告时仍返回 `0`。不要求 `main`，存在时校验其签名。
+`0` 表示成功，`1` 表示有错误；只有警告时仍返回 `0`。可恢复错误按发现顺序逐条写出，随后若出现
+致命错误，`main` 在已输出的诊断之后报告该错误。普通编译只在严格分析成功后输出 warning 和提示。
+诊断标题为 `error[E401]: …`、`warning[W501]: …`；编号决定等级，文件级位置带独立路径行，源码
+位置带 `--> path:line:column` 与源码摘录。不要求 `main`，存在时校验其签名。
 `--check` 接受 `--packages`、`--compiler-root`、`--raw-pointers`、`--allow-ffi`、`-O`、`--dump`、
 `--profile`、`--profile-output` 和日志选项；显式 `-t`、`-o`、`--link-lib`、`--link-search` 会报配置错误。
 `--runtime-profile-dir` 只用于插桩 `exe` 构建，与 `--check` 组合会报配置错误。

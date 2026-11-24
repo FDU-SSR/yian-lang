@@ -93,7 +93,7 @@ impl TypeStore {
     pub fn require(id: TypeId) -> Result<TypeData&, AnalysisError> {
         match self.get(id) {
             Some(value) => Result<TypeData&, AnalysisError>.Ok(value),
-            None => Result<TypeData&, AnalysisError>.Err(AnalysisError.internal("invalid type ID"))
+            None => @panic("invalid type ID")
         }
     }
 
@@ -117,7 +117,7 @@ impl TypeStore {
             Integer(bits, signed) => {
                 if *bits != 8 && *bits != 16 && *bits != 32 && *bits != 64 {
                     data.drop();
-                    return Result<TypeId, AnalysisError>.Err(AnalysisError.internal("unsupported scalar width"));
+                    @panic("unsupported scalar width");
                 }
 
                 TypeKey.Integer(*bits, *signed)
@@ -126,14 +126,14 @@ impl TypeStore {
             Float(bits) => {
                 if *bits != 16 && *bits != 32 && *bits != 64 {
                     data.drop();
-                    return Result<TypeId, AnalysisError>.Err(AnalysisError.internal("unsupported scalar width"));
+                    @panic("unsupported scalar width");
                 }
 
                 TypeKey.Float(*bits)
             },
             _ => {
                 data.drop();
-                return Result<TypeId, AnalysisError>.Err(AnalysisError.internal("expected primitive type"));
+                @panic("expected primitive type");
             },
         };
 
@@ -205,7 +205,7 @@ impl TypeStore {
     pub fn instance(id: DefId, arguments: Vec<TypeId>&) -> Result<TypeId, AnalysisError> {
         let definition = match self.definition(id) {
             Some(value) => value,
-            None => return Result<TypeId, AnalysisError>.Err(AnalysisError.internal("invalid definition ID")),
+            None => @panic("invalid definition ID"),
         };
 
         if arguments.len() != definition.generic_count() {
@@ -245,7 +245,7 @@ impl TypeStore {
 
                                         normalized[index] = self.literal(*bits, false, *value_type);
                                     },
-                                    _ => return Result<TypeId, AnalysisError>.Err(AnalysisError.internal("constant parameter is not integer typed")),
+                                    _ => @panic("constant parameter is not integer typed"),
                                 }
                             },
                             ConstGeneric(_, _) => {},
@@ -317,7 +317,7 @@ impl TypeStore {
             Some(definition) => definition.complete(body),
             None => {
                 body.drop();
-                Result<(), AnalysisError>.Err(AnalysisError.internal("invalid definition ID"))
+                @panic("invalid definition ID")
             },
         }
     }
@@ -325,7 +325,7 @@ impl TypeStore {
     pub fn complete_definition(id: DefId) -> Result<DefinitionBody&, AnalysisError> {
         match self.definition(id) {
             Some(definition) => definition.body(),
-            None => Result<DefinitionBody&, AnalysisError>.Err(AnalysisError.internal("invalid definition ID")),
+            None => @panic("invalid definition ID"),
         }
     }
 }

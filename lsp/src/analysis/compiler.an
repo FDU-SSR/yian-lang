@@ -5,143 +5,131 @@ from yianc.driver.frontend import FrontendDriver;
 from yianc.driver.trace import CompilerTrace;
 from yianc.driver.middle import MiddleEndDriver;
 from yianc.analysis.constant.evaluate import TypeSizeProvider;
-from yianc.common.location import SourceSpan;
-from yianc.diagnostics.model import AnalysisError, Diagnostic, DiagnosticCode, Severity;
-from yianc.diagnostics.render import detach;
-from yianc.frontend.source import SourceDocument;
+from yianc.diagnostics.model import UserDiagnostic, DiagnosticReporter;
+from yianc.frontend.source import SourceDocument, SourceMap, SourceTable;
 from yianc.package.model import PackageMap;
 from yianc.package.provenance import SourceTrust;
+from lsp.analysis.diagnostic import LspDiagnostic;
+from std.core.iter import Iterator, IntoIterator;
 
-// The session owns every semantic identity; the output borrows procedure records from it.
+// Output refers to session records and is released before the session.
 pub struct CompilerAnalysis {
     pub session: AnalysisSession,
     pub output: AnalysisOutput,
+    warnings: Option<Vec<LspDiagnostic>>,
+}
+
+impl CompilerAnalysis {
+    pub fn take_warnings() -> Vec<LspDiagnostic> {
+        match self.warnings.take() {
+            Some(value) => value,
+            None => Vec<LspDiagnostic>.new(),
+        }
+    }
+}
+
+fn release_diagnostics(values: Vec<LspDiagnostic>&) {
+    for value in *values { value.drop(); }
+    values.drop();
 }
 
 impl Drop for CompilerAnalysis {
     pub fn drop() {
+        match self.warnings.take() { Some(values) => release_diagnostics(&values), None => {}, }
         self.output.drop();
         self.session.drop();
     }
 }
 
-// Failure diagnostics are detached from the released session before this value is returned.
 pub struct CompilerFailure {
-    diagnostics: Option<Vec<Diagnostic>>,
+    diagnostics: Option<Vec<LspDiagnostic>>,
 }
 
 impl CompilerFailure {
-    static fn single(diagnostic: Diagnostic) -> Self {
-        let diagnostics = Vec<Diagnostic>.new();
-        diagnostics.push(diagnostic);
-        Self(Option<Vec<Diagnostic>>.Some(diagnostics))
+    static fn single(diagnostic: UserDiagnostic&, sources: SourceMap&) -> Self {
+        let diagnostics = Vec<LspDiagnostic>.new();
+        diagnostics.push(LspDiagnostic.from_diagnostic(diagnostic, sources));
+        Self(Option<Vec<LspDiagnostic>>.Some(diagnostics))
     }
 
-    pub fn take_diagnostics() -> Vec<Diagnostic> {
+    pub fn take_diagnostics() -> Vec<LspDiagnostic> {
         match self.diagnostics.take() {
             Some(value) => value,
-            None => Vec<Diagnostic>.new(),
+            None => Vec<LspDiagnostic>.new(),
         }
     }
 }
 
 impl Drop for CompilerFailure {
     pub fn drop() {
-        match self.diagnostics.take() {
-            Some(diagnostics) => {
-                for diagnostic in diagnostics { diagnostic.drop(); }
-                diagnostics.drop();
-            },
-            None => {},
-        }
+        match self.diagnostics.take() { Some(values) => release_diagnostics(&values), None => {}, }
     }
 }
 
-fn failure_from_error(error: AnalysisError, session: Option<AnalysisSession&>) -> CompilerFailure {
-    let copied = error.diagnostic.copy();
-    error.drop();
-    match session {
-        Some(value) => match detach(&copied, value.source_manager()) {
-            Ok(_) => CompilerFailure.single(copied),
-            Err(problem) => {
-                problem.drop();
-                copied.drop();
-                CompilerFailure.single(Diagnostic.new(
-                    DiagnosticCode.Internal, Severity.Error, Option<SourceSpan>.None,
-                    "could not detach the analysis diagnostic"))
-            },
-        },
-        None => CompilerFailure.single(copied),
+struct LspReporter {
+    sources: SourceMap&,
+    warnings: Vec<LspDiagnostic>,
+}
+
+impl DiagnosticReporter for LspReporter {
+    pub fn report(diagnostic: UserDiagnostic&) {
+        self.warnings.push(LspDiagnostic.from_diagnostic(diagnostic, self.sources));
     }
 }
 
-// Strict analysis runs once at its normal semantic boundary and never enters CFG or LLVM emission.
+// Convert all diagnostics while the source table is still owned by the compiler.
 pub fn analyze(documents: Vec<SourceDocument>&, trust: SourceTrust, packages: Option<PackageMap>,
     raw_pointers: bool, allow_ffi: bool) -> Result<CompilerAnalysis, CompilerFailure> {
     let trace = CompilerTrace.disabled();
     defer trace.drop();
-    let frontend = match FrontendDriver.prepare_documents(documents, trust, packages, allow_ffi, &trace) {
+    let frontend = match FrontendDriver.from_documents(documents, trust, packages, allow_ffi, &trace) {
         Ok(value) => value,
-        Err(error) => return Result<CompilerAnalysis, CompilerFailure>.Err(
-            failure_from_error(error, Option<AnalysisSession&>.None)),
+        Err(error) => {
+            defer error.drop();
+            let empty = SourceTable.new();
+            defer empty.drop();
+            return Result<CompilerAnalysis, CompilerFailure>.Err(CompilerFailure.single(&error, &empty));
+        },
     };
     defer frontend.drop();
+    match frontend.run() {
+        Ok(_) => {},
+        Err(error) => {
+            defer error.drop();
+            return Result<CompilerAnalysis, CompilerFailure>.Err(CompilerFailure.single(&error, frontend.source_table()));
+        },
+    }
     let middle = MiddleEndDriver.new(frontend.take_session(), raw_pointers);
-    let transferred = false;
-    defer { if !transferred { middle.drop(); } };
-
+    defer middle.drop();
+    let sources = middle.analysis_session().frontend().source_table();
     let backend_value = match BackendSession.new(middle.analysis_session(), BackendOptions(raw_pointers, 0u8, Option<str>.None, true, true)) {
         Ok(value) => value,
         Err(error) => {
-            error.drop();
-            return Result<CompilerAnalysis, CompilerFailure>.Err(CompilerFailure.single(Diagnostic.new(
-                DiagnosticCode.Internal, Severity.Error, Option<SourceSpan>.None,
-                "could not create the target layout provider")));
+            defer error.drop();
+            return Result<CompilerAnalysis, CompilerFailure>.Err(CompilerFailure.single(&error, sources));
         },
     };
     let backend = Option<BackendSession>.Some(backend_value);
     defer { match backend.take() { Some(value) => value.drop(), None => {}, } };
-
+    let reporter = LspReporter(sources, Vec<LspDiagnostic>.new());
+    let transferred = false;
+    defer { if !transferred { release_diagnostics(&reporter.warnings); } };
     let options = AnalysisOptions.new();
     options.require_entry = false;
     options.entry_optional = true;
     options.recover = false;
     options.verify_hir = true;
-    options.sizes = Option<TypeSizeProvider&>.Some(match &backend { Some(value) => value.size_provider(), None => @panic("E599: backend session was released") });
-    match middle.run(options) {
-        Ok(report_value) => {
-            if !report_value.ok() {
-                let diagnostics = report_value.diagnostics.take();
-                for diagnostic in *diagnostics {
-                    match detach(diagnostic, middle.analysis_session().source_manager()) {
-                        Ok(_) => {},
-                        Err(problem) => problem.drop(),
-                    }
-                }
-                report_value.drop();
-                match backend.take() { Some(value) => value.drop(), None => {}, }
-                return Result<CompilerAnalysis, CompilerFailure>.Err(CompilerFailure(Option<Vec<Diagnostic>>.Some(diagnostics)));
-            }
-            let output = match report_value.output.take() {
-                Some(value) => value,
-                None => {
-                    report_value.drop();
-                    match backend.take() { Some(value) => value.drop(), None => {}, }
-                    return Result<CompilerAnalysis, CompilerFailure>.Err(CompilerFailure.single(Diagnostic.new(
-                        DiagnosticCode.Internal, Severity.Error, Option<SourceSpan>.None,
-                        "strict analysis returned no output")));
-                },
-            };
-            report_value.drop();
-            match backend.take() { Some(value) => value.drop(), None => {}, }
-            let session = middle.take_session();
-            transferred = true;
-            Result<CompilerAnalysis, CompilerFailure>.Ok(CompilerAnalysis(session, output))
-        },
+    options.sizes = Option<TypeSizeProvider&>.Some(match &backend { Some(value) => value.size_provider(), None => @panic("backend session was released") });
+    let output = match middle.run(options, &reporter) {
+        Ok(Some(value)) => value,
+        Ok(None) => @panic("strict analysis returned no output"),
         Err(error) => {
-            match backend.take() { Some(value) => value.drop(), None => {}, }
-            Result<CompilerAnalysis, CompilerFailure>.Err(
-                failure_from_error(error, Option<AnalysisSession&>.Some(middle.analysis_session())))
+            defer error.drop();
+            return Result<CompilerAnalysis, CompilerFailure>.Err(CompilerFailure.single(&error, sources));
         },
-    }
+    };
+    match backend.take() { Some(value) => value.drop(), None => {}, }
+    let session = middle.take_session();
+    transferred = true;
+    Result<CompilerAnalysis, CompilerFailure>.Ok(CompilerAnalysis(session, output, Option<Vec<LspDiagnostic>>.Some(reporter.warnings)))
 }

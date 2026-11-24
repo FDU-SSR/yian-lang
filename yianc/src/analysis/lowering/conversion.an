@@ -334,7 +334,7 @@ impl ExprChecker {
     fn convert_function_address(id: HirId, expected: TypeId, parameters: Vec<TypeId>&, result: TypeId) -> Result<Option<HirId>, AnalysisError> {
         let node = self.ctx.session.hir.require(id)?;
         let operand = match &node.kind {
-            Unary(value) => value.operand, _ => return Result<Option<HirId>, AnalysisError>.Err(AnalysisError.internal("function address lacks an operand"))
+            Unary(value) => value.operand, _ => @panic("function address lacks an operand")
         };
         let template = self.type_of(operand);
         let substitutions = instance_substitutions(self.ctx, template)?;

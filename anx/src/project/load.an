@@ -850,7 +850,7 @@ pub fn load(root: str, std_root: str) -> LoadReport {
             Ok(value) => value,
             Err(problem) => {
                 let message = String.from(&"Could not index sources: ");
-                message.push_str(problem.msg());
+                message.push_str(problem.error.msg());
                 defer message.drop();
                 let path = String.from(&packages[package_index].source_root());
                 defer path.drop();

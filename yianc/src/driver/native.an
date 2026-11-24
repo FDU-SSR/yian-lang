@@ -2,6 +2,7 @@ from yianc.package.model import PackageMap;
 from yianc.package.provenance import within;
 from yianc.driver.trace import CompilerTrace;
 from yianc.driver.profile import ProfileKind;
+from yianc.diagnostics.model import DiagnosticCode, DiagnosticLocation, UserDiagnostic;
 from std.collections.hash_set import HashSet;
 from std.collections.sort import sort_by;
 from std.core.convert import From;
@@ -39,6 +40,31 @@ impl DriverError {
     static pub fn message(tool: str, message: str) -> Self {
         Self(String.from(&tool), Vec<String>.new(), Option<ExitStatus>.None, Option<i32>.None,
             String.from(&message), Vec<u8>.new(), Vec<u8>.new())
+    }
+}
+
+impl UserDiagnostic for DriverError {
+    pub fn code() -> DiagnosticCode { DiagnosticCode.NativeTool }
+    pub fn location() -> DiagnosticLocation { DiagnosticLocation.Global }
+    pub fn message() -> String {
+        let text = String.from(&"native tool ");
+        text.push_str(self.tool.as_str());
+        text.push_str(": ");
+        text.push_str(self.message.as_str());
+        match self.status {
+            Some(status) => {
+                text.push_str(" (");
+                let number = match status {
+                    Exited(code) => { text.push_str("exit "); code.to_string() },
+                    Signaled(signal) => { text.push_str("signal "); signal.to_string() },
+                };
+                defer number.drop();
+                text.push_str(number.as_str());
+                text.push(')');
+            },
+            None => {},
+        }
+        text
     }
 }
 

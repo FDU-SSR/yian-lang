@@ -65,7 +65,7 @@ impl Lowering {
             Some(id) => Result<ValueId, CodegenError>.Ok(id),
             None => match address {
                 Some(pointer) => self.emit(span, type_id, Operation.Read(pointer)),
-                None => Result<ValueId, CodegenError>.Err(CodegenError.invalid("pattern has no matched storage")),
+                None => @panic("pattern has no matched storage"),
             },
         }
     }
@@ -83,7 +83,7 @@ impl Lowering {
                 } else {
                     match address {
                         Some(pointer) => pointer,
-                        None => return Result<(), CodegenError>.Err(CodegenError.invalid("reference binding has no matched place")),
+                        None => @panic("reference binding has no matched place"),
                     }
                 };
                 self.effect(pattern.span, Operation.Store(local, bound))?;
@@ -111,7 +111,7 @@ impl Lowering {
                                 } else { number.raw_bits() }),
                             Bool(value) => ValueKind.Integer(if *value { 1u64 } else { 0u64 }),
                             Char(value) => ValueKind.Integer(u64(u32(*value))),
-                            _ => return Result<(), CodegenError>.Err(CodegenError.invalid("literal pattern has no scalar value")),
+                            _ => @panic("literal pattern has no scalar value"),
                         };
                         let rhs = self.function.add_value(pattern.type_id, constant);
                         self.compare(pattern.span, BinaryOperator.Eq, operand, rhs)?
@@ -127,7 +127,7 @@ impl Lowering {
                     Integer(bits, sign) => { width = *bits; signed = *sign; },
                     CScalar(kind) => { width = kind.bits(); signed = kind.is_signed(); },
                     Char => { width = 32u32; },
-                    _ => return Result<(), CodegenError>.Err(CodegenError.invalid("range pattern is not integer-like")),
+                    _ => @panic("range pattern is not integer-like"),
                 }
                 match &range.lower { AfterMax => return self.end(Terminator.Jump(no)), _ => {}, }
                 let high_test = self.function.add_block();
@@ -206,13 +206,13 @@ impl Lowering {
                         }
                         let payload_type = match concrete {
                             Some(value) => value,
-                            None => return Result<(), CodegenError>.Err(CodegenError.invalid("enum pattern has no concrete payload")),
+                            None => @panic("enum pattern has no concrete payload"),
                         };
                         if place {
                             match address {
                                 Some(pointer) => self.enum_pattern_fields(pattern.span, pattern.type_id, payload_type,
                                     enumeration.variant.discriminant, fields, pointer, yes, no),
-                                None => return Result<(), CodegenError>.Err(CodegenError.invalid("enum place pattern has no matched place")),
+                                None => @panic("enum place pattern has no matched place"),
                             }
                         } else {
                             let source = self.pattern_value(value, address, pattern.type_id, pattern.span)?;
@@ -248,7 +248,7 @@ impl Lowering {
                 element = Option<TypeId>.Some(*inner);
                 let size = match self.session.types.require(*count)? {
                     LiteralValue(bits, _, _) => *bits,
-                    _ => return Result<(), CodegenError>.Err(CodegenError.invalid("array pattern has no concrete length")),
+                    _ => @panic("array pattern has no concrete length"),
                 };
                 length = Option<ValueId>.Some(self.function.add_value(unsigned, ValueKind.Integer(size)));
                 base = address;
@@ -269,7 +269,7 @@ impl Lowering {
                 let pointer = self.session.types.pointer(*inner);
                 base = Option<ValueId>.Some(self.emit(span, pointer, Operation.Builtin(BuiltinKind.SliceGetPtr, Vec<TypeId>.new(), pointer_arguments))?);
             },
-            _ => return Result<(), CodegenError>.Err(CodegenError.invalid("sequence pattern has no array or slice")),
+            _ => @panic("sequence pattern has no array or slice"),
         }
         let count = sequence.prefix.len() + sequence.suffix.len();
         let minimum = self.function.add_value(unsigned, ValueKind.Integer(count));

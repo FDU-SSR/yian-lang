@@ -46,12 +46,12 @@ pub fn check_impls(ctx: ResolutionContext&) -> Result<(), AnalysisError> {
                     let required = *entry[1];
                     let required_id = match ctx.session.types.require(required)? {
                         Nominal(definition, _) => *definition,
-                        _ => return Result<(), AnalysisError>.Err(AnalysisError.internal("trait method has invalid identity")),
+                        _ => @panic("trait method has invalid identity"),
                     };
                     let required_header = *ctx.session.types.definition(required_id).unwrap();
                     let required_body = match ctx.session.types.complete_definition(required_id)? {
                         Method(value) => value,
-                        _ => return Result<(), AnalysisError>.Err(AnalysisError.internal("trait member is not a method")),
+                        _ => @panic("trait member is not a method"),
                     };
                     let substitutions = HashMap<TypeId, TypeId>.new();
                     defer substitutions.drop();
@@ -85,7 +85,7 @@ pub fn check_impls(ctx: ResolutionContext&) -> Result<(), AnalysisError> {
                     };
                     let actual_id = match ctx.session.types.require(actual)? {
                         Nominal(definition, _) => *definition,
-                        _ => return Result<(), AnalysisError>.Err(AnalysisError.internal("impl method has invalid identity")),
+                        _ => @panic("impl method has invalid identity"),
                     };
                     let actual_header = *ctx.session.types.definition(actual_id).unwrap();
                     let required_own = required_header.generic_count() - trait_header.generic_count() - 1;
@@ -105,7 +105,7 @@ pub fn check_impls(ctx: ResolutionContext&) -> Result<(), AnalysisError> {
 
                     let actual_body = match ctx.session.types.complete_definition(actual_id)? {
                         Method(value) => value,
-                        _ => return Result<(), AnalysisError>.Err(AnalysisError.internal("impl member is not a method")),
+                        _ => @panic("impl member is not a method"),
                     };
 
                     if actual_body.parameters.len() != required_body.parameters.len() || actual_body.is_static != required_body.is_static {

@@ -1,4 +1,4 @@
-from yianc.common.ids import SourceId, UnitId, TypeId;
+from yianc.common.ids import UnitId, TypeId;
 from yianc.analysis.definition.registry import DefinitionRegistry;
 from yianc.analysis.definition.worklist import DefinitionWorklist;
 from yianc.analysis.hir.store import HirStore;
@@ -7,9 +7,9 @@ from yianc.analysis.symbol.scope import SymbolStore;
 from yianc.analysis.symbol.model import SymbolKind;
 from yianc.analysis.ty.impl_registry import ImplRegistry;
 from yianc.analysis.ty.store import TypeStore;
-from yianc.diagnostics.model import AnalysisError, DiagnosticSink;
+from yianc.diagnostics.model import AnalysisError;
 from yianc.frontend.session import CompilationUnit, FrontendSession;
-from yianc.frontend.source import SourceFile, SourceManager;
+from yianc.frontend.source import SourceFile;
 from yianc.package.model import PackageMap;
 from std.core.iter import Iterator, IntoIterator;
 
@@ -30,7 +30,6 @@ pub struct AnalysisSession {
     pub definitions: DefinitionRegistry,
     pub worklist: DefinitionWorklist,
     pub impls: ImplRegistry,
-    pub diagnostics: DiagnosticSink,
     pub raw_pointers: bool,
     phase: AnalysisPhase,
 }
@@ -38,7 +37,7 @@ pub struct AnalysisSession {
 impl AnalysisSession {
     static pub fn new(frontend: FrontendSession, raw_pointers: bool) -> Self {
         Self(frontend, NameInterner.new(), TypeStore.new(), SymbolStore.new(), HirStore.new(),
-            DefinitionRegistry.new(), DefinitionWorklist.new(), ImplRegistry.new(), DiagnosticSink.new(),
+            DefinitionRegistry.new(), DefinitionWorklist.new(), ImplRegistry.new(),
             raw_pointers, AnalysisPhase.Prepared)
     }
 
@@ -50,16 +49,12 @@ impl AnalysisSession {
         self.frontend.unit(id)
     }
 
-    pub fn source(id: SourceId) -> Option<SourceFile&> {
+    pub fn source(id: UnitId) -> SourceFile& {
         self.frontend.source(id)
     }
 
     pub fn len() -> u64 {
         self.frontend.len()
-    }
-
-    pub fn source_manager() -> SourceManager& {
-        self.frontend.source_manager()
     }
 
     pub fn package_map() -> Option<PackageMap&> {
@@ -86,12 +81,11 @@ impl AnalysisSession {
         Option<TypeId>.None
     }
 
-    pub fn begin_analysis() -> Result<(), AnalysisError> {
+    pub fn begin_analysis() {
         if self.phase != AnalysisPhase.Prepared {
-            return Result<(), AnalysisError>.Err(AnalysisError.internal("analysis session cannot be analyzed twice"));
+            @panic("analysis session cannot be analyzed twice");
         }
         self.phase = AnalysisPhase.Analyzing;
-        Result<(), AnalysisError>.Ok(())
     }
 
     pub fn complete_analysis(ok: bool) {
@@ -101,7 +95,6 @@ impl AnalysisSession {
 
 impl Drop for AnalysisSession {
     pub fn drop() {
-        self.diagnostics.drop();
         self.worklist.drop();
         self.definitions.drop();
         self.impls.drop();

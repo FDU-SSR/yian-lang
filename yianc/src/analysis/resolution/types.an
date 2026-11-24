@@ -103,7 +103,7 @@ pub fn apply_arguments(ctx: ResolutionContext&, unit: UnitId, scope: ScopeId, sy
                     index += 1;
                 }
             },
-            _ => return Result<TypeId, AnalysisError>.Err(AnalysisError.internal("invalid generic alias")),
+            _ => @panic("invalid generic alias"),
         }
 
         return substitute(&ctx.session.types, base, &substitutions);
@@ -151,7 +151,7 @@ pub fn resolve_alias(ctx: ResolutionContext&, symbol: SymbolId) -> Result<TypeId
         Alias(_, _, _, target) => {
             record.type_id = resolve_type(ctx, declaration.unit, declaration.scope, *target)?;
         },
-        _ => return Result<TypeId, AnalysisError>.Err(AnalysisError.internal("alias declaration has invalid syntax")),
+        _ => @panic("alias declaration has invalid syntax"),
     }
 
     declaration.state = DeclarationState.Complete;
@@ -214,7 +214,7 @@ fn evaluate_const_tree(ctx: ResolutionContext&, unit: UnitId, scope: ScopeId, ex
     match &expr.data {
         LiteralConstExpr(literal) => {
             let id = resolve_const(ctx, unit, scope, expr)?;
-            let type_id = match ctx.session.types.require(id)? { LiteralValue(_, _, type_id) => *type_id, _ => return Result<Option<ConstInteger>, AnalysisError>.Err(AnalysisError.internal("literal constant has no value")), };
+            let type_id = match ctx.session.types.require(id)? { LiteralValue(_, _, type_id) => *type_id, _ => @panic("literal constant has no value"), };
             type_id = if literal.data.suffix.spelling() == "" { TypeId(INT_LITERAL_TYPE_ID) } else { type_id };
             let value = ctx.evaluator.convert(ConstValue.Integer(IntegerValue.untyped(literal.data.value, literal.data.negative)), type_id, location)?;
             Result<Option<ConstInteger>, AnalysisError>.Ok(Option<ConstInteger>.Some(ConstInteger(value, type_id)))
@@ -296,7 +296,7 @@ fn resolve_type_inner(ctx: ResolutionContext&, unit: UnitId, scope: ScopeId, syn
                 return Result<TypeId, AnalysisError>.Ok(TypeId(C_SIZE_TYPE_ID));
             }
 
-            Result<TypeId, AnalysisError>.Err(AnalysisError.internal("unknown C scalar type"))
+            @panic("unknown C scalar type")
         },
         NamedType(name) => {
             let text = name.data.name.as_str();
@@ -434,7 +434,7 @@ fn missing_trait_arguments(ctx: ResolutionContext&, scope: ScopeId, syntax: Type
             let interned = ctx.session.names.intern(name.data.name.as_str());
             let symbol = match ctx.session.symbols.lookup(scope, interned) {
                 Some(value) => value,
-                None => return Result<bool, AnalysisError>.Err(AnalysisError.internal("resolved trait name is absent from its scope")),
+                None => @panic("resolved trait name is absent from its scope"),
             };
             let record = *ctx.session.symbols.get(symbol).unwrap();
 
@@ -448,7 +448,7 @@ fn missing_trait_arguments(ctx: ResolutionContext&, scope: ScopeId, syntax: Type
                             missing_trait_arguments(ctx, declaration.scope, *target)
                         }
                     },
-                    _ => Result<bool, AnalysisError>.Err(AnalysisError.internal("alias has invalid declaration syntax")),
+                    _ => @panic("alias has invalid declaration syntax"),
                 };
             }
 

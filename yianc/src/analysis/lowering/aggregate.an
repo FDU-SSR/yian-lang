@@ -385,7 +385,7 @@ impl ExprChecker {
     pub fn check_field_access(type_id: TypeId, field: StructField, span: Span) -> Result<(), AnalysisError> {
         let definition = match self.ctx.session.types.require(type_id)? {
             Nominal(id, _) => *id,
-            _ => return Result<(), AnalysisError>.Err(AnalysisError.internal("field access requires a nominal type")),
+            _ => @panic("field access requires a nominal type"),
         };
         let header = self.ctx.session.types.definition(definition).unwrap().header();
 

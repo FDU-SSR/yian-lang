@@ -10,9 +10,9 @@ pub fn payload_fields(ctx: ResolutionContext&, payload: Option<TypeId>) -> Resul
         Some(type_id) => match ctx.session.types.require(type_id)? {
             Nominal(id, _) => match ctx.session.types.complete_definition(*id)? {
                 Struct(body) => Result<Vec<StructField>, AnalysisError>.Ok(body.fields.clone()),
-                _ => Result<Vec<StructField>, AnalysisError>.Err(AnalysisError.internal("enum payload is not an aggregate")),
+                _ => @panic("enum payload is not an aggregate"),
             },
-            _ => Result<Vec<StructField>, AnalysisError>.Err(AnalysisError.internal("enum payload has invalid identity")),
+            _ => @panic("enum payload has invalid identity"),
         },
     }
 }

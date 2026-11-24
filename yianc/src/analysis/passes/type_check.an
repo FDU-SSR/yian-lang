@@ -11,14 +11,14 @@ from yianc.common.ids import TypeId, SymbolId, NameId, ScopeId, UnitId;
 from yianc.driver.profile import ProfileKind;
 from yianc.driver.log import LogLevel;
 from yianc.common.location import SourceSpan;
-from yianc.diagnostics.model import AnalysisError, AnalysisErrorKind, Diagnostic, DiagnosticCode;
+from yianc.diagnostics.model import AnalysisError, AnalysisErrorKind, DiagnosticCode;
 from std.core.iter import Iterator, IntoIterator;
 
 fn root_unit(ctx: ResolutionContext&, unit: UnitId) -> bool {
     let record = *ctx.session.unit(unit).unwrap();
 
     match ctx.session.package_map() {
-        Some(packages) => match packages.package_of(ctx.session.source(record.source).unwrap().canonical_path()) {
+        Some(packages) => match packages.package_of(ctx.session.source(record.id).canonical_path()) {
             Some(owner) => match packages.root_name() {
                 Some(name) => owner.name.as_str() == name, None => true
             },
@@ -28,7 +28,9 @@ fn root_unit(ctx: ResolutionContext&, unit: UnitId) -> bool {
     }
 }
 
-pub fn check_procedures(ctx: ResolutionContext&, options: AnalysisOptions&, diagnostics: Vec<Diagnostic>&) -> Result<AnalysisOutput, AnalysisError> {
+pub fn check_procedures(ctx: ResolutionContext&, options: AnalysisOptions&) -> Result<AnalysisOutput, AnalysisError> {
+    let diagnostics = Vec<DiagnosticKey>.new();
+    defer diagnostics.drop();
     let output = AnalysisOutput.new();
     let accepted = false;
     defer {
@@ -53,7 +55,7 @@ pub fn check_procedures(ctx: ResolutionContext&, options: AnalysisOptions&, diag
 
     // Match the reference worklist: entry and reachable calls first, then all concrete root definitions.
     match output.entry { Some(entry) => { schedule(ctx, entry)?; }, None => {}, }
-    drain(ctx, options, &output, diagnostics)?;
+    drain(ctx, options, &output, &diagnostics)?;
     let count = ctx.session.definitions.len();
     for index in 0u64..count {
         let procedure = *ctx.session.definitions.at(index).unwrap();
@@ -61,12 +63,12 @@ pub fn check_procedures(ctx: ResolutionContext&, options: AnalysisOptions&, diag
             schedule(ctx, procedure.type_id)?;
         }
     }
-    drain(ctx, options, &output, diagnostics)?;
+    drain(ctx, options, &output, &diagnostics)?;
     accepted = true;
     Result<AnalysisOutput, AnalysisError>.Ok(output)
 }
 
-fn drain(ctx: ResolutionContext&, options: AnalysisOptions&, output: AnalysisOutput&, diagnostics: Vec<Diagnostic>&) -> Result<(), AnalysisError> {
+fn drain(ctx: ResolutionContext&, options: AnalysisOptions&, output: AnalysisOutput&, diagnostics: Vec<DiagnosticKey>&) -> Result<(), AnalysisError> {
     while true {
         let type_id = match ctx.session.worklist.next() {
             Some(value) => value,
@@ -85,10 +87,12 @@ fn drain(ctx: ResolutionContext&, options: AnalysisOptions&, output: AnalysisOut
         let checked = match check_one(ctx, type_id, options) {
             Ok(value) => value,
             Err(problem) => {
-                if !options.recover || problem.kind == AnalysisErrorKind.Internal {
+                if options.recover && problem.kind == AnalysisErrorKind.Unsupported { problem.kind = AnalysisErrorKind.User; }
+                if !options.recover || problem.kind != AnalysisErrorKind.User {
                     return Result<(), AnalysisError>.Err(problem);
                 }
-                if duplicate(diagnostics, &problem.diagnostic) { problem.drop(); } else { diagnostics.push(problem.diagnostic); }
+                if !duplicate(diagnostics, &problem) { ctx.report_error(&problem); }
+                problem.drop();
                 ctx.session.worklist.finish(type_id, true)?;
                 finished = true;
                 continue;
@@ -123,7 +127,7 @@ fn check_one(ctx: ResolutionContext&, type_id: TypeId, options: AnalysisOptions&
     }
     let procedure = match ctx.session.definitions.get(type_id) {
         Some(value) => value,
-        None => return Result<AnalyzedProcedure, AnalysisError>.Err(AnalysisError.internal("scheduled function has no body")),
+        None => @panic("scheduled function has no body"),
     };
     let parent = *ctx.callable_scopes.get(&procedure.definition).unwrap();
     let callable = signature(ctx, type_id)?;
@@ -169,7 +173,7 @@ fn check_one(ctx: ResolutionContext&, type_id: TypeId, options: AnalysisOptions&
                     Generic(name) => *name,
                     ConstGeneric(name, _) => *name,
                     SelfType(_) => ctx.session.names.intern("Self"),
-                    _ => return Result<AnalyzedProcedure, AnalysisError>.Err(AnalysisError.internal("invalid generic identity")),
+                    _ => @panic("invalid generic identity"),
                 };
                 checker.bind(ctx.session.names.text(name), arguments[index], procedure.body.span, SymbolKind.Type)?;
                 index += 1;
@@ -213,15 +217,19 @@ fn check_one(ctx: ResolutionContext&, type_id: TypeId, options: AnalysisOptions&
     Result<AnalyzedProcedure, AnalysisError>.Ok(AnalyzedProcedure(procedure.definition, type_id, parameters, root, procedure.unit, captures))
 }
 
-fn duplicate(diagnostics: Vec<Diagnostic>&, candidate: Diagnostic&) -> bool {
+struct DiagnosticKey {
+    code: DiagnosticCode,
+    unit: UnitId,
+    row: u64,
+    column: u64,
+}
+
+fn duplicate(diagnostics: Vec<DiagnosticKey>&, candidate: AnalysisError&) -> bool {
+    let location = match &candidate.location { Source(value) => *value, _ => return false };
     for diagnostic in *diagnostics {
-        if diagnostic.code != candidate.code { continue; }
-        let existing = match &diagnostic.location { Some(value) => value, None => continue };
-        let incoming = match &candidate.location { Some(value) => value, None => continue };
-        let left = match existing { Source(value) => value, _ => continue };
-        let right = match incoming { Source(value) => value, _ => continue };
-        if left.source == right.source && left.span.start.row == right.span.start.row &&
-        left.span.start.column == right.span.start.column { return true; }
+        if diagnostic.code == candidate.code && diagnostic.unit == location.unit &&
+        diagnostic.row == location.span.start.row && diagnostic.column == location.span.start.column { return true; }
     }
+    diagnostics.push(DiagnosticKey(candidate.code, location.unit, location.span.start.row, location.span.start.column));
     false
 }

@@ -1,10 +1,18 @@
 from yianc.config import CompilerAction, CompilerConfig, OutputKind;
 from yianc.driver.profile import ProfileRecorder, ProfileKind;
+from yianc.diagnostics.model import DiagnosticCode, DiagnosticLocation, UserDiagnostic;
 from std.core.convert import From;
 from std.core.fmt import ToString;
 from std.core.iter import Iterator, IntoIterator;
 
 struct Timing { name: String, elapsed: u64 }
+pub struct ProfileWarning { pub message: String }
+impl UserDiagnostic for ProfileWarning {
+    pub fn message() -> String { String.from(&self.message.as_str()) }
+    pub fn location() -> DiagnosticLocation { DiagnosticLocation.Global }
+    pub fn code() -> DiagnosticCode { DiagnosticCode.ProfileOutput }
+}
+impl Drop for ProfileWarning { pub fn drop() { self.message.drop(); } }
 pub struct CompilerTiming {
     recorder: ProfileRecorder,
     timings: Vec<Timing>,
@@ -72,23 +80,22 @@ impl CompilerTiming {
         }
     }
 
-    pub fn finalize(ok: bool) {
+    pub fn finalize(ok: bool) -> Option<ProfileWarning> {
         self.report();
         self.mark_unreached();
         match &self.output {
             Some(path) => match self.recorder.write_report(path.as_str(), ok, self.target.as_str(), self.optimization, self.raw_pointers) {
                 Ok(_) => {},
                 Err(problem) => {
-                    let warning = String.from(&"[profile] warning: could not write report: ");
+                    let warning = String.from(&"[profile] could not write report: ");
                     warning.push_str(problem.as_str());
-                    warning.push('\n');
-                    defer warning.drop();
                     problem.drop();
-                    @eprint(warning);
+                    return Option<ProfileWarning>.Some(ProfileWarning(warning));
                 },
             },
             None => {},
         }
+        Option<ProfileWarning>.None
     }
 
 }

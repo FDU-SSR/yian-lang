@@ -108,7 +108,7 @@ impl Lowering {
             Return(value) => self.return_value(node, *value)?,
             Defer(action) => {
                 if self.scopes.is_empty() {
-                    return Result<ValueId, CodegenError>.Err(CodegenError.invalid("defer has no cleanup scope"));
+                    @panic("defer has no cleanup scope");
                 }
                 self.scopes[self.scopes.len() - 1].actions.push(*action);
                 self.zero(node.type_id)
@@ -212,9 +212,9 @@ impl Lowering {
                 let count = match self.session.types.require(node.type_id)? {
                     Array(_, length) => match self.session.types.require(*length)? {
                         LiteralValue(bits, _, _) => *bits,
-                        _ => return Result<ValueId, CodegenError>.Err(CodegenError.invalid("repeated array has no concrete length")),
+                        _ => @panic("repeated array has no concrete length"),
                     },
-                    _ => return Result<ValueId, CodegenError>.Err(CodegenError.invalid("repeated array has no array type")),
+                    _ => @panic("repeated array has no array type"),
                 };
                 self.emit(node.span, node.type_id, Operation.Repeat(element, count))?
             },
@@ -237,7 +237,7 @@ impl Lowering {
                     }
                     match found {
                         Some(value) => fields.push(value),
-                        None => return Result<ValueId, CodegenError>.Err(CodegenError.invalid("checked structure has a missing field")),
+                        None => @panic("checked structure has a missing field"),
                     }
                 }
                 transferred = true;
@@ -271,7 +271,7 @@ impl Lowering {
                                     }
                                     match found {
                                         Some(value) => fields.push(value),
-                                        None => return Result<ValueId, CodegenError>.Err(CodegenError.invalid("checked enum payload has a missing field")),
+                                        None => @panic("checked enum payload has a missing field"),
                                     }
                                 }
                             },
@@ -356,7 +356,7 @@ impl Lowering {
         match &node.kind {
             Block(value) => {
                 if node.is_place { return self.block_address(node, value); }
-                Result<ValueId, CodegenError>.Err(CodegenError.invalid("non-place block reached address lowering"))
+                @panic("non-place block reached address lowering")
             },
             Var(symbol) => {
                 match self.captured_places.get(symbol) {
@@ -368,7 +368,7 @@ impl Lowering {
             },
             Unary(value) => {
                 if value.op == UnaryOperator.Deref { return self.expression(value.operand); }
-                Result<ValueId, CodegenError>.Err(CodegenError.invalid("non-dereference unary expression reached address lowering"))
+                @panic("non-dereference unary expression reached address lowering")
             },
             FieldAccess(value) => {
                 let receiver = self.session.hir.require(value.receiver)?;
@@ -402,7 +402,7 @@ impl Lowering {
                 let length = self.emit(node.span, unsigned, Operation.Builtin(BuiltinKind.SliceGetLen, Vec<TypeId>.new(), lengths))?;
                 self.emit(node.span, pointer, Operation.IndexAddress(base, value.element_type, index, IndexBounds.Slice(length)))
             },
-            _ => Result<ValueId, CodegenError>.Err(CodegenError.invalid("address lowering requires normalized storage")),
+            _ => @panic("address lowering requires normalized storage"),
         }
     }
 
@@ -456,7 +456,7 @@ impl Lowering {
                 self.emit(node.span, node.type_id, Operation.Builtin(value.kind, types, args))
             },
             Append | Write | Print | Println | Eprint | Eprintln => {
-                return Result<ValueId, CodegenError>.Err(CodegenError.invalid("formatting builtin has no HIR node"));
+                @panic("formatting builtin has no HIR node");
             },
         }
     }

@@ -109,7 +109,7 @@ impl ConstantEvaluator {
         defer { if !transferred { element_value.drop(); } };
         let length_type = match self.types.require(type_id)? {
             Array(_, count) => *count,
-            _ => return Result<ConstValue, AnalysisError>.Err(AnalysisError.internal("repeat constant has no array type")),
+            _ => @panic("repeat constant has no array type"),
         };
         let length = self.array_length(length_type, location)?;
         let element = dyn element_value;
@@ -147,7 +147,7 @@ impl ConstantEvaluator {
                 let pointer = *element;
                 Result<ConstValue, AnalysisError>.Ok(pointer.clone())
             },
-            _ => Result<ConstValue, AnalysisError>.Err(AnalysisError.internal("array access base is not an array")),
+            _ => @panic("array access base is not an array"),
         }
     }
 
@@ -164,7 +164,7 @@ impl ConstantEvaluator {
 
                 Result<u64, AnalysisError>.Ok(*value)
             },
-            _ => Result<u64, AnalysisError>.Err(AnalysisError.internal("array length is not a literal value")),
+            _ => @panic("array length is not a literal value"),
         }
     }
 
@@ -283,7 +283,7 @@ impl ConstantEvaluator {
         match ty {
             Float(bits) => Result<u32, AnalysisError>.Ok(*bits),
             FloatLiteral => Result<u32, AnalysisError>.Ok(64),
-            _ => Result<u32, AnalysisError>.Err(AnalysisError.internal("expected float type"))
+            _ => @panic("expected float type")
         }
     }
 

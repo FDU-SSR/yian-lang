@@ -115,7 +115,7 @@ impl BackendSession {
         let success = false;
         defer end_profile(trace, "backend.initialize", success);
         if options.raw_pointers != analysis.raw_pointers || options.optimization > 3u8 {
-            return Result<Self, CodegenError>.Err(CodegenError.invalid("inconsistent backend configuration"));
+            @panic("inconsistent backend configuration");
         }
         let value = match Module.try_new("yian", options.optimization) {
             Ok(value) => value,
@@ -130,7 +130,7 @@ impl BackendSession {
         defer target_bytes.drop();
         let target = match str.from_slice(target_bytes.as_slice()) {
             Some(text) => text,
-            None => return Result<Self, CodegenError>.Err(CodegenError.invalid("LLVM target is not UTF-8")),
+            None => return Result<Self, CodegenError>.Err(CodegenError.target("LLVM target is not UTF-8")),
         };
         if !target.starts_with("x86_64-") || !target.contains("linux") || target.contains("x32")
         || value.abi_size(value.pointer_type(0u32)) != 8u64 {

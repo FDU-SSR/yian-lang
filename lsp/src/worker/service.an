@@ -20,7 +20,8 @@ from std.core.ops import Index;
 from std.core.path import Path, PathBuf;
 from std.core.text import LineIndex;
 from std.core.time import monotonic_now;
-from yianc.diagnostics.model import Diagnostic, DiagnosticLocation, Severity;
+from yianc.diagnostics.model import Severity;
+from lsp.analysis.diagnostic import LspDiagnostic;
 from yianc.frontend.source import Span, collect_sources, SourceDocument;
 from yianc.package.model import PackageMap;
 from yianc.package.provenance import SourceTrust;
@@ -736,7 +737,7 @@ fn collect_standalone_paths(std_root: str, source_path: str) -> Result<Vec<PathB
         Ok(value) => value,
         Err(problem) => {
             let message = String.from(&"could not collect standard-library sources: ");
-            message.push_str(problem.msg());
+            message.push_str(problem.error.msg());
             problem.drop();
             return Result<Vec<PathBuf>, String>.Err(message);
         },
@@ -835,6 +836,12 @@ fn make_documents(paths: Vec<PathBuf>&, open: Vec<OpenInput>&) -> Result<Vec<Sou
                 return Result<Vec<SourceDocument>, String>.Err(message);
             },
         };
+        defer normalized.drop();
+        let already_loaded = false;
+        for document in documents {
+            if document.path.as_str() == normalized.as_str() { already_loaded = true; break; }
+        }
+        if already_loaded { continue; }
         let overlay = overlay_index(open, normalized.as_str());
         match overlay {
             Some(index) => documents.push(SourceDocument(path=String.from(&normalized.as_str()),
@@ -850,7 +857,6 @@ fn make_documents(paths: Vec<PathBuf>&, open: Vec<OpenInput>&) -> Result<Vec<Sou
                 },
             },
         }
-        normalized.drop();
     }
     transferred = true;
     Result<Vec<SourceDocument>, String>.Ok(documents)
@@ -1023,32 +1029,15 @@ fn append_grouped(groups: Object&, uri: str, diagnostic: Value) {
     }
 }
 
-fn add_analysis_diagnostic(snapshot: Snapshot&, diagnostic: Diagnostic&, groups: Object&) {
-    let span = match &diagnostic.location {
-        Some(location) => location.span(),
-        None => { return; },
+fn add_analysis_diagnostic(snapshot: Snapshot&, diagnostic: LspDiagnostic&, groups: Object&) {
+    let span = match &diagnostic.span { Some(value) => *value, None => { return; }, };
+    let source_path = match &diagnostic.path { Some(value) => value.as_str(), None => { return; }, };
+    let path = String.from(&source_path);
+    let text = match snapshot.text_for_path(source_path) {
+        Some(value) => String.from(&value),
+        None => String.new(),
     };
-    let path = String.new();
-    let text = String.new();
-    match &diagnostic.location {
-        Some(Detached(value, _)) => {
-            path.push_str(value.as_str());
-            match snapshot.text_for_path(value.as_str()) {
-                Some(found) => text.push_str(found),
-                None => {},
-            }
-        },
-        // Warning and failure locations are detached during snapshot construction;
-        // a live source location would require the released compiler session.
-        Some(Source(_)) => {
-            path.drop();
-            text.drop();
-            return;
-        },
-        None => {},
-    }
-    if path.as_slice().len() == 0u64 { path.drop(); text.drop(); return; }
-    let severity = match diagnostic.severity {
+    let severity = match diagnostic.code.severity() {
         Severity.Error => 1u64,
         Severity.Warning => 2u64,
         Severity.Note => 3u64,

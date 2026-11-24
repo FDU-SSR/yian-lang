@@ -60,7 +60,7 @@ fn clean_function(function: CfgFunction&) -> Result<(), CodegenError> {
 
 pub fn cleanup(module: CfgModule&) -> Result<(), CodegenError> {
     if module.safety_stage != SafetyStage.Neutral {
-        return Result<(), CodegenError>.Err(CodegenError.invalid("CFG cleanup requires a neutral graph"));
+        @panic("CFG cleanup requires a neutral graph");
     }
     for index in 0u64..module.len() { clean_function(*module.function(FunctionId(index)).unwrap())?; }
     Result<(), CodegenError>.Ok(())

@@ -39,7 +39,7 @@ impl DefinitionRegistry {
 
     pub fn register(procedure: Procedure) -> Result<(), AnalysisError> {
         if self.index.contains(&procedure.type_id) {
-            return Result<(), AnalysisError>.Err(AnalysisError.internal("duplicate procedure registration"));
+            @panic("duplicate procedure registration");
         }
 
         let index = self.records.len();

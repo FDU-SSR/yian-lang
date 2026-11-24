@@ -183,7 +183,7 @@ impl TypeDefinition {
     pub fn complete(body: DefinitionBody) -> Result<(), AnalysisError> {
         if self.is_complete() || body.kind() != self.header.kind {
             body.drop();
-            return Result<(), AnalysisError>.Err(AnalysisError.internal("invalid definition completion"));
+            @panic("invalid definition completion");
         }
 
         let valid_prefix = match &body {
@@ -194,7 +194,7 @@ impl TypeDefinition {
 
         if !valid_prefix {
             body.drop();
-            return Result<(), AnalysisError>.Err(AnalysisError.internal("invalid callable generic prefix"));
+            @panic("invalid callable generic prefix");
         }
 
         self.status = DefinitionStatus.Complete(body);
@@ -204,7 +204,7 @@ impl TypeDefinition {
     // The returned payload is borrowed and must be treated as immutable.
     pub fn body() -> Result<DefinitionBody&, AnalysisError> {
         match &self.status {
-            Declared => Result<DefinitionBody&, AnalysisError>.Err(AnalysisError.internal("type definition is incomplete")),
+            Declared => @panic("type definition is incomplete"),
             Complete(body) => Result<DefinitionBody&, AnalysisError>.Ok(body),
         }
     }

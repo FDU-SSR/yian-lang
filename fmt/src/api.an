@@ -1,4 +1,4 @@
-from yianc.common.ids import SourceId;
+from yianc.common.ids import UnitId;
 from yianc.frontend.prepare import FrontendPhase;
 from yianc.diagnostics.model import AnalysisError;
 from fmt.layout import format_tokens;
@@ -8,7 +8,7 @@ from yianc.frontend.prepare import prepare_file;
 // A syntax failure is deliberately represented as None so callers can preserve
 // the established CLI behavior of skipping files that cannot be formatted.
 pub fn format_text(text: str, path: str) -> Result<Option<String>, AnalysisError> {
-    let prepared = match prepare_file(SourceId(0), path, text, FrontendPhase.Ast) {
+    let prepared = match prepare_file(UnitId(0), path, text, FrontendPhase.Ast) {
         Ok(value) => value,
         Err(problem) => {
             problem.drop();

@@ -49,7 +49,7 @@ fn zst_inner(store: TypeStore&, type_id: TypeId, visiting: HashSet<TypeId>&) -> 
         },
         Closure(_, _, _, _, environment, _) => match environment {
             Some(value) => zst_inner(store, *value, visiting),
-            None => Result<bool, AnalysisError>.Err(AnalysisError.internal("closure has no completed environment")),
+            None => @panic("closure has no completed environment"),
         },
         Nominal(id, _) => {
             let substitutions = store_substitutions(store, type_id)?;

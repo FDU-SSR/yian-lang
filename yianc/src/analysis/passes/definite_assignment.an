@@ -299,7 +299,7 @@ impl AssignmentChecker {
                 },
                 FieldAccess(value) => current = value.receiver,
                 TupleAccess(value) => current = value.receiver,
-                _ => return Result<AnalysisError, AnalysisError>.Err(AnalysisError.internal("uninitialized place has no root symbol")),
+                _ => @panic("uninitialized place has no root symbol"),
             }
         }
     }
@@ -473,7 +473,7 @@ impl AssignmentChecker {
                 self.optional(value, state)?;
 
                 if self.loops.len() == 0 {
-                    return Result<(), AnalysisError>.Err(AnalysisError.internal("HIR break has no loop"));
+                    @panic("HIR break has no loop");
                 }
 
                 let index = self.loops.len() - 1;
@@ -483,7 +483,7 @@ impl AssignmentChecker {
             },
             Continue => {
                 if self.loops.len() == 0 {
-                    return Result<(), AnalysisError>.Err(AnalysisError.internal("HIR continue has no loop"));
+                    @panic("HIR continue has no loop");
                 }
 
                 self.flush(self.loops[self.loops.len() - 1].defer_base, state)?;

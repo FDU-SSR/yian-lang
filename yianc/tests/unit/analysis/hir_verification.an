@@ -2,6 +2,7 @@ from yianc.analysis.hir.node import Block, HirKind, HirNode;
 from yianc.analysis.passes.hir_verification_cache import HirVerificationCache, HirVerificationObserver;
 from yianc.analysis.passes.verify_hir import verify_hir_observed;
 from yianc.analysis.resolution.context import ResolutionContext;
+from yianc.analysis.constant.evaluate import TypeSizeProvider;
 from yianc.analysis.session.output import AnalysisOptions, AnalysisOutput, AnalyzedProcedure;
 from yianc.analysis.session.session import AnalysisSession;
 from yianc.driver.frontend import FrontendDriver;
@@ -9,14 +10,17 @@ from yianc.driver.trace import CompilerTrace;
 from yianc.driver.middle import MiddleEndDriver;
 from yianc.analysis.ty.model import AccessMode, AggregateDefinition, CallableDefinition, DefinitionBody,
 DefinitionHeader, NominalKind, Parameter, StructField;
+from yianc.analysis.ty.store import BOOL_TYPE_ID, ERROR_TYPE_ID, I32_TYPE_ID, NEVER_TYPE_ID, U64_TYPE_ID, VOID_TYPE_ID;
 from yianc.analysis.ty.validation import validate_concrete_value;
-from yianc.common.ids import DefId, HirId, NameId, SourceId, SymbolId, TypeId, UnitId;
+from yianc.common.ids import DefId, HirId, NameId, SymbolId, TypeId, UnitId;
 from yianc.common.location import SourceSpan;
-from yianc.diagnostics.model import AnalysisError, AnalysisErrorKind, DiagnosticLocation;
+from yianc.diagnostics.model import AnalysisError, AnalysisErrorKind, DiagnosticLocation, DiagnosticReporter, UserDiagnostic;
 from yianc.frontend.source import Position, SourceDocument, Span;
 from yianc.package.model import PackageMap;
 from yianc.package.provenance import SourceTrust;
 from std.collections.hash_map import HashMap;
+from std.core.env import args;
+from std.core.process import Command, ExitStatus;
 
 // Records the actual underlying queries a verification cache performs.
 // Duplicate keys for a successful query path indicate a cache regression.
@@ -106,18 +110,17 @@ fn has_duplicate(keys: Vec<TypeId>&) -> bool {
     false
 }
 
+struct IgnoreDiagnostics {}
+impl DiagnosticReporter for IgnoreDiagnostics { pub fn report(diagnostic: UserDiagnostic&) {} }
+
 fn same_location(error: AnalysisError&, location: SourceSpan) -> bool {
-    match &error.diagnostic.location {
-        Some(DiagnosticLocation.Source(actual)) => actual.source == location.source
+    match &error.location {
+        DiagnosticLocation.Source(actual) => actual.unit == location.unit
         && actual.span.start.row == location.span.start.row
         && actual.span.start.column == location.span.start.column
         && actual.span.end.row == location.span.end.row
         && actual.span.end.column == location.span.end.column,
-        Some(DiagnosticLocation.Detached(_, actual)) => actual.start.row == location.span.start.row
-        && actual.start.column == location.span.start.column
-        && actual.end.row == location.span.end.row
-        && actual.end.column == location.span.end.column,
-        None => false,
+        _ => false,
     }
 }
 
@@ -145,7 +148,7 @@ fn build_types(session: AnalysisSession&, context: ResolutionContext&, location:
     let node = *session.types.instance(node_definition, &empty).unwrap();
     let node_fields = Vec<StructField>.new();
     node_fields.push(field(session, "next", session.types.pointer(node), 0u64, location));
-    node_fields.push(field(session, "value", context.primitives.integer, 1u64, location));
+    node_fields.push(field(session, "value", TypeId(I32_TYPE_ID), 1u64, location));
     session.types.finish_definition(node_definition,
         DefinitionBody.Struct(AggregateDefinition(node_fields, HashMap<NameId, TypeId>.new()))).unwrap();
 
@@ -153,7 +156,7 @@ fn build_types(session: AnalysisSession&, context: ResolutionContext&, location:
     let bad = *session.types.instance(bad_definition, &empty).unwrap();
     let bad_fields = Vec<StructField>.new();
     bad_fields.push(field(session, "next", session.types.pointer(bad), 0u64, location));
-    bad_fields.push(field(session, "broken", context.primitives.error, 1u64, location));
+    bad_fields.push(field(session, "broken", TypeId(ERROR_TYPE_ID), 1u64, location));
     session.types.finish_definition(bad_definition,
         DefinitionBody.Struct(AggregateDefinition(bad_fields, HashMap<NameId, TypeId>.new()))).unwrap();
 
@@ -166,17 +169,17 @@ fn build_types(session: AnalysisSession&, context: ResolutionContext&, location:
     session.types.finish_definition(box_definition,
         DefinitionBody.Struct(AggregateDefinition(box_fields, HashMap<NameId, TypeId>.new()))).unwrap();
     let box_i32_arguments = Vec<TypeId>.new();
-    box_i32_arguments.push(context.primitives.integer);
+    box_i32_arguments.push(TypeId(I32_TYPE_ID));
     let box_i32 = *session.types.instance(box_definition, &box_i32_arguments).unwrap();
     box_i32_arguments.drop();
     let box_u64_arguments = Vec<TypeId>.new();
-    box_u64_arguments.push(context.primitives.unsigned);
+    box_u64_arguments.push(TypeId(U64_TYPE_ID));
     let box_u64 = *session.types.instance(box_definition, &box_u64_arguments).unwrap();
     box_u64_arguments.drop();
 
     let plain_definition = definition(session, "plain", NominalKind.Function, location, Vec<TypeId>.new());
     session.types.finish_definition(plain_definition, DefinitionBody.Function(
-        CallableDefinition(Vec<Parameter>.new(), context.primitives.integer, Option<TypeId>.None,
+        CallableDefinition(Vec<Parameter>.new(), TypeId(I32_TYPE_ID), Option<TypeId>.None,
         true, false, false, false, false, true, 0u64))).unwrap();
     let plain = *session.types.instance(plain_definition, &empty).unwrap();
 
@@ -190,15 +193,15 @@ fn build_types(session: AnalysisSession&, context: ResolutionContext&, location:
         CallableDefinition(function_parameters, function_generic, Option<TypeId>.None,
         true, false, false, false, false, true, 0u64))).unwrap();
     let generic_i32_arguments = Vec<TypeId>.new();
-    generic_i32_arguments.push(context.primitives.integer);
+    generic_i32_arguments.push(TypeId(I32_TYPE_ID));
     let generic_i32 = *session.types.instance(function_definition, &generic_i32_arguments).unwrap();
     generic_i32_arguments.drop();
     let generic_u64_arguments = Vec<TypeId>.new();
-    generic_u64_arguments.push(context.primitives.unsigned);
+    generic_u64_arguments.push(TypeId(U64_TYPE_ID));
     let generic_u64 = *session.types.instance(function_definition, &generic_u64_arguments).unwrap();
     generic_u64_arguments.drop();
     let generic_bool_arguments = Vec<TypeId>.new();
-    generic_bool_arguments.push(context.primitives.boolean);
+    generic_bool_arguments.push(TypeId(BOOL_TYPE_ID));
     let generic_bool = *session.types.instance(function_definition, &generic_bool_arguments).unwrap();
     generic_bool_arguments.drop();
 
@@ -244,11 +247,11 @@ fn build_types(session: AnalysisSession&, context: ResolutionContext&, location:
     methods.insert(session.names.intern("second"), second_method);
     session.types.finish_definition(trait_definition, DefinitionBody.Trait(methods)).unwrap();
     let trait_i32_arguments = Vec<TypeId>.new();
-    trait_i32_arguments.push(context.primitives.integer);
+    trait_i32_arguments.push(TypeId(I32_TYPE_ID));
     let trait_i32 = *session.types.instance(trait_definition, &trait_i32_arguments).unwrap();
     trait_i32_arguments.drop();
     let trait_u64_arguments = Vec<TypeId>.new();
-    trait_u64_arguments.push(context.primitives.unsigned);
+    trait_u64_arguments.push(TypeId(U64_TYPE_ID));
     let trait_u64 = *session.types.instance(trait_definition, &trait_u64_arguments).unwrap();
     trait_u64_arguments.drop();
 
@@ -275,8 +278,8 @@ fn check_value_cache(context: ResolutionContext&, fixture: FixtureTypes&,
     match &first_bad {
         Err(error) => {
             assert error.kind == AnalysisErrorKind.User: "a broken field is a user diagnostic";
-            assert error.diagnostic.code.text() == "E499": "a broken field keeps its diagnostic code";
-            assert error.diagnostic.message.as_str() == "value type must be specified": "a broken field keeps its message";
+            assert error.code.text() == "E499": "a broken field keeps its diagnostic code";
+            assert error.message.as_str() == "value type must be specified": "a broken field keeps its message";
             assert same_location(error, first_location): "a failure reports its own location";
         },
         Ok(_) => @panic("a recursive type with an error field was accepted"),
@@ -286,9 +289,9 @@ fn check_value_cache(context: ResolutionContext&, fixture: FixtureTypes&,
         Err(expected) => match &first_bad {
             Err(actual) => {
                 assert actual.kind == expected.kind: "a cached failure keeps the uncached kind";
-                assert actual.diagnostic.code.text() == expected.diagnostic.code.text():
+                assert actual.code.text() == expected.code.text():
                 "a cached failure keeps the uncached code";
-                assert actual.diagnostic.message.as_str() == expected.diagnostic.message.as_str():
+                assert actual.message.as_str() == expected.message.as_str():
                 "a cached failure keeps the uncached message";
             },
             Ok(_) => @panic("the cached query accepted an invalid root"),
@@ -302,7 +305,7 @@ fn check_value_cache(context: ResolutionContext&, fixture: FixtureTypes&,
     match &second_bad {
         Err(error) => {
             assert error.kind == AnalysisErrorKind.User: "a repeated failure keeps its kind";
-            assert error.diagnostic.message.as_str() == "value type must be specified": "a repeated failure keeps its message";
+            assert error.message.as_str() == "value type must be specified": "a repeated failure keeps its message";
             assert same_location(error, second_location): "a repeated failure uses the current location";
         },
         Ok(_) => @panic("a repeated invalid root was accepted"),
@@ -310,22 +313,22 @@ fn check_value_cache(context: ResolutionContext&, fixture: FixtureTypes&,
     match second_bad { Err(error) => error.drop(), Ok(_) => {}, }
     assert count_key(&observer.value_keys, fixture.bad) == 2u64: "failed roots are not cached";
 
-    let first_error = cache.validate_value(context.primitives.error, first_location);
+    let first_error = cache.validate_value(TypeId(ERROR_TYPE_ID), first_location);
     match &first_error {
         Err(error) => {
-            assert error.diagnostic.code.text() == "E499": "an error type keeps its code";
+            assert error.code.text() == "E499": "an error type keeps its code";
             assert same_location(error, first_location): "an error type reports the first location";
         },
         Ok(_) => @panic("an error type was accepted"),
     }
     match first_error { Err(error) => error.drop(), Ok(_) => {}, }
-    let second_error = cache.validate_value(context.primitives.error, second_location);
+    let second_error = cache.validate_value(TypeId(ERROR_TYPE_ID), second_location);
     match &second_error {
         Err(error) => assert same_location(error, second_location): "an error type reports the second location",
         Ok(_) => @panic("an error type was accepted twice"),
     }
     match second_error { Err(error) => error.drop(), Ok(_) => {}, }
-    assert count_key(&observer.value_keys, context.primitives.error) == 2u64: "invalid value types are not cached";
+    assert count_key(&observer.value_keys, TypeId(ERROR_TYPE_ID)) == 2u64: "invalid value types are not cached";
 }
 
 fn check_query_cache(context: ResolutionContext&, fixture: FixtureTypes&, observer: MissCounter&) {
@@ -339,36 +342,17 @@ fn check_query_cache(context: ResolutionContext&, fixture: FixtureTypes&, observ
     let fourth = cache.signature_of(fixture.generic_bool).unwrap();
     cache.signature_of(fixture.generic_i32).unwrap();
     assert first.definition == fixture.plain_definition: "a borrowed signature keeps its identity";
-    assert first.result == context.primitives.integer: "a plain signature keeps its result";
+    assert first.result == TypeId(I32_TYPE_ID): "a plain signature keeps its result";
     assert first.parameters.len() == 0u64: "a plain signature has no parameters";
     assert second.parameters.len() == 1u64: "the first generic instance has one parameter";
-    assert second.parameters[0u64].type_id == context.primitives.integer: "generic substitution keeps i32";
-    assert third.parameters[0u64].type_id == context.primitives.unsigned: "generic substitution keeps u64";
-    assert fourth.parameters[0u64].type_id == context.primitives.boolean: "generic substitution keeps bool";
-    assert first.result == context.primitives.integer: "the first borrow survives index growth";
+    assert second.parameters[0u64].type_id == TypeId(I32_TYPE_ID): "generic substitution keeps i32";
+    assert third.parameters[0u64].type_id == TypeId(U64_TYPE_ID): "generic substitution keeps u64";
+    assert fourth.parameters[0u64].type_id == TypeId(BOOL_TYPE_ID): "generic substitution keeps bool";
+    assert first.result == TypeId(I32_TYPE_ID): "the first borrow survives index growth";
     assert count_key(&observer.signature_keys, fixture.plain) == 1u64: "a plain signature is built once";
     assert count_key(&observer.signature_keys, fixture.generic_i32) == 1u64: "a generic instance is built once";
     assert count_key(&observer.signature_keys, fixture.generic_u64) == 1u64: "each concrete instance is separate";
     assert count_key(&observer.signature_keys, fixture.generic_bool) == 1u64: "each concrete instance is separate";
-
-    let first_failure = cache.signature_of(context.primitives.integer);
-    match &first_failure {
-        Err(error) => {
-            assert error.kind == AnalysisErrorKind.Internal: "a non-callable signature fails internally";
-            assert error.diagnostic.message.as_str().contains("callable instance is not nominal"):
-            "a non-callable signature keeps its message";
-        },
-        Ok(_) => @panic("a primitive type produced a callable signature"),
-    }
-    match first_failure { Err(error) => error.drop(), Ok(_) => {}, }
-    let second_failure = cache.signature_of(context.primitives.integer);
-    match &second_failure {
-        Err(error) => assert error.diagnostic.message.as_str().contains("callable instance is not nominal"):
-        "a repeated failed signature keeps its message",
-        Ok(_) => @panic("a primitive type produced a callable signature twice"),
-    }
-    match second_failure { Err(error) => error.drop(), Ok(_) => {}, }
-    assert count_key(&observer.signature_keys, context.primitives.integer) == 2u64: "failed signatures are not cached";
 
     let first_slots = cache.object_methods_of(fixture.trait_i32).unwrap();
     let second_slots = cache.object_methods_of(fixture.trait_u64).unwrap();
@@ -379,25 +363,6 @@ fn check_query_cache(context: ResolutionContext&, fixture: FixtureTypes&, observ
     assert first_slots[1u64] != second_slots[1u64]: "the second slot is substituted separately";
     assert count_key(&observer.object_keys, fixture.trait_i32) == 1u64: "trait slots are collected once";
     assert count_key(&observer.object_keys, fixture.trait_u64) == 1u64: "each trait instance is collected separately";
-
-    let first_slot_failure = cache.object_methods_of(context.primitives.integer);
-    match &first_slot_failure {
-        Err(error) => {
-            assert error.kind == AnalysisErrorKind.Internal: "a non-trait object fails internally";
-            assert error.diagnostic.message.as_str() == "trait object has invalid trait identity":
-            "a non-trait object keeps its message";
-        },
-        Ok(_) => @panic("a primitive type produced trait slots"),
-    }
-    match first_slot_failure { Err(error) => error.drop(), Ok(_) => {}, }
-    let second_slot_failure = cache.object_methods_of(context.primitives.integer);
-    match &second_slot_failure {
-        Err(error) => assert error.diagnostic.message.as_str() == "trait object has invalid trait identity":
-        "a repeated failed trait query keeps its message",
-        Ok(_) => @panic("a primitive type produced trait slots twice"),
-    }
-    match second_slot_failure { Err(error) => error.drop(), Ok(_) => {}, }
-    assert count_key(&observer.object_keys, context.primitives.integer) == 2u64: "failed trait queries are not cached";
 }
 
 fn check_fresh_cache(context: ResolutionContext&, fixture: FixtureTypes&, location: SourceSpan) {
@@ -418,7 +383,7 @@ fn check_fresh_cache(context: ResolutionContext&, fixture: FixtureTypes&, locati
 fn check_hir_integration(session: AnalysisSession&, output: AnalysisOutput&) {
     let first_observer = MissCounter.new();
     defer first_observer.drop();
-    let first_context = match ResolutionContext.new(session) {
+    let first_context = match ResolutionContext.new(session, Option<TypeSizeProvider&>.None, Option<DiagnosticReporter&>.None) {
         Ok(value) => value,
         Err(error) => { error.drop(); @panic("could not rebuild the verification context"); },
     };
@@ -440,20 +405,30 @@ fn check_hir_integration(session: AnalysisSession&, output: AnalysisOutput&) {
     assert second_observer.signature_misses == first_observer.signature_misses:
     "a second verification repeats the same signatures";
 
-    // The same Break node is reachable inside a loop and again outside it.
-    let location = SourceSpan(SourceId(0u64), Span(Position(0u64, 0u64), Position(0u64, 0u64)));
-    let break_id = session.hir.add(HirNode(location, first_context.primitives.never, false,
+    let final_observer = MissCounter.new();
+    defer final_observer.drop();
+    verify_hir_observed(&first_context, output,
+        Option<HirVerificationObserver&>.Some(&final_observer)).unwrap();
+    assert final_observer.value_misses == first_observer.value_misses:
+    "a repeated verification repeats the same distinct roots";
+}
+
+// The same Break node is reachable inside a loop and again outside it, so the
+// exported root must be rejected by the context that lacks an enclosing loop.
+fn shared_break_output(session: AnalysisSession&, context: ResolutionContext&, output: AnalysisOutput&) -> AnalysisOutput {
+    let location = SourceSpan(UnitId(0u64), Span(Position(0u64, 0u64), Position(0u64, 0u64)));
+    let break_id = session.hir.add(HirNode(location, TypeId(NEVER_TYPE_ID), false,
         HirKind.Break(Option<HirId>.None)));
     let body_statements = Vec<HirId>.new();
     body_statements.push(break_id);
-    let loop_body = session.hir.add(HirNode(location, first_context.primitives.void, false,
+    let loop_body = session.hir.add(HirNode(location, TypeId(VOID_TYPE_ID), false,
         HirKind.Block(Block(body_statements))));
-    let loop_id = session.hir.add(HirNode(location, first_context.primitives.void, false,
+    let loop_id = session.hir.add(HirNode(location, TypeId(VOID_TYPE_ID), false,
         HirKind.Loop(loop_body)));
     let root_statements = Vec<HirId>.new();
     root_statements.push(loop_id);
     root_statements.push(break_id);
-    let shared_root = session.hir.add(HirNode(location, first_context.primitives.void, false,
+    let shared_root = session.hir.add(HirNode(location, TypeId(VOID_TYPE_ID), false,
         HirKind.Block(Block(root_statements))));
 
     let entry_type = match &output.entry {
@@ -469,39 +444,16 @@ fn check_hir_integration(session: AnalysisSession&, output: AnalysisOutput&) {
         }
         entry_index += 1u64;
     }
-    assert located: "the entry procedure is exported";
+    if !located { @panic("the entry procedure is not exported"); }
 
     let modified = AnalysisOutput.new();
-    defer modified.drop();
     for checked_definition in output.checked {
         modified.checked.push(*checked_definition);
     }
     modified.procedures.push(AnalyzedProcedure(output.procedures[entry_index].definition,
         output.procedures[entry_index].type_id, Vec<SymbolId>.new(), shared_root,
         output.procedures[entry_index].unit, Vec<(NameId, SymbolId)>.new()));
-
-    let context_observer = MissCounter.new();
-    defer context_observer.drop();
-    let result = verify_hir_observed(&first_context, &modified,
-        Option<HirVerificationObserver&>.Some(&context_observer));
-    match &result {
-        Err(error) => {
-            assert error.kind == AnalysisErrorKind.Internal: "a break outside a loop is an internal verification failure";
-            assert error.diagnostic.message.as_str() == "exported break has no enclosing loop":
-            "the shared break is rejected by its second context";
-            assert same_location(error, location): "the shared break failure keeps its location";
-        },
-        Ok(_) => @panic("a break outside every loop was accepted"),
-    }
-    match result { Err(error) => error.drop(), Ok(_) => {}, }
-    assert context_observer.value_misses >= 1u64: "the contextual verification still uses the cache";
-
-    let final_observer = MissCounter.new();
-    defer final_observer.drop();
-    verify_hir_observed(&first_context, output,
-        Option<HirVerificationObserver&>.Some(&final_observer)).unwrap();
-    assert final_observer.value_misses == first_observer.value_misses:
-    "a failed contextual verification leaves no cached state";
+    modified
 }
 
 fn prepare(source: str, path: str) -> MiddleEndDriver {
@@ -510,25 +462,22 @@ fn prepare(source: str, path: str) -> MiddleEndDriver {
     defer release_documents(&documents);
     let trace = CompilerTrace.disabled();
     defer trace.drop();
-    let frontend = match FrontendDriver.prepare_documents(&documents, trust(), Option<PackageMap>.None, false, &trace) {
+    let frontend = match FrontendDriver.from_documents(&documents, trust(), Option<PackageMap>.None, false, &trace) {
         Ok(value) => value,
         Err(error) => { error.drop(); @panic("probe preparation failed"); },
     };
     defer frontend.drop();
+    match frontend.run() { Ok(_) => {}, Err(error) => { error.drop(); @panic("probe preparation failed"); }, }
     MiddleEndDriver.new(frontend.take_session(), false)
 }
 
 fn analyze(driver: MiddleEndDriver&) -> AnalysisOutput {
-    let report = match driver.run(AnalysisOptions.new()) {
-        Ok(value) => value,
+    let reporter = IgnoreDiagnostics();
+    match driver.run(AnalysisOptions.new(), &reporter) {
+        Ok(Some(value)) => value,
+        Ok(None) => @panic("probe analysis produced no output"),
         Err(error) => { error.drop(); @panic("probe analysis failed"); },
-    };
-    let output = match report.output.take() {
-        Some(value) => value,
-        None => { report.drop(); @panic("probe analysis produced no output"); },
-    };
-    report.drop();
-    output
+    }
 }
 
 fn check_trait_integration() {
@@ -538,7 +487,7 @@ fn check_trait_integration() {
     let output = analyze(&driver);
     defer output.drop();
     let session = driver.analysis_session();
-    let context = match ResolutionContext.new(session) {
+    let context = match ResolutionContext.new(session, Option<TypeSizeProvider&>.None, Option<DiagnosticReporter&>.None) {
         Ok(value) => value,
         Err(error) => { error.drop(); @panic("trait probe context failed"); },
     };
@@ -557,8 +506,112 @@ fn check_trait_integration() {
     assert !has_duplicate(&observer.value_keys): "one cache validates each type root once";
 }
 
+fn probe_source() -> str {
+    "fn left(value: i32) { let first: i32 = value; }\nfn right(value: i32) { let second: i32 = value; }\nfn main() {\n    let value: i32 = 1;\n    left(value);\n    right(value);\n    match value { 0 => {}, _ => {} }\n}\n"
+}
+
+// The negative cache queries violate type identities; the child process isolates the panic.
+fn non_callable_signature() {
+    let driver = prepare(probe_source(), "/tmp/hir-verification-probe.an");
+    defer driver.drop();
+    let output = analyze(&driver);
+    defer output.drop();
+    let context = match ResolutionContext.new(driver.analysis_session(), Option<TypeSizeProvider&>.None, Option<DiagnosticReporter&>.None) {
+        Ok(value) => value,
+        Err(error) => { error.drop(); @panic("probe context failed"); },
+    };
+    defer context.drop();
+    let cache = HirVerificationCache.new(&context, Option<HirVerificationObserver&>.None);
+    defer cache.drop();
+    match cache.signature_of(TypeId(I32_TYPE_ID)) {
+        Ok(_) => @panic("a primitive type produced a callable signature"),
+        Err(error) => { error.drop(); @panic("a primitive signature returned a value error"); },
+    }
+}
+
+fn non_trait_object() {
+    let driver = prepare(probe_source(), "/tmp/hir-verification-probe.an");
+    defer driver.drop();
+    let output = analyze(&driver);
+    defer output.drop();
+    let context = match ResolutionContext.new(driver.analysis_session(), Option<TypeSizeProvider&>.None, Option<DiagnosticReporter&>.None) {
+        Ok(value) => value,
+        Err(error) => { error.drop(); @panic("probe context failed"); },
+    };
+    defer context.drop();
+    let cache = HirVerificationCache.new(&context, Option<HirVerificationObserver&>.None);
+    defer cache.drop();
+    match cache.object_methods_of(TypeId(I32_TYPE_ID)) {
+        Ok(_) => @panic("a primitive type produced trait slots"),
+        Err(error) => { error.drop(); @panic("a primitive trait query returned a value error"); },
+    }
+}
+
+fn break_outside_loop() {
+    let driver = prepare(probe_source(), "/tmp/hir-verification-probe.an");
+    defer driver.drop();
+    let output = analyze(&driver);
+    defer output.drop();
+    let session = driver.analysis_session();
+    let context = match ResolutionContext.new(session, Option<TypeSizeProvider&>.None, Option<DiagnosticReporter&>.None) {
+        Ok(value) => value,
+        Err(error) => { error.drop(); @panic("probe context failed"); },
+    };
+    defer context.drop();
+    let modified = shared_break_output(session, &context, &output);
+    defer modified.drop();
+    match verify_hir_observed(&context, &modified, Option<HirVerificationObserver&>.None) {
+        Ok(_) => @panic("a break outside every loop was accepted"),
+        Err(error) => { error.drop(); @panic("a break outside every loop returned a value error"); },
+    }
+}
+
+// Run one selectable negative branch in a child process so the invariant panic
+// stays outside this process while its raw stderr and status are asserted.
+fn assert_child_panic(flag: str, expected: str) {
+    let arguments = args();
+    let program = String.from(&arguments[0].as_str());
+    defer program.drop();
+    let command = Command.new(program.as_str());
+    defer command.drop();
+    command.arg(flag);
+    let output = match command.output() {
+        Ok(value) => value,
+        Err(error) => { error.drop(); @panic("could not start the isolation child"); },
+    };
+    defer output.drop();
+    match output.status {
+        ExitStatus.Exited(code) => assert code == 1i32: "an internal invariant exits with status 1",
+        ExitStatus.Signaled(_) => @panic("an internal invariant was reported as a signal"),
+    };
+    let text = match str.from_slice(output.stderr.as_slice()) {
+        Some(value) => value,
+        None => @panic("isolation child stderr is not UTF-8"),
+    };
+    assert text.contains("yian: panic: "): "an internal invariant reports the panic prefix";
+    assert text.contains(expected): "an internal invariant reports its reason";
+    for argument in arguments { argument.drop(); }
+    arguments.drop();
+}
+
 fn main() {
-    let source = "fn left(value: i32) { let first: i32 = value; }\nfn right(value: i32) { let second: i32 = value; }\nfn main() {\n    let value: i32 = 1;\n    left(value);\n    right(value);\n    match value { 0 => {}, _ => {} }\n}\n";
+    let arguments = args();
+    if arguments.len() > 1u64 && arguments[1].as_str() == "--non-callable-signature" {
+        non_callable_signature();
+        return;
+    }
+    if arguments.len() > 1u64 && arguments[1].as_str() == "--non-trait-object" {
+        non_trait_object();
+        return;
+    }
+    if arguments.len() > 1u64 && arguments[1].as_str() == "--break-outside-loop" {
+        break_outside_loop();
+        return;
+    }
+    for argument in arguments { argument.drop(); }
+    arguments.drop();
+
+    let source = probe_source();
     let driver = prepare(source, "/tmp/hir-verification-probe.an");
     defer driver.drop();
     let output = analyze(&driver);
@@ -568,13 +621,13 @@ fn main() {
     check_hir_integration(session, &output);
     check_trait_integration();
 
-    let context = match ResolutionContext.new(session) {
+    let context = match ResolutionContext.new(session, Option<TypeSizeProvider&>.None, Option<DiagnosticReporter&>.None) {
         Ok(value) => value,
         Err(error) => { error.drop(); @panic("probe context failed"); },
     };
     defer context.drop();
-    let location = SourceSpan(SourceId(0u64), Span(Position(1u64, 4u64), Position(1u64, 9u64)));
-    let second_location = SourceSpan(SourceId(0u64), Span(Position(2u64, 4u64), Position(2u64, 9u64)));
+    let location = SourceSpan(UnitId(0u64), Span(Position(1u64, 4u64), Position(1u64, 9u64)));
+    let second_location = SourceSpan(UnitId(0u64), Span(Position(2u64, 4u64), Position(2u64, 9u64)));
     let fixture = build_types(session, &context, location);
 
     let value_observer = MissCounter.new();
@@ -586,4 +639,8 @@ fn main() {
     check_query_cache(&context, &fixture, &query_observer);
 
     check_fresh_cache(&context, &fixture, location);
+
+    assert_child_panic("--non-callable-signature", "callable instance is not nominal");
+    assert_child_panic("--non-trait-object", "trait object has invalid trait identity");
+    assert_child_panic("--break-outside-loop", "exported break has no enclosing loop");
 }

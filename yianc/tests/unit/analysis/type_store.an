@@ -2,7 +2,7 @@ from yianc.analysis.names import NameInterner;
 from yianc.analysis.ty.model import DefinitionHeader, NominalKind, TypeData;
 from yianc.analysis.ty.c_scalar import CScalarKind;
 from yianc.analysis.ty.store import TypeStore;
-from yianc.common.ids import SourceId, UnitId, TypeId;
+from yianc.common.ids import UnitId, TypeId;
 from yianc.common.location import SourceSpan;
 from yianc.frontend.source import Position, Span;
 from std.core.ops import Index;
@@ -18,7 +18,7 @@ fn main() {
     let another_generic = types.generic(generic_name);
     assert generic != another_generic: "generic binders have distinct declaration identities";
 
-    let span = SourceSpan(SourceId(0u64), Span(Position(0u64, 0u64), Position(0u64, 0u64)));
+    let span = SourceSpan(UnitId(0u64), Span(Position(0u64, 0u64), Position(0u64, 0u64)));
     let box_name = names.intern("Box");
     let first_generics = Vec<TypeId>.new();
     first_generics.push(generic);

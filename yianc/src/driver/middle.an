@@ -1,5 +1,5 @@
 from yianc.analysis.session.session import AnalysisSession;
-from yianc.analysis.session.output import AnalysisOptions, AnalysisOutput, AnalysisReport;
+from yianc.analysis.session.output import AnalysisOptions, AnalysisOutput;
 from yianc.analysis.resolution.context import ResolutionContext;
 from yianc.analysis.resolution.declarations import collect_declarations;
 from yianc.analysis.resolution.imports import resolve_imports;
@@ -17,19 +17,17 @@ from yianc.analysis.passes.coverage import check_coverage;
 from yianc.analysis.passes.verify_hir import verify_hir;
 from yianc.analysis.passes.address_storage import normalize_address_storage;
 from yianc.analysis.passes.finalize_hir_types import finalize_hir_types;
-from yianc.diagnostics.model import AnalysisError, AnalysisErrorKind, AnalysisStage;
-from yianc.diagnostics.order import order_diagnostics;
-from yianc.driver.dump import hir_dump;
+from yianc.diagnostics.model import AnalysisError, AnalysisErrorKind, AnalysisStage, DiagnosticReporter, UserDiagnostic;
 from yianc.driver.profile import ProfileKind;
-from yianc.driver.report import report, report_diagnostics;
+from yianc.diagnostics.render import render;
+from yianc.driver.report import report;
+from yianc.frontend.source import SourceTable;
 from yianc.frontend.session import FrontendSession;
-from yianc.frontend.source import SourceManager;
 from std.core.iter import Iterator, IntoIterator;
 
 // The middle-end driver owns the semantic session and the exported analysis output.
 pub struct MiddleEndDriver {
     session: Option<AnalysisSession>,
-    output: Option<AnalysisOutput>,
 }
 
 fn start_stage(options: AnalysisOptions&, pass_id: str, stage: AnalysisStage) {
@@ -52,9 +50,25 @@ fn at_stage(result: Result<(), AnalysisError>, pass_id: str, stage: AnalysisStag
     match result { Ok(_) => Result<(), AnalysisError>.Ok(()), Err(problem) => Result<(), AnalysisError>.Err(problem.with_stage(stage)) }
 }
 
+struct CliReporter {
+    sources: SourceTable&,
+    immediate: bool,
+    pending: String,
+}
+
+impl DiagnosticReporter for CliReporter {
+    pub fn report(diagnostic: UserDiagnostic&) {
+        if self.immediate { report(diagnostic, self.sources); return; }
+        let text = render(diagnostic, self.sources);
+        defer text.drop();
+        self.pending.push_str(text.as_str());
+        self.pending.push('\n');
+    }
+}
+
 impl MiddleEndDriver {
     static pub fn new(frontend: FrontendSession, raw_pointers: bool) -> Self {
-        Self(Option<AnalysisSession>.Some(AnalysisSession.new(frontend, raw_pointers)), Option<AnalysisOutput>.None)
+        Self(Option<AnalysisSession>.Some(AnalysisSession.new(frontend, raw_pointers)))
     }
 
     pub fn analysis_session() -> AnalysisSession& {
@@ -71,31 +85,28 @@ impl MiddleEndDriver {
         }
     }
 
-    pub fn output() -> AnalysisOutput& {
-        match &self.output {
-            Some(value) => value,
-            None => @panic("E599: analysis output is not available"),
+    pub fn run_cli(options: AnalysisOptions, sources: SourceTable&) -> Result<Option<AnalysisOutput>, AnalysisError> {
+        let reporter = CliReporter(sources, options.recover, String.new());
+        defer reporter.pending.drop();
+        let result = self.run(options, &reporter);
+        match &result {
+            Ok(Some(_)) => if !reporter.immediate { @eprint(reporter.pending.as_str()); },
+            _ => {},
         }
-    }
-
-    pub fn take_output() -> AnalysisOutput {
-        match self.output.take() {
-            Some(value) => value,
-            None => @panic("E599: analysis output is not available"),
-        }
+        result
     }
 
     // The pass sequence is the middle-end contract; callers choose recover/strict via options.
-    pub fn run(options: AnalysisOptions) -> Result<AnalysisReport, AnalysisError> {
+    pub fn run(options: AnalysisOptions, reporter: DiagnosticReporter&) -> Result<Option<AnalysisOutput>, AnalysisError> {
         let session = self.analysis_session();
-        session.begin_analysis()?;
+        session.begin_analysis();
         let completed = false;
         defer { session.complete_analysis(completed); };
 
         start_stage(&options, "analysis.restricted", AnalysisStage.Restricted);
         at_stage(check_restricted(session), "analysis.restricted", AnalysisStage.Restricted, &options)?;
         start_stage(&options, "analysis.context", AnalysisStage.Resolve);
-        let context_result = ResolutionContext.new(session, options.sizes);
+        let context_result = ResolutionContext.new(session, options.sizes, Option<DiagnosticReporter&>.Some(reporter));
         match &context_result {
             Ok(_) => finish_stage(&options, "analysis.context", true),
             Err(_) => finish_stage(&options, "analysis.context", false),
@@ -120,20 +131,15 @@ impl MiddleEndDriver {
         at_stage(check_impls(&context), "analysis.check_impls", AnalysisStage.Resolve, &options)?;
         start_stage(&options, "analysis.validate_declarations", AnalysisStage.Resolve);
         at_stage(validate_declarations(&context), "analysis.validate_declarations", AnalysisStage.Resolve, &options)?;
-        let report_value = AnalysisReport.new();
-        for warning in context.warnings { report_value.diagnostics.push(*warning); }
-        context.warnings.clear();
-        let report_transferred = false;
-        defer { if !report_transferred { report_value.drop(); } };
         start_stage(&options, "analysis.check_procedures", AnalysisStage.TypeCheck);
-        let checked = check_procedures(&context, &options, &report_value.diagnostics);
+        let checked = check_procedures(&context, &options);
         match &checked {
             Ok(_) => finish_stage(&options, "analysis.check_procedures", true),
             Err(_) => finish_stage(&options, "analysis.check_procedures", false),
         }
         let output = match checked {
             Ok(value) => value,
-            Err(problem) => return Result<AnalysisReport, AnalysisError>.Err(problem.with_stage(AnalysisStage.TypeCheck)),
+            Err(problem) => return Result<Option<AnalysisOutput>, AnalysisError>.Err(problem.with_stage(AnalysisStage.TypeCheck)),
         };
         let accepted_output = false;
         defer {
@@ -149,10 +155,10 @@ impl MiddleEndDriver {
         }
         match normalized {
             Ok(_) => {},
-            Err(problem) => return Result<AnalysisReport, AnalysisError>.Err(problem.with_stage(AnalysisStage.TypeCheck)),
+            Err(problem) => return Result<Option<AnalysisOutput>, AnalysisError>.Err(problem.with_stage(AnalysisStage.TypeCheck)),
         }
         // Successful output is concretely typed regardless of the optional HIR verifier.
-        if report_value.ok() {
+        if !context.has_errors() {
             start_stage(&options, "analysis.finalize_hir_types", AnalysisStage.TypeCheck);
             let finalized = finalize_hir_types(&context, &output);
             match &finalized {
@@ -161,20 +167,18 @@ impl MiddleEndDriver {
             }
             match finalized {
                 Ok(_) => {},
-                Err(problem) => return Result<AnalysisReport, AnalysisError>.Err(problem.with_stage(AnalysisStage.TypeCheck)),
+                Err(problem) => return Result<Option<AnalysisOutput>, AnalysisError>.Err(problem.with_stage(AnalysisStage.TypeCheck)),
             }
         }
         // A callee failure leaves a partial call graph. It is never exported to the backend.
-        if report_value.ok() && options.verify_hir {
+        if !context.has_errors() && options.verify_hir {
             start_stage(&options, "analysis.verify_hir", AnalysisStage.TypeCheck);
             at_stage(verify_hir(&context, &output), "analysis.verify_hir", AnalysisStage.TypeCheck, &options)?;
         } else {
             match options.trace { Some(trace) => trace.skip("analysis.verify_hir", "disabled or earlier diagnostics prevent HIR verification"), None => {}, }
         }
         start_stage(&options, "analysis.check_coverage", AnalysisStage.Coverage);
-        at_stage(check_coverage(&context, &output, options.recover, &report_value.diagnostics), "analysis.check_coverage", AnalysisStage.Coverage, &options)?;
-        for warning in output.warnings { report_value.diagnostics.push(*warning); }
-        output.warnings.clear();
+        at_stage(check_coverage(&context, &output, options.recover), "analysis.check_coverage", AnalysisStage.Coverage, &options)?;
 
         for procedure in output.procedures {
             start_stage(&options, "analysis.check_assignment", AnalysisStage.Assignment);
@@ -186,105 +190,27 @@ impl MiddleEndDriver {
             match checked_assignment {
                 Ok(_) => {},
                 Err(problem) => {
-                    if !options.recover || problem.kind == AnalysisErrorKind.Internal {
-                        return Result<AnalysisReport, AnalysisError>.Err(problem.with_stage(AnalysisStage.Assignment));
+                    if !options.recover || problem.kind != AnalysisErrorKind.User {
+                        return Result<Option<AnalysisOutput>, AnalysisError>.Err(problem.with_stage(AnalysisStage.Assignment));
                     }
-                    report_value.diagnostics.push(problem.diagnostic);
+                    context.report_error(&problem);
+                    problem.drop();
                 },
             }
         }
 
-        order_diagnostics(&report_value.diagnostics, session.source_manager());
-        completed = report_value.ok();
+        completed = !context.has_errors();
         if completed {
             accepted_output = true;
-            report_value.output = Option<AnalysisOutput>.Some(output);
+            return Result<Option<AnalysisOutput>, AnalysisError>.Ok(Option<AnalysisOutput>.Some(output));
         }
-        report_transferred = true;
-        Result<AnalysisReport, AnalysisError>.Ok(report_value)
+        Result<Option<AnalysisOutput>, AnalysisError>.Ok(Option<AnalysisOutput>.None)
     }
 
-    pub fn analyze(options: AnalysisOptions, dump: bool) -> bool {
-        options.recover = false;
-        match self.run(options) {
-            Ok(report_value) => {
-                if !report_value.ok() {
-                    report_diagnostics(&report_value.diagnostics, Option<SourceManager&>.Some(self.analysis_session().source_manager()));
-                    report_value.drop();
-                    return false;
-                }
-                let output = match report_value.output.take() {
-                    Some(value) => value,
-                    None => {
-                        report_value.drop();
-                        return false;
-                    },
-                };
-                for warning in output.warnings {
-                    report(warning, Option<SourceManager&>.Some(self.analysis_session().source_manager()));
-                }
-                if dump {
-                    match hir_dump(self.analysis_session(), &output) {
-                        Ok(_) => {},
-                        Err(problem) => {
-                            report(&problem.diagnostic, Option<SourceManager&>.Some(self.analysis_session().source_manager()));
-                            problem.drop();
-                            output.drop();
-                            report_value.drop();
-                            return false;
-                        },
-                    }
-                }
-                self.output = Option<AnalysisOutput>.Some(output);
-                report_value.drop();
-                true
-            },
-            Err(problem) => {
-                report(&problem.diagnostic, Option<SourceManager&>.Some(self.analysis_session().source_manager()));
-                problem.drop();
-                false
-            },
-        }
-    }
-
-    pub fn check(options: AnalysisOptions, dump: bool) -> bool {
-        options.recover = true;
-        match self.run(options) {
-            Ok(report_value) => {
-                let ok = report_value.ok();
-                let emitted = report_diagnostics(&report_value.diagnostics, Option<SourceManager&>.Some(self.analysis_session().source_manager()));
-                if ok && dump {
-                    match &report_value.output {
-                        Some(output) => match hir_dump(self.analysis_session(), output) {
-                            Ok(_) => {},
-                            Err(problem) => {
-                                report(&problem.diagnostic, Option<SourceManager&>.Some(self.analysis_session().source_manager()));
-                                problem.drop();
-                                report_value.drop();
-                                return false;
-                            },
-                        },
-                        None => {},
-                    }
-                }
-                report_value.drop();
-                ok && emitted
-            },
-            Err(problem) => {
-                report(&problem.diagnostic, Option<SourceManager&>.Some(self.analysis_session().source_manager()));
-                problem.drop();
-                false
-            },
-        }
-    }
 }
 
 impl Drop for MiddleEndDriver {
     pub fn drop() {
-        match &self.output {
-            Some(value) => value.drop(),
-            None => {},
-        }
         match self.session.take() {
             Some(value) => value.drop(),
             None => {},

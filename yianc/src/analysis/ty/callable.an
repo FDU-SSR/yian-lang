@@ -53,7 +53,7 @@ pub fn store_substitutions(store: TypeStore&, type_id: TypeId) -> Result<HashMap
                 index += 1;
             }
         },
-        _ => return Result<HashMap<TypeId, TypeId>, AnalysisError>.Err(AnalysisError.internal("callable instance is not nominal")),
+        _ => @panic("callable instance is not nominal"),
     }
 
     accepted = true;
@@ -70,12 +70,12 @@ pub fn store_signature(store: TypeStore&, type_id: TypeId) -> Result<CallableSig
     defer substitutions.drop();
     let id = match store.require(type_id)? {
         Nominal(id, _) => *id,
-        _ => return Result<CallableSignature, AnalysisError>.Err(AnalysisError.internal("invalid callable identity")),
+        _ => @panic("invalid callable identity"),
     };
     let body = match store.complete_definition(id)? {
         Function(value) => value,
         Method(value) => value,
-        _ => return Result<CallableSignature, AnalysisError>.Err(AnalysisError.internal("definition is not callable")),
+        _ => @panic("definition is not callable"),
     };
     let parameters = Vec<Parameter>.new();
     let accepted = false;
@@ -104,7 +104,7 @@ pub fn schedule(ctx: ResolutionContext&, type_id: TypeId) -> Result<(), Analysis
     if ctx.session.definitions.get(type_id).is_none() {
         let definition = match ctx.session.types.require(type_id)? {
             Nominal(id, _) => *id,
-            _ => return Result<(), AnalysisError>.Err(AnalysisError.internal("invalid scheduled type")),
+            _ => @panic("invalid scheduled type"),
         };
         let header = *ctx.session.types.definition(definition).unwrap();
         let arguments = Vec<TypeId>.new();
@@ -119,7 +119,7 @@ pub fn schedule(ctx: ResolutionContext&, type_id: TypeId) -> Result<(), Analysis
         let template_id = ctx.session.types.instance(definition, &arguments)?;
         let template = match ctx.session.definitions.get(template_id) {
             Some(value) => value,
-            None => return Result<(), AnalysisError>.Err(AnalysisError.internal("callable template has no body")),
+            None => @panic("callable template has no body"),
         };
         ctx.session.definitions.register(Procedure(definition, type_id, template.unit, template.body, template.kind))?;
     }

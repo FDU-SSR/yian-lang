@@ -264,7 +264,7 @@ impl ExprChecker {
                 self.ctx.session.types.c_pointer(types[0])
             },
             Append | Write | Print | Println | Eprint | Eprintln => {
-                return Result<HirId, AnalysisError>.Err(AnalysisError.internal("formatting builtins lower through lower_format"));
+                @panic("formatting builtins lower through lower_format");
             },
         };
         accepted = true;
@@ -287,7 +287,7 @@ impl ExprChecker {
             Println => FormatDestination.Stdout(newline=true),
             Eprint => FormatDestination.Stderr(newline=false),
             Eprintln => FormatDestination.Stderr(newline=true),
-            _ => return Result<HirId, AnalysisError>.Err(AnalysisError.internal("not a formatting builtin")),
+            _ => @panic("not a formatting builtin"),
         };
         let template = if print_entry { args[0] } else { args[1] };
 

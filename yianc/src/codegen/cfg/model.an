@@ -345,21 +345,21 @@ impl CfgFunction {
     pub fn block(id: BlockId) -> Result<BasicBlock&, CodegenError> {
         match self.blocks.get(id.index) {
             Some(value) => Result<BasicBlock&, CodegenError>.Ok(value),
-            None => Result<BasicBlock&, CodegenError>.Err(CodegenError.invalid("invalid CFG block ID")),
+            None => @panic("invalid CFG block ID"),
         }
     }
 
     pub fn value(id: ValueId) -> Result<Value&, CodegenError> {
         match self.values.get(id.index) {
             Some(value) => Result<Value&, CodegenError>.Ok(value),
-            None => Result<Value&, CodegenError>.Err(CodegenError.invalid("invalid CFG value ID")),
+            None => @panic("invalid CFG value ID"),
         }
     }
 
     pub fn local(id: LocalId) -> Result<Local&, CodegenError> {
         match self.locals.get(id.index) {
             Some(value) => Result<Local&, CodegenError>.Ok(value),
-            None => Result<Local&, CodegenError>.Err(CodegenError.invalid("invalid CFG local ID")),
+            None => @panic("invalid CFG local ID"),
         }
     }
 
@@ -387,7 +387,7 @@ impl CfgFunction {
     pub fn scope(id: ScopeId) -> Result<InlineScope&, CodegenError> {
         match self.scopes.as_slice().get(id.index) {
             Some(value) => Result<InlineScope&, CodegenError>.Ok(value),
-            None => Result<InlineScope&, CodegenError>.Err(CodegenError.invalid("invalid CFG scope ID")),
+            None => @panic("invalid CFG scope ID"),
         }
     }
 
@@ -406,7 +406,7 @@ impl CfgFunction {
         self.scope(scope)?;
         match self.locals.get(id.index) {
             Some(value) => { value.scope = scope; Result<(), CodegenError>.Ok(()) },
-            None => Result<(), CodegenError>.Err(CodegenError.invalid("invalid CFG local ID")),
+            None => @panic("invalid CFG local ID"),
         }
     }
 
@@ -414,7 +414,7 @@ impl CfgFunction {
         match parent { Some(value) => { self.scope(value)?; }, None => {}, }
         match self.scopes.as_slice().get(id.index) {
             Some(value) => { value.parent = parent; Result<(), CodegenError>.Ok(()) },
-            None => Result<(), CodegenError>.Err(CodegenError.invalid("invalid CFG scope ID")),
+            None => @panic("invalid CFG scope ID"),
         }
     }
 
@@ -441,7 +441,7 @@ impl CfgFunction {
         };
         if target.terminator.is_some() {
             operation.drop();
-            return Result<Option<ValueId>, CodegenError>.Err(CodegenError.invalid("instruction follows CFG terminator"));
+            @panic("instruction follows CFG terminator");
         }
 
         let result = match type_id {
@@ -457,7 +457,7 @@ impl CfgFunction {
     pub fn terminate(block: BlockId, terminator: Terminator) -> Result<(), CodegenError> {
         let target = self.block(block)?;
         if target.terminator.is_some() {
-            return Result<(), CodegenError>.Err(CodegenError.invalid("CFG block has multiple terminators"));
+            @panic("CFG block has multiple terminators");
         }
 
         target.terminator = Option<Terminator>.Some(terminator);
@@ -510,7 +510,7 @@ impl CfgModule {
     pub fn add(function: CfgFunction) -> Result<FunctionId, CodegenError> {
         if self.index.contains(&function.callable) {
             function.drop();
-            return Result<FunctionId, CodegenError>.Err(CodegenError.invalid("duplicate CFG procedure"));
+            @panic("duplicate CFG procedure");
         }
 
         let id = FunctionId(self.functions.len());

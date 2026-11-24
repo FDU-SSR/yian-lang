@@ -89,7 +89,7 @@ impl FunctionLowering {
                     self.builder.icmp(IntCompare.Eq, self.pointer_offset_bytes(value), self.integer(0u64), ""), "");
             },
             Slice(_) | Str | Reference(_) => {},
-            _ => return Result<IrValue, CodegenError>.Err(CodegenError.invalid("deallocation has no language pointer")),
+            _ => @panic("deallocation has no language pointer"),
         };
         self.checked(valid, "S006")?;
         Result<IrValue, CodegenError>.Ok(self.builder.cast(CastOp.Inttoptr,

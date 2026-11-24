@@ -112,7 +112,7 @@ impl ExprChecker {
         defer subject.drop();
         let definition = match *self.ctx.session.types.get(type_id).unwrap() {
             Nominal(id, _) => *id,
-            _ => return AnalysisError.internal("arity requires a callable identity"),
+            _ => @panic("arity requires a callable identity"),
         };
         let header = self.ctx.session.types.definition(definition).unwrap().header();
         if header.kind == NominalKind.Method {

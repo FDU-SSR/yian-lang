@@ -74,13 +74,13 @@ impl LlvmLowering {
         let signature = self.types.function_type(type_id)?;
         let record = match self.session.types.require(type_id)? {
             Nominal(definition, _) => *self.session.types.definition(*definition).unwrap(),
-            _ => return Result<Function, CodegenError>.Err(CodegenError.invalid("LLVM declaration is not a nominal callable")),
+            _ => @panic("LLVM declaration is not a nominal callable"),
         };
         let external = false;
         let header = false;
         match record.body()? {
             Function(value) | Method(value) => { external = value.is_extern; header = value.is_header; },
-            _ => return Result<Function, CodegenError>.Err(CodegenError.invalid("LLVM declaration is not a function")),
+            _ => @panic("LLVM declaration is not a function"),
         }
         let name = String.new();
         defer name.drop();
@@ -132,7 +132,7 @@ impl LlvmLowering {
             }
         }
         if !valid {
-            return Result<(), CodegenError>.Err(CodegenError.invalid("external symbol has inconsistent signatures"));
+            @panic("external symbol has inconsistent signatures");
         }
         Result<(), CodegenError>.Ok(())
     }
@@ -257,7 +257,7 @@ impl FunctionLowering {
         match &cfg.fat_plan {
             Some(plan) => {
                 if plan.scopes.len() != cfg.scopes.len() {
-                    return Result<Self, CodegenError>.Err(CodegenError.invalid("fat plan scope count is inconsistent"));
+                    @panic("fat plan scope count is inconsistent");
                 }
                 for index in 0u64..plan.scopes.len() { locked[index] = plan.scopes[index].needs_lock; }
             },
@@ -350,12 +350,12 @@ impl FunctionLowering {
 
     fn require_guard(kind: GuardKind, site: GuardSite) -> Result<(), CodegenError> {
         if self.take_guard(kind, site) { return Result<(), CodegenError>.Ok(()); }
-        Result<(), CodegenError>.Err(CodegenError.invalid("LLVM template is missing a CFG operation guard"))
+        @panic("LLVM template is missing a CFG operation guard")
     }
 
     fn finish_guards() -> Result<(), CodegenError> {
         if self.guard_position != self.guards.len() {
-            return Result<(), CodegenError>.Err(CodegenError.invalid("LLVM template did not consume every CFG operation guard"));
+            @panic("LLVM template did not consume every CFG operation guard");
         }
         self.guards.clear();
         Result<(), CodegenError>.Ok(())
@@ -364,7 +364,7 @@ impl FunctionLowering {
     fn get(id: ValueId) -> Result<IrValue, CodegenError> {
         match self.values[id.index] {
             Some(value) => Result<IrValue, CodegenError>.Ok(value),
-            None => Result<IrValue, CodegenError>.Err(CodegenError.invalid("LLVM operand has no generated value")),
+            None => @panic("LLVM operand has no generated value"),
         }
     }
 
@@ -514,7 +514,7 @@ impl FunctionLowering {
                     TraitObject(source, methods) => self.trait_object(type_id, *source, methods)?,
                     DynamicCall(receiver, method, slot, args) => self.dynamic_call(type_id, *receiver, *method, *slot, args)?,
                     Builtin(kind, type_args, args) => self.builtin(type_id, *kind, type_args, args)?,
-                    _ => return Result<(), CodegenError>.Err(CodegenError.invalid("LLVM lowering has no CFG operation handler")),
+                    _ => @panic("LLVM lowering has no CFG operation handler"),
                 };
                 Option<IrValue>.Some(generated)
             },

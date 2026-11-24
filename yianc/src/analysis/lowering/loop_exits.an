@@ -37,7 +37,7 @@ impl ExprChecker {
                     Some(inner) => { *value = Option<HirId>.Some(self.coerce(*inner, expected)?); },
                     None => {},
                 },
-                _ => return Result<HirId, AnalysisError>.Err(AnalysisError.internal("collected loop exit is not a break")),
+                _ => @panic("collected loop exit is not a break"),
             }
         }
         Result<HirId, AnalysisError>.Ok(self.node(span, expected, false, HirKind.Loop(body)))

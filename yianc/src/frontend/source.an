@@ -1,5 +1,6 @@
 from std.core.path import PathBuf;
-from std.collections.arena import Arena;
+from std.collections.hash_map import HashMap;
+from yianc.common.ids import UnitId;
 from std.collections.sort import sort_by;
 from std.core.convert import From;
 from std.core.fs import Directory, DirEntryKind, metadata, read_to_string, canonicalize, resolve;
@@ -66,12 +67,26 @@ pub struct SourceFile {
     path: String,
     text: String,
     canonical: PathBuf,
+    disk_loaded: bool,
 }
 
 // An in-memory input owns its path and text until a preparation call copies both into its session.
 pub struct SourceDocument {
     pub path: String,
     pub text: String,
+}
+
+pub struct SourceCollectionError {
+    pub path: String,
+    pub error: IoError,
+}
+
+impl Drop for SourceCollectionError {
+    pub fn drop() { self.path.drop(); self.error.drop(); }
+}
+
+fn collection_error(path: str, error: IoError) -> SourceCollectionError {
+    SourceCollectionError(String.from(&path), error)
 }
 
 impl Drop for SourceDocument {
@@ -97,48 +112,92 @@ impl Drop for SourceFile {
     }
 }
 
-pub struct SourceManager {
-    files: Arena<SourceFile>,
+pub trait SourceMap {
+    fn file(unit: UnitId) -> SourceFile&;
 }
 
-impl SourceManager {
-    static pub fn new() -> Self { return Self(files=Arena<SourceFile>.new()); }
+pub struct SourceTable {
+    files: HashMap<UnitId, SourceFile>,
+    paths: HashMap<str, UnitId>,
+}
 
-    pub fn len() -> u64 { return self.files.len(); }
-
-    pub fn file(id: u64) -> SourceFile& {
-        match self.files.get(id) {
-            Some(file) => file,
-            None => @panic("E599: invalid source ID"),
-        }
+impl SourceTable {
+    static pub fn new() -> Self {
+        Self(HashMap<UnitId, SourceFile>.new(), HashMap<str, UnitId>.new())
     }
 
-    pub fn get(id: u64) -> Option<SourceFile&> { self.files.get(id) }
+    pub fn len() -> u64 { self.files.len() }
 
-    pub fn load(path: str) -> Result<u64, IoError> {
+    pub fn load(path: str) -> Result<UnitId, IoError> {
         let canonical = canonicalize(path)?;
+        let canonical_text = canonical.as_str();
+        match self.paths.get(&canonical_text) {
+            Some(existing) => {
+                let id = *existing;
+                if self.file(id).disk_loaded {
+                    canonical.drop();
+                    return Result<UnitId, IoError>.Ok(id);
+                }
+            },
+            None => {},
+        }
         let text = match read_source(path) {
             Ok(value) => value,
             Err(error) => {
                 canonical.drop();
-                return Result<u64, IoError>.Err(error);
+                return Result<UnitId, IoError>.Err(error);
             },
         };
-
-        let id = self.files.len();
-        self.files.alloc(SourceFile(path=String.from(&path), text=text, canonical=canonical));
-        Result<u64, IoError>.Ok(val=id)
+        self.add(SourceFile(String.from(&path), text, canonical, true))
     }
 
-    // In-memory buffers may refer to paths that do not exist on disk; resolve still canonicalizes their existing prefixes.
-    pub fn load_text(path: str, text: str) -> Result<u64, IoError> {
+    pub fn load_text(path: str, text: str) -> Result<UnitId, IoError> {
         let canonical = resolve(path)?;
-        let canonical_text = canonical.as_str();
-        let display_path = String.from(&canonical_text);
-        let owned_text = String.from(&text);
-        let id = self.files.len();
-        self.files.alloc(SourceFile(path=display_path, text=owned_text, canonical=canonical));
-        Result<u64, IoError>.Ok(val=id)
+        let display = String.from(&canonical.as_str());
+        self.add(SourceFile(display, String.from(&text), canonical, false))
+    }
+
+    fn add(file: SourceFile) -> Result<UnitId, IoError> {
+        let path = file.canonical_path();
+        match self.paths.get(&path) {
+            Some(existing) => {
+                let id = *existing;
+                let same = self.file(id).text() == file.text();
+                let disk_loaded = file.disk_loaded;
+                file.drop();
+                if same {
+                    if disk_loaded { self.file(id).disk_loaded = true; }
+                    return Result<UnitId, IoError>.Ok(id);
+                }
+                return Result<UnitId, IoError>.Err(IoError.new(IoErrorKind.InvalidInput, "conflicting source text for path"));
+            },
+            None => {},
+        }
+        let id = UnitId(self.files.len());
+        self.paths.insert(path, id);
+        self.files.insert(id, file);
+        Result<UnitId, IoError>.Ok(id)
+    }
+}
+
+impl SourceMap for SourceTable {
+    pub fn file(unit: UnitId) -> SourceFile& {
+        match self.files.get(&unit) {
+            Some(file) => file,
+            None => @panic("invalid source unit ID"),
+        }
+    }
+}
+
+impl Drop for SourceTable {
+    pub fn drop() {
+        self.paths.drop();
+        let index: u64 = 0;
+        while index < self.files.len() {
+            self.file(UnitId(index)).drop();
+            index += 1;
+        }
+        self.files.drop();
     }
 }
 
@@ -163,18 +222,6 @@ pub fn read_source(path: str) -> Result<String, IoError> {
     }
     result.push_str(str.from_slice_unchecked(bytes[begin..bytes.len()]));
     Result<String, IoError>.Ok(result)
-}
-
-impl Drop for SourceManager {
-    pub fn drop() {
-        let index: u64 = 0u64;
-
-        while index < self.files.len() {
-            (*self.files.get(index).unwrap()).drop();
-            index += 1u64;
-        }
-        self.files.drop();
-    }
 }
 
 fn less(left: str, right: str) -> bool {
@@ -227,12 +274,19 @@ fn path_less(left: String&, right: String&) -> bool {
 }
 
 // Recurse into actual directories; collect symlinks only when they target source files, never recurse into linked directories.
-fn collect_dir(path: str, paths: Vec<String>&) -> Result<(), IoError> {
-    let directory = Directory.open(path)?;
+fn collect_dir(path: str, paths: Vec<String>&) -> Result<(), SourceCollectionError> {
+    let directory = match Directory.open(path) {
+        Ok(value) => value,
+        Err(error) => return Result<(), SourceCollectionError>.Err(collection_error(path, error)),
+    };
     defer directory.drop();
 
     loop {
-        let entry = match directory.next()? {
+        let next = match directory.next() {
+            Ok(value) => value,
+            Err(error) => return Result<(), SourceCollectionError>.Err(collection_error(path, error)),
+        };
+        let entry = match next {
             Some(value) => value,
             None => {
                 break;
@@ -248,14 +302,17 @@ fn collect_dir(path: str, paths: Vec<String>&) -> Result<(), IoError> {
                 paths.push(String.from(&child));
             }
         } elif kind == DirEntryKind.Link {
-            let info = entry.metadata()?;
+            let info = match entry.metadata() {
+                Ok(value) => value,
+                Err(error) => return Result<(), SourceCollectionError>.Err(collection_error(child, error)),
+            };
             if info.is_file() && entry.name().ends_with(".an") {
                 paths.push(String.from(&child));
             }
         }
     }
 
-    Result<(), IoError>.Ok(val= ())
+    Result<(), SourceCollectionError>.Ok(val= ())
 }
 
 fn release_paths(paths: Vec<String>&) {
@@ -269,7 +326,7 @@ fn release_paths(paths: Vec<String>&) {
 }
 
 // Preserve command-line root order and sort files within each directory; release collected paths on failure.
-pub fn collect_sources(inputs: Vec<String>&) -> Result<Vec<String>, IoError> {
+pub fn collect_sources(inputs: Vec<String>&) -> Result<Vec<String>, SourceCollectionError> {
     let paths = Vec<String>.new();
     let transferred = false;
     defer {
@@ -282,7 +339,10 @@ pub fn collect_sources(inputs: Vec<String>&) -> Result<Vec<String>, IoError> {
 
     while index < inputs.len() {
         let root = inputs[index].as_str();
-        let info = metadata(root)?;
+        let info = match metadata(root) {
+            Ok(value) => value,
+            Err(error) => return Result<Vec<String>, SourceCollectionError>.Err(collection_error(root, error)),
+        };
         if info.is_dir() {
             let start = paths.len();
             collect_dir(root, &paths)?;
@@ -295,11 +355,11 @@ pub fn collect_sources(inputs: Vec<String>&) -> Result<Vec<String>, IoError> {
             let error = IoError.new(IoErrorKind.InvalidInput, "source path is not a file or directory");
             let contextual = error.with_path(root);
             error.drop();
-            return Result<Vec<String>, IoError>.Err(msg=contextual);
+            return Result<Vec<String>, SourceCollectionError>.Err(collection_error(root, contextual));
         }
         index += 1u64;
     }
 
     transferred = true;
-    Result<Vec<String>, IoError>.Ok(val=paths)
+    Result<Vec<String>, SourceCollectionError>.Ok(val=paths)
 }

@@ -38,7 +38,7 @@ pub fn register_automatic(ctx: ResolutionContext&) -> Result<(), AnalysisError> 
 
     let trait_definition = match equality {
         Some(type_id) => match ctx.session.types.require(type_id)? {
-            Nominal(id, _) => *id, _ => return Result<(), AnalysisError>.Err(AnalysisError.internal("intrinsic equality is not nominal"))
+            Nominal(id, _) => *id, _ => @panic("intrinsic equality is not nominal")
         },
         None => return Result<(), AnalysisError>.Ok(()),
     };

@@ -9,15 +9,22 @@ from yianc.frontend.ast.traversal import AstVisitor, walk_program;
 from yianc.frontend.source import SourceDocument;
 from json.write import Writer;
 from json.parse import parse;
+from std.core.env import args;
 from std.core.ops import Index;
+from std.core.process import Command, ExitStatus;
 from yianc.analysis.session.session import AnalysisSession;
 from yianc.driver.frontend import FrontendDriver;
 from yianc.driver.trace import CompilerTrace;
 from yianc.driver.middle import MiddleEndDriver;
 from yianc.analysis.session.output import AnalysisOptions;
-from yianc.diagnostics.model import AnalysisErrorKind;
+from yianc.diagnostics.model import DiagnosticReporter, UserDiagnostic;
 from yianc.package.model import PackageMap;
 from yianc.package.provenance import SourceTrust;
+
+struct DiagnosticCounter { count: u64 }
+impl DiagnosticReporter for DiagnosticCounter {
+    pub fn report(diagnostic: UserDiagnostic&) { self.count += 1; }
+}
 
 struct Counter { owned_names: u64 }
 impl AstVisitor for Counter {
@@ -111,44 +118,89 @@ fn trust() -> SourceTrust {
     }
 }
 
-fn check_strict_lifecycle(raw: bool) {
+// One strict fixture keeps its documents and trace alive until the frontend is consumed.
+fn strict_lifecycle_driver(raw: bool) -> MiddleEndDriver {
     let documents = Vec<SourceDocument>.new();
     documents.push(SourceDocument(path=String.from(&"/tmp/yian-native-strict-lifecycle.an"),
         text=String.from(&"struct Record { field: i32 }\nfn helper(value: Record) -> Record { value }\nconst SIZE: u64 = 8;\nfn main() { helper(Record(1)); }\n")));
     defer release_documents(&documents);
     let trace = CompilerTrace.disabled();
     defer trace.drop();
-    let frontend = match FrontendDriver.prepare_documents(&documents, trust(), Option<PackageMap>.None, false, &trace) {
+    let frontend = match FrontendDriver.from_documents(&documents, trust(), Option<PackageMap>.None, false, &trace) {
         Ok(value) => value,
         Err(error) => { error.drop(); @panic("strict preparation failed"); },
     };
     defer frontend.drop();
-    let driver = MiddleEndDriver.new(frontend.take_session(), raw);
+    match frontend.run() { Ok(_) => {}, Err(error) => { error.drop(); @panic("fixture preparation failed"); }, }
+    MiddleEndDriver.new(frontend.take_session(), raw)
+}
+
+fn check_strict_lifecycle(raw: bool) {
+    let driver = strict_lifecycle_driver(raw);
     defer driver.drop();
-    let report = match driver.run(AnalysisOptions.new()) {
-        Ok(value) => value,
+    let reporter = DiagnosticCounter(0);
+    let output = match driver.run(AnalysisOptions.new(), &reporter) {
+        Ok(Some(value)) => value,
+        Ok(None) => @panic("strict analysis produced no output"),
         Err(error) => { error.drop(); @panic("strict analysis failed"); },
     };
-    let output = match report.output.take() {
-        Some(value) => value,
-        None => { report.drop(); @panic("strict analysis produced no output"); },
-    };
-    report.drop();
     assert output.procedures.len() >= 2u64: "strict analysis exports checked procedure roots";
-    assert output.warnings.len() == 0u64: "a clean strict analysis emits no warnings";
+    assert reporter.count == 0u64: "a clean strict analysis emits no warnings";
     assert output.entry.is_some(): "strict analysis selects an entry when main exists";
-    let second = driver.run(AnalysisOptions.new());
-    match second {
-        Err(error) => { assert error.kind == AnalysisErrorKind.Internal: "a session cannot analyze twice"; error.drop(); },
-        Ok(again) => { again.drop(); @panic("strict session accepted a second analysis"); },
-    }
     assert driver.analysis_session().len() == 1u64: "the session keeps its prepared unit until its owner drops";
     output.drop();
+}
+
+// The second analysis violates the session phase; the caller isolates the panic.
+fn repeat_analysis(raw: bool) {
+    let driver = strict_lifecycle_driver(raw);
+    defer driver.drop();
+    let reporter = DiagnosticCounter(0);
+    let output = match driver.run(AnalysisOptions.new(), &reporter) {
+        Ok(Some(value)) => value,
+        Ok(None) => @panic("strict analysis produced no output"),
+        Err(error) => { error.drop(); @panic("strict analysis failed"); },
+    };
+    output.drop();
+    match driver.run(AnalysisOptions.new(), &reporter) {
+        Ok(Some(again)) => { again.drop(); @panic("strict session accepted a second analysis"); },
+        Ok(None) => @panic("strict session accepted a second analysis"),
+        Err(error) => { error.drop(); @panic("a repeated analysis returned a value error"); },
+    }
+}
+
+// Run one selectable negative branch in a child process so the invariant panic
+// stays outside this process while its raw stderr and status are asserted.
+fn assert_child_panic(flag: str, expected: str) {
+    let arguments = args();
+    let program = String.from(&arguments[0].as_str());
+    defer program.drop();
+    let command = Command.new(program.as_str());
+    defer command.drop();
+    command.arg(flag);
+    let output = match command.output() {
+        Ok(value) => value,
+        Err(error) => { error.drop(); @panic("could not start the isolation child"); },
+    };
+    defer output.drop();
+    match output.status {
+        ExitStatus.Exited(code) => assert code == 1i32: "an internal invariant exits with status 1",
+        ExitStatus.Signaled(_) => @panic("an internal invariant was reported as a signal"),
+    };
+    let text = match str.from_slice(output.stderr.as_slice()) {
+        Some(value) => value,
+        None => @panic("isolation child stderr is not UTF-8"),
+    };
+    assert text.contains("yian: panic: "): "an internal invariant reports the panic prefix";
+    assert text.contains(expected): "an internal invariant reports its reason";
+    for argument in arguments { argument.drop(); }
+    arguments.drop();
 }
 
 fn strict_analysis_lifecycle() {
     check_strict_lifecycle(false);
     check_strict_lifecycle(true);
+    assert_child_panic("--repeat-analysis", "analysis session cannot be analyzed twice");
 }
 
 fn strict_analysis_reports_first_error() {
@@ -158,18 +210,21 @@ fn strict_analysis_reports_first_error() {
     defer release_documents(&documents);
     let trace = CompilerTrace.disabled();
     defer trace.drop();
-    let frontend = match FrontendDriver.prepare_documents(&documents, trust(), Option<PackageMap>.None, false, &trace) {
+    let frontend = match FrontendDriver.from_documents(&documents, trust(), Option<PackageMap>.None, false, &trace) {
         Ok(value) => value,
         Err(error) => { error.drop(); @panic("strict error fixture preparation failed"); },
     };
     defer frontend.drop();
+    match frontend.run() { Ok(_) => {}, Err(error) => { error.drop(); @panic("fixture preparation failed"); }, }
     let driver = MiddleEndDriver.new(frontend.take_session(), false);
     defer driver.drop();
-    match driver.run(AnalysisOptions.new()) {
-        Ok(report) => { report.drop(); @panic("invalid strict fixture passed analysis"); },
+    let reporter = DiagnosticCounter(0);
+    match driver.run(AnalysisOptions.new(), &reporter) {
+        Ok(Some(output)) => { output.drop(); @panic("invalid strict fixture passed analysis"); },
+        Ok(None) => @panic("strict fixture produced no output"),
         Err(error) => {
-            assert error.diagnostic.code.text() == "E401": "strict failure keeps the type diagnostic code";
-            assert error.diagnostic.message.as_str().contains("Expected type"):
+            assert error.code.text() == "E401": "strict failure keeps the type diagnostic code";
+            assert error.message.as_str().contains("Expected type"):
             "strict failure reports the first type error";
             error.drop();
         },
@@ -177,6 +232,13 @@ fn strict_analysis_reports_first_error() {
 }
 
 fn main() {
+    let arguments = args();
+    if arguments.len() > 1u64 && arguments[1].as_str() == "--repeat-analysis" {
+        repeat_analysis(false);
+        return;
+    }
+    for argument in arguments { argument.drop(); }
+    arguments.drop();
     success();
     lex_failure();
     parse_failure();

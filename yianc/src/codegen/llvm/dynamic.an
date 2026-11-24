@@ -60,7 +60,7 @@ impl LlvmLowering {
         defer arguments.drop();
         let receiver = match callable.receiver {
             Some(value) => value,
-            None => return Result<Function, CodegenError>.Err(CodegenError.invalid("dynamic implementation has no receiver")),
+            None => @panic("dynamic implementation has no receiver"),
         };
         if !self.types.is_zst(receiver)? {
             let data = builder.extract_value(thunk.param(0u32), 0u32, "");
@@ -115,12 +115,12 @@ impl FunctionLowering {
         let object_type = self.cfg.value(receiver)?.type_id;
         let trait_type = match self.owner.session.types.require(object_type)? {
             TraitObject(trait_type) => *trait_type,
-            _ => return Result<IrValue, CodegenError>.Err(CodegenError.invalid("dynamic call has no trait identity")),
+            _ => @panic("dynamic call has no trait identity"),
         };
         let methods = store_object_methods(&self.owner.session.types, &self.owner.session.names, trait_type)?;
         defer methods.drop();
         if slot >= methods.len() || methods[slot] != method {
-            return Result<IrValue, CodegenError>.Err(CodegenError.invalid("dynamic call slot has an inconsistent signature"));
+            @panic("dynamic call slot has an inconsistent signature");
         }
         let object = self.get(receiver)?;
         if !self.owner.types.raw_pointers() {

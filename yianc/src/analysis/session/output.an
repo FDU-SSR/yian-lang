@@ -1,7 +1,9 @@
 from yianc.common.ids import DefId, TypeId, SymbolId, HirId, UnitId, NameId;
 from yianc.analysis.constant.evaluate import TypeSizeProvider;
 from yianc.driver.trace import CompilerTrace;
-from yianc.diagnostics.model import Diagnostic, Severity, AnalysisStage;
+from yianc.common.location import SourceSpan;
+from yianc.diagnostics.model import DiagnosticCode, DiagnosticLocation, UserDiagnostic;
+from std.core.convert import From;
 from std.core.iter import Iterator, IntoIterator;
 
 pub struct AnalysisOptions {
@@ -41,12 +43,11 @@ pub struct AnalysisOutput {
     pub checked: Vec<DefId>,
     pub procedures: Vec<AnalyzedProcedure>,
     pub entry: Option<TypeId>,
-    pub warnings: Vec<Diagnostic>,
 }
 
 impl AnalysisOutput {
     static pub fn new() -> Self {
-        Self(Vec<DefId>.new(), Vec<AnalyzedProcedure>.new(), Option<TypeId>.None, Vec<Diagnostic>.new())
+        Self(Vec<DefId>.new(), Vec<AnalyzedProcedure>.new(), Option<TypeId>.None)
     }
 }
 
@@ -56,36 +57,23 @@ impl Drop for AnalysisOutput {
             procedure.drop();
         }
 
-        for warning in self.warnings {
-            warning.drop();
-        }
-
         self.checked.drop();
         self.procedures.drop();
-        self.warnings.drop();
     }
 }
 
-// Diagnostics remain renderable with the owning session; only a clean run exports HIR.
-pub struct AnalysisReport {
-    pub output: Option<AnalysisOutput>,
-    pub diagnostics: Vec<Diagnostic>,
-    pub failed_stage: Option<AnalysisStage>,
+pub struct AnalysisWarning {
+    pub code: DiagnosticCode,
+    pub source: SourceSpan,
+    pub message: String,
 }
 
-impl AnalysisReport {
-    static pub fn new() -> Self { Self(Option<AnalysisOutput>.None, Vec<Diagnostic>.new(), Option<AnalysisStage>.None) }
-
-    pub fn ok() -> bool {
-        for diagnostic in self.diagnostics { if diagnostic.severity == Severity.Error { return false; } }
-        true
-    }
+impl UserDiagnostic for AnalysisWarning {
+    pub fn code() -> DiagnosticCode { self.code }
+    pub fn location() -> DiagnosticLocation { DiagnosticLocation.Source(self.source) }
+    pub fn message() -> String { String.from(&self.message.as_str()) }
 }
 
-impl Drop for AnalysisReport {
-    pub fn drop() {
-        match &self.output { Some(value) => value.drop(), None => {}, }
-        for diagnostic in self.diagnostics { diagnostic.drop(); }
-        self.diagnostics.drop();
-    }
+impl Drop for AnalysisWarning {
+    pub fn drop() { self.message.drop(); }
 }

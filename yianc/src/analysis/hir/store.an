@@ -38,14 +38,14 @@ impl HirStore {
     pub fn require(id: HirId) -> Result<HirNode&, AnalysisError> {
         match self.get(id) {
             Some(value) => Result<HirNode&, AnalysisError>.Ok(value),
-            None => Result<HirNode&, AnalysisError>.Err(AnalysisError.internal("invalid HIR ID"))
+            None => @panic("invalid HIR ID")
         }
     }
 
     pub fn require_pattern(id: PatternId) -> Result<PatternNode&, AnalysisError> {
         match self.get_pattern(id) {
             Some(value) => Result<PatternNode&, AnalysisError>.Ok(value),
-            None => Result<PatternNode&, AnalysisError>.Err(AnalysisError.internal("invalid pattern ID"))
+            None => @panic("invalid pattern ID")
         }
     }
 }

@@ -90,7 +90,7 @@ impl SymbolStore {
         match parent {
             Some(id) => {
                 if self.scope(id).is_none() {
-                    return Result<ScopeId, AnalysisError>.Err(AnalysisError.internal("invalid parent scope"));
+                    @panic("invalid parent scope");
                 }
             },
             None => {},
@@ -102,7 +102,7 @@ impl SymbolStore {
     // The concrete result belongs to this function-body root; declaration scopes stay lexical.
     pub fn create_callable_scope(parent: ScopeId, result: TypeId) -> Result<ScopeId, AnalysisError> {
         if self.scope(parent).is_none() {
-            return Result<ScopeId, AnalysisError>.Err(AnalysisError.internal("invalid parent scope"));
+            @panic("invalid parent scope");
         }
 
         Result<ScopeId, AnalysisError>.Ok(self.add_scope(Scope.callable(Option<ScopeId>.Some(parent), result)))
@@ -116,7 +116,7 @@ impl SymbolStore {
             let id = *current.unwrap();
 
             if id.index >= self.scopes.len() {
-                return Result<Option<TypeId>, AnalysisError>.Err(AnalysisError.internal("invalid scope ID"));
+                @panic("invalid scope ID");
             }
 
             let record = *self.scopes.get(id.index).unwrap();
@@ -134,12 +134,12 @@ impl SymbolStore {
 
     pub fn bind(scope: ScopeId, name: NameId, symbol: SymbolId) -> Result<bool, AnalysisError> {
         if self.get(symbol).is_none() {
-            return Result<bool, AnalysisError>.Err(AnalysisError.internal("invalid symbol ID"));
+            @panic("invalid symbol ID");
         }
 
         match self.scope(scope) {
             Some(target) => Result<bool, AnalysisError>.Ok(target.bind(name, symbol)),
-            None => Result<bool, AnalysisError>.Err(AnalysisError.internal("invalid scope ID")),
+            None => @panic("invalid scope ID"),
         }
     }
 

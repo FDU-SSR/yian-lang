@@ -1,0 +1,18 @@
+from yianc.diagnostics.model import DiagnosticCode, DiagnosticLocation, UserDiagnostic;
+from std.core.convert import From;
+
+pub struct InputError {
+    pub code: DiagnosticCode,
+    pub location: DiagnosticLocation,
+    pub message: String,
+}
+
+impl UserDiagnostic for InputError {
+    pub fn code() -> DiagnosticCode { self.code }
+    pub fn location() -> DiagnosticLocation { self.location.copy() }
+    pub fn message() -> String { String.from(&self.message.as_str()) }
+}
+
+impl Drop for InputError {
+    pub fn drop() { self.location.drop(); self.message.drop(); }
+}

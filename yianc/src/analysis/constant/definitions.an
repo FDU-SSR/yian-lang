@@ -69,7 +69,7 @@ fn constant_template(ctx: ResolutionContext&, symbol: SymbolId) -> Result<HirId,
     defer checker.drop();
     let lowered = match &declaration.item.data {
         ConstDef(_, _, _, initializer) => checker.expression(*initializer)?,
-        _ => return Result<HirId, AnalysisError>.Err(AnalysisError.internal("invalid constant definition")),
+        _ => @panic("invalid constant definition"),
     };
     let type_id = if record.type_id == TypeId(ERROR_TYPE_ID) {
         default_type(ctx, checker.type_of(lowered))
@@ -82,12 +82,12 @@ fn constant_template(ctx: ResolutionContext&, symbol: SymbolId) -> Result<HirId,
         Err(problem) => {
             if problem.kind == AnalysisErrorKind.NotConstant {
                 problem.kind = AnalysisErrorKind.User;
-                problem.diagnostic.code = DiagnosticCode.Resolution;
+                problem.code = DiagnosticCode.Resolution;
                 let message = String.from(&"constant initializer is not compile-time evaluable: ");
                 defer message.drop();
-                message.push_str(if problem.diagnostic.message.as_str() == "expression is not compile-time evaluable" {
+                message.push_str(if problem.message.as_str() == "expression is not compile-time evaluable" {
                         "condition depends on runtime state or has side effects"
-                    } else { problem.diagnostic.message.as_str() });
+                    } else { problem.message.as_str() });
                 return Result<HirId, AnalysisError>.Err(problem.with_message(message.as_str()));
             }
             return Result<HirId, AnalysisError>.Err(problem);
@@ -114,7 +114,7 @@ fn materialize(ctx: ResolutionContext&, value: ConstValue&, type_id: TypeId, uni
         Array(elements) => {
             let element_type = match ctx.session.types.require(type_id)? {
                 Array(element, _) => *element,
-                _ => return Result<HirKind, AnalysisError>.Err(AnalysisError.internal("array constant has no array type")),
+                _ => @panic("array constant has no array type"),
             };
             let nodes = Vec<HirId>.new();
             let accepted = false;
@@ -131,7 +131,7 @@ fn materialize(ctx: ResolutionContext&, value: ConstValue&, type_id: TypeId, uni
         ArrayRepeat(element, _) => {
             let element_type = match ctx.session.types.require(type_id)? {
                 Array(inner, _) => *inner,
-                _ => return Result<HirKind, AnalysisError>.Err(AnalysisError.internal("repeat constant has no array type")),
+                _ => @panic("repeat constant has no array type"),
             };
             let kind = materialize(ctx, &**element, element_type, unit, span)?;
             let node = ctx.session.hir.add(HirNode(ctx.span(unit, span), element_type, false, kind));
@@ -161,7 +161,7 @@ fn copy_constant(ctx: ResolutionContext&, id: HirId) -> Result<HirId, AnalysisEr
             HirKind.Array(HirArray(value.element_type, nodes))
         },
         ArrayRepeat(value) => HirKind.ArrayRepeat(HirArrayRepeat(value.element_type, copy_constant(ctx, value.element)?)),
-        _ => return Result<HirId, AnalysisError>.Err(AnalysisError.internal("constant template contains a non-value node")),
+        _ => @panic("constant template contains a non-value node"),
     };
     Result<HirId, AnalysisError>.Ok(ctx.session.hir.add(HirNode(node.span, node.type_id, false, kind)))
 }

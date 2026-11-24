@@ -3,14 +3,14 @@ from lsp.analysis.compiler import CompilerAnalysis, CompilerFailure, analyze as 
 from lsp.analysis.query_index import QuerySnapshot;
 from lsp.analysis.semantic_index import SemanticIndex, build as build_semantic;
 from lsp.analysis.source_index import SourceIndex;
-from yianc.diagnostics.model import Diagnostic;
+from lsp.analysis.diagnostic import LspDiagnostic;
 from yianc.frontend.source import SourceDocument;
 from yianc.package.model import PackageMap;
 from yianc.package.provenance import SourceTrust;
 from std.core.time import monotonic_now;
 
 pub enum SnapshotState {
-    Failed { documents: Vec<SourceDocument>, diagnostics: Vec<Diagnostic> },
+    Failed { documents: Vec<SourceDocument>, diagnostics: Vec<LspDiagnostic> },
     Ready { query: QuerySnapshot },
 }
 
@@ -86,6 +86,7 @@ impl Snapshot {
             Err(failure) => {
                 let strict_finished_ns = timing_now_ns();
                 let diagnostics = failure.take_diagnostics();
+                failure.drop();
                 let snapshot = Self(revision=revision, topology_revision=topology_revision,
                     configuration_identity=String.from(&configuration_identity),
                     identity=identity,
@@ -98,7 +99,7 @@ impl Snapshot {
             Ok(analysis) => {
                 let strict_finished_ns = timing_now_ns();
                 let source_started_ns = timing_now_ns();
-                let index = match SourceIndex.build(&owned, &analysis.session, std_root) {
+                let index = match SourceIndex.build(&analysis.session, std_root) {
                     Ok(value) => value,
                     Err(message) => {
                         analysis.drop();
@@ -117,7 +118,7 @@ impl Snapshot {
                 };
                 let semantic_finished_ns = timing_now_ns();
                 let query_started_ns = timing_now_ns();
-                let query = match QuerySnapshot.extract(&owned, &index, &analysis) {
+                let query = match QuerySnapshot.extract(&index, &analysis) {
                     Ok(value) => value,
                     Err(message) => {
                         semantic.drop();
@@ -201,13 +202,13 @@ impl Snapshot {
         }
     }
 
-    pub fn failure_diagnostic(index: u64) -> Option<Diagnostic&> {
+    pub fn failure_diagnostic(index: u64) -> Option<LspDiagnostic&> {
         match &self.state {
             Failed(_, diagnostics) => match diagnostics.as_slice().get(index) {
-                Some(value) => Option<Diagnostic&>.Some(value),
-                None => Option<Diagnostic&>.None,
+                Some(value) => Option<LspDiagnostic&>.Some(value),
+                None => Option<LspDiagnostic&>.None,
             },
-            _ => Option<Diagnostic&>.None,
+            _ => Option<LspDiagnostic&>.None,
         }
     }
 

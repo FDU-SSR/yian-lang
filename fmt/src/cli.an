@@ -182,7 +182,7 @@ fn run_sources(options: Options&) -> i32 {
         Ok(value) => value,
         Err(problem) => {
             @eprint("yian-fmt: ");
-            @eprintln(f"{problem.msg()}");
+            @eprintln(f"{problem.error.msg()}");
             problem.drop();
             return EXIT_USAGE;
         },

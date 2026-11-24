@@ -107,17 +107,14 @@ impl LlvmLowering {
         let required = self.session.types.require(type_id)?;
         let(definition, arguments) = match required {
             Nominal(definition, arguments) => (*definition, arguments),
-            _ => return Result<ProfileDescriptor, CodegenError>.Err(CodegenError.invalid("runtime profile callable is not nominal")),
+            _ => @panic("runtime profile callable is not nominal"),
         };
         let record = match self.session.types.definition(definition) {
             Some(value) => value,
-            None => return Result<ProfileDescriptor, CodegenError>.Err(CodegenError.invalid("runtime profile callable definition is missing")),
+            None => @panic("runtime profile callable definition is missing"),
         };
         let header = record.header();
-        let source_path = match self.session.source(header.span.source) {
-            Some(value) => String.from(&value.canonical_path()),
-            None => String.new(),
-        };
+        let source_path = String.from(&self.session.source(header.span.unit).canonical_path());
         let package = String.new();
         let module = String.from(&source_path.as_str());
         let source_root = String.new();

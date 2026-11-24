@@ -13,7 +13,7 @@ impl FunctionLowering {
     fn pointed_type(type_id: TypeId) -> Result<TypeId, CodegenError> {
         match self.owner.session.types.require(type_id)? {
             Pointer(inner) | Reference(inner) | CPointer(inner) => Result<TypeId, CodegenError>.Ok(*inner),
-            _ => Result<TypeId, CodegenError>.Err(CodegenError.invalid("memory operation has no pointee")),
+            _ => @panic("memory operation has no pointee"),
         }
     }
 
@@ -132,7 +132,7 @@ impl FunctionLowering {
             self.checked(self.builder.binary(BinaryOp.And, equal, same_pair, ""), "S005")?;
             let predicate = match op {
                 Lt => IntCompare.Ult, Leq => IntCompare.Ule, Gt => IntCompare.Ugt, Geq => IntCompare.Uge,
-                _ => return Result<IrValue, CodegenError>.Err(CodegenError.invalid("invalid pointer comparison")),
+                _ => @panic("invalid pointer comparison"),
             };
             return Result<IrValue, CodegenError>.Ok(self.builder.icmp(predicate, self.pointer_offset_bytes(first), self.pointer_offset_bytes(second), ""));
         }

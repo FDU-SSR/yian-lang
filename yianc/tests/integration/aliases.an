@@ -5,10 +5,13 @@ from yianc.driver.middle import MiddleEndDriver;
 from yianc.analysis.session.output import AnalysisOptions;
 from yianc.analysis.ty.queries import struct_fields;
 from yianc.common.ids import TypeId;
-from yianc.diagnostics.model import AnalysisError;
+from yianc.diagnostics.model import AnalysisError, DiagnosticReporter, UserDiagnostic;
 from yianc.frontend.source import SourceDocument;
 from yianc.package.model import PackageMap;
 from yianc.package.provenance import SourceTrust;
+
+struct IgnoreDiagnostics {}
+impl DiagnosticReporter for IgnoreDiagnostics { pub fn report(diagnostic: UserDiagnostic&) {} }
 
 fn release_documents(documents: Vec<SourceDocument>&) {
     for document in *documents { document.drop(); }
@@ -28,21 +31,24 @@ fn prepare(source: str, path: str) -> MiddleEndDriver {
     defer release_documents(&documents);
     let trace = CompilerTrace.disabled();
     defer trace.drop();
-    let frontend = match FrontendDriver.prepare_documents(&documents, trust(), Option<PackageMap>.None, false, &trace) {
+    let frontend = match FrontendDriver.from_documents(&documents, trust(), Option<PackageMap>.None, false, &trace) {
         Ok(value) => value,
         Err(error) => { error.drop(); @panic("strict fixture preparation failed"); },
     };
     defer frontend.drop();
+    match frontend.run() { Ok(_) => {}, Err(error) => { error.drop(); @panic("strict fixture preparation failed"); }, }
     MiddleEndDriver.new(frontend.take_session(), IS_RAW_MODE)
 }
 
 fn analyze_success(source: str, path: str) -> AnalysisSession {
     let driver = prepare(source, path);
-    match driver.run(AnalysisOptions.new()) {
-        Ok(report) => {
-            report.drop();
+    let reporter = IgnoreDiagnostics();
+    match driver.run(AnalysisOptions.new(), &reporter) {
+        Ok(Some(output)) => {
+            output.drop();
             driver.take_session()
         },
+        Ok(None) => @panic("strict fixture produced no output"),
         Err(error) => {
             error.drop();
             @panic("strict fixture analysis failed");
@@ -52,8 +58,10 @@ fn analyze_success(source: str, path: str) -> AnalysisSession {
 
 fn analyze_failure(source: str, path: str) -> AnalysisError {
     let driver = prepare(source, path);
-    match driver.run(AnalysisOptions.new()) {
-        Ok(report) => { report.drop(); driver.take_session().drop(); @panic("invalid fixture passed strict analysis"); },
+    let reporter = IgnoreDiagnostics();
+    match driver.run(AnalysisOptions.new(), &reporter) {
+        Ok(Some(output)) => { output.drop(); driver.take_session().drop(); @panic("invalid fixture passed strict analysis"); },
+        Ok(None) => { driver.take_session().drop(); @panic("strict fixture produced no output"); },
         Err(error) => { driver.take_session().drop(); error },
     }
 }
@@ -100,9 +108,9 @@ fn explicit_and_inferred_alias_calls_analyze() {
 
 fn check_alias_failure(source: str, message: str, code: str) {
     let error = analyze_failure(source, "/tmp/yian-native-alias-cycle.an");
-    assert error.diagnostic.message.as_str().contains(message):
+    assert error.message.as_str().contains(message):
     "unused alias cycles and undefined alias bodies retain their diagnostic";
-    assert error.diagnostic.code.text() == code: "alias diagnostic keeps its code";
+    assert error.code.text() == code: "alias diagnostic keeps its code";
     error.drop();
 }
 
@@ -128,16 +136,16 @@ fn check_alias_argument_failure(declaration: str, use: str, message: str, code: 
     source.push_str(use);
     source.push_str("; }\n");
     let error = analyze_failure(source.as_str(), "/tmp/yian-native-alias-argument.an");
-    assert error.diagnostic.code.text() == code: "alias argument diagnostic keeps its code";
-    assert error.diagnostic.message.as_str().contains(message):
+    assert error.code.text() == code: "alias argument diagnostic keeps its code";
+    assert error.message.as_str().contains(message):
     "alias argument diagnostic keeps its reason";
-    match &error.diagnostic.location {
-        Some(location) => {
-            let span = location.span();
+    match &error.location {
+        Source(location) => {
+            let span = location.span;
             assert span.start.row == 1u64 && span.start.column == 23u64:
             "alias argument diagnostic points at the use";
         },
-        None => @panic("alias argument diagnostic lost its source location"),
+        _ => @panic("alias argument diagnostic lost its source location"),
     }
     error.drop();
     source.drop();

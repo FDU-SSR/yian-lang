@@ -35,7 +35,7 @@ fn register(ctx: ResolutionContext&, declaration: Declaration&) -> Result<Option
                 return Result<Option<TypeId>, AnalysisError>.Err(ctx.error(declaration.unit, declaration.item.span, DiagnosticCode.Type, "The 'main' function cannot have generics"));
             }
         },
-        _ => return Result<Option<TypeId>, AnalysisError>.Err(AnalysisError.internal("entry is not a function")),
+        _ => @panic("entry is not a function"),
     }
     let type_id = ctx.session.symbols.get(declaration.symbol).unwrap().type_id;
     match ctx.session.types.complete_definition(*declaration.definition.unwrap())? {
@@ -50,7 +50,7 @@ fn register(ctx: ResolutionContext&, declaration: Declaration&) -> Result<Option
                 return Result<Option<TypeId>, AnalysisError>.Err(ctx.error(declaration.unit, declaration.item.span, DiagnosticCode.Type, message.as_str()));
             }
         },
-        _ => return Result<Option<TypeId>, AnalysisError>.Err(AnalysisError.internal("entry signature is not a function")),
+        _ => @panic("entry signature is not a function"),
     }
     Result<Option<TypeId>, AnalysisError>.Ok(Option<TypeId>.Some(type_id))
 }
@@ -76,7 +76,7 @@ pub fn select_entry(ctx: ResolutionContext&, options: AnalysisOptions&) -> Resul
                 let index = 0u64;
                 while index < ctx.session.len() {
                     let unit = *ctx.session.unit(UnitId(index)).unwrap();
-                    if ctx.session.source(unit.source).unwrap().canonical_path() == entry {
+                    if ctx.session.source(unit.id).canonical_path() == entry {
                         return match main_in(ctx, unit.id) {
                             Some(declaration) => register(ctx, declaration),
                             None => {

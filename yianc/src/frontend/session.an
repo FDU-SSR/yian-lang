@@ -1,9 +1,7 @@
-from yianc.common.ids import SourceId, UnitId;
-from yianc.common.location import SourceSpan;
-from yianc.diagnostics.model import AnalysisError, AnalysisStage, DiagnosticCode;
-from yianc.diagnostics.render import detach;
+from yianc.common.ids import UnitId;
+from yianc.diagnostics.output import OutputError;
 from yianc.frontend.prepare import FrontendPhase, PreparedFile, FrontendStageError, PreparationStage, prepare_file;
-from yianc.frontend.source import SourceFile, SourceManager;
+from yianc.frontend.source import SourceFile, SourceMap, SourceTable;
 from yianc.package.model import PackageMap;
 from yianc.package.provenance import SourceTrust;
 from std.collections.arena import Arena;
@@ -11,7 +9,6 @@ from std.core.iter import Iterator, IntoIterator;
 
 pub struct CompilationUnit {
     pub id: UnitId,
-    pub source: SourceId,
     pub prepared: PreparedFile,
     pub is_stdlib: bool,
     pub allows_restricted: bool,
@@ -34,28 +31,28 @@ pub struct SourcePermissions {
 pub trait PreparationObserver {
     fn begin(pass_id: str) {}
     fn finish(pass_id: str, success: bool) {}
-    fn stage_complete(stage: PreparationStage, session: FrontendSession&) -> Result<(), AnalysisError>;
+    fn stage_complete(stage: PreparationStage, session: FrontendSession&) -> Result<(), OutputError>;
 }
 
 // This owner keeps every source, prepared token stream, AST and trust decision for one run.
 pub struct FrontendSession {
-    sources: SourceManager,
+    sources: SourceTable,
     units: Arena<CompilationUnit>,
     packages: Option<PackageMap>,
     trust: SourceTrust,
 }
 
 impl FrontendSession {
-    static pub fn new(trust: SourceTrust, packages: Option<PackageMap>) -> Self {
-        Self(SourceManager.new(), Arena<CompilationUnit>.new(), packages, trust)
+    static pub fn new(trust: SourceTrust, packages: Option<PackageMap>, sources: SourceTable) -> Self {
+        Self(sources, Arena<CompilationUnit>.new(), packages, trust)
     }
 
-    // A lexed file transfers here; later preparation stages mutate the session-owned payload.
-    pub fn accept(prepared: PreparedFile, permissions: SourcePermissions) -> UnitId {
-        let id = UnitId(self.units.len());
-        self.units.alloc(CompilationUnit(id, prepared.source, prepared,
+    // A lexed file transfers here in the same order as the frozen source table.
+    pub fn accept(id: UnitId, prepared: PreparedFile, permissions: SourcePermissions) {
+        if id.index != self.units.len() { @panic("invalid compilation unit order"); }
+        self.sources.file(id);
+        self.units.alloc(CompilationUnit(id, prepared,
             permissions.is_stdlib, permissions.allows_restricted, permissions.allows_ffi));
-        id
     }
 
     pub fn unit(id: UnitId) -> Option<CompilationUnit&> {
@@ -66,25 +63,13 @@ impl FrontendSession {
         self.units.get(index)
     }
 
-    pub fn source(id: SourceId) -> Option<SourceFile&> {
-        self.sources.get(id.index)
+    pub fn source(id: UnitId) -> SourceFile& {
+        self.sources.file(id)
     }
 
-    pub fn source_at(index: u64) -> Option<SourceFile&> {
-        self.sources.get(index)
-    }
-
-    pub fn source_count() -> u64 {
-        self.sources.len()
-    }
-
-    pub fn len() -> u64 {
-        self.units.len()
-    }
-
-    pub fn source_manager() -> SourceManager& {
-        &self.sources
-    }
+    pub fn source_count() -> u64 { self.sources.len() }
+    pub fn len() -> u64 { self.units.len() }
+    pub fn source_table() -> SourceTable& { &self.sources }
 
     pub fn package_map() -> Option<PackageMap&> {
         match &self.packages {
@@ -97,60 +82,14 @@ impl FrontendSession {
         self.trust.stdlib_root()
     }
 
-    // Source order is supplied by the caller; each file is copied into this owner.
-    pub fn load_source(path: str) -> Result<SourceId, AnalysisError> {
-        match self.sources.load(path) {
-            Ok(id) => Result<SourceId, AnalysisError>.Ok(SourceId(id)),
-            Err(error) => {
-                defer error.drop();
-                let contextual = error.with_path(path);
-                defer contextual.drop();
-                Result<SourceId, AnalysisError>.Err(AnalysisError.user(DiagnosticCode.Source, Option<SourceSpan>.None, contextual.msg()))
-            },
-        }
+    pub fn prepare_source(unit: UnitId) -> Result<PreparedFile, FrontendStageError> {
+        let file = self.sources.file(unit);
+        prepare_file(unit, file.path(), file.text(), FrontendPhase.Tokens)
     }
 
-    pub fn load_text(path: str, text: str) -> Result<SourceId, AnalysisError> {
-        match self.sources.load_text(path, text) {
-            Ok(id) => Result<SourceId, AnalysisError>.Ok(SourceId(id)),
-            Err(error) => {
-                defer error.drop();
-                let contextual = error.with_path(path);
-                defer contextual.drop();
-                Result<SourceId, AnalysisError>.Err(AnalysisError.user(DiagnosticCode.Source,
-                    Option<SourceSpan>.None, contextual.msg()))
-            },
-        }
-    }
-
-    pub fn prepare_source(source: SourceId) -> Result<PreparedFile, AnalysisError> {
-        let file = self.sources.file(source.index);
-
-        match prepare_file(source, file.path(), file.text(), FrontendPhase.Tokens) {
-            Ok(value) => Result<PreparedFile, AnalysisError>.Ok(value),
-            Err(error) => {
-                defer error.drop();
-                let stage = match error.stage { Lex => AnalysisStage.Lex, Parse => AnalysisStage.Parse, Desugar => AnalysisStage.Desugar, };
-                Result<PreparedFile, AnalysisError>.Err(AnalysisError.user(error.code,
-                    Option<SourceSpan>.Some(SourceSpan(source, error.span)), error.message.as_str()).with_stage(stage))
-            },
-        }
-    }
-
-    pub fn finish_preparation(result: Result<(), FrontendStageError>, source: SourceId) -> Result<(), AnalysisError> {
-        match result {
-            Ok(_) => Result<(), AnalysisError>.Ok(()),
-            Err(error) => {
-                defer error.drop();
-                let stage = match error.stage { Lex => AnalysisStage.Lex, Parse => AnalysisStage.Parse, Desugar => AnalysisStage.Desugar, };
-                let problem = AnalysisError.user(error.code, Option<SourceSpan>.Some(SourceSpan(source, error.span)),
-                    error.message.as_str()).with_stage(stage);
-                match detach(&problem.diagnostic, &self.sources) {
-                    Ok(_) => Result<(), AnalysisError>.Err(problem),
-                    Err(detach_error) => { problem.drop(); Result<(), AnalysisError>.Err(detach_error) },
-                }
-            },
-        }
+    pub fn finish_preparation(result: Result<(), FrontendStageError>, unit: UnitId) -> Result<(), FrontendStageError> {
+        self.sources.file(unit);
+        result
     }
 
     // Permission precedence is independent of the spelling of the input path.

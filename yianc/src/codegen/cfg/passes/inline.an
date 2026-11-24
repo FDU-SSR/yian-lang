@@ -42,14 +42,14 @@ fn scope_depth(function: CfgFunction&, scope: ScopeId) -> Result<u64, CodegenErr
 fn remap_value(values: HashMap<ValueId, ValueId>&, id: ValueId) -> Result<ValueId, CodegenError> {
     match values.get(&id) {
         Some(value) => Result<ValueId, CodegenError>.Ok(*value),
-        None => Result<ValueId, CodegenError>.Err(CodegenError.invalid("inlined operand has no remapped value")),
+        None => @panic("inlined operand has no remapped value"),
     }
 }
 
 fn remap_local(locals: HashMap<LocalId, LocalId>&, id: LocalId) -> Result<LocalId, CodegenError> {
     match locals.get(&id) {
         Some(value) => Result<LocalId, CodegenError>.Ok(*value),
-        None => Result<LocalId, CodegenError>.Err(CodegenError.invalid("inlined operand has no remapped local")),
+        None => @panic("inlined operand has no remapped local"),
     }
 }
 
@@ -85,7 +85,7 @@ fn clone_operation(operation: Operation&, values: HashMap<ValueId, ValueId>&, bl
             for edge in *incoming {
                 let destination = match blocks.as_slice().get(edge[1].index) {
                     Some(value) => *value,
-                    None => return Result<Operation, CodegenError>.Err(CodegenError.invalid("inlined Phi successor is outside the callee")),
+                    None => @panic("inlined Phi successor is outside the callee"),
                 };
                 cloned_incoming.push((remap_value(values, edge[0])?, destination));
             }
@@ -155,13 +155,13 @@ fn clone_operation(operation: Operation&, values: HashMap<ValueId, ValueId>&, bl
         ScopeEnter(scope) => {
             match scopes.as_slice().get(scope.index) {
                 Some(value) => Operation.ScopeEnter(*value),
-                None => return Result<Operation, CodegenError>.Err(CodegenError.invalid("inlined scope is outside the callee")),
+                None => @panic("inlined scope is outside the callee"),
             }
         },
         ScopeExit(scope) => {
             match scopes.as_slice().get(scope.index) {
                 Some(value) => Operation.ScopeExit(*value),
-                None => return Result<Operation, CodegenError>.Err(CodegenError.invalid("inlined scope is outside the callee")),
+                None => @panic("inlined scope is outside the callee"),
             }
         },
         SafetyPoint => Operation.SafetyPoint,
@@ -343,21 +343,21 @@ fn inline_call(module: CfgModule&, types: BackendTypes&, function: CfgFunction&,
     }
     let parent_scope = match block_scopes.as_slice().get(block_id.index) {
         Some(value) => *value,
-        None => return Result<Option<u64>, CodegenError>.Err(CodegenError.invalid("inline block has no logical scope")),
+        None => @panic("inline block has no logical scope"),
     };
     if scope_depth(function, parent_scope)? >= DEPTH_LIMIT {
         return Result<Option<u64>, CodegenError>.Ok(Option<u64>.None);
     }
     let result_type = function.value(*call_result.unwrap())?.type_id;
     if result_type != callee.result_type {
-        return Result<Option<u64>, CodegenError>.Err(CodegenError.invalid("inline call result type disagrees with the callee"));
+        @panic("inline call result type disagrees with the callee");
     }
     let returns = 0u64;
     for block_index in 0u64..callee.block_count() {
         match &callee.block(BlockId(block_index))?.terminator {
             Some(Return(_)) => { returns += 1u64; },
             Some(_) => {},
-            None => return Result<Option<u64>, CodegenError>.Err(CodegenError.invalid("inline callee block has no terminator")),
+            None => @panic("inline callee block has no terminator"),
         }
     }
     if returns == 0u64 { return Result<Option<u64>, CodegenError>.Ok(Option<u64>.None); }
@@ -372,7 +372,7 @@ fn inline_call(module: CfgModule&, types: BackendTypes&, function: CfgFunction&,
         let parent = match record.parent {
             Some(value) => match scope_map.as_slice().get(value.index) {
                 Some(mapped) => Option<ScopeId>.Some(*mapped),
-                None => return Result<Option<u64>, CodegenError>.Err(CodegenError.invalid("inline callee scope parent is invalid")),
+                None => @panic("inline callee scope parent is invalid"),
             },
             None => Option<ScopeId>.Some(new_root),
         };
@@ -394,7 +394,7 @@ fn inline_call(module: CfgModule&, types: BackendTypes&, function: CfgFunction&,
         let record = callee.local(LocalId(index))?;
         let scope = match scope_map.as_slice().get(record.scope.index) {
             Some(value) => *value,
-            None => return Result<Option<u64>, CodegenError>.Err(CodegenError.invalid("inline local scope is invalid")),
+            None => @panic("inline local scope is invalid"),
         };
         local_map.insert(LocalId(index), function.add_scoped_local(record.type_id, scope)?);
     }
@@ -407,7 +407,7 @@ fn inline_call(module: CfgModule&, types: BackendTypes&, function: CfgFunction&,
         match &record.kind {
             Parameter(argument) => {
                 if *argument >= args.len() {
-                    return Result<Option<u64>, CodegenError>.Err(CodegenError.invalid("inline parameter index is outside the call arguments"));
+                    @panic("inline parameter index is outside the call arguments");
                 }
                 value_map.insert(ValueId(index), args[*argument]);
             },
@@ -427,7 +427,7 @@ fn inline_call(module: CfgModule&, types: BackendTypes&, function: CfgFunction&,
         let mapped_block = block_map[index];
         for instruction in callee_block.instructions {
             if !instruction.checks.is_empty() || !instruction.guards.is_empty() || !instruction.live_proofs.is_empty() {
-                return Result<Option<u64>, CodegenError>.Err(CodegenError.invalid("inline callee is not a neutral CFG"));
+                @panic("inline callee is not a neutral CFG");
             }
             let operation = clone_operation(&instruction.operation, &value_map, &block_map, &local_map, &scope_map)?;
             let result = match instruction.result {
@@ -436,7 +436,7 @@ fn inline_call(module: CfgModule&, types: BackendTypes&, function: CfgFunction&,
             };
             let position = function.block(mapped_block)?.instructions.len();
             if function.block(mapped_block)?.terminator.is_some() {
-                return Result<Option<u64>, CodegenError>.Err(CodegenError.invalid("inline callee block already has a terminator"));
+                @panic("inline callee block already has a terminator");
             }
             function.block(mapped_block)?.instructions.push(Instruction(instruction.span, result, operation,
                 Vec<SafetyCheck>.new(), Vec<OperationGuard>.new(), Vec<LiveProof>.new()));
@@ -465,7 +465,7 @@ fn inline_call(module: CfgModule&, types: BackendTypes&, function: CfgFunction&,
     // The original block keeps its prefix, drops the call, and jumps into the cloned body.
     let terminator = match &function.block(block_id)?.terminator {
         Some(value) => *value,
-        None => return Result<Option<u64>, CodegenError>.Err(CodegenError.invalid("inline call block has no terminator")),
+        None => @panic("inline call block has no terminator"),
     };
     let call_instruction = function.block(block_id)?.instructions.remove(call_index);
     call_instruction.drop();
@@ -491,7 +491,7 @@ fn inline_call(module: CfgModule&, types: BackendTypes&, function: CfgFunction&,
         Some(value) => {
             if phi_count == 1u64 {
                 if return_values.is_empty() {
-                    return Result<Option<u64>, CodegenError>.Err(CodegenError.invalid("inline callee has no return value"));
+                    @panic("inline callee has no return value");
                 }
                 function.block(continuation)?.instructions.insert(0u64,
                     Instruction(call_span, Option<ValueId>.Some(value), Operation.Phi(return_values),
@@ -504,7 +504,7 @@ fn inline_call(module: CfgModule&, types: BackendTypes&, function: CfgFunction&,
         },
         None => {
             if phi_count == 1u64 {
-                return Result<Option<u64>, CodegenError>.Err(CodegenError.invalid("inline non-ZST call has no result"));
+                @panic("inline non-ZST call has no result");
             }
             return_values.drop();
         },
@@ -515,7 +515,7 @@ fn inline_call(module: CfgModule&, types: BackendTypes&, function: CfgFunction&,
 // Inlining runs before activation, so no safety plan, check, or guard exists yet.
 pub fn inline_cfg(module: CfgModule&, types: BackendTypes&, options: CfgPassOptions) -> Result<(), CodegenError> {
     if module.safety_stage != SafetyStage.Neutral {
-        return Result<(), CodegenError>.Err(CodegenError.invalid("CFG inlining requires a neutral graph"));
+        @panic("CFG inlining requires a neutral graph");
     }
     if !options.inline { return Result<(), CodegenError>.Ok(()); }
     // Raw-pointer mode keeps the original function boundaries; inlining only

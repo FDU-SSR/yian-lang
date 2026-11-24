@@ -1,0 +1,31 @@
+from yianc.diagnostics.model import DiagnosticCode, UserDiagnostic;
+from yianc.frontend.source import SourceMap, Span;
+from std.core.convert import From;
+
+// This record remains valid after the compiler session is released.
+pub struct LspDiagnostic {
+    pub code: DiagnosticCode,
+    pub message: String,
+    pub path: Option<String>,
+    pub span: Option<Span>,
+}
+
+impl LspDiagnostic {
+    static pub fn from_diagnostic(diagnostic: UserDiagnostic&, sources: SourceMap&) -> Self {
+        let location = diagnostic.location();
+        defer location.drop();
+        let (path, span) = match &location {
+            Global => (Option<String>.None, Option<Span>.None),
+            File(value) => (Option<String>.Some(String.from(&value.as_str())), Option<Span>.None),
+            Source(value) => (Option<String>.Some(String.from(&sources.file(value.unit).path())), Option<Span>.Some(value.span)),
+        };
+        Self(diagnostic.code(), diagnostic.message(), path, span)
+    }
+}
+
+impl Drop for LspDiagnostic {
+    pub fn drop() {
+        self.message.drop();
+        match &self.path { Some(path) => path.drop(), None => {}, }
+    }
+}

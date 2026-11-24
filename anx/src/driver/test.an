@@ -244,12 +244,12 @@ fn discover_tests(root: str) -> Vec<ProjectTest> {
     let sources = match collect_sources(&input) {
         Ok(value) => value,
         Err(problem) => {
-            if problem.kind() == IoErrorKind.NotFound {
+            if problem.error.kind() == IoErrorKind.NotFound {
                 problem.drop();
                 return Vec<ProjectTest>.new();
             }
             @eprint("error: could not discover tests: ");
-            @eprintln(f"{problem.msg()}");
+            @eprintln(f"{problem.error.msg()}");
             problem.drop();
             return Vec<ProjectTest>.new();
         },

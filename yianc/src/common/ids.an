@@ -2,22 +2,6 @@ from std.core.hash import Hash, Murmur3Hasher;
 from std.core.ops import PartialEq;
 
 // IDs identify append-only records within one analysis session.
-pub struct SourceId {
-    pub index: u64
-}
-
-impl PartialEq<SourceId> for SourceId {
-    pub fn eq(other: SourceId&) -> bool {
-        self.index == other.index
-    }
-}
-
-impl Hash<Murmur3Hasher> for SourceId {
-    pub fn hash(hasher: Murmur3Hasher&) {
-        self.index.hash(hasher);
-    }
-}
-
 pub struct UnitId {
     pub index: u64
 }

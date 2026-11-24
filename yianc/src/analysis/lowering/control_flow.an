@@ -37,7 +37,7 @@ impl ExprChecker {
                 Break(value) => match value {
                     Some(id) => self.type_of(*id), None => TypeId(VOID_TYPE_ID)
                 },
-                _ => return Result<TypeId, AnalysisError>.Err(AnalysisError.internal("invalid loop exit node")),
+                _ => @panic("invalid loop exit node"),
             };
 
             if compatible(self.ctx, result, type_id) {

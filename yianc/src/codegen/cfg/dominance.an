@@ -23,13 +23,13 @@ impl Dominance {
     fn parent(id: BlockId) -> Result<BlockId, CodegenError> {
         match self.parents[id.index] {
             Some(value) => Result<BlockId, CodegenError>.Ok(value),
-            None => Result<BlockId, CodegenError>.Err(CodegenError.invalid("reachable CFG block has no dominator")),
+            None => @panic("reachable CFG block has no dominator"),
         }
     }
 
     pub fn dominates(origin: BlockId, block: BlockId) -> Result<bool, CodegenError> {
         if origin.index >= self.rank.len() || block.index >= self.rank.len() {
-            return Result<bool, CodegenError>.Err(CodegenError.invalid("invalid dominance query block"));
+            @panic("invalid dominance query block");
         }
         if origin == block { return Result<bool, CodegenError>.Ok(true); }
         if !self.reachable[block.index] || !self.reachable[origin.index] {
@@ -41,7 +41,7 @@ impl Dominance {
             let parent = self.parent(current)?;
             if parent == current { return Result<bool, CodegenError>.Ok(false); }
             if self.rank[parent.index] >= self.rank[current.index] {
-                return Result<bool, CodegenError>.Err(CodegenError.invalid("cyclic CFG dominator tree"));
+                @panic("cyclic CFG dominator tree");
             }
             current = parent;
         }
@@ -58,7 +58,7 @@ impl Dominance {
             } elif self.rank[right.index] > self.rank[left.index] {
                 right = self.parent(right)?;
             } else {
-                return Result<BlockId, CodegenError>.Err(CodegenError.invalid("inconsistent CFG traversal ranks"));
+                @panic("inconsistent CFG traversal ranks");
             }
         }
         Result<BlockId, CodegenError>.Ok(left)
@@ -69,7 +69,7 @@ pub fn dominators(function: CfgFunction&, predecessors: Vec<Vec<BlockId>>&)
 -> Result<Dominance, CodegenError> {
     let count = function.block_count();
     if count == 0u64 || predecessors.len() != count {
-        return Result<Dominance, CodegenError>.Err(CodegenError.invalid("invalid CFG predecessor table"));
+        @panic("invalid CFG predecessor table");
     }
     let facts = Dominance(Vec<bool>.new(), Vec<u64>.new(), Vec<Option<BlockId>>.new());
     let accepted = false;
@@ -95,7 +95,7 @@ pub fn dominators(function: CfgFunction&, predecessors: Vec<Vec<BlockId>>&)
         pending.push((id, true));
         let terminator = match &function.block(id)?.terminator {
             Some(value) => value,
-            None => return Result<Dominance, CodegenError>.Err(CodegenError.invalid("CFG block has no terminator")),
+            None => @panic("CFG block has no terminator"),
         };
         match terminator {
             Jump(destination) => pending.push((*destination, false)),

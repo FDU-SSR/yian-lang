@@ -63,10 +63,10 @@ pub fn object_methods(ctx: ResolutionContext&, trait_id: TypeId) -> Result<Vec<T
 
 pub fn store_object_methods(store: TypeStore&, names: NameInterner&, trait_id: TypeId) -> Result<Vec<TypeId>, AnalysisError> {
     let definition = match store.require(trait_id)? {
-        Nominal(id, _) => *id, _ => return Result<Vec<TypeId>, AnalysisError>.Err(AnalysisError.internal("trait object has invalid trait identity"))
+        Nominal(id, _) => *id, _ => @panic("trait object has invalid trait identity")
     };
     let methods = match store.complete_definition(definition)? {
-        Trait(methods) => methods, _ => return Result<Vec<TypeId>, AnalysisError>.Err(AnalysisError.internal("trait object target is not a trait"))
+        Trait(methods) => methods, _ => @panic("trait object target is not a trait")
     };
     let result = Vec<TypeId>.new();
     let transferred = false;
@@ -89,7 +89,7 @@ pub fn store_object_methods(store: TypeStore&, names: NameInterner&, trait_id: T
 
     for method in templates {
         let id = match store.require(*method)? {
-            Nominal(id, _) => *id, _ => return Result<Vec<TypeId>, AnalysisError>.Err(AnalysisError.internal("trait member has invalid identity"))
+            Nominal(id, _) => *id, _ => @panic("trait member has invalid identity")
         };
         let header = *store.definition(id).unwrap();
         let callable = store_signature(store, *method)?;

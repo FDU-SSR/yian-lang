@@ -8,5 +8,3 @@ pre:p=Point(1, 2)
 three targets ok
 print[  1.25]
 println[  ab]
-eprint[1.2]
-eprintln[001.2]

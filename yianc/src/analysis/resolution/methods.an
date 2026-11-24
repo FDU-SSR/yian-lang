@@ -160,7 +160,7 @@ pub fn resolve_trait(ctx: ResolutionContext&, index: u64) -> Result<(), Analysis
                 };
                 let nominal = match ctx.session.types.require(id)? {
                     Nominal(value, _) => *value,
-                    _ => return Result<(), AnalysisError>.Err(AnalysisError.internal("method has invalid identity")),
+                    _ => @panic("method has invalid identity"),
                 };
                 let name = ctx.session.types.definition(nominal).unwrap().header().name;
 
@@ -171,7 +171,7 @@ pub fn resolve_trait(ctx: ResolutionContext&, index: u64) -> Result<(), Analysis
                 methods.insert(name, id);
             }
         },
-        _ => return Result<(), AnalysisError>.Err(AnalysisError.internal("invalid trait syntax")),
+        _ => @panic("invalid trait syntax"),
     }
 
     transferred = true;

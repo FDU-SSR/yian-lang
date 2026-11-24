@@ -1,10 +1,12 @@
-from yianc.common.ids import UnitId, ScopeId, SymbolId, DefId, TypeId, SourceId, HirId;
+from yianc.common.ids import UnitId, ScopeId, SymbolId, DefId, TypeId, HirId;
 from yianc.common.location import SourceSpan;
 from yianc.analysis.session.session import AnalysisSession;
 from yianc.analysis.constant.evaluate import ConstantEvaluator, TypeSizeProvider;
 from yianc.frontend.ast.node import Item;
 from yianc.frontend.source import Position, Span;
-from yianc.diagnostics.model import Diagnostic, DiagnosticCode, AnalysisError;
+from yianc.diagnostics.model import DiagnosticCode, AnalysisError, AnalysisErrorKind, DiagnosticReporter, Severity;
+from yianc.analysis.session.output import AnalysisWarning;
+from std.core.convert import From;
 from std.collections.arena import Arena;
 from std.collections.hash_map import HashMap;
 from std.core.iter import Iterator, IntoIterator;
@@ -39,11 +41,12 @@ pub struct ResolutionContext {
     pub evaluator: ConstantEvaluator,
     pub alias_stack: Vec<SymbolId>,
     pub constant_stack: Vec<SymbolId>,
-    pub warnings: Vec<Diagnostic>,
+    reporter: Option<DiagnosticReporter&>,
+    has_errors: bool,
 }
 
 impl ResolutionContext {
-    static pub fn new(session: AnalysisSession&, sizes: Option<TypeSizeProvider&>) -> Result<Self, AnalysisError> {
+    static pub fn new(session: AnalysisSession&, sizes: Option<TypeSizeProvider&>, reporter: Option<DiagnosticReporter&>) -> Result<Self, AnalysisError> {
         let evaluator = ConstantEvaluator.new(&session.types, &session.hir, sizes);
         let scopes = Vec<ScopeId>.new();
         let accepted = false;
@@ -62,11 +65,12 @@ impl ResolutionContext {
         }
 
         accepted = true;
-        Result<Self, AnalysisError>.Ok(Self(session, scopes, Arena<Declaration>.new(), HashMap<DefId, ScopeId>.new(), HashMap<SymbolId, HirId>.new(), HashMap<DefId, Vec<SymbolId>>.new(), evaluator, Vec<SymbolId>.new(), Vec<SymbolId>.new(), Vec<Diagnostic>.new()))
+        Result<Self, AnalysisError>.Ok(Self(session, scopes, Arena<Declaration>.new(), HashMap<DefId, ScopeId>.new(), HashMap<SymbolId, HirId>.new(), HashMap<DefId, Vec<SymbolId>>.new(), evaluator, Vec<SymbolId>.new(), Vec<SymbolId>.new(), reporter, false))
     }
 
     pub fn span(unit: UnitId, span: Span) -> SourceSpan {
-        SourceSpan(self.session.unit(unit).unwrap().source, span)
+        self.session.source(unit);
+        SourceSpan(unit, span)
     }
 
     pub fn error(unit: UnitId, span: Span, code: DiagnosticCode, message: str) -> AnalysisError {
@@ -74,7 +78,20 @@ impl ResolutionContext {
     }
 
     pub fn warning(unit: UnitId, span: Span, code: DiagnosticCode, message: str) {
-        self.warnings.push(Diagnostic.warning(code, Option<SourceSpan>.Some(self.span(unit, span)), message));
+        if code.severity() != Severity.Warning { @panic("analysis warning requires a warning code"); }
+        let warning = AnalysisWarning(code, self.span(unit, span), String.from(&message));
+        defer warning.drop();
+        match self.reporter { Some(reporter) => reporter.report(&warning), None => {}, }
+    }
+
+    pub fn report_error(error: AnalysisError&) {
+        if error.kind != AnalysisErrorKind.User { @panic("expected user error"); }
+        self.has_errors = true;
+        match self.reporter { Some(reporter) => reporter.report(error), None => {}, }
+    }
+
+    pub fn has_errors() -> bool {
+        self.has_errors
     }
 
     pub fn add(declaration: Declaration) {
@@ -117,7 +134,6 @@ impl Drop for ResolutionContext {
         }
 
         self.closure_captures.drop();
-        self.warnings.drop();
         self.scopes.drop();
     }
 }

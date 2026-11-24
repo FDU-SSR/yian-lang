@@ -86,7 +86,7 @@ impl Lowering {
     pub fn end(terminator: Terminator) -> Result<(), CodegenError> {
         let block = match self.current {
             Some(value) => value,
-            None => return Result<(), CodegenError>.Err(CodegenError.invalid("path has already exited")),
+            None => @panic("path has already exited"),
         };
         self.function.terminate(block, terminator)?;
         self.current = Option<BlockId>.None;
@@ -100,7 +100,7 @@ impl Lowering {
         }
         let record = match self.session.symbols.get(symbol) {
             Some(value) => value,
-            None => return Result<LocalId, CodegenError>.Err(CodegenError.invalid("invalid lowered symbol")),
+            None => @panic("invalid lowered symbol"),
         };
         assert_cfg_type(&self.session.types, record.type_id);
         let local = self.function.add_local(record.type_id);
@@ -147,7 +147,7 @@ impl Lowering {
                 parameter_position = 1u64;
             },
             None => {
-                if !procedure.captures.is_empty() { return Result<(), CodegenError>.Err(CodegenError.invalid("capturing procedure has no environment ABI")); }
+                if !procedure.captures.is_empty() { @panic("capturing procedure has no environment ABI"); }
             },
         }
 
@@ -200,7 +200,7 @@ pub fn lower_module(session: AnalysisSession&, types: BackendTypes&, output: Ana
     for index in 0u64..output.procedures.len() {
         let callable = output.procedures[index].type_id;
         if procedures.contains(&callable) {
-            return Result<CfgModule, CodegenError>.Err(CodegenError.invalid("duplicate checked procedure"));
+            @panic("duplicate checked procedure");
         }
         procedures.insert(callable, index);
     }
@@ -220,7 +220,7 @@ pub fn lower_module(session: AnalysisSession&, types: BackendTypes&, output: Ana
         if signature.is_header { continue; }
         let position = match procedures.get(&callable) {
             Some(value) => *value,
-            None => return Result<CfgModule, CodegenError>.Err(CodegenError.invalid("checked callable has no exported procedure")),
+            None => @panic("checked callable has no exported procedure"),
         };
         let body: AnalyzedProcedure& = &output.procedures[position];
 

@@ -1,5 +1,6 @@
-from yianc.common.ids import SourceId;
-from yianc.diagnostics.model import DiagnosticCode;
+from yianc.common.ids import UnitId;
+from yianc.common.location import SourceSpan;
+from yianc.diagnostics.model import DiagnosticCode, DiagnosticLocation, UserDiagnostic;
 from yianc.frontend.ast.arena import AstTree;
 from yianc.frontend.desugar import desugar;
 from yianc.frontend.diagnostics import lex_code, parse_code;
@@ -30,22 +31,80 @@ pub enum PreparationStage {
     Desugar,
 }
 
-pub struct FrontendStageError {
-    pub stage: PreparationStage,
+pub struct LexDiagnostic {
     pub code: DiagnosticCode,
+    pub source: SourceSpan,
     pub message: String,
-    pub span: Span
+}
+
+impl UserDiagnostic for LexDiagnostic {
+    pub fn code() -> DiagnosticCode { self.code }
+    pub fn location() -> DiagnosticLocation { DiagnosticLocation.Source(self.source) }
+    pub fn message() -> String { String.from(&self.message.as_str()) }
+}
+
+impl Drop for LexDiagnostic {
+    pub fn drop() { self.message.drop(); }
+}
+
+pub struct ParseDiagnostic {
+    pub code: DiagnosticCode,
+    pub source: SourceSpan,
+    pub message: String,
+}
+
+impl UserDiagnostic for ParseDiagnostic {
+    pub fn code() -> DiagnosticCode { self.code }
+    pub fn location() -> DiagnosticLocation { DiagnosticLocation.Source(self.source) }
+    pub fn message() -> String { String.from(&self.message.as_str()) }
+}
+
+impl Drop for ParseDiagnostic {
+    pub fn drop() { self.message.drop(); }
+}
+
+pub struct DesugarDiagnostic {
+    pub code: DiagnosticCode,
+    pub source: SourceSpan,
+    pub message: String,
+}
+
+impl UserDiagnostic for DesugarDiagnostic {
+    pub fn code() -> DiagnosticCode { self.code }
+    pub fn location() -> DiagnosticLocation { DiagnosticLocation.Source(self.source) }
+    pub fn message() -> String { String.from(&self.message.as_str()) }
+}
+
+impl Drop for DesugarDiagnostic {
+    pub fn drop() { self.message.drop(); }
+}
+
+pub enum FrontendStageError {
+    Lex { error: LexDiagnostic },
+    Parse { error: ParseDiagnostic },
+    Desugar { error: DesugarDiagnostic },
+}
+
+impl UserDiagnostic for FrontendStageError {
+    pub fn code() -> DiagnosticCode {
+        match self { Lex(error) => error.code(), Parse(error) => error.code(), Desugar(error) => error.code(), }
+    }
+    pub fn location() -> DiagnosticLocation {
+        match self { Lex(error) => error.location(), Parse(error) => error.location(), Desugar(error) => error.location(), }
+    }
+    pub fn message() -> String {
+        match self { Lex(error) => error.message(), Parse(error) => error.message(), Desugar(error) => error.message(), }
+    }
 }
 
 impl Drop for FrontendStageError {
     pub fn drop() {
-        self.message.drop();
+        match self { Lex(error) => error.drop(), Parse(error) => error.drop(), Desugar(error) => error.drop(), }
     }
 }
 
 // Tokens and the optional tree transfer together; the parser owns neither after success.
 pub struct PreparedFile {
-    pub source: SourceId,
     pub tokens: Vec<Token>,
     pub tree: Option<AstTree>
 }
@@ -63,44 +122,44 @@ impl Drop for PreparedFile {
 
 impl PreparedFile {
     // Parsing borrows tokens and transfers the completed tree into this owner only on success.
-    pub fn parse() -> Result<(), FrontendStageError> {
+    pub fn parse(unit: UnitId) -> Result<(), FrontendStageError> {
         let parser = Parser.new(&self.tokens);
         defer parser.drop();
         let tree = match parse_program(&parser) {
             Ok(value) => value,
             Err(error) => {
                 defer error.drop();
-                return Result<(), FrontendStageError>.Err(FrontendStageError(PreparationStage.Parse,
-                    parse_code(error.message()), String.from(&error.message()), error.span()));
+                return Result<(), FrontendStageError>.Err(FrontendStageError.Parse(ParseDiagnostic(
+                    parse_code(error.message()), SourceSpan(unit, error.span()), String.from(&error.message()))));
             },
         };
         self.tree = Option<AstTree>.Some(tree);
         Result<(), FrontendStageError>.Ok(())
     }
 
-    pub fn desugar(path: str) -> Result<(), FrontendStageError> {
+    pub fn desugar(unit: UnitId, path: str) -> Result<(), FrontendStageError> {
         // Mutate the owned tree; an arena shallow copy would retain stale allocation metadata.
         match desugar(self.tree.unwrap(), path) {
             Ok(_) => Result<(), FrontendStageError>.Ok(()),
             Err(error) => {
                 defer error.drop();
-                Result<(), FrontendStageError>.Err(FrontendStageError(PreparationStage.Desugar,
-                    parse_code(error.message()), String.from(&error.message()), error.span()))
+                Result<(), FrontendStageError>.Err(FrontendStageError.Desugar(DesugarDiagnostic(
+                    parse_code(error.message()), SourceSpan(unit, error.span()), String.from(&error.message()))))
             },
         }
     }
 }
 
-pub fn prepare_file(id: SourceId, path: str, source: str, phase: FrontendPhase) -> Result<PreparedFile, FrontendStageError> {
+pub fn prepare_file(id: UnitId, path: str, source: str, phase: FrontendPhase) -> Result<PreparedFile, FrontendStageError> {
     let tokens = match Lexer.new(source).run() {
         Ok(value) => value,
         Err(error) => {
             defer error.drop();
-            return Result<PreparedFile, FrontendStageError>.Err(FrontendStageError(PreparationStage.Lex, lex_code(error.message()), String.from(&error.message()), error.span()));
+            return Result<PreparedFile, FrontendStageError>.Err(FrontendStageError.Lex(LexDiagnostic(lex_code(error.message()), SourceSpan(id, error.span()), String.from(&error.message()))));
         },
     };
 
-    let prepared = PreparedFile(id, tokens, Option<AstTree>.None);
+    let prepared = PreparedFile(tokens, Option<AstTree>.None);
     let transferred = false;
     defer {
         if !transferred {
@@ -113,10 +172,10 @@ pub fn prepare_file(id: SourceId, path: str, source: str, phase: FrontendPhase) 
         return Result<PreparedFile, FrontendStageError>.Ok(prepared);
     }
 
-    prepared.parse()?;
+    prepared.parse(id)?;
 
     if phase == FrontendPhase.Desugared {
-        prepared.desugar(path)?;
+        prepared.desugar(id, path)?;
     }
 
     transferred = true;

@@ -11,7 +11,7 @@ from yianc.common.ids import PatternId, TypeId, HirId;
 from yianc.common.location import SourceSpan;
 from yianc.common.traversal import WalkControl;
 from yianc.frontend.ast.atoms import MatchArmOrigin;
-from yianc.diagnostics.model import AnalysisError, AnalysisErrorKind, DiagnosticCode, Diagnostic, Severity;
+from yianc.diagnostics.model import AnalysisError, AnalysisErrorKind, DiagnosticCode;
 from std.collections.sort import sort_by;
 from std.core.iter import Iterator, IntoIterator;
 from std.collections.hash_set import HashSet;
@@ -115,7 +115,7 @@ impl CoverageChecker {
                 match self.ctx.session.types.require(*count)? {
                     LiteralValue(bits, negative, _) => {
                         if *negative {
-                            return Result<bool, AnalysisError>.Err(AnalysisError.internal("negative array length in coverage"));
+                            @panic("negative array length in coverage");
                         }
                         if *bits == 0 {
                             return Result<bool, AnalysisError>.Ok(true);
@@ -283,7 +283,7 @@ impl CoverageChecker {
                     Integer(integer) => match self.ctx.session.types.require(node.type_id)? {
                         Integer(bits, signed) => scalar_key(integer.raw_bits(), *bits, *signed),
                         CScalar(kind) => scalar_key(integer.raw_bits(), kind.bits(), kind.is_signed()),
-                        _ => return Result<Option<Interval>, AnalysisError>.Err(AnalysisError.internal("integer pattern has non-integer type")),
+                        _ => @panic("integer pattern has non-integer type"),
                     },
                     Char(value) => u64(u32(*value)),
                     _ => return Result<Option<Interval>, AnalysisError>.Ok(Option<Interval>.None),
@@ -363,7 +363,7 @@ impl CoverageChecker {
                 let length = match self.ctx.session.types.require(*count)? {
                     LiteralValue(bits, negative, _) => {
                         if *negative {
-                            return Result<Vec<Constructor>, AnalysisError>.Err(AnalysisError.internal("negative array length"));
+                            @panic("negative array length");
                         };
 
                         *bits
@@ -491,7 +491,7 @@ impl CoverageChecker {
             Integer(bits, _) => scalar_domain(*bits),
             CScalar(kind) => scalar_domain(kind.bits()),
             Char => Interval(Boundary.Finite(0), Boundary.Finite(0x110000)),
-            _ => return Result<(), AnalysisError>.Err(AnalysisError.internal("invalid scalar coverage domain")),
+            _ => @panic("invalid scalar coverage domain"),
         };
         let cuts = Vec<Boundary>.new();
         defer cuts.drop();
@@ -644,7 +644,7 @@ impl CoverageChecker {
                 },
                 _ => false,
             },
-            _ => return Result<Option<Row>, AnalysisError>.Err(AnalysisError.internal("coverage specialization requires a normalized pattern")),
+            _ => @panic("coverage specialization requires a normalized pattern"),
         };
 
         if !is_match {
@@ -919,13 +919,13 @@ impl CoverageChecker {
                             if variant.discriminant == *index { label.push_str(self.ctx.session.names.text(variant.name)); }
                         }
                     },
-                    _ => return Result<String, AnalysisError>.Err(AnalysisError.internal("coverage variant requires an enum")),
+                    _ => @panic("coverage variant requires an enum"),
                 },
-                _ => return Result<String, AnalysisError>.Err(AnalysisError.internal("coverage variant requires a nominal type")),
+                _ => @panic("coverage variant requires a nominal type"),
             },
             Structure => match self.ctx.session.types.require(type_id)? {
                 Nominal(id, _) => label.push_str(self.ctx.session.names.text(self.ctx.session.types.definition(*id).unwrap().header().name)),
-                _ => return Result<String, AnalysisError>.Err(AnalysisError.internal("coverage structure requires a nominal type")),
+                _ => @panic("coverage structure requires a nominal type"),
             },
             Tuple => label.push_str("tuple"),
             Sequence(length, _, _) => match self.ctx.session.types.require(type_id)? {
@@ -939,7 +939,7 @@ impl CoverageChecker {
                 },
             },
             Scalar(interval) => {
-                let key = match interval.low { Finite(value) => value, _ => return Result<String, AnalysisError>.Err(AnalysisError.internal("scalar witness has no finite lower bound")), };
+                let key = match interval.low { Finite(value) => value, _ => @panic("scalar witness has no finite lower bound"), };
                 if type_id == TypeId(CHAR_TYPE_ID) {
                     transferred = true;
                     label.drop();
@@ -1054,14 +1054,14 @@ impl HirVisitor for CoverageChecker {
                             EnumPattern(pattern) => match &pattern.fields {
                                 Some(fields) => {
                                     if fields.len() != 1 {
-                                        return Result<WalkControl, AnalysisError>.Err(AnalysisError.internal("iterator item pattern must have one payload"));
+                                        @panic("iterator item pattern must have one payload");
                                     }
 
                                     fields[0][1]
                                 },
-                                None => return Result<WalkControl, AnalysisError>.Err(AnalysisError.internal("iterator item pattern has no payload")),
+                                None => @panic("iterator item pattern has no payload"),
                             },
-                            _ => return Result<WalkControl, AnalysisError>.Err(AnalysisError.internal("iterator item pattern must select an enum variant")),
+                            _ => @panic("iterator item pattern must select an enum variant"),
                         };
 
                         if !self.irrefutable(item)? {
@@ -1087,10 +1087,10 @@ impl HirVisitor for CoverageChecker {
                             "pattern condition cannot match"
                         } elif self.irrefutable(arm.pattern)? { "irrefutable pattern condition" } else { "" };
                         if message != "" {
-                            self.output.warnings.push(Diagnostic.new(DiagnosticCode.UnreachablePattern, Severity.Warning, Option<SourceSpan>.Some(pattern.span), message));
+                            self.ctx.warning(pattern.span.unit, pattern.span.span, DiagnosticCode.UnreachablePattern, message);
                         }
                     } elif arm.origin == MatchArmOrigin.User && (unconditional_catchall || (!side_effect_seen && !self.useful(&rows, &row, &types)?)) {
-                        self.output.warnings.push(Diagnostic.new(DiagnosticCode.UnreachablePattern, Severity.Warning, Option<SourceSpan>.Some(arm.span), "unreachable match arm"));
+                        self.ctx.warning(arm.span.unit, arm.span.span, DiagnosticCode.UnreachablePattern, "unreachable match arm");
                     }
 
                     if arm.guard.is_none() && self.peel(Cell.Some(arm.pattern)).is_none() { unconditional_catchall = true; }
@@ -1125,7 +1125,7 @@ impl HirVisitor for CoverageChecker {
             PatternLet(value) => {
                 if value.else_branch.is_some() && self.irrefutable(value.pattern)? {
                     let branch = self.ctx.session.hir.require(*value.else_branch.unwrap())?;
-                    self.output.warnings.push(Diagnostic.new(DiagnosticCode.UnreachablePattern, Severity.Warning, Option<SourceSpan>.Some(branch.span), "unreachable else block for an irrefutable pattern"));
+                    self.ctx.warning(branch.span.unit, branch.span.span, DiagnosticCode.UnreachablePattern, "unreachable else block for an irrefutable pattern");
                 }
                 if value.else_branch.is_none() {
                     let rows = Vec<Row>.new();
@@ -1154,15 +1154,17 @@ impl HirVisitor for CoverageChecker {
     }
 }
 
-pub fn check_coverage(ctx: ResolutionContext&, output: AnalysisOutput&, recover: bool, diagnostics: Vec<Diagnostic>&) -> Result<(), AnalysisError> {
+pub fn check_coverage(ctx: ResolutionContext&, output: AnalysisOutput&, recover: bool) -> Result<(), AnalysisError> {
     let checker = CoverageChecker(ctx, output);
 
     for procedure in output.procedures {
         match walk_expr(&ctx.session.hir, procedure.root, &checker) {
             Ok(_) => {},
             Err(problem) => {
-                if !recover || problem.kind == AnalysisErrorKind.Internal { return Result<(), AnalysisError>.Err(problem); }
-                diagnostics.push(problem.diagnostic);
+                if recover && problem.kind == AnalysisErrorKind.Unsupported { problem.kind = AnalysisErrorKind.User; }
+                if !recover || problem.kind != AnalysisErrorKind.User { return Result<(), AnalysisError>.Err(problem); }
+                ctx.report_error(&problem);
+                problem.drop();
             },
         }
     }

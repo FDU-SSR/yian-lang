@@ -2,7 +2,8 @@ from lsp.analysis.fingerprint import sha256;
 from lsp.analysis.query_index import QueryDecl, QueryFileSpec, QueryOccurrence, QuerySnapshot;
 from lsp.analysis.source_index import DeclKind;
 from yianc.codegen.session import TargetIdentity, target_identity;
-from yianc.diagnostics.model import AnalysisStage, Diagnostic, DiagnosticCode, DiagnosticLocation, RelatedLocation, Severity;
+from yianc.diagnostics.model import DiagnosticCode;
+from lsp.analysis.diagnostic import LspDiagnostic;
 from yianc.frontend.source import Position, SourceDocument, Span;
 from json.value import Object, Number, Value;
 from json.write import stringify;
@@ -236,7 +237,7 @@ fn release_occurrences(occurrences: Vec<QueryOccurrence>&) {
     occurrences.drop();
 }
 
-fn release_warnings(warnings: Vec<Diagnostic>&) {
+fn release_warnings(warnings: Vec<LspDiagnostic>&) {
     for value in *warnings { value.drop(); }
     warnings.drop();
 }
@@ -312,28 +313,25 @@ fn parse_occurrences(document: Object&) -> Result<Vec<QueryOccurrence>, String> 
     Result<Vec<QueryOccurrence>, String>.Ok(val=occurrences)
 }
 
-fn parse_warnings(document: Object&) -> Result<Vec<Diagnostic>, String> {
+fn parse_warnings(document: Object&) -> Result<Vec<LspDiagnostic>, String> {
     let values = match field_value(document, "warnings") {
-        Some(value) => match value.as_array() { Some(items) => items, None => return Result<Vec<Diagnostic>, String>.Err(String.from(&"cached warnings are malformed")) },
-        None => return Result<Vec<Diagnostic>, String>.Err(String.from(&"cached warnings are missing")),
+        Some(value) => match value.as_array() { Some(items) => items, None => return Result<Vec<LspDiagnostic>, String>.Err(String.from(&"cached warnings are malformed")) },
+        None => return Result<Vec<LspDiagnostic>, String>.Err(String.from(&"cached warnings are missing")),
     };
-    let warnings = Vec<Diagnostic>.new();
+    let warnings = Vec<LspDiagnostic>.new();
     let accepted = false;
     defer { if !accepted { release_warnings(&warnings); } };
     for value in *values {
-        let record = match value.as_object() { Some(items) => items, None => return Result<Vec<Diagnostic>, String>.Err(String.from(&"cached warning is malformed")) };
-        let path = match field_string(record, "path") { Some(item) => String.from(&item), None => return Result<Vec<Diagnostic>, String>.Err(String.from(&"cached warning path is missing")) };
-        let start = match field_position(record, "start") { Some(item) => item, None => { path.drop(); return Result<Vec<Diagnostic>, String>.Err(String.from(&"cached warning span is invalid")); } };
-        let end = match field_position(record, "end") { Some(item) => item, None => { path.drop(); return Result<Vec<Diagnostic>, String>.Err(String.from(&"cached warning span is invalid")); } };
-        let message = match field_string(record, "message") { Some(item) => String.from(&item), None => { path.drop(); return Result<Vec<Diagnostic>, String>.Err(String.from(&"cached warning message is missing")); } };
-        let location = Option<DiagnosticLocation>.Some(
-            DiagnosticLocation.Detached(path, Span(start=start, end=end)));
-        warnings.push(Diagnostic(code=DiagnosticCode.UnreachablePattern, severity=Severity.Warning,
-            location=location, message=message, related=Vec<RelatedLocation>.new(),
-            stage=Option<AnalysisStage>.None, recovered=false));
+        let record = match value.as_object() { Some(items) => items, None => return Result<Vec<LspDiagnostic>, String>.Err(String.from(&"cached warning is malformed")) };
+        let path = match field_string(record, "path") { Some(item) => String.from(&item), None => return Result<Vec<LspDiagnostic>, String>.Err(String.from(&"cached warning path is missing")) };
+        let start = match field_position(record, "start") { Some(item) => item, None => { path.drop(); return Result<Vec<LspDiagnostic>, String>.Err(String.from(&"cached warning span is invalid")); } };
+        let end = match field_position(record, "end") { Some(item) => item, None => { path.drop(); return Result<Vec<LspDiagnostic>, String>.Err(String.from(&"cached warning span is invalid")); } };
+        let message = match field_string(record, "message") { Some(item) => String.from(&item), None => { path.drop(); return Result<Vec<LspDiagnostic>, String>.Err(String.from(&"cached warning message is missing")); } };
+        warnings.push(LspDiagnostic(DiagnosticCode.UnreachablePattern, message,
+            Option<String>.Some(path), Option<Span>.Some(Span(start=start, end=end))));
     }
     accepted = true;
-    Result<Vec<Diagnostic>, String>.Ok(val=warnings)
+    Result<Vec<LspDiagnostic>, String>.Ok(val=warnings)
 }
 
 fn build_cache(identity: CacheIdentity&, config_sha256: str, documents: Vec<SourceDocument>&,
@@ -421,15 +419,18 @@ fn build_cache(identity: CacheIdentity&, config_sha256: str, documents: Vec<Sour
     let warning_index = 0u64;
     while warning_index < query.warnings_len() {
         match query.warning(warning_index) {
-            Some(warning) => match &warning.location {
-                Some(Detached(path, span)) => {
-                    let record = Object.new();
-                    record.insert("path", Value.String(String.from(&path.as_str())));
-                    append_span(&record, *span);
-                    record.insert("message", Value.String(String.from(&warning.message.as_str())));
-                    warnings.push(Value.Object(record));
+            Some(warning) => match &warning.path {
+                Some(path) => match &warning.span {
+                    Some(span) => {
+                        let record = Object.new();
+                        record.insert("path", Value.String(String.from(&path.as_str())));
+                        append_span(&record, *span);
+                        record.insert("message", Value.String(String.from(&warning.message.as_str())));
+                        warnings.push(Value.Object(record));
+                    },
+                    None => {},
                 },
-                _ => {},
+                None => {},
             },
             None => {},
         }

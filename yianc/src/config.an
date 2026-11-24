@@ -1,8 +1,33 @@
 from std.cli import ArgumentParser, Nargs, ArgMatches, Action;
 from std.core.process import env_var;
+from yianc.diagnostics.model import DiagnosticCode, DiagnosticLocation, UserDiagnostic;
+from std.core.convert import From;
 
 const EXIT_FAILURE: i32 = 1;
 const EXIT_USAGE_ERROR: i32 = 2;
+
+pub struct CliError { pub message: String, pub status: i32, pub usage: Option<String> }
+
+impl UserDiagnostic for CliError {
+    pub fn message() -> String { String.from(&self.message.as_str()) }
+    pub fn location() -> DiagnosticLocation { DiagnosticLocation.Global }
+    pub fn code() -> DiagnosticCode { DiagnosticCode.CommandLine }
+}
+
+impl Drop for CliError {
+    pub fn drop() {
+        self.message.drop();
+        match &self.usage { Some(value) => value.drop(), None => {}, }
+    }
+}
+
+fn config_error(text: String, status: i32) -> CliError {
+    let trimmed = text.as_str().trim();
+    let body = if trimmed.starts_with("error: ") { str.from_slice_unchecked(trimmed.as_slice()[7u64..trimmed.as_slice().len()]) } else { trimmed };
+    let message = String.from(&body);
+    text.drop();
+    CliError(message, status, Option<String>.None)
+}
 
 pub enum CompilerAction {
     Compile,
@@ -98,13 +123,13 @@ impl CompilerConfig {
             Vec<String>.new(), Vec<String>.new(), true, true)
     }
 
-    static fn from_matches(arg_matches: ArgMatches&) -> Result<Self, String> {
+    static fn from_matches(arg_matches: ArgMatches&) -> Result<Self, CliError> {
         let check = *arg_matches.get_bool("check").unwrap().unwrap();
 
         let inputs = string_values(arg_matches, "inputs");
         if inputs.is_empty() {
             inputs.drop();
-            return Result<Self, String>.Err(String.from(&"error: the following arguments are required: PATH\n"));
+            return Result<Self, CliError>.Err(config_error(String.from(&"error: the following arguments are required: PATH\n"), EXIT_USAGE_ERROR));
         }
 
         let root = match arg_matches.get_string("compiler-root") {
@@ -149,53 +174,46 @@ impl CompilerConfig {
         let link_searches = string_values(arg_matches, "link-search");
         let cfg_inline_disabled = *arg_matches.get_bool("no-cfg-inline").unwrap().unwrap();
         let eliminate_disabled = *arg_matches.get_bool("no-fat-check-elimination").unwrap().unwrap();
-        let cfg_inline = environment_switch("YIAN_CFG_INLINE", true)? && !cfg_inline_disabled;
-        let fat_check_elimination = environment_switch("YIAN_FAT_CHECK_ELIMINATION", true)? && !eliminate_disabled;
-
-        let runtime_profile_error = match &runtime_profile_dir {
-            Some(value) if value.is_empty() => Option<String>.Some(String.from(&"error: --runtime-profile-dir PATH cannot be empty\n")),
-            Some(_) if check => Option<String>.Some(String.from(&"error: --runtime-profile-dir requires compilation without --check\n")),
-            Some(_) if target != OutputKind.Exe => Option<String>.Some(String.from(&"error: --runtime-profile-dir requires target exe\n")),
-            Some(value) if !value.as_str().starts_with("/") => Option<String>.Some(String.from(&"error: --runtime-profile-dir PATH must be absolute\n")),
-            _ => Option<String>.None,
+        let action = if check { CompilerAction.Check } else { CompilerAction.Compile };
+        let config = Self(action, inputs, root, arg_matches.get_string("compiler-root").unwrap().is_some(), packages, raw, ffi, target, target_explicit, output, optimization,
+            dump, profile, profile_output, runtime_profile_dir, log_enabled, log_spec, log_file, link_libraries, link_searches,
+            true, true);
+        let transferred = false;
+        defer { if !transferred { config.drop(); } };
+        config.cfg_inline = match environment_switch("YIAN_CFG_INLINE", true) {
+            Ok(value) => value && !cfg_inline_disabled,
+            Err(message) => return Result<Self, CliError>.Err(config_error(message, EXIT_USAGE_ERROR)),
         };
-        let profile_error = match &profile_output {
-            Some(_) if !profile => Option<String>.Some(String.from(&"error: --profile-output requires --profile\n")),
-            Some(value) if value.is_empty() => Option<String>.Some(String.from(&"error: --profile-output PATH cannot be empty\n")),
-            _ => Option<String>.None,
-        };
-        let action_error = match runtime_profile_error {
-            Some(message) => Option<String>.Some(message),
-            None => if !log_enabled && log_spec.is_some() {
-                Option<String>.Some(String.from(&"error: --log-spec requires --log\n"))
-            } elif !log_enabled && log_file.is_some() {
-                Option<String>.Some(String.from(&"error: --log-file requires --log\n"))
-            } else { match profile_error {
-                Some(message) => Option<String>.Some(message),
-                None => if check && target_explicit {
-                    Option<String>.Some(String.from(&"error: --check does not accept --target\n"))
-                } elif check && output.is_some() {
-                    Option<String>.Some(String.from(&"error: --check does not accept --output\n"))
-                } elif check && (!link_libraries.is_empty() || !link_searches.is_empty()) {
-                    Option<String>.Some(String.from(&"error: --check does not accept native link options\n"))
-                } else {
-                    Option<String>.None
-                },
-            } },
+        config.fat_check_elimination = match environment_switch("YIAN_FAT_CHECK_ELIMINATION", true) {
+            Ok(value) => value && !eliminate_disabled,
+            Err(message) => return Result<Self, CliError>.Err(config_error(message, EXIT_USAGE_ERROR)),
         };
 
-        match action_error {
-            Some(message) => {
-                @eprintln(message);
-                exit(EXIT_FAILURE);
+        match &config.runtime_profile_dir {
+            Some(value) => {
+                if value.is_empty() { return Result<Self, CliError>.Err(config_error(String.from(&"--runtime-profile-dir PATH cannot be empty"), EXIT_FAILURE)); }
+                if check { return Result<Self, CliError>.Err(config_error(String.from(&"--runtime-profile-dir requires compilation without --check"), EXIT_FAILURE)); }
+                if target != OutputKind.Exe { return Result<Self, CliError>.Err(config_error(String.from(&"--runtime-profile-dir requires target exe"), EXIT_FAILURE)); }
+                if !value.as_str().starts_with("/") { return Result<Self, CliError>.Err(config_error(String.from(&"--runtime-profile-dir PATH must be absolute"), EXIT_FAILURE)); }
             },
             None => {},
         }
-
-        let action = if check { CompilerAction.Check } else { CompilerAction.Compile };
-        Result<Self, String>.Ok(Self(action, inputs, root, arg_matches.get_string("compiler-root").unwrap().is_some(), packages, raw, ffi, target, target_explicit, output, optimization,
-            dump, profile, profile_output, runtime_profile_dir, log_enabled, log_spec, log_file, link_libraries, link_searches,
-            cfg_inline, fat_check_elimination))
+        if !log_enabled && config.log_spec.is_some() { return Result<Self, CliError>.Err(config_error(String.from(&"--log-spec requires --log"), EXIT_FAILURE)); }
+        if !log_enabled && config.log_file.is_some() { return Result<Self, CliError>.Err(config_error(String.from(&"--log-file requires --log"), EXIT_FAILURE)); }
+        match &config.profile_output {
+            Some(value) => {
+                if !profile { return Result<Self, CliError>.Err(config_error(String.from(&"--profile-output requires --profile"), EXIT_FAILURE)); }
+                if value.is_empty() { return Result<Self, CliError>.Err(config_error(String.from(&"--profile-output PATH cannot be empty"), EXIT_FAILURE)); }
+            },
+            None => {},
+        }
+        if check && target_explicit { return Result<Self, CliError>.Err(config_error(String.from(&"--check does not accept --target"), EXIT_FAILURE)); }
+        if check && config.output.is_some() { return Result<Self, CliError>.Err(config_error(String.from(&"--check does not accept --output"), EXIT_FAILURE)); }
+        if check && (!config.link_libraries.is_empty() || !config.link_searches.is_empty()) {
+            return Result<Self, CliError>.Err(config_error(String.from(&"--check does not accept native link options"), EXIT_FAILURE));
+        }
+        transferred = true;
+        Result<Self, CliError>.Ok(config)
     }
 }
 
@@ -234,8 +252,8 @@ impl Drop for CompilerConfig {
 }
 
 // Configuration and error text own their storage independently of the parser and command-line strings.
-// Argument failures are reported here and terminate the process with the usage status.
-pub fn parse_args() -> CompilerConfig {
+// Argument failures transfer their message, optional usage, and exit status to the caller.
+pub fn parse_args() -> Result<CompilerConfig, CliError> {
     let parser = ArgumentParser.new("compiler");
     defer parser.drop();
 
@@ -321,38 +339,24 @@ pub fn parse_args() -> CompilerConfig {
     .nargs(Nargs.ZeroOrMore).metavar("INPUT")
     .help("input files or directories");
 
-    let config = match parser.parse_env() {
+    match parser.parse_env() {
         Ok(outcome) => match outcome {
-            Help(text) => CompilerConfig.help(text),
+            Help(text) => Result<CompilerConfig, CliError>.Ok(CompilerConfig.help(text)),
             Parsed(arg_matches) => {
                 defer arg_matches.drop();
-                match CompilerConfig.from_matches(&arg_matches) {
-                    Ok(value) => value,
-                    Err(message) => {
-                        @eprintln(message);
-                        exit(EXIT_USAGE_ERROR);
-                    },
-                }
+                CompilerConfig.from_matches(&arg_matches)
             },
         },
         Err(error) => {
             defer error.drop();
-            let diagnostic = String.new();
-
-            match parser.format_usage() {
-                Ok(text) => {
-                    defer text.drop();
-                    diagnostic.push_str(text.as_str());
-                },
-                Err(problem) => problem.drop(),
-            }
-
-            let message = error.format();
-            defer message.drop();
-            diagnostic.push_str(message.as_str());
-            @eprintln(diagnostic);
-            exit(EXIT_USAGE_ERROR);
+            let usage = match parser.format_usage() {
+                Ok(text) => Option<String>.Some(text),
+                Err(problem) => { problem.drop(); Option<String>.None },
+            };
+            let message = String.new();
+            if error.argument() != "" { message.push_str(error.argument()); message.push_str(": "); }
+            message.push_str(error.message());
+            Result<CompilerConfig, CliError>.Err(CliError(message, EXIT_USAGE_ERROR, usage))
         },
-    };
-    config
+    }
 }

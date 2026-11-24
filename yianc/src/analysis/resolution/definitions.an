@@ -44,7 +44,7 @@ pub fn parameters(ctx: ResolutionContext&, unit: UnitId, scope: ScopeId, syntax:
                 result.push(Parameter(name, type_id, Option<SourceSpan>.Some(ctx.span(unit, value.span))));
             },
             Pattern(value) => {
-                return Result<Vec<Parameter>, AnalysisError>.Err(AnalysisError.internal("parameter patterns must be desugared before declaration resolution"));
+                @panic("parameter patterns must be desugared before declaration resolution");
             },
         }
     }
@@ -72,7 +72,7 @@ pub fn annotations(ctx: ResolutionContext&, unit: UnitId, scope: ScopeId, generi
 
                 match ctx.session.types.require(generic_id)? {
                     ConstGeneric(_, annotation) => *annotation = type_id,
-                    _ => return Result<(), AnalysisError>.Err(AnalysisError.internal("constant parameter has invalid type")),
+                    _ => @panic("constant parameter has invalid type"),
                 };
             },
             Type(_) => {},
@@ -269,7 +269,7 @@ fn resolve_one_definition(ctx: ResolutionContext&, index: u64) -> Result<(), Ana
                 }
             }
         },
-        _ => return Result<(), AnalysisError>.Err(AnalysisError.internal("invalid named declaration")),
+        _ => @panic("invalid named declaration"),
     }
 
     Result<(), AnalysisError>.Ok(())

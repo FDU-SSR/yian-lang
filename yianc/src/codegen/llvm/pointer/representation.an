@@ -109,7 +109,7 @@ impl FunctionLowering {
                 let result = self.builder.insert_value(self.owner.module.undef_value(native), data, 0u32, "");
                 Result<IrValue, CodegenError>.Ok(self.builder.insert_value(result, word, 1u32, ""))
             },
-            _ => Result<IrValue, CodegenError>.Err(CodegenError.invalid("place address has no language pointer type")),
+            _ => @panic("place address has no language pointer type"),
         }
     }
 
@@ -127,7 +127,7 @@ impl FunctionLowering {
             return Result<IrValue, CodegenError>.Ok(self.owner.module.const_null(self.owner.types.value_type(target)?));
         }
         if !source_pointer || !target_pointer {
-            return Result<IrValue, CodegenError>.Err(CodegenError.invalid("invalid language pointer conversion"));
+            @panic("invalid language pointer conversion");
         }
 
         let module = self.owner.module;
@@ -141,7 +141,7 @@ impl FunctionLowering {
                     if is_match {
                         let bits = match store.require(*count)? {
                             LiteralValue(bits, false, _) => *bits,
-                            _ => return Result<IrValue, CodegenError>.Err(CodegenError.invalid("array pointer conversion has no length")),
+                            _ => @panic("array pointer conversion has no length"),
                         };
                         empty = bits == 0u64;
                         array = true;
@@ -160,7 +160,7 @@ impl FunctionLowering {
                     _ => self.make_place_pointer(target, slot, word),
                 };
             }
-            return Result<IrValue, CodegenError>.Err(CodegenError.invalid("nonempty pointer conversion from a zero-sized value"));
+            @panic("nonempty pointer conversion from a zero-sized value");
         }
 
         if !self.owner.types.raw_pointers() && !array {
@@ -182,7 +182,7 @@ impl FunctionLowering {
             Pointer(_) => {
                 let element = match source_type {
                     Pointer(element) | Reference(element) => *element,
-                    _ => return Result<IrValue, CodegenError>.Err(CodegenError.invalid("full pointer conversion has no source pointee")),
+                    _ => @panic("full pointer conversion has no source pointee"),
                 };
                 self.require_guard(GuardKind.ByteExtent, GuardSite.Before)?;
                 let stride = module.abi_size(self.owner.types.value_type(element)?);
@@ -218,7 +218,7 @@ impl FunctionLowering {
                 }
                 self.make_place_pointer(target, data, word)
             },
-            _ => Result<IrValue, CodegenError>.Err(CodegenError.invalid("unsupported language pointer conversion")),
+            _ => @panic("unsupported language pointer conversion"),
         }
     }
 }

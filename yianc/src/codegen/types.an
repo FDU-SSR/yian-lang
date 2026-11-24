@@ -116,15 +116,15 @@ impl BackendTypes {
     // One binding fixes every representation the backend may consume. Entries copy borrowed records.
     pub fn bind_representations(entries: Vec<TypeRepresentation>&) -> Result<(), CodegenError> {
         if self.representations_bound {
-            return Result<(), CodegenError>.Err(CodegenError.invalid("backend representations are already bound"));
+            @panic("backend representations are already bound");
         }
         for entry in *entries {
             let classified = classify_representation(self.store, entry.type_id, self.raw)?;
             if classified != entry.representation {
-                return Result<(), CodegenError>.Err(CodegenError.invalid("representation entry disagrees with the active classifier"));
+                @panic("representation entry disagrees with the active classifier");
             }
             if self.representations.contains(&entry.type_id) {
-                return Result<(), CodegenError>.Err(CodegenError.invalid("representation entry is duplicated"));
+                @panic("representation entry is duplicated");
             }
             self.representations.insert(entry.type_id, entry.representation);
         }
@@ -137,11 +137,11 @@ impl BackendTypes {
     // Consumers query the bound table only; a missing record is an internal error, never a fallback.
     pub fn representation(type_id: TypeId) -> Result<PointerRepresentation, CodegenError> {
         if !self.representations_bound {
-            return Result<PointerRepresentation, CodegenError>.Err(CodegenError.invalid("backend representations are not bound"));
+            @panic("backend representations are not bound");
         }
         match self.representations.get(&type_id) {
             Some(value) => Result<PointerRepresentation, CodegenError>.Ok(*value),
-            None => Result<PointerRepresentation, CodegenError>.Err(CodegenError.invalid("backend representation is missing for a CFG type")),
+            None => @panic("backend representation is missing for a CFG type"),
         }
     }
 
@@ -325,7 +325,7 @@ impl BackendTypes {
             Closure(_, _, _, _, environment, _) => {
                 match environment {
                     Some(value) => return self.value_type(*value),
-                    None => return Result<IrType, AnalysisError>.Err(AnalysisError.internal("closure has no environment type")),
+                    None => @panic("closure has no environment type"),
                 }
             },
             Nominal(definition, _) => {
@@ -357,7 +357,7 @@ impl BackendTypes {
         for field in fields {
             let alignment = u64(self.module.abi_alignment(*field));
             if alignment == 0u64 {
-                return Result<(), AnalysisError>.Err(AnalysisError.internal("LLVM field has zero ABI alignment"));
+                @panic("LLVM field has zero ABI alignment");
             }
             let size = self.module.abi_size(*field);
             let padding = (alignment - offset % alignment) % alignment;

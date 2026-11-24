@@ -1,8 +1,7 @@
 from lsp.analysis.compiler import CompilerAnalysis;
 from lsp.analysis.source_index import DeclKind, SourceIndex;
-from yianc.common.ids import SourceId;
-from yianc.diagnostics.model import Diagnostic;
-from yianc.diagnostics.render import detach;
+from yianc.common.ids import UnitId;
+from lsp.analysis.diagnostic import LspDiagnostic;
 from yianc.frontend.lex.token import KeywordKind, TokenPayload;
 from yianc.frontend.source import SourceDocument, Span;
 from std.collections.hash_map import HashMap;
@@ -158,7 +157,7 @@ fn release_occurrences(occurrences: Vec<QueryOccurrence>&) {
     occurrences.drop();
 }
 
-fn release_warnings(warnings: Vec<Diagnostic>&) {
+fn release_warnings(warnings: Vec<LspDiagnostic>&) {
     for value in *warnings { value.drop(); }
     warnings.drop();
 }
@@ -337,7 +336,7 @@ fn semantic_kind_index(kind: DeclKind) -> u64 {
 
 fn append_token_data(file_id: u64, file: QueryFile&, index: SourceIndex&,
     occurrences: Vec<QueryOccurrence>&, decls: Vec<QueryDecl>&, files: Vec<QueryFile>&) {
-    let tokens = match index.tokens_of(SourceId(file_id)) {
+    let tokens = match index.tokens_of(UnitId(file_id)) {
         Some(value) => value,
         None => { return; },
     };
@@ -431,7 +430,7 @@ pub struct QuerySnapshot {
     decls: Vec<QueryDecl>,
     occurrences: Vec<QueryOccurrence>,
     references: Vec<Vec<u64>>,
-    warnings: Vec<Diagnostic>,
+    warnings: Vec<LspDiagnostic>,
 }
 
 // Cache loading supplies owned file text and precomputed semantic token data.
@@ -446,7 +445,7 @@ pub struct QueryFileSpec {
 
 impl QuerySnapshot {
     static pub fn restore(file_specs: Vec<QueryFileSpec>, decls: Vec<QueryDecl>,
-        occurrences: Vec<QueryOccurrence>, warnings: Vec<Diagnostic>) -> Result<Self, String> {
+        occurrences: Vec<QueryOccurrence>, warnings: Vec<LspDiagnostic>) -> Result<Self, String> {
         let file_cursor = 0u64;
         while file_cursor < file_specs.len() {
             let spec = &file_specs[file_cursor];
@@ -537,19 +536,18 @@ impl QuerySnapshot {
     // Extraction copies every value the protocol needs, detaches warning
     // locations and rebuilds position tables. The caller releases the compiler
     // session, output, source index and semantic index after this returns.
-    static pub fn extract(documents: Vec<SourceDocument>&, index: SourceIndex&,
-        analysis: CompilerAnalysis&) -> Result<Self, String> {
+    static pub fn extract(index: SourceIndex&, analysis: CompilerAnalysis&) -> Result<Self, String> {
         let files = Vec<QueryFile>.new();
         let accepted = false;
         defer { if !accepted { release_files(&files); } };
 
         let document_cursor = 0u64;
-        while document_cursor < documents.len() {
-            let document = &documents[document_cursor];
-            let path = String.from(&document.path.as_str());
-            let module = module_name_for_path(analysis, document.path.as_str());
-            let file = QueryFile.new(path, String.from(&document.text.as_str()),
-                index.is_stdlib_source(SourceId(document_cursor)), module);
+        while document_cursor < analysis.session.len() {
+            let document = analysis.session.source(UnitId(document_cursor));
+            let path = String.from(&document.path());
+            let module = module_name_for_path(analysis, document.path());
+            let file = QueryFile.new(path, String.from(&document.text()),
+                index.is_stdlib_source(UnitId(document_cursor)), module);
             files.push(file);
             document_cursor += 1u64;
         }
@@ -637,31 +635,7 @@ impl QuerySnapshot {
             file_cursor += 1u64;
         }
 
-        let warnings = Vec<Diagnostic>.new();
-        let warning_cursor = 0u64;
-        while warning_cursor < analysis.output.warnings.len() {
-            let warning = &analysis.output.warnings[warning_cursor];
-            let copied = warning.copy();
-            match detach(&copied, analysis.session.source_manager()) {
-                Ok(_) => warnings.push(copied),
-                Err(problem) => {
-                    problem.drop();
-                    copied.drop();
-                    for value in warnings { value.drop(); }
-                    warnings.drop();
-                    for reference in references { reference.drop(); }
-                    references.drop();
-                    for occurrence in occurrences { occurrence.drop(); }
-                    occurrences.drop();
-                    for declaration in decls { declaration.drop(); }
-                    decls.drop();
-                    release_file_map(&files_by_path);
-                    return Result<Self, String>.Err(
-                        String.from(&"could not detach an analysis warning"));
-                },
-            }
-            warning_cursor += 1u64;
-        }
+        let warnings = analysis.take_warnings();
 
         accepted = true;
         Result<Self, String>.Ok(Self(files=files, files_by_path=files_by_path, decls=decls,
@@ -778,7 +752,7 @@ impl QuerySnapshot {
 
     pub fn warnings_len() -> u64 { self.warnings.len() }
 
-    pub fn warning(index: u64) -> Option<Diagnostic&> { self.warnings.as_slice().get(index) }
+    pub fn warning(index: u64) -> Option<LspDiagnostic&> { self.warnings.as_slice().get(index) }
 
     pub fn same_documents(documents: Vec<SourceDocument>&) -> bool {
         if documents.len() != self.files.len() { return false; }

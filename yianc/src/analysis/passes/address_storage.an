@@ -12,8 +12,8 @@ from yianc.frontend.ast.operator import UnaryOperator;
 from std.collections.hash_set import HashSet;
 from yianc.analysis.ty.store import VOID_TYPE_ID;
 
-fn invalid(span: SourceSpan, message: str) -> AnalysisError {
-    AnalysisError.internal(message).with_location(span)
+fn invalid(span: SourceSpan, message: str) -> ! {
+    @panic(message)
 }
 
 // Collection is read-only; normalization edits edges only after the walk completes.
@@ -40,7 +40,7 @@ impl Drop for AddressUseCollector {
 impl HirVisitor for AddressUseCollector {
     pub fn enter_expr(id: HirId, node: HirNode&) -> Result<WalkControl, AnalysisError> {
         if !self.active.insert(id) {
-            return Result<WalkControl, AnalysisError>.Err(invalid(node.span, "HIR address normalization found an expression cycle"));
+            invalid(node.span, "HIR address normalization found an expression cycle");
         }
         Result<WalkControl, AnalysisError>.Ok(WalkControl.Continue)
     }
@@ -60,7 +60,7 @@ impl HirVisitor for AddressUseCollector {
 
     pub fn enter_pattern(id: PatternId, node: PatternNode&) -> Result<WalkControl, AnalysisError> {
         if !self.active_patterns.insert(id) {
-            return Result<WalkControl, AnalysisError>.Err(invalid(node.span, "HIR address normalization found a pattern cycle"));
+            invalid(node.span, "HIR address normalization found a pattern cycle");
         }
         Result<WalkControl, AnalysisError>.Ok(WalkControl.Continue)
     }
@@ -105,37 +105,37 @@ fn ensure_place(ctx: ResolutionContext&, unit: UnitId, id: HirId) -> Result<HirI
             Result<HirId, AnalysisError>.Ok(id)
         },
         3u8 => {
-            let receiver_id = match &ctx.session.hir.require(id)?.kind { FieldAccess(value) => value.receiver, _ => return Result<HirId, AnalysisError>.Err(invalid(span, "field place changed during normalization")), };
+            let receiver_id = match &ctx.session.hir.require(id)?.kind { FieldAccess(value) => value.receiver, _ => invalid(span, "field place changed during normalization"), };
             let place_receiver = ensure_place(ctx, unit, receiver_id)?;
             let node = ctx.session.hir.require(id)?;
-            match &node.kind { FieldAccess(value) => value.receiver = place_receiver, _ => return Result<HirId, AnalysisError>.Err(invalid(span, "field place changed during normalization")), }
+            match &node.kind { FieldAccess(value) => value.receiver = place_receiver, _ => invalid(span, "field place changed during normalization"), }
             node.is_place = true;
             Result<HirId, AnalysisError>.Ok(id)
         },
         4u8 => {
-            let receiver_id = match &ctx.session.hir.require(id)?.kind { TupleAccess(value) => value.receiver, _ => return Result<HirId, AnalysisError>.Err(invalid(span, "tuple place changed during normalization")), };
+            let receiver_id = match &ctx.session.hir.require(id)?.kind { TupleAccess(value) => value.receiver, _ => invalid(span, "tuple place changed during normalization"), };
             let place_receiver = ensure_place(ctx, unit, receiver_id)?;
             let node = ctx.session.hir.require(id)?;
-            match &node.kind { TupleAccess(value) => value.receiver = place_receiver, _ => return Result<HirId, AnalysisError>.Err(invalid(span, "tuple place changed during normalization")), }
+            match &node.kind { TupleAccess(value) => value.receiver = place_receiver, _ => invalid(span, "tuple place changed during normalization"), }
             node.is_place = true;
             Result<HirId, AnalysisError>.Ok(id)
         },
         5u8 => {
-            let array_id = match &ctx.session.hir.require(id)?.kind { ArrayAccess(value) => value.array, _ => return Result<HirId, AnalysisError>.Err(invalid(span, "array place changed during normalization")), };
+            let array_id = match &ctx.session.hir.require(id)?.kind { ArrayAccess(value) => value.array, _ => invalid(span, "array place changed during normalization"), };
             let place_array = ensure_place(ctx, unit, array_id)?;
             let node = ctx.session.hir.require(id)?;
-            match &node.kind { ArrayAccess(value) => value.array = place_array, _ => return Result<HirId, AnalysisError>.Err(invalid(span, "array place changed during normalization")), }
+            match &node.kind { ArrayAccess(value) => value.array = place_array, _ => invalid(span, "array place changed during normalization"), }
             node.is_place = true;
             Result<HirId, AnalysisError>.Ok(id)
         },
         7u8 => {
             let (last_id, index) = match &ctx.session.hir.require(id)?.kind {
                 Block(value) if value.stmts.len() != 0 => (value.stmts[value.stmts.len() - 1u64], value.stmts.len() - 1u64),
-                _ => return Result<HirId, AnalysisError>.Err(invalid(span, "place block changed during normalization")),
+                _ => invalid(span, "place block changed during normalization"),
             };
             let place_last = ensure_place(ctx, unit, last_id)?;
             let node = ctx.session.hir.require(id)?;
-            match &node.kind { Block(value) => value.stmts[index] = place_last, _ => return Result<HirId, AnalysisError>.Err(invalid(span, "place block changed during normalization")), }
+            match &node.kind { Block(value) => value.stmts[index] = place_last, _ => invalid(span, "place block changed during normalization"), }
             Result<HirId, AnalysisError>.Ok(id)
         },
         _ => Result<HirId, AnalysisError>.Ok(spill(ctx, unit, id, type_id, span)),
@@ -156,13 +156,13 @@ fn normalize_use(ctx: ResolutionContext&, unit: UnitId, id: HirId) -> Result<(),
             if function_address {
                 let is_function = match &ctx.session.hir.require(operand)?.kind { Ty => true, _ => false, };
                 if !is_function {
-                    return Result<(), AnalysisError>.Err(invalid(span, "function address operand is not a function type"));
+                    invalid(span, "function address operand is not a function type");
                 }
                 return Result<(), AnalysisError>.Ok(());
             }
             let operand = ensure_place(ctx, unit, operand)?;
             let node = ctx.session.hir.require(id)?;
-            match &node.kind { Unary(value) => value.operand = operand, _ => return Result<(), AnalysisError>.Err(invalid(span, "address expression changed during normalization")), }
+            match &node.kind { Unary(value) => value.operand = operand, _ => invalid(span, "address expression changed during normalization"), }
             return Result<(), AnalysisError>.Ok(());
         },
         None => {},
@@ -191,7 +191,7 @@ fn normalize_use(ctx: ResolutionContext&, unit: UnitId, id: HirId) -> Result<(),
             if is_closure {
                 let callable = ensure_place(ctx, unit, callable)?;
                 let node = ctx.session.hir.require(id)?;
-                match &node.kind { Invoke(value) => { value.callable = callable; }, _ => return Result<(), AnalysisError>.Err(invalid(span, "closure invocation changed during normalization")), }
+                match &node.kind { Invoke(value) => { value.callable = callable; }, _ => invalid(span, "closure invocation changed during normalization"), }
             }
         },
         None => {},

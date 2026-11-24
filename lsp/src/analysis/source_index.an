@@ -1,6 +1,6 @@
 from yianc.analysis.names import NameInterner;
 from yianc.analysis.session.session import AnalysisSession;
-from yianc.common.ids import NameId, SourceId, TypeId, UnitId;
+from yianc.common.ids import NameId, TypeId, UnitId;
 from yianc.common.location import SourceSpan;
 from yianc.common.traversal import WalkControl;
 from yianc.frontend.ast.arena import AstTree;
@@ -13,7 +13,7 @@ from yianc.frontend.lex.lexer import Lexer;
 from yianc.frontend.lex.token import KeywordKind, Token, TokenPayload, drop_tokens;
 from yianc.frontend.parse.items import parse_program;
 from yianc.frontend.parse.state import Parser;
-from yianc.frontend.source import Position, SourceDocument, Span;
+from yianc.frontend.source import Position, Span;
 from std.collections.hash_map import HashMap;
 from std.core.fs import canonicalize;
 from std.core.hash import Hash, Murmur3Hasher;
@@ -141,7 +141,7 @@ impl Hash<Murmur3Hasher> for OccurrenceKey {
 }
 
 pub struct DeclInfo {
-    pub source: SourceId,
+    pub source: UnitId,
     pub span: SourceSpan,
     pub kind: DeclKind,
     pub name: String,
@@ -169,7 +169,7 @@ impl Drop for DeclInfo {
 }
 
 pub struct Occurrence {
-    pub source: SourceId,
+    pub source: UnitId,
     pub span: SourceSpan,
     pub target: Option<u64>,
     pub kind: DeclKind,
@@ -203,12 +203,12 @@ pub struct SourceIndex {
     package_roots: Vec<(String, String)>,
 }
 
-fn span_key(source: SourceId, span: SourceSpan) -> SpanKey {
+fn span_key(source: UnitId, span: SourceSpan) -> SpanKey {
     SpanKey(source.index, span.span.start.row, span.span.start.column,
         span.span.end.row, span.span.end.column)
 }
 
-fn position_span(source: SourceId, row: u64, column: u64) -> SourceSpan {
+fn position_span(source: UnitId, row: u64, column: u64) -> SourceSpan {
     let point = Position(row=row, column=column);
     SourceSpan(source, Span(point, point))
 }
@@ -266,7 +266,7 @@ impl Drop for ScopeFrame {
 struct Binder {
     index: SourceIndex&,
     names: NameInterner&,
-    source: SourceId,
+    source: UnitId,
     scopes: Vec<ScopeFrame>,
     skip: HashMap<SpanKey, bool>,
     pending_patterns: Vec<(NameId, u64)>,
@@ -729,7 +729,7 @@ impl TryAstVisitor<String> for Binder {
 }
 
 impl SourceIndex {
-    static pub fn build(documents: Vec<SourceDocument>&, session: AnalysisSession&, std_root: str)
+    static pub fn build(session: AnalysisSession&, std_root: str)
     -> Result<Self, String> {
         let index = Self(
             decls=Vec<DeclInfo>.new(),
@@ -765,27 +765,12 @@ impl SourceIndex {
         }
 
         let source_index = 0u64;
-        while source_index < documents.len() {
-            let source = SourceId(source_index);
-            let path = String.from(&documents[source_index].path.as_str());
-            let is_stdlib = match session.source(source) {
-                Some(file) => {
-                    let found = false;
-                    let unit_index = 0u64;
-                    while unit_index < session.len() {
-                        match session.unit(UnitId(unit_index)) {
-                            Some(unit) if session.source(unit.source).unwrap().canonical_path() == file.canonical_path() => {
-                                found = unit.is_stdlib;
-                            },
-                            _ => {},
-                        }
-                        unit_index += 1u64;
-                    }
-                    found
-                },
-                None => false,
-            };
-            let scanned = match Lexer.new(documents[source_index].text.as_str()).run() {
+        while source_index < session.len() {
+            let source = UnitId(source_index);
+            let file = session.source(source);
+            let path = String.from(&file.path());
+            let is_stdlib = session.unit(source).unwrap().is_stdlib;
+            let scanned = match Lexer.new(file.text()).run() {
                 Ok(value) => value,
                 Err(error) => {
                     defer error.drop();
@@ -794,6 +779,7 @@ impl SourceIndex {
                 },
             };
             let parser = Parser.new(&scanned);
+            defer parser.drop();
             let tree = match parse_program(&parser) {
                 Ok(value) => value,
                 Err(error) => {
@@ -812,13 +798,13 @@ impl SourceIndex {
         }
 
         source_index = 0u64;
-        while source_index < documents.len() {
-            index.add_module(SourceId(source_index));
+        while source_index < session.len() {
+            index.add_module(UnitId(source_index));
             source_index += 1u64;
         }
         source_index = 0u64;
-        while source_index < documents.len() {
-            index.collect_source(SourceId(source_index), &session.names);
+        while source_index < session.len() {
+            index.collect_source(UnitId(source_index), &session.names);
             source_index += 1u64;
         }
         index.resolve_imports(&session.names);
@@ -827,8 +813,8 @@ impl SourceIndex {
         index.add_import_occurrences(&session.names);
 
         source_index = 0u64;
-        while source_index < documents.len() {
-            match index.walk_source(SourceId(source_index), &session.names) {
+        while source_index < session.len() {
+            match index.walk_source(UnitId(source_index), &session.names) {
                 Ok(_) => {},
                 Err(message) => return Result<Self, String>.Err(message),
             }
@@ -839,14 +825,14 @@ impl SourceIndex {
         Result<Self, String>.Ok(index)
     }
 
-    fn add_module(source: SourceId) {
+    fn add_module(source: UnitId) {
         let span = position_span(source, 0u64, 0u64);
         let stem = module_stem(self.paths[source.index].as_str());
         self.add_decl(source, span, DeclKind.Module, stem.as_str(), Option<SourceSpan>.None);
         stem.drop();
     }
 
-    fn collect_source(source: SourceId, names: NameInterner&) {
+    fn collect_source(source: UnitId, names: NameInterner&) {
         match &self.asts[source.index] {
             Some(tree) => {
                 for item in tree.root.data.items {
@@ -857,7 +843,7 @@ impl SourceIndex {
         }
     }
 
-    fn collect_generics(source: SourceId, generics: Vec<GenericParam>&) {
+    fn collect_generics(source: UnitId, generics: Vec<GenericParam>&) {
         for generic in *generics {
             match generic {
                 Type(value) => { self.add_decl(source, SourceSpan(source, value.data.name.span),
@@ -868,13 +854,13 @@ impl SourceIndex {
         }
     }
 
-    fn collect_method(source: SourceId, decl: MethodDecl&, owner: Option<SourceSpan>) {
+    fn collect_method(source: UnitId, decl: MethodDecl&, owner: Option<SourceSpan>) {
         self.add_decl(source, SourceSpan(source, decl.data.name.span), DeclKind.Method,
             decl.data.name.data.name.as_str(), owner);
         self.collect_generics(source, &decl.data.generics);
     }
 
-    fn collect_item(source: SourceId, item: Item&, names: NameInterner&) {
+    fn collect_item(source: UnitId, item: Item&, names: NameInterner&) {
         match &item.data {
             Alias(_, name, generics, _) => {
                 let id = self.add_decl(source, SourceSpan(source, name.span), DeclKind.Alias,
@@ -966,7 +952,7 @@ impl SourceIndex {
                         for item in tree.root.data.items {
                             match &item.data {
                                 Import(paths, target, alias, _) => {
-                                    match self.module_source(SourceId(source), paths) {
+                                    match self.module_source(UnitId(source), paths) {
                                         Some(provider) => {
                                             let name_id = names.intern(target.data.name.as_str());
                                             match self.module_names[provider.index].get(&name_id) {
@@ -1048,13 +1034,13 @@ impl SourceIndex {
                                 let prefix = 0u64;
                                 while prefix < paths.len() {
                                     let count = prefix + 1u64;
-                                    match self.module_source_n(SourceId(source), paths, count) {
+                                    match self.module_source_n(UnitId(source), paths, count) {
                                         Some(provider) => {
                                             let target = self.find_decl_exact(provider,
                                                 position_span(provider, 0u64, 0u64), DeclKind.Module);
                                             match target {
-                                                Some(id) => self.add_occurrence(SourceId(source),
-                                                    SourceSpan(SourceId(source), paths[prefix].span), Option<u64>.Some(id),
+                                                Some(id) => self.add_occurrence(UnitId(source),
+                                                    SourceSpan(UnitId(source), paths[prefix].span), Option<u64>.Some(id),
                                                     DeclKind.Module, false, Option<TypeId>.None,
                                                     Option<String>.None, Option<String>.None, false),
                                                 None => {},
@@ -1083,19 +1069,19 @@ impl SourceIndex {
                     for item in tree.root.data.items {
                         match &item.data {
                             Import(paths, target, alias, _) => {
-                                match self.module_source(SourceId(source), paths) {
+                                match self.module_source(UnitId(source), paths) {
                                     Some(provider) => {
                                         let name_id = names.intern(target.data.name.as_str());
                                         match self.module_names[provider.index].get(&name_id) {
                                             Some(found) => {
                                                 let target_id = *found;
-                                                self.add_occurrence(SourceId(source),
-                                                    SourceSpan(SourceId(source), target.span), Option<u64>.Some(target_id),
+                                                self.add_occurrence(UnitId(source),
+                                                    SourceSpan(UnitId(source), target.span), Option<u64>.Some(target_id),
                                                     self.decls[target_id].kind, false, Option<TypeId>.None,
                                                     Option<String>.None, Option<String>.None, false);
                                                 match alias {
-                                                    Some(value) => self.add_occurrence(SourceId(source),
-                                                        SourceSpan(SourceId(source), value.span), Option<u64>.Some(target_id),
+                                                    Some(value) => self.add_occurrence(UnitId(source),
+                                                        SourceSpan(UnitId(source), value.span), Option<u64>.Some(target_id),
                                                         self.decls[target_id].kind, false, Option<TypeId>.None,
                                                         Option<String>.None, Option<String>.None, false),
                                                     None => {},
@@ -1117,7 +1103,7 @@ impl SourceIndex {
         }
     }
 
-    fn walk_source(source: SourceId, names: NameInterner&) -> Result<(), String> {
+    fn walk_source(source: UnitId, names: NameInterner&) -> Result<(), String> {
         let root = match &self.asts[source.index] {
             Some(tree) => tree.root,
             None => return Result<(), String>.Ok(()),
@@ -1149,7 +1135,7 @@ impl SourceIndex {
         Result<(), String>.Ok(())
     }
 
-    fn add_decl(source: SourceId, span: SourceSpan, kind: DeclKind, name: str,
+    fn add_decl(source: UnitId, span: SourceSpan, kind: DeclKind, name: str,
         owner: Option<SourceSpan>) -> u64 {
         let key = DeclKey(span=span_key(source, span), kind=kind.code());
         if let Some(existing) = self.decl_keys.get(&key) {
@@ -1171,7 +1157,7 @@ impl SourceIndex {
         id
     }
 
-    pub fn add_occurrence(source: SourceId, span: SourceSpan, target: Option<u64>, kind: DeclKind,
+    pub fn add_occurrence(source: UnitId, span: SourceSpan, target: Option<u64>, kind: DeclKind,
         is_declaration: bool, context: Option<TypeId>, type_text: Option<String>,
         signature: Option<String>, lexical: bool) {
         let target_key = match &target {
@@ -1205,15 +1191,15 @@ impl SourceIndex {
     }
 
     pub fn is_declaration_span(span: SourceSpan) -> bool {
-        self.decl_spans.contains(&span_key(span.source, span))
+        self.decl_spans.contains(&span_key(span.unit, span))
     }
 
     pub fn value_is_covered(span: SourceSpan) -> bool {
-        self.covered_values.contains(&span_key(span.source, span))
+        self.covered_values.contains(&span_key(span.unit, span))
     }
 
     pub fn mark_value_covered(span: SourceSpan) {
-        self.covered_values.insert(span_key(span.source, span), true);
+        self.covered_values.insert(span_key(span.unit, span), true);
     }
 
     pub fn remove_covered_lexical() {
@@ -1228,7 +1214,7 @@ impl SourceIndex {
         }
     }
 
-    pub fn find_decl_at_span(source: SourceId, span: SourceSpan) -> Option<u64> {
+    pub fn find_decl_at_span(source: UnitId, span: SourceSpan) -> Option<u64> {
         let index = 0u64;
         while index < self.decls.len() {
             let decl = &self.decls[index];
@@ -1242,7 +1228,7 @@ impl SourceIndex {
         Option<u64>.None
     }
 
-    pub fn find_decl_exact(source: SourceId, span: SourceSpan, kind: DeclKind) -> Option<u64> {
+    pub fn find_decl_exact(source: UnitId, span: SourceSpan, kind: DeclKind) -> Option<u64> {
         let key = DeclKey(span=span_key(source, span), kind=kind.code());
         match self.decl_keys.get(&key) {
             Some(value) => Option<u64>.Some(*value),
@@ -1252,7 +1238,7 @@ impl SourceIndex {
 
     // Closure captures are recorded by the compiler at the whole capture item; this lookup
     // connects that symbol span to the name declaration the binder created.
-    pub fn find_decl_by_symbol_span(source: SourceId, span: SourceSpan) -> Option<u64> {
+    pub fn find_decl_by_symbol_span(source: UnitId, span: SourceSpan) -> Option<u64> {
         let index = 0u64;
         while index < self.decls.len() {
             let decl = &self.decls[index];
@@ -1274,13 +1260,13 @@ impl SourceIndex {
         Option<u64>.None
     }
 
-    pub fn source_for_path(path: str) -> Option<SourceId> {
+    pub fn source_for_path(path: str) -> Option<UnitId> {
         let index = 0u64;
         while index < self.paths.len() {
-            if self.paths[index].as_str() == path { return Option<SourceId>.Some(SourceId(index)); }
+            if self.paths[index].as_str() == path { return Option<UnitId>.Some(UnitId(index)); }
             index += 1u64;
         }
-        Option<SourceId>.None
+        Option<UnitId>.None
     }
 
     fn package_root(name: str) -> Option<String> {
@@ -1294,12 +1280,12 @@ impl SourceIndex {
         Option<String>.None
     }
 
-    fn module_source(source: SourceId, paths: Vec<Identifier&>&) -> Option<SourceId> {
+    fn module_source(source: UnitId, paths: Vec<Identifier&>&) -> Option<UnitId> {
         self.module_source_n(source, paths, paths.len())
     }
 
-    fn module_source_n(source: SourceId, paths: Vec<Identifier&>&, count: u64) -> Option<SourceId> {
-        if paths.len() == 0u64 || count == 0u64 { return Option<SourceId>.None; }
+    fn module_source_n(source: UnitId, paths: Vec<Identifier&>&, count: u64) -> Option<UnitId> {
+        if paths.len() == 0u64 || count == 0u64 { return Option<UnitId>.None; }
         let first = paths[0].data.name.as_str();
         let root = String.new();
         let start = 0u64;
@@ -1313,7 +1299,7 @@ impl SourceIndex {
                     let parent = Path.new(self.paths[source.index].as_str()).parent();
                     match parent {
                         Some(value) => { root.push_str(value.as_str()); },
-                        None => { root.drop(); return Option<SourceId>.None; },
+                        None => { root.drop(); return Option<UnitId>.None; },
                     }
                 },
             }
@@ -1331,39 +1317,30 @@ impl SourceIndex {
                 value.drop();
                 found
             },
-            Err(problem) => { problem.drop(); Option<SourceId>.None },
+            Err(problem) => { problem.drop(); Option<UnitId>.None },
         };
         root.drop();
         result
     }
 
-    pub fn path(source: SourceId) -> Option<str> {
+    pub fn path(source: UnitId) -> Option<str> {
         if source.index < self.paths.len() {
             return Option<str>.Some(self.paths[source.index].as_str());
         }
         Option<str>.None
     }
 
-    pub fn text(source: SourceId, documents: Vec<SourceDocument>&) -> Option<str> {
-        let index = 0u64;
-        while index < documents.len() {
-            if index == source.index { return Option<str>.Some(documents[index].text.as_str()); }
-            index += 1u64;
-        }
-        Option<str>.None
-    }
-
-    pub fn is_stdlib_source(source: SourceId) -> bool {
+    pub fn is_stdlib_source(source: UnitId) -> bool {
         if source.index < self.stdlib.len() { return self.stdlib[source.index]; }
         false
     }
 
-    pub fn tokens_of(source: SourceId) -> Option<Vec<Token>&> {
+    pub fn tokens_of(source: UnitId) -> Option<Vec<Token>&> {
         if source.index < self.tokens.len() { return Option<Vec<Token>&>.Some(&self.tokens[source.index]); }
         Option<Vec<Token>&>.None
     }
 
-    pub fn declaration_at(source: SourceId, row: u64, column: u64) -> Option<u64> {
+    pub fn declaration_at(source: UnitId, row: u64, column: u64) -> Option<u64> {
         let best = Option<u64>.None;
         let index = 0u64;
         while index < self.decls.len() {
@@ -1387,7 +1364,7 @@ impl SourceIndex {
         best
     }
 
-    pub fn occurrences_at(source: SourceId, row: u64, column: u64) -> Vec<u64> {
+    pub fn occurrences_at(source: UnitId, row: u64, column: u64) -> Vec<u64> {
         let result = Vec<u64>.new();
         let index = 0u64;
         while index < self.occurrences.len() {

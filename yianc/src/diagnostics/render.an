@@ -1,117 +1,36 @@
-from yianc.diagnostics.model import Diagnostic, DiagnosticLocation, AnalysisError;
-from yianc.frontend.source import SourceManager, read_source;
-from yianc.frontend.source import Span;
-from std.core.convert import From;
+from yianc.diagnostics.model import UserDiagnostic, DiagnosticLocation;
+from yianc.frontend.source import SourceMap, Span;
 from std.core.fmt import ToString;
 from std.core.iter import Iterator, IntoIterator;
 
-// Resolve every location before the source owner is released, including related files.
-pub fn detach(diagnostic: Diagnostic&, sources: SourceManager&) -> Result<(), AnalysisError> {
-    match &diagnostic.location {
-        Some(location) => {
-            detach_location(location, sources)?;
-        },
-        None => {},
-    }
-
-    for related in diagnostic.related {
-        detach_location(&related.location, sources)?;
-    }
-
-    Result<(), AnalysisError>.Ok(())
-}
-
-fn detach_location(location: DiagnosticLocation&, sources: SourceManager&) -> Result<(), AnalysisError> {
-    match location {
-        Source(value) => {
-            let file = match sources.get(value.source.index) {
-                Some(file) => file,
-                None => return Result<(), AnalysisError>.Err(AnalysisError.internal("invalid diagnostic source ID")),
-            };
-
-            let detached = DiagnosticLocation.Detached(String.from(&file.path()), value.span);
-            *location = detached;
-        },
-        Detached(_, _) => {},
-    }
-
-    Result<(), AnalysisError>.Ok(())
-}
-
-fn location_path(location: DiagnosticLocation&, sources: Option<SourceManager&>) -> Result<str, AnalysisError> {
-    match location {
-        Detached(path, _) => Result<str, AnalysisError>.Ok(path.as_str()),
-        Source(value) => {
-            let manager = match sources {
-                Some(manager) => manager,
-                None => return Result<str, AnalysisError>.Err(AnalysisError.internal("diagnostic requires its source manager")),
-            };
-
-            match manager.get(value.source.index) {
-                Some(file) => Result<str, AnalysisError>.Ok(file.path()),
-                None => Result<str, AnalysisError>.Err(AnalysisError.internal("invalid diagnostic source ID")),
-            }
-        },
-    }
-}
-
-fn diagnostic_text(location: Option<DiagnosticLocation>&, sources: Option<SourceManager&>) -> String {
-    match location {
-        Some(value) => location_text(value, sources),
-        None => String.new(),
-    }
-}
-
-fn location_text(location: DiagnosticLocation&, sources: Option<SourceManager&>) -> String {
-    match (location, sources) {
-        (Source(span), Some(manager)) => return String.from(&manager.file(span.source.index).text()),
-        _ => {},
-    }
-    match location_path(location, sources) {
-        Ok(path) => match read_source(path) { Ok(text) => return text, Err(problem) => problem.drop(), },
-        Err(problem) => problem.drop(),
-    }
-    String.new()
-}
-
-pub fn render(diagnostic: Diagnostic&, sources: Option<SourceManager&>) -> Result<String, AnalysisError> {
+// The caller owns the returned text; locations are resolved while the map is live.
+pub fn render(diagnostic: UserDiagnostic&, sources: SourceMap&) -> String {
     let text = String.new();
-    let transferred = false;
-    defer {
-        if !transferred {
-            text.drop();
-        }
-    };
-
-    text.push_str(match diagnostic.severity { Error => "error[", Warning => "warning[", Note => "note[", });
-    text.push_str(diagnostic.code.text());
+    text.push_str(match diagnostic.severity() { Error => "error[", Warning => "warning[", Note => "note[", });
+    text.push_str(diagnostic.code().text());
     text.push_str("]: ");
-    text.push_str(diagnostic.message.as_str());
-
-    match &diagnostic.location {
-        Some(location) => {
-            append_location_block(&text, location, sources, 0u64)?;
+    let message = diagnostic.message();
+    defer message.drop();
+    text.push_str(message.as_str());
+    let location = diagnostic.location();
+    defer location.drop();
+    match &location {
+        Global => {},
+        File(path) => {
+            text.push_str("\n--> ");
+            text.push_str(path.as_str());
         },
-        None => {},
+        Source(value) => {
+            let file = sources.file(value.unit);
+            append_location_block(&text, file.path(), file.text(), value.span);
+        },
     }
-
-    for related in diagnostic.related {
-        text.push_str("\n  ");
-        text.push_str(related.message.as_str());
-        append_location_block(&text, &related.location, sources, 2u64)?;
-    }
-
-    transferred = true;
-    Result<String, AnalysisError>.Ok(text)
+    text
 }
 
-// Text diagnostics share one layout: header, arrow, source line, and carets.
-fn append_location_block(text: String&, location: DiagnosticLocation&, sources: Option<SourceManager&>, indent: u64) -> Result<(), AnalysisError> {
-    let span = location.span();
-    text.push('\n');
-    append_indent(text, indent);
-    text.push_str("--> ");
-    text.push_str(location_path(location, sources)?);
+fn append_location_block(text: String&, path: str, source: str, span: Span) {
+    text.push_str("\n--> ");
+    text.push_str(path);
     let row = (span.start.row + 1).to_string();
     defer row.drop();
     let column = (span.start.column + 1).to_string();
@@ -120,25 +39,17 @@ fn append_location_block(text: String&, location: DiagnosticLocation&, sources: 
     text.push_str(row.as_str());
     text.push(':');
     text.push_str(column.as_str());
-
-    let source = location_text(location, sources);
-    defer source.drop();
-    match source_line(source.as_str(), span.start.row) {
+    match source_line(source, span.start.row) {
         Some(line) => {
             defer line.drop();
-            text.push('\n');
-            append_indent(text, indent);
-            text.push_str("    ");
+            text.push_str("\n    ");
             text.push_str(line.as_str());
-            text.push('\n');
-            append_indent(text, indent);
-            text.push_str("    ");
+            text.push_str("\n    ");
             append_indent(text, span.start.column);
             append_carets(text, marker_width(line.as_str(), span));
         },
         None => {},
     }
-    Result<(), AnalysisError>.Ok(())
 }
 
 fn append_indent(text: String&, count: u64) {

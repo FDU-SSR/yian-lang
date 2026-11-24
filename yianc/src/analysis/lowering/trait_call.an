@@ -16,7 +16,7 @@ impl ExprChecker {
             Syntax(value) => self.local_type(*value),
             ArgumentType(index) => {
                 if *index >= args.len() {
-                    return Result<TypeId, AnalysisError>.Err(AnalysisError.internal("trait argument type source is out of range"));
+                    @panic("trait argument type source is out of range");
                 }
 
                 Result<TypeId, AnalysisError>.Ok(default_type(self.ctx, self.type_of(args[*index])))

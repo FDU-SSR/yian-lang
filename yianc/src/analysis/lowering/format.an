@@ -72,7 +72,7 @@ fn standard_unit(checker: ExprChecker&, relative: str) -> Result<UnitId, Analysi
         let id = UnitId(index);
         let unit = checker.ctx.session.unit(id).unwrap();
 
-        if unit.is_stdlib && checker.ctx.session.source(unit.source).unwrap().canonical_path() == expected.as_str() {
+        if unit.is_stdlib && checker.ctx.session.source(unit.id).canonical_path() == expected.as_str() {
             return Result<UnitId, AnalysisError>.Ok(id);
         }
 
@@ -83,7 +83,7 @@ fn standard_unit(checker: ExprChecker&, relative: str) -> Result<UnitId, Analysi
     defer message.drop();
     message.push_str(relative);
     message.push_str("' is absent from the compilation inputs");
-    Result<UnitId, AnalysisError>.Err(AnalysisError.internal(message.as_str()))
+    Result<UnitId, AnalysisError>.Err(AnalysisError.user(DiagnosticCode.Internal, Option<SourceSpan>.None, message.as_str()))
 }
 
 fn unit_symbol(checker: ExprChecker&, unit: UnitId, name: str) -> Result<SymbolId, AnalysisError> {
@@ -106,7 +106,7 @@ fn nominal_definition(checker: ExprChecker&, symbol: SymbolId, what: str) -> Res
             let message = String.from(&what);
             defer message.drop();
             message.push_str(" is not a nominal type");
-            Result<DefId, AnalysisError>.Err(AnalysisError.internal(message.as_str()))
+            @panic(message.as_str())
         },
     }
 }
@@ -145,7 +145,7 @@ fn load_library(checker: ExprChecker&) -> Result<FormatLibrary, AnalysisError> {
     let result_type = symbol_type(checker, result_symbol);
     let result_definition = match checker.ctx.session.types.require(result_type)? {
         Nominal(value, _) => *value,
-        _ => return Result<FormatLibrary, AnalysisError>.Err(AnalysisError.internal("standard Result is not a nominal type")),
+        _ => @panic("standard Result is not a nominal type"),
     };
     let vec_definition = nominal_definition(checker, vec_symbol, "standard Vec")?;
     let option_definition = nominal_definition(checker, option_symbol, "standard Option")?;
@@ -630,7 +630,7 @@ fn error_pattern(checker: ExprChecker&, span: Span, expected: TypeId, symbol_nam
 fn result_variant(checker: ExprChecker&, span: Span, library: FormatLibrary&, variant_name: str, value: HirId) -> Result<HirId, AnalysisError> {
     let definition = match checker.ctx.session.types.require(library.result_instance)? {
         Nominal(id, _) => *id,
-        _ => return Result<HirId, AnalysisError>.Err(AnalysisError.internal("standard Result instance is not nominal")),
+        _ => @panic("standard Result instance is not nominal"),
     };
     let interned = checker.ctx.session.names.intern(variant_name);
     let substitutions = instance_substitutions(checker.ctx, library.result_instance)?;
@@ -645,11 +645,11 @@ fn result_variant(checker: ExprChecker&, span: Span, library: FormatLibrary&, va
                 }
             }
         },
-        _ => return Result<HirId, AnalysisError>.Err(AnalysisError.internal("standard Result is not an enum")),
+        _ => @panic("standard Result is not an enum"),
     }
 
     if selected.is_none() {
-        return Result<HirId, AnalysisError>.Err(AnalysisError.internal("standard Result variant is missing"));
+        @panic("standard Result variant is missing");
     }
 
     let variant = *selected.unwrap();
@@ -657,7 +657,7 @@ fn result_variant(checker: ExprChecker&, span: Span, library: FormatLibrary&, va
     defer fields.drop();
 
     if fields.len() != 1u64 {
-        return Result<HirId, AnalysisError>.Err(AnalysisError.internal("standard Result variant has an unexpected payload"));
+        @panic("standard Result variant has an unexpected payload");
     }
 
     let concrete = substitute(&checker.ctx.session.types, fields[0].type_id, &substitutions)?;
@@ -690,7 +690,7 @@ fn match_write(checker: ExprChecker&, span: Span, library: FormatLibrary&, write
         Some(value) => value,
         None => {
             checker.scope = previous;
-            return Result<HirId, AnalysisError>.Err(AnalysisError.internal("format error binding is missing"));
+            @panic("format error binding is missing");
         },
     };
     let held = variable(checker, span, symbol, true);

@@ -1,6 +1,6 @@
 from yianc.config import CompilerConfig;
-from yianc.driver.log import CompilerLog, LogLevel;
-from yianc.driver.timing import CompilerTiming;
+from yianc.driver.log import CompilerLog, LogLevel, LogConfigError;
+from yianc.driver.timing import CompilerTiming, ProfileWarning;
 from yianc.driver.profile import ProfileKind;
 from llvm.observation import OperationKind, OperationObserver;
 
@@ -8,12 +8,12 @@ pub struct CompilerTrace { log: Option<CompilerLog>, timing: Option<CompilerTimi
 
 impl CompilerTrace {
     static pub fn disabled() -> Self { Self(Option<CompilerLog>.None, Option<CompilerTiming>.None) }
-    static pub fn new(config: CompilerConfig&) -> Self {
+    static pub fn new(config: CompilerConfig&) -> Result<Self, LogConfigError> {
         let log = if config.log_enabled { match CompilerLog.new(config) {
             Ok(value) => Option<CompilerLog>.Some(value),
-            Err(problem) => { @eprintln(problem); problem.drop(); exit(1); },
+            Err(problem) => return Result<Self, LogConfigError>.Err(problem),
         } } else { Option<CompilerLog>.None };
-        Self(log, CompilerTiming.from_config(config))
+        Result<Self, LogConfigError>.Ok(Self(log, CompilerTiming.from_config(config)))
     }
     pub fn event(channel: str, severity: LogLevel, message: str, path: Option<str>) {
         match &self.log { Some(log) => log.event(channel, severity, message, path), None => {}, }
@@ -30,7 +30,9 @@ impl CompilerTrace {
     }
     pub fn skip(pass_id: str, reason: str) { match &self.timing { Some(timing) => timing.skip(pass_id, reason), None => {}, } }
     pub fn report() { match &self.timing { Some(timing) => timing.report(), None => {}, } }
-    pub fn finalize(ok: bool) { match &self.timing { Some(timing) => timing.finalize(ok), None => {}, } }
+    pub fn finalize(ok: bool) -> Option<ProfileWarning> {
+        match &self.timing { Some(timing) => timing.finalize(ok), None => Option<ProfileWarning>.None, }
+    }
 }
 impl Drop for CompilerTrace {
     pub fn drop() {

@@ -46,7 +46,7 @@ impl ExprChecker {
 
         for method in required {
             let definition = match self.ctx.session.types.require(*method)? {
-                Nominal(id, _) => *id, _ => return Result<HirId, AnalysisError>.Err(AnalysisError.internal("dynamic slot is not nominal"))
+                Nominal(id, _) => *id, _ => @panic("dynamic slot is not nominal")
             };
             let name = self.ctx.session.types.definition(definition).unwrap().header().name;
             let implementation = lookup_method(self.ctx, concrete, name, Option<TypeId>.Some(trait_id), node.span)?;
@@ -71,7 +71,7 @@ impl ExprChecker {
 
         for method in methods {
             let definition = match self.ctx.session.types.require(*method)? {
-                Nominal(id, _) => *id, _ => return Result<HirId, AnalysisError>.Err(AnalysisError.internal("dynamic slot is not nominal"))
+                Nominal(id, _) => *id, _ => @panic("dynamic slot is not nominal")
             };
 
             if self.ctx.session.types.definition(definition).unwrap().header().name == name {
