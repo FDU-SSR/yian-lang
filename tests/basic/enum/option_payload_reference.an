@@ -1,0 +1,19 @@
+// References to fields of a generic Option payload keep working regardless of
+// the representation chosen for the payload storage area.
+
+struct Payload { first: u64, second: u64, third: u64 }
+struct Holder { name: u64, value: Option<Payload> }
+
+fn read_second(second: u64&) -> u64 { *second }
+
+fn read_holder(holder: Holder&) -> u64 {
+    let payload = holder.value.unwrap();
+    read_second(&payload.second)
+}
+
+fn main() {
+    let holder = Holder(name=0u64, value=Option<Payload>.Some(Payload(1u64, 2u64, 3u64)));
+    let value = read_holder(&holder);
+    assert value == 2u64: "payload field reference";
+    @println(f"{value}");
+}

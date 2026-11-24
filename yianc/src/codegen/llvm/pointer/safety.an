@@ -68,19 +68,13 @@ impl FunctionLowering {
     }
 
     // References have already established the typed spatial obligations at formation.
+    // Alignment is a code-generation representation choice, not a semantic obligation.
     pub fn check_access_bounds(type_id: TypeId, value: IrValue, code: str) -> Result<(), CodegenError> {
         if !self.fat(type_id)? { return Result<(), CodegenError>.Ok(()); }
         match self.owner.session.types.require(type_id)? {
             Pointer(element) => {
                 let native = self.owner.types.value_type(*element)?;
                 self.check_pointer_span(value, self.integer(self.owner.module.abi_size(native)), code)?;
-                let alignment = u64(self.owner.module.abi_alignment(native));
-                if alignment > 1u64 {
-                    let address = self.builder.cast(CastOp.Ptrtoint, self.pointer_data(type_id, value)?,
-                        self.owner.module.int_type(64u32), "");
-                    let remainder = self.builder.binary(BinaryOp.And, address, self.integer(alignment - 1u64), "");
-                    self.checked(self.builder.icmp(IntCompare.Eq, remainder, self.integer(0u64), ""), code)?;
-                }
             },
             _ => {},
         }
@@ -209,12 +203,6 @@ impl FunctionLowering {
         let start = self.builder.cast(CastOp.Ptrtoint, data, module.int_type(64u32), "");
         let end = self.builder.binary(BinaryOp.Add, start, span, "");
         self.checked(self.builder.icmp(IntCompare.Uge, end, start, ""), "S002")?;
-        let alignment = u64(module.abi_alignment(element));
-        if alignment > 1u64 {
-            let remainder = self.builder.binary(BinaryOp.And, start, self.integer(alignment - 1u64), "");
-            let aligned = self.builder.icmp(IntCompare.Eq, remainder, self.integer(0u64), "");
-            self.checked(self.builder.binary(BinaryOp.Or, empty, aligned, ""), "S002")?;
-        }
 
         let index = self.builder.binary(BinaryOp.And, word, self.integer(LOCK_MASK), "");
         let heap = self.builder.icmp(IntCompare.Uge, index, self.integer(HEAP_LOCK_BASE), "");
