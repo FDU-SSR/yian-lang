@@ -6,7 +6,7 @@ from yianc.analysis.session.output import AnalysisOptions;
 from yianc.analysis.ty.queries import struct_fields;
 from yianc.common.ids import TypeId;
 from yianc.diagnostics.model import AnalysisError, DiagnosticReporter, UserDiagnostic;
-from yianc.frontend.source import SourceDocument;
+from yianc.frontend.source import SourceDocument, SourceTable;
 from yianc.package.model import PackageMap;
 from yianc.package.provenance import SourceTrust;
 
@@ -16,6 +16,17 @@ impl DiagnosticReporter for IgnoreDiagnostics { pub fn report(diagnostic: UserDi
 fn release_documents(documents: Vec<SourceDocument>&) {
     for document in *documents { document.drop(); }
     documents.drop();
+}
+
+fn load_sources(documents: Vec<SourceDocument>&) -> SourceTable {
+    let sources = SourceTable.new();
+    for document in *documents {
+        match sources.load_text(document.path.as_str(), document.text.as_str()) {
+            Ok(_) => {},
+            Err(error) => { error.drop(); @panic("fixture source load failed"); },
+        }
+    }
+    sources
 }
 
 fn trust() -> SourceTrust {
@@ -31,13 +42,10 @@ fn prepare(source: str, path: str) -> MiddleEndDriver {
     defer release_documents(&documents);
     let trace = CompilerTrace.disabled();
     defer trace.drop();
-    let frontend = match FrontendDriver.from_documents(&documents, trust(), Option<PackageMap>.None, false, &trace) {
-        Ok(value) => value,
-        Err(error) => { error.drop(); @panic("strict fixture preparation failed"); },
-    };
+    let frontend = FrontendDriver.new(load_sources(&documents), false, &trace);
     defer frontend.drop();
     match frontend.run() { Ok(_) => {}, Err(error) => { error.drop(); @panic("strict fixture preparation failed"); }, }
-    MiddleEndDriver.new(frontend.take_session(), IS_RAW_MODE)
+    MiddleEndDriver.new(frontend.take_session(), IS_RAW_MODE, trust(), Option<PackageMap>.None, false)
 }
 
 fn analyze_success(source: str, path: str) -> AnalysisSession {

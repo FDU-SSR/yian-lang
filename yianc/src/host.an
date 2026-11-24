@@ -1,5 +1,5 @@
 from yianc.diagnostics.model import DiagnosticCode, DiagnosticLocation;
-from yianc.frontend.input import InputError;
+from yianc.input_error import InputError;
 from std.core.convert import From;
 
 extern "C" {

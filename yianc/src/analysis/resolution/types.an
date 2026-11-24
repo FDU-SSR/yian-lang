@@ -210,7 +210,7 @@ fn resolve_arithmetic(ctx: ResolutionContext&, unit: UnitId, scope: ScopeId, exp
 }
 
 fn evaluate_const_tree(ctx: ResolutionContext&, unit: UnitId, scope: ScopeId, expr: ConstExpr&) -> Result<Option<ConstInteger>, AnalysisError> {
-        let location = ctx.span(unit, expr.span);
+    let location = ctx.span(unit, expr.span);
     match &expr.data {
         LiteralConstExpr(literal) => {
             let id = resolve_const(ctx, unit, scope, expr)?;
@@ -276,7 +276,7 @@ fn resolve_type_inner(ctx: ResolutionContext&, unit: UnitId, scope: ScopeId, syn
         NeverType => Result<TypeId, AnalysisError>.Ok(TypeId(NEVER_TYPE_ID)),
         DeducedType => Result<TypeId, AnalysisError>.Ok(TypeId(ERROR_TYPE_ID)),
         CScalarType(name) => {
-            if !ctx.session.unit(unit).unwrap().allows_ffi {
+            if !ctx.session.allows_ffi(unit) {
                 return Result<TypeId, AnalysisError>.Err(ctx.error(unit, syntax.span, DiagnosticCode.Access, "C ABI types require FFI permission"));
             }
 
@@ -320,7 +320,7 @@ fn resolve_type_inner(ctx: ResolutionContext&, unit: UnitId, scope: ScopeId, syn
             Result<TypeId, AnalysisError>.Ok(ctx.session.types.pointer(inner))
         },
         CPtrType(pointee) => {
-            if !ctx.session.unit(unit).unwrap().allows_ffi {
+            if !ctx.session.allows_ffi(unit) {
                 return Result<TypeId, AnalysisError>.Err(ctx.error(unit, syntax.span, DiagnosticCode.Access, "cptr requires FFI permission"));
             }
 

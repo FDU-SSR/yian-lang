@@ -137,14 +137,14 @@ pub trait DiagnosticReporter {
 }
 
 pub enum AnalysisStage {
-    Lex, Parse, Desugar, Prelude, Restricted, Resolve, Finalize, TypeCheck, Coverage, Assignment, Codegen,
+    Lex, Parse, Desugar, Prelude, Classify, Restricted, Resolve, Finalize, TypeCheck, Coverage, Assignment, Codegen,
 }
 
 impl AnalysisStage {
     pub fn name() -> str {
         match self {
             Lex => "lex", Parse => "parse", Desugar => "desugar", Prelude => "prelude",
-            Restricted => "restricted_ops", Resolve => "resolve", Finalize => "finalize",
+            Classify => "classify_sources", Restricted => "restricted_ops", Resolve => "resolve", Finalize => "finalize",
             TypeCheck => "type_check", Coverage => "match_coverage", Assignment => "definite_assignment", Codegen => "codegen",
         }
     }

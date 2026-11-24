@@ -1,81 +1,90 @@
 from yianc.analysis.session.output import AnalysisOptions;
 from yianc.analysis.constant.evaluate import TypeSizeProvider;
-from yianc.codegen.session import BackendOptions;
-from yianc.config import CompilerAction, CompilerConfig, parse_args;
-from yianc.codegen.driver import BackendDriver;
 from yianc.analysis.dump import hir_dump;
-from yianc.frontend.driver import FrontendDriver;
 from yianc.analysis.driver import MiddleEndDriver;
-from yianc.telemetry.profile import ProfileKind;
+from yianc.codegen.session import BackendOptions;
+from yianc.codegen.driver import BackendDriver;
+from yianc.config import CompilerAction, parse_args;
 from yianc.diagnostics.report import report;
-from yianc.telemetry.trace import CompilerTrace;
-from yianc.telemetry.log import LogLevel;
+from yianc.frontend.driver import FrontendDriver;
 from yianc.frontend.source import SourceTable;
+from yianc.package.model import PackageMap;
+from yianc.preprocess import load_packages, build_trust, collect_sources;
+from yianc.telemetry.log import LogLevel;
+from yianc.telemetry.profile import ProfileKind;
+from yianc.telemetry.trace import CompilerTrace;
 from std.core.io import Stderr, Write;
 
 const EXIT_FAILURE: i32 = 1;
 
-fn run(config: CompilerConfig&, trace: CompilerTrace&) -> i32 {
+fn main() {
+    let config = parse_args();
+    defer config.drop();
+    let empty = SourceTable.new();
+    defer empty.drop();
+    let trace = CompilerTrace.new(&config);
+    defer trace.drop();
+
     let check = &config.action matches Check;
     trace.start_pass("compiler.total", "main", "compiler.total", ProfileKind.Stage);
     if !check { trace.event("main", LogLevel.Info, "compiling source inputs", Option<str>.None); }
 
     trace.start_pass("source_preparation", "main", "source preparation", ProfileKind.Stage);
-    let frontend = match FrontendDriver.new(config, trace) {
-        Ok(value) => value,
-        Err(problem) => {
-            trace.fail("source_preparation");
-            let empty = SourceTable.new();
-            report(&problem, &empty);
-            empty.drop();
-            problem.drop();
-            return EXIT_FAILURE;
-        },
+    let packages = load_packages(&config, &trace);
+    let package_ref = match &packages {
+        Some(value) => Option<PackageMap&>.Some(value),
+        None => Option<PackageMap&>.None,
     };
+    let trust = build_trust(&config, &trace, package_ref);
+    let input_sources = collect_sources(&config, &trace);
+
+    let frontend = FrontendDriver.new(input_sources, config.dump, &trace);
     defer frontend.drop();
     match frontend.run() {
         Ok(_) => {},
         Err(problem) => {
             trace.fail("source_preparation");
             report(&problem, frontend.source_table());
-            problem.drop();
-            return EXIT_FAILURE;
+            exit(EXIT_FAILURE);
         },
     }
     trace.finish("source_preparation");
-    let middle = MiddleEndDriver.new(frontend.take_session(), config.raw_pointers);
+
+    let middle = MiddleEndDriver.new(frontend.take_session(), config.raw_pointers, trust, packages, config.allow_ffi);
     defer middle.drop();
     let sources = middle.analysis_session().frontend().source_table();
     let runtime_profile_dir = match &config.runtime_profile_dir { Some(value) => Option<str>.Some(value.as_str()), None => Option<str>.None };
-    let backend = match BackendDriver.new(middle.analysis_session(), BackendOptions(config.raw_pointers, config.optimization, runtime_profile_dir, config.cfg_inline, config.fat_check_elimination), Option<CompilerTrace&>.Some(trace)) {
+    let backend = match BackendDriver.new(middle.analysis_session(), BackendOptions(config.raw_pointers, config.optimization, runtime_profile_dir, config.cfg_inline, config.fat_check_elimination), Option<CompilerTrace&>.Some(&trace)) {
         Ok(value) => value,
-        Err(problem) => { report(&problem, sources); problem.drop(); return EXIT_FAILURE; },
+        Err(problem) => { report(&problem, sources); exit(EXIT_FAILURE); },
     };
     defer backend.drop();
+
     let options = AnalysisOptions.new();
     options.require_entry = !check;
     options.entry_optional = check;
     options.recover = check;
     options.verify_hir = true;
     options.sizes = Option<TypeSizeProvider&>.Some(backend.size_provider());
-    options.trace = Option<CompilerTrace&>.Some(trace);
-    if !check { trace.start_pass("semantic_analysis", "main", "semantic analysis", ProfileKind.Stage); }
+    options.trace = Option<CompilerTrace&>.Some(&trace);
+
+    trace.start_pass("semantic_analysis", "main", "semantic analysis", ProfileKind.Stage);
     let output = match middle.run_cli(options, sources) {
         Ok(value) => value,
         Err(problem) => {
-            if !check { trace.fail("semantic_analysis"); }
+            trace.fail("semantic_analysis");
             report(&problem, sources);
-            problem.drop();
-            return EXIT_FAILURE;
+            exit(EXIT_FAILURE);
         },
     };
     defer { match &output { Some(value) => value.drop(), None => {}, } };
-    if !check { trace.finish("semantic_analysis"); }
+    trace.finish("semantic_analysis");
+
     if config.dump {
         match &output {
             Some(value) => match hir_dump(middle.analysis_session(), value) {
                 Ok(_) => {},
-                Err(problem) => { report(&problem, sources); problem.drop(); return EXIT_FAILURE; },
+                Err(problem) => { report(&problem, sources); exit(EXIT_FAILURE); },
             },
             None => {},
         }
@@ -87,60 +96,29 @@ fn run(config: CompilerConfig&, trace: CompilerTrace&) -> i32 {
             trace.skip(*pass_id, "check stops after semantic analysis");
         }
         trace.finish("compiler.total");
-        if output.is_none() { return EXIT_FAILURE; }
-        return 0;
-    }
-    let result = match &output {
-        Some(value) => backend.compile(config, value, Option<CompilerTrace&>.Some(trace)),
-        None => @panic("strict analysis returned no output"),
-    };
-    trace.finish("compiler.total");
-    match result {
-        Ok(_) => 0,
-        Err(error) => {
-            report(&error, sources);
-            match &error {
-                Native(problem) => match Stderr.new().write_all(problem.stderr.as_slice()) {
-                    Ok(_) => {}, Err(write_error) => write_error.drop(),
-                },
-                _ => {},
-            }
-            error.drop();
-            EXIT_FAILURE
-        },
-    }
-}
-
-fn main() {
-    let empty = SourceTable.new();
-    defer empty.drop();
-    let config = match parse_args() {
-        Ok(value) => value,
-        Err(error) => {
-            match &error.usage { Some(value) => @eprint(value.as_str()), None => {}, }
-            report(&error, &empty);
-            let status = error.status;
-            exit(status);
-        },
-    };
-    defer config.drop();
-    if let Help(text) = &config.action { @print(text.as_str()); return; }
-    let trace = match CompilerTrace.new(&config) {
-        Ok(value) => value,
-        Err(error) => {
-            report(&error, &empty);
-            exit(EXIT_FAILURE);
-        },
-    };
-    defer trace.drop();
-    let status = run(&config, &trace);
-    if status == 0 {
-        match trace.finalize(true) {
-            Some(warning) => { report(&warning, &empty); warning.drop(); },
-            None => {},
+        if output.is_none() { exit(EXIT_FAILURE); }
+    } else {
+        let result = match &output {
+            Some(value) => backend.compile(&config, value, Option<CompilerTrace&>.Some(&trace)),
+            None => @panic("strict analysis returned no output"),
+        };
+        trace.finish("compiler.total");
+        match result {
+            Ok(_) => {},
+            Err(error) => {
+                report(&error, sources);
+                match &error {
+                    Native(problem) => match Stderr.new().write_all(problem.stderr.as_slice()) {
+                        Ok(_) => {}, Err(write_error) => write_error.drop(),
+                    },
+                    _ => {},
+                }
+                exit(EXIT_FAILURE);
+            },
         }
     }
-    if status != 0 {
-        exit(status);
+    match trace.finalize(true) {
+        Some(warning) => { report(&warning, &empty); warning.drop(); },
+        None => {},
     }
 }

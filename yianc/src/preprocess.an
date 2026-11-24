@@ -1,0 +1,114 @@
+from yianc.config import CompilerConfig;
+from yianc.diagnostics.model import DiagnosticCode, DiagnosticLocation;
+from yianc.diagnostics.report import report;
+from yianc.frontend.source import SourceTable, collect_sources as collect_source_paths;
+from yianc.host import associated_root;
+from yianc.input_error import InputError;
+from yianc.package.model import PackageMap;
+from yianc.package.provenance import SourceTrust;
+from yianc.roots import source_roots;
+from yianc.telemetry.profile import ProfileKind;
+from yianc.telemetry.trace import CompilerTrace;
+from std.core.convert import From;
+from std.core.fs import try_exists;
+from std.core.iter import Iterator, IntoIterator;
+from std.core.path import Path;
+
+const EXIT_FAILURE: i32 = 1;
+
+fn start_profile(trace: CompilerTrace&, pass_id: str) {
+    trace.start_pass(pass_id, "input", pass_id, ProfileKind.Pass);
+}
+
+fn finish_profile(trace: CompilerTrace&, pass_id: str, success: bool) {
+    if success { trace.finish(pass_id); } else { trace.fail(pass_id); }
+}
+
+// Input failures are terminal: report with an empty source table and exit without returning.
+fn exit_with_error(trace: CompilerTrace&, error: InputError) -> ! {
+    trace.fail("source_preparation");
+    let empty = SourceTable.new();
+    report(&error, &empty);
+    exit(EXIT_FAILURE);
+}
+
+fn release_paths(paths: Vec<String>&) {
+    for path in *paths { path.drop(); }
+    paths.drop();
+}
+
+pub fn load_packages(config: CompilerConfig&, trace: CompilerTrace&) -> Option<PackageMap> {
+    match &config.packages {
+        Some(path) => {
+            start_profile(trace, "input.package_map");
+            match PackageMap.load(path.as_str()) {
+                Ok(value) => { finish_profile(trace, "input.package_map", true); Option<PackageMap>.Some(value) },
+                Err(problem) => {
+                    finish_profile(trace, "input.package_map", false);
+                    exit_with_error(trace, problem)
+                },
+            }
+        },
+        None => {
+            trace.skip("input.package_map", "standalone compilation has no package map");
+            Option<PackageMap>.None
+        },
+    }
+}
+
+pub fn build_trust(config: CompilerConfig&, trace: CompilerTrace&, packages: Option<PackageMap&>) -> SourceTrust {
+    start_profile(trace, "input.source_roots");
+    let roots = match source_roots(config, packages) {
+        Ok(value) => { finish_profile(trace, "input.source_roots", true); value },
+        Err(problem) => {
+            finish_profile(trace, "input.source_roots", false);
+            exit_with_error(trace, problem)
+        },
+    };
+    let trust = match SourceTrust.new(roots.standard_library.as_str()) {
+        Ok(value) => value,
+        Err(problem) => exit_with_error(trace, problem),
+    };
+    let harness_checkout = match associated_root() {
+        Ok(value) => value,
+        Err(problem) => exit_with_error(trace, problem),
+    };
+    for harness in ["tests/basic/std", "tests/safety/std"] {
+        let root = Path.new(harness_checkout.as_str()).join(*harness);
+        match try_exists(root.as_str()) {
+            Ok(exists) => if exists {
+                match trust.add_test_root(root.as_str()) {
+                    Ok(_) => {},
+                    Err(problem) => exit_with_error(trace, problem),
+                }
+            },
+            Err(problem) => exit_with_error(trace, InputError(DiagnosticCode.Source,
+                DiagnosticLocation.File(String.from(&root.as_str())), String.from(&problem.msg()))),
+        }
+    }
+    trust
+}
+
+pub fn collect_sources(config: CompilerConfig&, trace: CompilerTrace&) -> SourceTable {
+    let sources = SourceTable.new();
+    start_profile(trace, "input.collect_sources");
+    let paths_result = collect_source_paths(&config.inputs);
+    finish_profile(trace, "input.collect_sources", match &paths_result { Ok(_) => true, Err(_) => false });
+    let paths = match paths_result {
+        Ok(value) => value,
+        Err(error) => exit_with_error(trace, InputError(DiagnosticCode.Source,
+            DiagnosticLocation.File(String.from(&error.path.as_str())), String.from(&error.error.msg()))),
+    };
+    defer release_paths(&paths);
+    for path in paths {
+        start_profile(trace, "input.read_sources");
+        let result = sources.load(path.as_str());
+        finish_profile(trace, "input.read_sources", match &result { Ok(_) => true, Err(_) => false });
+        match result {
+            Ok(_) => {},
+            Err(error) => exit_with_error(trace, InputError(DiagnosticCode.Source,
+                DiagnosticLocation.File(String.from(&path.as_str())), String.from(&error.msg()))),
+        }
+    }
+    sources
+}

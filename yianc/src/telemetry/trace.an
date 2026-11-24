@@ -2,20 +2,31 @@ from yianc.config import CompilerConfig;
 from yianc.telemetry.log import CompilerLog, LogLevel, LogConfigError;
 from yianc.telemetry.timing import CompilerTiming, ProfileWarning;
 from yianc.telemetry.profile import ProfileKind;
+from yianc.diagnostics.report import report;
+from yianc.frontend.source import SourceTable;
 from llvm.observation import OperationKind, OperationObserver;
+
+const EXIT_FAILURE: i32 = 1;
 
 pub struct CompilerTrace { log: Option<CompilerLog>, timing: Option<CompilerTiming> }
 
+// Log configuration failures are terminal: report the diagnostic and exit without returning.
+fn exit_with_error(error: LogConfigError) -> ! {
+    let empty = SourceTable.new();
+    report(&error, &empty);
+    exit(EXIT_FAILURE);
+}
+
 impl CompilerTrace {
     static pub fn disabled() -> Self { Self(Option<CompilerLog>.None, Option<CompilerTiming>.None) }
-    static pub fn new(config: CompilerConfig&) -> Result<Self, LogConfigError> {
+    static pub fn new(config: CompilerConfig&) -> Self {
         let log = if config.log_enabled {
             match CompilerLog.new(config) {
                 Ok(value) => Option<CompilerLog>.Some(value),
-                Err(problem) => return Result<Self, LogConfigError>.Err(problem),
+                Err(problem) => exit_with_error(problem),
             }
         } else { Option<CompilerLog>.None };
-        Result<Self, LogConfigError>.Ok(Self(log, CompilerTiming.from_config(config)))
+        Self(log, CompilerTiming.from_config(config))
     }
     pub fn event(channel: str, severity: LogLevel, message: str, path: Option<str>) {
         match &self.log { Some(log) => log.event(channel, severity, message, path), None => {}, }

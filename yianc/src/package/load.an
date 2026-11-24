@@ -1,5 +1,5 @@
 from yianc.diagnostics.model import DiagnosticCode, DiagnosticLocation;
-from yianc.frontend.input import InputError;
+from yianc.input_error import InputError;
 from yianc.package.model import PackageMap, PackageSpec, NativeC, NativeLLVM;
 from yianc.package.provenance import normalize_path, within;
 from std.core.convert import From;

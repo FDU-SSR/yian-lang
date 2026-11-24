@@ -11,6 +11,7 @@ from yianc.diagnostics.model import AnalysisError;
 from yianc.frontend.session import CompilationUnit, FrontendSession;
 from yianc.frontend.source import SourceFile;
 from yianc.package.model import PackageMap;
+from yianc.package.provenance import SourceTrust;
 from std.core.iter import Iterator, IntoIterator;
 
 pub enum AnalysisPhase {
@@ -20,9 +21,20 @@ pub enum AnalysisPhase {
     Failed,
 }
 
+struct SourcePermissions {
+    is_stdlib: bool,
+    allows_restricted: bool,
+    allows_ffi: bool,
+}
+
 // The middle-end owner composes the completed frontend owner and keeps all semantic data.
 pub struct AnalysisSession {
     frontend: FrontendSession,
+    trust: SourceTrust,
+    packages: Option<PackageMap>,
+    allow_ffi: bool,
+    permissions: Vec<SourcePermissions>,
+    permissions_ready: bool,
     pub names: NameInterner,
     pub types: TypeStore,
     pub symbols: SymbolStore,
@@ -35,8 +47,10 @@ pub struct AnalysisSession {
 }
 
 impl AnalysisSession {
-    static pub fn new(frontend: FrontendSession, raw_pointers: bool) -> Self {
-        Self(frontend, NameInterner.new(), TypeStore.new(), SymbolStore.new(), HirStore.new(),
+    static pub fn new(frontend: FrontendSession, raw_pointers: bool, trust: SourceTrust,
+        packages: Option<PackageMap>, allow_ffi: bool) -> Self {
+        Self(frontend, trust, packages, allow_ffi, Vec<SourcePermissions>.new(), false,
+            NameInterner.new(), TypeStore.new(), SymbolStore.new(), HirStore.new(),
             DefinitionRegistry.new(), DefinitionWorklist.new(), ImplRegistry.new(),
             raw_pointers, AnalysisPhase.Prepared)
     }
@@ -58,12 +72,52 @@ impl AnalysisSession {
     }
 
     pub fn package_map() -> Option<PackageMap&> {
-        self.frontend.package_map()
+        match &self.packages {
+            Some(value) => Option<PackageMap&>.Some(value),
+            None => Option<PackageMap&>.None,
+        }
     }
 
     pub fn stdlib_root() -> str {
-        self.frontend.stdlib_root()
+        self.trust.stdlib_root()
     }
+
+    // Permissions belong to the analysis session; the frontend only owns sources and ASTs.
+    pub fn classify_sources() -> Result<(), AnalysisError> {
+        if self.permissions_ready { @panic("source permissions have already been classified"); }
+        if self.phase != AnalysisPhase.Analyzing { @panic("analysis session is not analyzing"); }
+        self.permissions_ready = true;
+        let count = self.frontend.len();
+        let index = 0u64;
+        while index < count {
+            let unit = UnitId(index);
+            let canonical = self.frontend.source(unit).canonical_path();
+            let stdlib = self.trust.is_stdlib(canonical);
+            let restricted = self.trust.allows_restricted(canonical);
+            let ffi = stdlib || self.allow_ffi;
+            match &self.packages {
+                Some(packages) => match packages.package_of(canonical) {
+                    Some(package) => ffi = package.allows_ffi,
+                    None => {},
+                },
+                None => {},
+            }
+            self.permissions.push(SourcePermissions(stdlib, restricted, ffi));
+            index += 1;
+        }
+        Result<(), AnalysisError>.Ok(())
+    }
+
+    fn permission(id: UnitId) -> SourcePermissions {
+        match self.permissions.as_slice().get(id.index) {
+            Some(value) => *value,
+            None => @panic("source permissions are unavailable"),
+        }
+    }
+
+    pub fn is_stdlib(id: UnitId) -> bool { self.permission(id).is_stdlib }
+    pub fn allows_restricted(id: UnitId) -> bool { self.permission(id).allows_restricted }
+    pub fn allows_ffi(id: UnitId) -> bool { self.permission(id).allows_ffi }
 
     // Intrinsic identity lives in the session, so later passes need no resolver.
     pub fn intrinsic_type(name: str) -> Option<TypeId> {
@@ -71,7 +125,7 @@ impl AnalysisSession {
         while index < self.symbols.symbol_count() {
             let symbol = self.symbols.symbol_at(index).unwrap();
             index += 1;
-            if symbol.kind == SymbolKind.Type && self.unit(symbol.unit).unwrap().is_stdlib && self.names.text(symbol.name) == name {
+            if symbol.kind == SymbolKind.Type && self.is_stdlib(symbol.unit) && self.names.text(symbol.name) == name {
                 match self.types.get(symbol.type_id) {
                     Some(Nominal(_, _)) => return Option<TypeId>.Some(symbol.type_id),
                     _ => {},
@@ -95,6 +149,12 @@ impl AnalysisSession {
 
 impl Drop for AnalysisSession {
     pub fn drop() {
+        self.permissions.drop();
+        match &self.packages {
+            Some(packages) => packages.drop(),
+            None => {},
+        }
+        self.trust.drop();
         self.worklist.drop();
         self.definitions.drop();
         self.impls.drop();

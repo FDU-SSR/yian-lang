@@ -6,7 +6,7 @@ from yianc.frontend.desugar import desugar;
 from yianc.frontend.ast.format import AstFormatter;
 from yianc.frontend.ast.node import Identifier;
 from yianc.frontend.ast.traversal import AstVisitor, walk_program;
-from yianc.frontend.source import SourceDocument;
+from yianc.frontend.source import SourceDocument, SourceTable;
 from json.write import Writer;
 from json.parse import parse;
 from std.core.env import args;
@@ -111,6 +111,17 @@ fn release_documents(documents: Vec<SourceDocument>&) {
     documents.drop();
 }
 
+fn load_sources(documents: Vec<SourceDocument>&) -> SourceTable {
+    let sources = SourceTable.new();
+    for document in *documents {
+        match sources.load_text(document.path.as_str(), document.text.as_str()) {
+            Ok(_) => {},
+            Err(error) => { error.drop(); @panic("fixture source load failed"); },
+        }
+    }
+    sources
+}
+
 fn trust() -> SourceTrust {
     match SourceTrust.new("../../../lib/src") {
         Ok(value) => value,
@@ -126,13 +137,10 @@ fn strict_lifecycle_driver(raw: bool) -> MiddleEndDriver {
     defer release_documents(&documents);
     let trace = CompilerTrace.disabled();
     defer trace.drop();
-    let frontend = match FrontendDriver.from_documents(&documents, trust(), Option<PackageMap>.None, false, &trace) {
-        Ok(value) => value,
-        Err(error) => { error.drop(); @panic("strict preparation failed"); },
-    };
+    let frontend = FrontendDriver.new(load_sources(&documents), false, &trace);
     defer frontend.drop();
     match frontend.run() { Ok(_) => {}, Err(error) => { error.drop(); @panic("fixture preparation failed"); }, }
-    MiddleEndDriver.new(frontend.take_session(), raw)
+    MiddleEndDriver.new(frontend.take_session(), raw, trust(), Option<PackageMap>.None, false)
 }
 
 fn check_strict_lifecycle(raw: bool) {
@@ -210,13 +218,10 @@ fn strict_analysis_reports_first_error() {
     defer release_documents(&documents);
     let trace = CompilerTrace.disabled();
     defer trace.drop();
-    let frontend = match FrontendDriver.from_documents(&documents, trust(), Option<PackageMap>.None, false, &trace) {
-        Ok(value) => value,
-        Err(error) => { error.drop(); @panic("strict error fixture preparation failed"); },
-    };
+    let frontend = FrontendDriver.new(load_sources(&documents), false, &trace);
     defer frontend.drop();
     match frontend.run() { Ok(_) => {}, Err(error) => { error.drop(); @panic("fixture preparation failed"); }, }
-    let driver = MiddleEndDriver.new(frontend.take_session(), false);
+    let driver = MiddleEndDriver.new(frontend.take_session(), false, trust(), Option<PackageMap>.None, false);
     defer driver.drop();
     let reporter = DiagnosticCounter(0);
     match driver.run(AnalysisOptions.new(), &reporter) {

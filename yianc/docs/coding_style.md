@@ -10,14 +10,15 @@
 
 | 目录           | 职责                                                  |
 | -------------- | ----------------------------------------------------- |
-| `frontend/`    | 输入准备、源码会话、词法、语法、AST、去糖、遍历与转储 |
-| `analysis/`    | 解析、类型、符号、HIR、常量求值、lowering、检查与转储 |
+| `frontend/`    | 源码会话、词法、语法、AST、去糖、遍历与转储 |
+| `analysis/`    | 权限分类、解析、类型、符号、HIR、常量求值、lowering、检查与转储 |
 | `codegen/`     | CFG、LLVM lowering、指针安全检查、原生链接与转储      |
 | `telemetry/`   | 日志、计时与 profile 记录                             |
 | `common/`      | 会话内 ID、源码位置等不依赖分析或 codegen 的基础类型  |
 | `diagnostics/` | 诊断模型、渲染和 stderr 输出                          |
 | `package/`     | 包图校验与来源信任，不依赖 AST 或 HIR                 |
 | `host.an`、`roots.an` | 主机资源定位、标准库源码根与运行时资源根       |
+| `preprocess.an`、`input_error.an` | 输入加载/收集与共享输入诊断            |
 
 依赖方向从底层到上层：
 
@@ -135,11 +136,11 @@ pub struct AnalysisOptions {
 - 前置条件和快速失败放在函数开头，使用 guard clause 减少嵌套：
 
 ```yian
-fn run(config: CompilerConfig&, trace: CompilerTrace&) -> i32 {
-    let check = &config.action matches Check;
-    trace.start_pass("compiler.total", "main", "compiler.total", ProfileKind.Stage);
-    if !check { trace.event("main", LogLevel.Info, "compiling source inputs", Option<str>.None); }
-    ...
+pub fn runtime_root(config: CompilerConfig&) -> Result<PathBuf, InputError> {
+    if config.root_explicit { return normalize_path(config.compiler_root.as_str()); }
+    let root = associated_root()?;
+    defer root.drop();
+    normalize_path(root.as_str())
 }
 ```
 
@@ -274,7 +275,7 @@ impl Drop for CodegenError {
 
 - 错误联合类型按变体转发 `code`、`location`、`message` 和 `drop`，不要复制下层诊断逻辑。
 - 用户可见诊断码由 `DiagnosticCode` 统一定义；不要在消息文本里临时发明新的 `E`/`W` 编号。
-- 可恢复警告通过同步的 `DiagnosticReporter` 报告；致命错误沿 `Result` 返回 `main`。
+- 可恢复警告通过同步的 `DiagnosticReporter` 报告；阶段致命错误沿 `Result` 返回 `main`，命令行参数和日志配置错误分别由 `parse_args`、`CompilerTrace.new` 直接输出并以进程状态退出。
 - 不要根据诊断消息文本判断错误类别；需要分类时增加枚举变体或诊断码。
 
 ### 6.2 内部不变量

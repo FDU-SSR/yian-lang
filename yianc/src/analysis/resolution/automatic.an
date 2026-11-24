@@ -29,7 +29,7 @@ pub fn register_automatic(ctx: ResolutionContext&) -> Result<(), AnalysisError> 
         let declaration = ctx.declaration(index);
         let symbol = *ctx.session.symbols.get(declaration.symbol).unwrap();
 
-        if ctx.session.unit(declaration.unit).unwrap().is_stdlib && ctx.session.names.text(symbol.name) == "PartialEq" {
+        if ctx.session.is_stdlib(declaration.unit) && ctx.session.names.text(symbol.name) == "PartialEq" {
             equality = Option<TypeId>.Some(symbol.type_id);
         }
 

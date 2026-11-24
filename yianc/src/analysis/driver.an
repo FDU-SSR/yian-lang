@@ -23,6 +23,8 @@ from yianc.diagnostics.render import render;
 from yianc.diagnostics.report import report;
 from yianc.frontend.source import SourceTable;
 from yianc.frontend.session import FrontendSession;
+from yianc.package.model import PackageMap;
+from yianc.package.provenance import SourceTrust;
 from std.core.iter import Iterator, IntoIterator;
 
 // The middle-end driver owns the semantic session and the exported analysis output.
@@ -67,8 +69,9 @@ impl DiagnosticReporter for CliReporter {
 }
 
 impl MiddleEndDriver {
-    static pub fn new(frontend: FrontendSession, raw_pointers: bool) -> Self {
-        Self(Option<AnalysisSession>.Some(AnalysisSession.new(frontend, raw_pointers)))
+    static pub fn new(frontend: FrontendSession, raw_pointers: bool, trust: SourceTrust,
+        packages: Option<PackageMap>, allow_ffi: bool) -> Self {
+        Self(Option<AnalysisSession>.Some(AnalysisSession.new(frontend, raw_pointers, trust, packages, allow_ffi)))
     }
 
     pub fn analysis_session() -> AnalysisSession& {
@@ -103,6 +106,8 @@ impl MiddleEndDriver {
         let completed = false;
         defer { session.complete_analysis(completed); };
 
+        start_stage(&options, "analysis.classify_sources", AnalysisStage.Classify);
+        at_stage(session.classify_sources(), "analysis.classify_sources", AnalysisStage.Classify, &options)?;
         start_stage(&options, "analysis.restricted", AnalysisStage.Restricted);
         at_stage(check_restricted(session), "analysis.restricted", AnalysisStage.Restricted, &options)?;
         start_stage(&options, "analysis.context", AnalysisStage.Resolve);

@@ -50,7 +50,7 @@ impl CompilerTiming {
     fn mark_unreached() {
         let known = [
             "compiler.total", "source_preparation", "semantic_analysis", "cfg_pipeline", "llvm_pipeline", "native_pipeline",
-            "input.package_map", "input.source_roots", "input.collect_sources", "input.read_sources", "input.classify_sources",
+            "input.package_map", "input.source_roots", "input.collect_sources", "input.read_sources", "analysis.classify_sources",
             "frontend.lex", "frontend.parse", "frontend.desugar", "analysis.restricted", "analysis.context",
             "analysis.collect_declarations", "analysis.resolve_imports", "analysis.resolve_definitions", "analysis.resolve_impls",
             "analysis.register_automatic", "analysis.evaluate_constants", "analysis.finalize_types", "analysis.check_impls",

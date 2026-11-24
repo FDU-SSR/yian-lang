@@ -106,9 +106,10 @@ Native pipeline:
 | Location | Responsibility |
 | --- | --- |
 | `yianc/src/{main.an,config.an}` | CLI parsing, stage sequencing and the process exit path. |
+| `yianc/src/{preprocess.an,input_error.an}` | Package-map loading, source-root/trust setup, source collection and their terminal diagnostics. |
 | `yianc/src/telemetry/`, `yianc/src/{host.an,roots.an}` | Logging/timing/profile recording; host resource and source/runtime root resolution. |
-| `yianc/src/frontend/` | Input preparation, source/session ownership, lexer/parser, AST, desugaring, traversal and stage dumps; `driver.an` composes the stage. |
-| `yianc/src/analysis/` | Session/output, resolution, types, symbols/definitions, HIR, constants, lowering, checking passes and HIR dump; `driver.an` owns the pass sequence. |
+| `yianc/src/frontend/` | Source/session ownership, lexer/parser, AST, desugaring, traversal and stage dumps; `driver.an` composes the stage. |
+| `yianc/src/analysis/` | Session/output, permission classification, resolution, types, symbols/definitions, HIR, constants, lowering, checking passes and HIR dump; `driver.an` owns the pass sequence. |
 | `yianc/src/codegen/` | CFG, LLVM lowering, pointer-check enforcement, native linking and stage dumps; `driver.an` owns emission and publication. |
 | `yianc/src/{common,diagnostics,package}/` | IDs/positions, owned diagnostics and stderr reporting, package-map validation/provenance. |
 | `anx/src/{manifest,project,driver}/` | TOML manifests, layouts/dependencies/ownership, command/test drivers. |
@@ -122,8 +123,8 @@ Native pipeline:
 
 ## Compiler invariants
 
-- `FrontendDriver.new` loads the inputs into a frontend session. `run` processes that session, and `take_session` transfers it to `MiddleEndDriver` after success. `BackendDriver` owns CFG/LLVM and native publication. Keep `common` independent of analysis, package loading independent of AST/HIR, and diagnostic models separate from rendering. HIR models do not depend on checkers, sessions or constant evaluation. Constant arithmetic/intervals do not depend on HIR; typed evaluation does. Reusable containers belong in `lib`.
-- Fatal user errors return through `Result` to `main`; recoverable diagnostics and warnings are delivered synchronously through `DiagnosticReporter`; internal invariant violations panic where they are detected. Each source file owns one `UnitId`; the frozen `SourceTable` implements `SourceMap`, and `SourceMap.file` panics for an unassigned ID. `render(diagnostic, sources)` produces the single CLI text form.
+- `preprocess.an` loads the package map, resolves source roots/trust and collects the source files into a `SourceTable`. `FrontendDriver.new` takes that table and only runs lex/parse/desugar; `take_session` transfers the frontend session to `MiddleEndDriver`. `AnalysisSession` owns the package map, trust, `allow_ffi` and source permissions, and classifies sources before restricted-operation checks. `BackendDriver` owns CFG/LLVM and native publication. Keep `common` independent of analysis, package loading independent of AST/HIR, and diagnostic models separate from rendering. HIR models do not depend on checkers, sessions or constant evaluation. Constant arithmetic/intervals do not depend on HIR; typed evaluation does. Reusable containers belong in `lib`.
+- Fatal user errors outside CLI initialization return through `Result` to `main`; command-line argument and log-configuration failures render and exit inside `parse_args` and `CompilerTrace.new`, respectively; recoverable diagnostics and warnings are delivered synchronously through `DiagnosticReporter`; internal invariant violations panic where they are detected. Each source file owns one `UnitId`; the frozen `SourceTable` implements `SourceMap`, and `SourceMap.file` panics for an unassigned ID. `render(diagnostic, sources)` produces the single CLI text form.
 - Sessions transition prepared → analyzing → complete/failed once. Failed sessions retain partial data for diagnostics. `AnalysisOutput` owns its lists but refers to session records; release output before session. Never persist or mix session-local IDs. CLI and LSP report diagnostics while the owning source table lives; records kept across sessions copy the message, path and span.
 - Escaping references require stable storage. `Arena<T>` preserves addresses on allocation and has O(1) indexed lookup. `clear`/`drop` invalidate references without dropping payloads: owners release payloads before storage. Do not shallow-copy owning stores and release both copies.
 - Structural types use `TypeStore` interning; do not mutate a value against its key. Nominal identities distinguish declared/complete definitions; reject queries requiring completion on incomplete records.

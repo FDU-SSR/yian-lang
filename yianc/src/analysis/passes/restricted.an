@@ -49,7 +49,7 @@ pub fn check_restricted(session: AnalysisSession&) -> Result<(), AnalysisError> 
     while index < session.len() {
         let unit = *session.unit(UnitId(index)).unwrap();
 
-        if !unit.allows_restricted {
+        if !session.allows_restricted(unit.id) {
             let visitor = RestrictedVisitor(unit.id);
             match try_walk_program<AnalysisError>(unit.prepared.tree.unwrap().root, &visitor) {
                 Ok(_) => {},

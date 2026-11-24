@@ -1,6 +1,8 @@
 from std.cli import ArgumentParser, Nargs, ArgMatches, Action;
 from std.core.process import env_var;
 from yianc.diagnostics.model import DiagnosticCode, DiagnosticLocation, UserDiagnostic;
+from yianc.diagnostics.report import report;
+from yianc.frontend.source import SourceTable;
 from std.core.convert import From;
 
 const EXIT_FAILURE: i32 = 1;
@@ -32,9 +34,6 @@ fn config_error(text: String, status: i32) -> CliError {
 pub enum CompilerAction {
     Compile,
     Check,
-    Help {
-        text: String
-    },
 }
 
 pub enum OutputKind {
@@ -117,12 +116,6 @@ fn string_values(arg_matches: ArgMatches&, name: str) -> Vec<String> {
 }
 
 impl CompilerConfig {
-    static fn help(text: String) -> Self {
-        Self(CompilerAction.Help(text), Vec<String>.new(), String.new(), false, Option<String>.None, false, false,
-            OutputKind.Exe, false, Option<String>.None, 0u8, false, false, Option<String>.None, Option<String>.None, false, Option<String>.None, Option<String>.None,
-            Vec<String>.new(), Vec<String>.new(), true, true)
-    }
-
     static fn from_matches(arg_matches: ArgMatches&) -> Result<Self, CliError> {
         let check = *arg_matches.get_bool("check").unwrap().unwrap();
 
@@ -219,12 +212,6 @@ impl CompilerConfig {
 
 impl Drop for CompilerConfig {
     pub fn drop() {
-        match &self.action {
-            Help(text) => text.drop(),
-            Check => {},
-            Compile => {},
-        }
-
         let index = 0u64;
 
         while index < self.inputs.len() {
@@ -251,9 +238,17 @@ impl Drop for CompilerConfig {
     }
 }
 
-// Configuration and error text own their storage independently of the parser and command-line strings.
-// Argument failures transfer their message, optional usage, and exit status to the caller.
-pub fn parse_args() -> Result<CompilerConfig, CliError> {
+// Argument failures are terminal: the caller receives no error value.
+fn exit_with_error(error: CliError) -> ! {
+    match &error.usage { Some(value) => @eprint(value.as_str()), None => {}, }
+    let sources = SourceTable.new();
+    report(&error, &sources);
+    exit(error.status);
+}
+
+// Configuration, help text and error text own their storage independently of the parser and command-line strings.
+// Help requests write stdout and exit 0; argument failures report to stderr and exit.
+pub fn parse_args() -> CompilerConfig {
     let parser = ArgumentParser.new("compiler");
     defer parser.drop();
 
@@ -341,14 +336,19 @@ pub fn parse_args() -> Result<CompilerConfig, CliError> {
 
     match parser.parse_env() {
         Ok(outcome) => match outcome {
-            Help(text) => Result<CompilerConfig, CliError>.Ok(CompilerConfig.help(text)),
+            Help(text) => {
+                @print(text.as_str());
+                exit(0);
+            },
             Parsed(arg_matches) => {
                 defer arg_matches.drop();
-                CompilerConfig.from_matches(&arg_matches)
+                match CompilerConfig.from_matches(&arg_matches) {
+                    Ok(config) => config,
+                    Err(error) => exit_with_error(error),
+                }
             },
         },
         Err(error) => {
-            defer error.drop();
             let usage = match parser.format_usage() {
                 Ok(text) => Option<String>.Some(text),
                 Err(problem) => { problem.drop(); Option<String>.None },
@@ -356,7 +356,7 @@ pub fn parse_args() -> Result<CompilerConfig, CliError> {
             let message = String.new();
             if error.argument() != "" { message.push_str(error.argument()); message.push_str(": "); }
             message.push_str(error.message());
-            Result<CompilerConfig, CliError>.Err(CliError(message, EXIT_USAGE_ERROR, usage))
+            exit_with_error(CliError(message, EXIT_USAGE_ERROR, usage))
         },
     }
 }

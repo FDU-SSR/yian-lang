@@ -35,9 +35,10 @@ CFG 和 LLVM IR，并按 `-t` 输出可执行文件、`.ll` 或 `.bc`。可执�
 |------|------|
 | `src/main.an` | 程序入口、阶段组合和顶层错误出口 |
 | `src/config.an` | 命令行解析与编译器配置 |
-| `src/frontend/driver.an`、`src/analysis/driver.an`、`src/codegen/driver.an` | 各阶段的组合入口：输入准备、pass 顺序、CFG/LLVM 与发布 |
+| `src/preprocess.an`、`src/input_error.an` | 包图加载、源码根/信任准备、源码收集和输入诊断 |
+| `src/frontend/driver.an`、`src/analysis/driver.an`、`src/codegen/driver.an` | 各阶段的组合入口：pass 顺序、CFG/LLVM 与发布 |
 | `src/frontend/` | 源码会话、词法、语法、AST、去糖、遍历和前端转储 |
-| `src/analysis/` | 解析、类型、符号、HIR、常量求值、lowering、检查 pass 和 HIR 转储 |
+| `src/analysis/` | 权限分类、解析、类型、符号、HIR、常量求值、lowering、检查 pass 和 HIR 转储 |
 | `src/codegen/` | CFG、LLVM lowering、指针安全检查、原生链接和阶段转储 |
 | `src/telemetry/` | 日志、计时与 profile 记录 |
 | `src/host.an`、`src/roots.an` | 主机/安装资源定位、标准库源码根与运行时资源根 |

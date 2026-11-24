@@ -1,22 +1,11 @@
 from yianc.common.ids import UnitId;
-from yianc.config import CompilerConfig;
 from yianc.diagnostics.model import DiagnosticCode, DiagnosticLocation, UserDiagnostic;
 from yianc.diagnostics.output import OutputError;
 from yianc.frontend.dump import StageDumps;
-from yianc.host import associated_root;
-from yianc.roots import source_roots;
-from yianc.telemetry.profile import ProfileKind;
-from yianc.telemetry.trace import CompilerTrace;
-from yianc.frontend.input import InputError;
 from yianc.frontend.prepare import FrontendStageError, PreparationStage;
 from yianc.frontend.session import FrontendSession, PreparationObserver;
-from yianc.frontend.source import SourceDocument, SourceTable, SourceMap, collect_sources;
-from yianc.package.model import PackageMap;
-from yianc.package.provenance import SourceTrust;
-from std.core.convert import From;
-from std.core.fs import try_exists;
-from std.core.iter import Iterator, IntoIterator;
-from std.core.path import Path;
+from yianc.frontend.source import SourceTable;
+from yianc.telemetry.trace import CompilerTrace;
 
 pub enum FrontendError {
     Stage { error: FrontendStageError },
@@ -41,19 +30,6 @@ impl Drop for FrontendError {
     }
 }
 
-fn start_profile(trace: CompilerTrace&, pass_id: str) {
-    trace.start_pass(pass_id, "input", pass_id, ProfileKind.Pass);
-}
-
-fn finish_profile(trace: CompilerTrace&, pass_id: str, success: bool) {
-    if success { trace.finish(pass_id); } else { trace.fail(pass_id); }
-}
-
-fn release_paths(paths: Vec<String>&) {
-    for path in *paths { path.drop(); }
-    paths.drop();
-}
-
 fn stage_complete(observer: PreparationObserver&, stage: PreparationStage, session: FrontendSession&) -> Result<(), FrontendError> {
     match observer.stage_complete(stage, session) {
         Ok(_) => Result<(), FrontendError>.Ok(()),
@@ -62,7 +38,7 @@ fn stage_complete(observer: PreparationObserver&, stage: PreparationStage, sessi
 }
 
 // Each stage processes the entire frozen input set before the next stage starts.
-fn prepare_session(session: FrontendSession&, allow_ffi: bool, observer: PreparationObserver&) -> Result<(), FrontendError> {
+fn prepare_session(session: FrontendSession&, observer: PreparationObserver&) -> Result<(), FrontendError> {
     let index: u64 = 0;
     while index < session.source_count() {
         let unit = UnitId(index);
@@ -73,11 +49,7 @@ fn prepare_session(session: FrontendSession&, allow_ffi: bool, observer: Prepara
             Ok(value) => value,
             Err(error) => return Result<(), FrontendError>.Err(FrontendError.Stage(error)),
         };
-        let file = session.source(unit);
-        observer.begin("input.classify_sources");
-        let permissions = session.classify(file.canonical_path(), allow_ffi);
-        observer.finish("input.classify_sources", true);
-        session.accept(unit, prepared, permissions);
+        session.accept(unit, prepared);
         index += 1;
     }
     stage_complete(observer, PreparationStage.Lex, session)?;
@@ -118,108 +90,12 @@ pub struct FrontendDriver {
     trace: CompilerTrace&,
     complete: bool,
     attempted: bool,
-    allow_ffi: bool,
     dump: bool,
 }
 
 impl FrontendDriver {
-    static pub fn new(config: CompilerConfig&, trace: CompilerTrace&) -> Result<Self, InputError> {
-        let packages = match &config.packages {
-            Some(path) => {
-                start_profile(trace, "input.package_map");
-                match PackageMap.load(path.as_str()) {
-                    Ok(value) => { finish_profile(trace, "input.package_map", true); Option<PackageMap>.Some(value) },
-                    Err(problem) => { finish_profile(trace, "input.package_map", false); return Result<Self, InputError>.Err(problem); },
-                }
-            },
-            None => {
-                trace.skip("input.package_map", "standalone compilation has no package map");
-                Option<PackageMap>.None
-            },
-        };
-        let packages_transferred = false;
-        defer { if !packages_transferred { match &packages { Some(value) => value.drop(), None => {}, } } };
-        let map = match &packages { Some(value) => Option<PackageMap&>.Some(value), None => Option<PackageMap&>.None, };
-        start_profile(trace, "input.source_roots");
-        let roots_result = source_roots(config, map);
-        finish_profile(trace, "input.source_roots", match &roots_result { Ok(_) => true, Err(_) => false });
-        let roots = roots_result?;
-        defer roots.drop();
-        let trust = SourceTrust.new(roots.standard_library.as_str())?;
-        let trust_transferred = false;
-        defer { if !trust_transferred { trust.drop(); } };
-        let harness_checkout = associated_root()?;
-        defer harness_checkout.drop();
-        for harness in ["tests/basic/std", "tests/safety/std"] {
-            let root = Path.new(harness_checkout.as_str()).join(*harness);
-            defer root.drop();
-            match try_exists(root.as_str()) {
-                Ok(exists) => if exists { trust.add_test_root(root.as_str())?; },
-                Err(problem) => {
-                    defer problem.drop();
-                    return Result<Self, InputError>.Err(InputError(DiagnosticCode.Source, DiagnosticLocation.File(String.from(&root.as_str())), String.from(&problem.msg())));
-                },
-            }
-        }
-        let sources = SourceTable.new();
-        let sources_transferred = false;
-        defer { if !sources_transferred { sources.drop(); } };
-        start_profile(trace, "input.collect_sources");
-        let paths_result = collect_sources(&config.inputs);
-        finish_profile(trace, "input.collect_sources", match &paths_result { Ok(_) => true, Err(_) => false });
-        let paths = match paths_result {
-            Ok(value) => value,
-            Err(error) => {
-                defer error.drop();
-                return Result<Self, InputError>.Err(InputError(DiagnosticCode.Source,
-                    DiagnosticLocation.File(String.from(&error.path.as_str())), String.from(&error.error.msg())));
-            },
-        };
-        defer release_paths(&paths);
-        for path in paths {
-            start_profile(trace, "input.read_sources");
-            let result = sources.load(path.as_str());
-            finish_profile(trace, "input.read_sources", match &result { Ok(_) => true, Err(_) => false });
-            match result {
-                Ok(_) => {},
-                Err(error) => {
-                    defer error.drop();
-                    return Result<Self, InputError>.Err(InputError(DiagnosticCode.Source,
-                        DiagnosticLocation.File(String.from(&path.as_str())), String.from(&error.msg())));
-                },
-            }
-        }
-        let session = FrontendSession.new(trust, packages, sources);
-        packages_transferred = true;
-        trust_transferred = true;
-        sources_transferred = true;
-        Result<Self, InputError>.Ok(Self(Option<FrontendSession>.Some(session), trace, false, false, config.allow_ffi, config.dump))
-    }
-
-    static pub fn from_documents(documents: Vec<SourceDocument>&, trust: SourceTrust,
-        packages: Option<PackageMap>, allow_ffi: bool, trace: CompilerTrace&) -> Result<Self, InputError> {
-        let sources = SourceTable.new();
-        let transferred = false;
-        defer {
-            if !transferred {
-                sources.drop();
-                trust.drop();
-                match &packages { Some(value) => value.drop(), None => {}, }
-            }
-        };
-        for document in *documents {
-            match sources.load_text(document.path.as_str(), document.text.as_str()) {
-                Ok(_) => {},
-                Err(error) => {
-                    defer error.drop();
-                    return Result<Self, InputError>.Err(InputError(DiagnosticCode.Source,
-                        DiagnosticLocation.File(String.from(&document.path.as_str())), String.from(&error.msg())));
-                },
-            }
-        }
-        let session = FrontendSession.new(trust, packages, sources);
-        transferred = true;
-        Result<Self, InputError>.Ok(Self(Option<FrontendSession>.Some(session), trace, false, false, allow_ffi, false))
+    static pub fn new(sources: SourceTable, dump: bool, trace: CompilerTrace&) -> Self {
+        Self(Option<FrontendSession>.Some(FrontendSession.new(sources)), trace, false, false, dump)
     }
 
     pub fn run() -> Result<(), FrontendError> {
@@ -230,7 +106,7 @@ impl FrontendDriver {
             None => @panic("frontend input session is not available"),
         };
         let dumps = StageDumps(self.dump, self.trace);
-        prepare_session(session, self.allow_ffi, &dumps)?;
+        prepare_session(session, &dumps)?;
         self.complete = true;
         Result<(), FrontendError>.Ok(())
     }

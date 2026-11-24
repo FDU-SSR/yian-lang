@@ -485,7 +485,7 @@ impl TryAstVisitor<String> for Binder {
         self.index.decls[target].binding = true;
         self.index.decls[target].annotated = false;
         self.index.decls[target].symbol_span =
-            Option<SourceSpan>.Some(SourceSpan(self.source, node.span));
+        Option<SourceSpan>.Some(SourceSpan(self.source, node.span));
         Result<WalkControl, String>.Ok(WalkControl.Continue)
     }
 
@@ -769,7 +769,7 @@ impl SourceIndex {
             let source = UnitId(source_index);
             let file = session.source(source);
             let path = String.from(&file.path());
-            let is_stdlib = session.unit(source).unwrap().is_stdlib;
+            let is_stdlib = session.is_stdlib(source);
             let scanned = match Lexer.new(file.text()).run() {
                 Ok(value) => value,
                 Err(error) => {
@@ -846,10 +846,14 @@ impl SourceIndex {
     fn collect_generics(source: UnitId, generics: Vec<GenericParam>&) {
         for generic in *generics {
             match generic {
-                Type(value) => { self.add_decl(source, SourceSpan(source, value.data.name.span),
-                    DeclKind.TypeParameter, value.data.name.data.name.as_str(), Option<SourceSpan>.None); },
-                Constant(value) => { self.add_decl(source, SourceSpan(source, value.data.name.span),
-                    DeclKind.TypeParameter, value.data.name.data.name.as_str(), Option<SourceSpan>.None); },
+                Type(value) => {
+                    self.add_decl(source, SourceSpan(source, value.data.name.span),
+                        DeclKind.TypeParameter, value.data.name.data.name.as_str(), Option<SourceSpan>.None);
+                },
+                Constant(value) => {
+                    self.add_decl(source, SourceSpan(source, value.data.name.span),
+                        DeclKind.TypeParameter, value.data.name.data.name.as_str(), Option<SourceSpan>.None);
+                },
             }
         }
     }

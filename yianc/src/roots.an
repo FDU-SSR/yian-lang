@@ -1,7 +1,7 @@
 from yianc.config import CompilerConfig;
 from yianc.package.model import PackageMap;
 from yianc.diagnostics.model import DiagnosticCode, DiagnosticLocation;
-from yianc.frontend.input import InputError;
+from yianc.input_error import InputError;
 from std.core.convert import From;
 from yianc.package.provenance import normalize_path;
 from yianc.host import associated_root;

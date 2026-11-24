@@ -74,7 +74,7 @@ pub fn resolve_method(ctx: ResolutionContext&, unit: UnitId, parent: ScopeId, re
     let name = ctx.session.names.intern(syntax.data.name.data.name.as_str());
     let name_span = ctx.span(unit, syntax.span);
 
-    if (has_attr(&syntax.data.attrs, AttrKind.Ffi) || has_attr(&syntax.data.attrs, AttrKind.PubFfi)) && !ctx.session.unit(unit).unwrap().allows_ffi {
+    if (has_attr(&syntax.data.attrs, AttrKind.Ffi) || has_attr(&syntax.data.attrs, AttrKind.PubFfi)) && !ctx.session.allows_ffi(unit) {
         return Result<TypeId, AnalysisError>.Err(ctx.error(unit, syntax.span, DiagnosticCode.Access, "FFI method requires permission"));
     }
 

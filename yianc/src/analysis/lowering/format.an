@@ -72,7 +72,7 @@ fn standard_unit(checker: ExprChecker&, relative: str) -> Result<UnitId, Analysi
         let id = UnitId(index);
         let unit = checker.ctx.session.unit(id).unwrap();
 
-        if unit.is_stdlib && checker.ctx.session.source(unit.id).canonical_path() == expected.as_str() {
+        if checker.ctx.session.is_stdlib(unit.id) && checker.ctx.session.source(unit.id).canonical_path() == expected.as_str() {
             return Result<UnitId, AnalysisError>.Ok(id);
         }
 
@@ -300,8 +300,8 @@ fn write_str_call(checker: ExprChecker&, span: Span, text_span: Span, receiver: 
 
 fn standard_container(library: FormatLibrary&, definition: DefId) -> bool {
     definition == library.vec_definition || definition == library.option_definition
-        || definition == library.result_definition || definition == library.map_definition
-        || definition == library.set_definition
+    || definition == library.result_definition || definition == library.map_definition
+    || definition == library.set_definition
 }
 
 // Report the innermost standard container member that lacks Format, so the diagnostic names the member constraint.
@@ -672,7 +672,7 @@ fn result_variant(checker: ExprChecker&, span: Span, library: FormatLibrary&, va
     let concrete_variant = EnumVariant(variant.name, payload, variant.discriminant, variant.span);
     Result<HirId, AnalysisError>.Ok(checker.node(span, library.result_instance, false,
         HirKind.VariantConstruct(VariantConstruct(library.result_instance, concrete_variant,
-            Option<Vec<(NameId, HirId)>>.Some(arguments), Option<SourceSpan>.None, spans))))
+        Option<Vec<(NameId, HirId)>>.Some(arguments), Option<SourceSpan>.None, spans))))
 }
 
 fn match_write(checker: ExprChecker&, span: Span, library: FormatLibrary&, write: HirId,

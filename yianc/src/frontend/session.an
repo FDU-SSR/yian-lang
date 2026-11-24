@@ -2,29 +2,18 @@ from yianc.common.ids import UnitId;
 from yianc.diagnostics.output import OutputError;
 from yianc.frontend.prepare import FrontendPhase, PreparedFile, FrontendStageError, PreparationStage, prepare_file;
 from yianc.frontend.source import SourceFile, SourceMap, SourceTable;
-from yianc.package.model import PackageMap;
-from yianc.package.provenance import SourceTrust;
 from std.collections.arena import Arena;
 from std.core.iter import Iterator, IntoIterator;
 
 pub struct CompilationUnit {
     pub id: UnitId,
     pub prepared: PreparedFile,
-    pub is_stdlib: bool,
-    pub allows_restricted: bool,
-    pub allows_ffi: bool,
 }
 
 impl Drop for CompilationUnit {
     pub fn drop() {
         self.prepared.drop();
     }
-}
-
-pub struct SourcePermissions {
-    pub is_stdlib: bool,
-    pub allows_restricted: bool,
-    pub allows_ffi: bool,
 }
 
 // Observers borrow the partial frontend owner synchronously; preparation never retains them.
@@ -34,25 +23,22 @@ pub trait PreparationObserver {
     fn stage_complete(stage: PreparationStage, session: FrontendSession&) -> Result<(), OutputError>;
 }
 
-// This owner keeps every source, prepared token stream, AST and trust decision for one run.
+// This owner keeps every source and prepared AST for one run. Permissions live in AnalysisSession.
 pub struct FrontendSession {
     sources: SourceTable,
     units: Arena<CompilationUnit>,
-    packages: Option<PackageMap>,
-    trust: SourceTrust,
 }
 
 impl FrontendSession {
-    static pub fn new(trust: SourceTrust, packages: Option<PackageMap>, sources: SourceTable) -> Self {
-        Self(sources, Arena<CompilationUnit>.new(), packages, trust)
+    static pub fn new(sources: SourceTable) -> Self {
+        Self(sources, Arena<CompilationUnit>.new())
     }
 
     // A lexed file transfers here in the same order as the frozen source table.
-    pub fn accept(id: UnitId, prepared: PreparedFile, permissions: SourcePermissions) {
+    pub fn accept(id: UnitId, prepared: PreparedFile) {
         if id.index != self.units.len() { @panic("invalid compilation unit order"); }
         self.sources.file(id);
-        self.units.alloc(CompilationUnit(id, prepared,
-            permissions.is_stdlib, permissions.allows_restricted, permissions.allows_ffi));
+        self.units.alloc(CompilationUnit(id, prepared));
     }
 
     pub fn unit(id: UnitId) -> Option<CompilationUnit&> {
@@ -71,17 +57,6 @@ impl FrontendSession {
     pub fn len() -> u64 { self.units.len() }
     pub fn source_table() -> SourceTable& { &self.sources }
 
-    pub fn package_map() -> Option<PackageMap&> {
-        match &self.packages {
-            Some(value) => Option<PackageMap&>.Some(value),
-            None => Option<PackageMap&>.None,
-        }
-    }
-
-    pub fn stdlib_root() -> str {
-        self.trust.stdlib_root()
-    }
-
     pub fn prepare_source(unit: UnitId) -> Result<PreparedFile, FrontendStageError> {
         let file = self.sources.file(unit);
         prepare_file(unit, file.path(), file.text(), FrontendPhase.Tokens)
@@ -91,25 +66,6 @@ impl FrontendSession {
         self.sources.file(unit);
         result
     }
-
-    // Permission precedence is independent of the spelling of the input path.
-    pub fn classify(canonical: str, allow_ffi: bool) -> SourcePermissions {
-        let stdlib = self.trust.is_stdlib(canonical);
-        let restricted = self.trust.allows_restricted(canonical);
-        let ffi = stdlib || allow_ffi;
-
-        match &self.packages {
-            None => {},
-            Some(packages) => match packages.package_of(canonical) {
-                None => {},
-                Some(package) => {
-                    ffi = package.allows_ffi;
-                },
-            },
-        }
-
-        SourcePermissions(stdlib, restricted, ffi)
-    }
 }
 
 impl Drop for FrontendSession {
@@ -118,13 +74,6 @@ impl Drop for FrontendSession {
             unit.drop();
         }
         self.units.drop();
-
-        match &self.packages {
-            Some(packages) => packages.drop(),
-            None => {},
-        }
-
-        self.trust.drop();
         self.sources.drop();
     }
 }

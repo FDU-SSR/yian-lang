@@ -18,7 +18,7 @@ from yianc.codegen.types import BackendTypes;
 from yianc.common.ids import DefId, NameId, TypeId, UnitId;
 from yianc.common.location import SourceSpan;
 from yianc.diagnostics.model import DiagnosticReporter, UserDiagnostic;
-from yianc.frontend.source import Position, SourceDocument, Span;
+from yianc.frontend.source import Position, SourceDocument, SourceTable, Span;
 from yianc.package.model import PackageMap;
 from yianc.package.provenance import SourceTrust;
 from llvm.object import Module;
@@ -45,6 +45,17 @@ fn trust() -> SourceTrust {
 fn release_documents(documents: Vec<SourceDocument>&) {
     for document in *documents { document.drop(); }
     documents.drop();
+}
+
+fn load_sources(documents: Vec<SourceDocument>&) -> SourceTable {
+    let sources = SourceTable.new();
+    for document in *documents {
+        match sources.load_text(document.path.as_str(), document.text.as_str()) {
+            Ok(_) => {},
+            Err(error) => { error.drop(); @panic("fixture source load failed"); },
+        }
+    }
+    sources
 }
 
 fn definition(session: AnalysisSession&, name_text: str, kind: NominalKind, location: SourceSpan, generics: Vec<TypeId>) -> DefId {
@@ -316,13 +327,10 @@ fn probe_driver() -> MiddleEndDriver {
     defer release_documents(&documents);
     let trace = CompilerTrace.disabled();
     defer trace.drop();
-    let frontend = match FrontendDriver.from_documents(&documents, trust(), Option<PackageMap>.None, false, &trace) {
-        Ok(value) => value,
-        Err(error) => { error.drop(); @panic("enum storage probe preparation failed"); },
-    };
+    let frontend = FrontendDriver.new(load_sources(&documents), false, &trace);
     defer frontend.drop();
     match frontend.run() { Ok(_) => {}, Err(error) => { error.drop(); @panic("enum storage probe preparation failed"); }, }
-    MiddleEndDriver.new(frontend.take_session(), false)
+    MiddleEndDriver.new(frontend.take_session(), false, trust(), Option<PackageMap>.None, false)
 }
 
 // One malformed graph per process; the invariant panic terminates the child.

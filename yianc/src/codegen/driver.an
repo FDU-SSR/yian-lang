@@ -20,7 +20,7 @@ from yianc.roots import runtime_root;
 from yianc.telemetry.profile import ProfileKind;
 from yianc.diagnostics.model import DiagnosticCode, DiagnosticLocation, UserDiagnostic;
 from yianc.diagnostics.output import OutputError;
-from yianc.frontend.input import InputError;
+from yianc.input_error import InputError;
 from yianc.telemetry.trace import CompilerTrace;
 from yianc.frontend.text import is_alphanumeric;
 from yianc.common.ids import UnitId;

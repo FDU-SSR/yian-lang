@@ -33,7 +33,7 @@ fn attributes(ctx: ResolutionContext&, unit: UnitId, item: Item&, attrs: Vec<Att
         seen.push(attr.data.kind);
 
         if attr.data.kind == AttrKind.Ffi || attr.data.kind == AttrKind.PubFfi {
-            if !ctx.session.unit(unit).unwrap().allows_ffi {
+            if !ctx.session.allows_ffi(unit) {
                 return Result<(), AnalysisError>.Err(ctx.error(unit, attr.span, DiagnosticCode.Access, "FFI requires package ffi = true or --allow-ffi"));
             }
 
@@ -48,7 +48,7 @@ fn attributes(ctx: ResolutionContext&, unit: UnitId, item: Item&, attrs: Vec<Att
     }
 
     if external {
-        if !ctx.session.unit(unit).unwrap().allows_ffi || has_attr(attrs, AttrKind.Pub) || has_attr(attrs, AttrKind.Ffi) || has_attr(attrs, AttrKind.Static) {
+        if !ctx.session.allows_ffi(unit) || has_attr(attrs, AttrKind.Pub) || has_attr(attrs, AttrKind.Ffi) || has_attr(attrs, AttrKind.Static) {
             return Result<(), AnalysisError>.Err(ctx.error(unit, item.span, DiagnosticCode.Access, "invalid or unauthorized FFI declaration"));
         }
     } elif has_attr(attrs, AttrKind.Static) || (function && has_attr(attrs, AttrKind.PubFfi) && !has_attr(attrs, AttrKind.Ffi)) {

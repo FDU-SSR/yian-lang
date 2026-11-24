@@ -112,7 +112,7 @@ fn bind_import(ctx: ResolutionContext&, unit: UnitId, target: UnitId, name: str,
     }
 
     let alias_id = ctx.session.names.intern(alias);
-    if record.ffi_only && !ctx.session.unit(unit).unwrap().allows_ffi {
+    if record.ffi_only && !ctx.session.allows_ffi(unit) {
         return Result<bool, AnalysisError>.Err(ctx.error(unit, span, DiagnosticCode.Access, "imported symbol requires FFI permission"));
     }
 
@@ -199,7 +199,7 @@ fn inject_prelude(ctx: ResolutionContext&) -> Result<(), AnalysisError> {
     let index = 0u64;
 
     while index < ctx.session.len() {
-        if ctx.session.unit(UnitId(index)).unwrap().is_stdlib {
+        if ctx.session.is_stdlib(UnitId(index)) {
             has_stdlib = true;
         }
 
@@ -216,7 +216,7 @@ fn inject_prelude(ctx: ResolutionContext&) -> Result<(), AnalysisError> {
         let unit = UnitId(index);
         let record = *ctx.session.unit(unit).unwrap();
 
-        if !record.is_stdlib {
+        if !ctx.session.is_stdlib(unit) {
             for entry in entries {
                 let filename = String.from(&ctx.session.stdlib_root());
                 defer filename.drop();
