@@ -26,7 +26,7 @@ fn finish_profile(trace: CompilerTrace&, pass_id: str, success: bool) {
 
 // Input failures are terminal: report with an empty source table and exit without returning.
 fn exit_with_error(trace: CompilerTrace&, error: InputError) -> ! {
-    trace.fail("source_preparation");
+    trace.fail("preprocessing");
     let empty = SourceTable.new();
     report(&error, &empty);
     exit(EXIT_FAILURE);

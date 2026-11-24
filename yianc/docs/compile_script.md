@@ -104,7 +104,7 @@ yianc --profile --profile-output build/profile/compiler.json lib/src tests/basic
 计时覆盖输入收集/读取、词法/解析/desugar、语义解析与检查、地址存储归一化、HIR 验证/覆盖/赋值、CFG
 lower/验证/清理/check insertion、LLVM lowering/优化前后验证/优化/native emission 或 IR/bitcode 序列化，
 以及 runtime、C shim、链接参数、最终链接和产物发布。优化等级 `-O0` 不运行 LLVM 优化；`--check` 在语义分析后结束，未执行项标为 `not_run`，不会伪造零耗时成功。原生链接阶段仅在 `exe` 目标运行。
-`--check` 和编译模式都将 `input.source_roots`、`input.collect_sources` 等输入准备计时归入 `source_preparation` 阶段；`analysis.classify_sources` 归入 `semantic_analysis`，并在 `analysis.restricted` 之前执行。
+`--check` 和编译模式都将 `input.source_roots`、`input.collect_sources` 等输入预处理计时归入 `preprocessing` 阶段，前端 lex/parse/desugar 与转储归入 `frontend` 阶段；`analysis.classify_sources` 归入 `semantic_analysis`，并在 `analysis.restricted` 之前执行。
 
 `--profile-output` 可用于编译模式与 `--check`；编译报告的目标为 `"exe"`、`"ll"` 或 `"bc"`，检查报告的目标为 `"check"`。报告写入失败作为 `W601` 非致命警告经统一诊断输出，不改变原编译结果；编译失败时不发布报告。`anx build --profile` 用该接口保存每次 compiler 调用的独立明细并生成命令级报告；命令选项见
 [anx CLI](../../docs/anx/03.cli.md)。`anx run --profile` 在启动产物前发布编译报告；运行时统计使用下节的插桩接口。
@@ -353,7 +353,8 @@ yianc --log --log-spec "main=DEBUG" lib/src tests/basic/array/assign.an
 ```text
 [DEBUG][main] compiler.total
 [INFO][main] compiling source inputs
-[DEBUG][main] source preparation
+[DEBUG][main] preprocessing
+[DEBUG][main] frontend
 [DEBUG][main] semantic analysis
 [DEBUG][main] native linking
 ```
