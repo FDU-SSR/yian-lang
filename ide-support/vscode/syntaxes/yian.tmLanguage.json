@@ -207,7 +207,7 @@
                 },
                 {
                     "name": "keyword.declaration.yian",
-                    "match": "\\b(?:let|typedef|struct|enum|trait|impl|fn|dyn|pub|static|const|comptime|inline|intrinsic)\\b"
+                    "match": "\\b(?:let|typedef|struct|enum|trait|impl|fn|dyn|pub|ffi|extern|opaque|type|static|const|comptime|inline|intrinsic)\\b"
                 },
                 {
                     "name": "constant.language.boolean.yian",
