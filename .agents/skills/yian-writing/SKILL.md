@@ -16,7 +16,7 @@ description: Write, edit, explain, or debug YIAN language code in .an files. Use
 
 ## 复制与资源清理
 
-容器、哈希与缓冲 I/O 的接口见[标准库参考](../../../docs/grammar/14.standard_library.md)。
+仅在用户询问相关语义，或具体操作会影响当前问题的结果时使用本节。解释时指出哪一步会发生什么，例如“这次追加可能触发扩容，使之前保存的元素地址失效”。容器、哈希与缓冲 I/O 的接口见[标准库参考](../../../docs/grammar/14.standard_library.md)。
 
 - 赋值、传参和返回都是浅复制，来源仍可使用。`T&` 没有借用检查或生命周期推断。对资源指定一个清理责任方，标明责任转交，并用 `defer` 覆盖提前返回路径。`Clone` 和 `Drop` 是显式调用的标准库 trait，作用域结束不会自动清理，`del` 只释放当前分配块。见[赋值与内存管理](../../../docs/grammar/15.assign_semantics.md)。
 - 浅复制 `String`、容器或编译器 session 会共享底层资源。`String` 拥有缓冲区，`str` 引用现有数据。需要独立副本时，核对具体类型的 `clone()` 深度。`ptr.clone()` 会解引用并克隆指向的值。

@@ -11,7 +11,8 @@ recovery; maintain only the compatibility that recovery needs.
 - Inspect tracked and untracked changes before editing; preserve unrelated work. Use `apply_patch` for local edits when practical.
 - Before writing or modifying `.an` files, read the [YIAN writing skill](.agents/skills/yian-writing/SKILL.md).
 - Inventory and inspect Git-tracked project documentation for every task. Investigate task-related facts and synchronize every affected document, including related modules; do not expand into unrelated business changes.
-- Complete authorized work through its user-visible boundary and required local acceptance. Keep connected layers, callers, ownership and error paths together. “Continue” resumes that feature without repeated permission; do not stop at scaffolding or a passing low-level slice.
+- Complete authorized work through its user-visible boundary and required local acceptance. Follow affected callers and error paths. “Continue” resumes that feature without repeated permission; do not stop at scaffolding or a passing low-level slice.
+- Explain YIAN code in terms of the behavior the user asked about. Discuss ownership or lifetimes only when the user asks or when a specific operation makes them relevant to the answer. In that case, identify the operation and its observable consequence using YIAN semantics.
 - Keep `CLAUDE.md` a relative symbolic link to `AGENTS.md`. Do not modify `bak/` or `.conda/` without explicit authorization. Regenerate `build/` artifacts through tools; do not hand-edit or commit them as source.
 
 ## Planning and execution
@@ -165,7 +166,7 @@ Native pipeline:
 
 - Do not add interfaces, data structures, fields, methods, or abstraction layers for requirements that do not exist. Implement only what a current call path or confirmed contract requires, and remove declarations when their last caller disappears; do not keep unused parameters, variants, wrappers, or adapters for hypothetical future use.
 - Tests and external consumers such as the LSP do not justify adding a dedicated interface to a core module; adapt within the consumer's own boundary.
-- Organize modules by responsibility and dependency direction. Split functions at meaningful interfaces, use guard clauses and blank lines for logical blocks. Comments explain ownership, prerequisites and non-obvious boundaries.
+- Organize modules by responsibility and dependency direction. Split functions at meaningful interfaces, use guard clauses and blank lines for logical blocks. Comments explain prerequisites and behavior that a reader cannot infer from the code.
 - Keep user errors distinct from internal invariant failures. Preserve source identity/locations; do not infer analysis error categories from message text outside the frontend compatibility boundary.
 - For Python structure/references, prefer available Serena/LSP symbol tools; inspect callers before modifying functions/classes and use semantic rename where applicable. Fall back to `rg` and source reading when semantic tools cannot answer. Use targeted diagnostics under the local-verification policy.
 - Python follows strict Pyright (`python/pyproject.toml`): avoid `Any`, `object` and `hasattr()`, keep imports at file top and preserve handler-map dispatch in type checking/LLVM translation. Private functions, constants, methods, attributes and nested helpers use `__`. A module-level private referenced inside a class uses `_` when name mangling would break lookup; names defined/used within that class still use `__`.
