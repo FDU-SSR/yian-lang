@@ -6,7 +6,7 @@
 
 ```text
 AGENTS.md
-.agent/
+.agents/
 ├── PLANS.md
 └── plans/
     └── <task-name>/
@@ -15,7 +15,7 @@ AGENTS.md
 ```
 
 - `AGENTS.md`：简短协议入口，以及仓库有效的工程规则、环境与验证要求。
-- `.agent/PLANS.md`：完整 Planning Protocol、Execution Protocol 和标准模板。
+- `.agents/PLANS.md`：完整 Planning Protocol、Execution Protocol 和标准模板。
 - `PLAN.md`：稳定执行契约，定义需求、现状、设计、决策、任务依赖、阶段、验收、约束和风险。
 - `PROGRESS.md`：唯一动态执行状态来源，记录实际修改、任务状态、验收证据、发现和恢复操作。
 
@@ -23,7 +23,7 @@ AGENTS.md
 
 PLAN 中不得维护任务完成勾选框、执行状态列或测试通过记录；这些只能写入 PROGRESS。PLAN 的“计划状态”只表示契约成熟度：`DRAFT` / `DECISION_COMPLETE` / `SUPERSEDED`，不表示执行进度。PROGRESS 引用所执行的计划版本；计划版本变化时必须重新检查受影响的进度和验收证据。
 
-本协议优先于与之冲突的仓库工程规则；没有冲突的规则仍然有效。用户明确要求优先于仓库协议，平台和系统权限规则仍须遵守。`.agent/` 的协议、模板、计划和进度允许未来工作、变更历史与检查点；产品文档仍描述当前实现，不以计划替代真实功能说明。
+本协议优先于与之冲突的仓库工程规则；没有冲突的规则仍然有效。用户明确要求优先于仓库协议，平台和系统权限规则仍须遵守。`.agents/` 的协议、模板、计划和进度允许未来工作、变更历史与检查点；产品文档仍描述当前实现，不以计划替代真实功能说明。
 
 规划应保持业务代码只读，但可以创建或修订本任务的 PLAN 和 PROGRESS。调查阶段先清点并检查所有 Git 跟踪项目文档，再深入核实任务相关事实；同步因本任务发生理解或实现变化的文档，包括关联模块文档，不借此扩张到无关业务功能。重要需求、决策、假设及用户回答必须持久化，不以聊天历史作为唯一信息源。
 
@@ -63,17 +63,17 @@ PLAN 中不得维护任务完成勾选框、执行状态列或测试通过记录
 
 ### Planning
 
-用户要求制订计划时，按 Planning Protocol 调查真实代码，澄清需求并讨论重要技术取舍。达到 Decision Complete 后，交付 `.agent/plans/<task-name>/PLAN.md`，列出完整任务、依赖、阶段以及以局部证据为默认的各级验收流程；扩展验证单列并标注授权要求。初始化 PROGRESS：实现状态 TODO、验证状态 UNVERIFIED、各验收结果 NOT_RUN、当前状态等待用户开始执行。规划请求不授权业务实现；交付计划后不自动执行。
+用户要求制订计划时，按 Planning Protocol 调查真实代码，澄清需求并讨论重要技术取舍。达到 Decision Complete 后，交付 `.agents/plans/<task-name>/PLAN.md`，列出完整任务、依赖、阶段以及以局部证据为默认的各级验收流程；扩展验证单列并标注授权要求。初始化 PROGRESS：实现状态 TODO、验证状态 UNVERIFIED、各验收结果 NOT_RUN、当前状态等待用户开始执行。规划请求不授权业务实现；交付计划后不自动执行。
 
-调用示例：`请按 Planning Protocol 为 <需求> 制订计划，保存到 .agent/plans/<task-name>/，本次只规划。`
+调用示例：`请按 Planning Protocol 为 <需求> 制订计划，保存到 .agents/plans/<task-name>/，本次只规划。`
 
 ### Execution
 
 用户要求执行计划时，按 Execution Protocol 阅读指定 PLAN 和 PROGRESS，从持久化信息及真实代码恢复位置，按照依赖完成实施、局部验收及用户明确要求的验收和最终报告。在契约内自主调查、实现、修复和局部验证，不重新开展完整规划，也不重复询问已授权的下一步。执行请求不自动授权批量测试、昂贵全项目流程、Git 提交或推送。“提交完整验收报告”指交付报告，不是创建 Git commit，也不表示执行完整回归。
 
-调用示例：`请按 Execution Protocol 执行 .agent/plans/<task-name>/PLAN.md，持续更新 PROGRESS.md，并完成最终验收。`
+调用示例：`请按 Execution Protocol 执行 .agents/plans/<task-name>/PLAN.md，持续更新 PROGRESS.md，并完成最终验收。`
 
-恢复示例：`继续执行 .agent/plans/<task-name>/PLAN.md，从 PROGRESS.md 和当前代码恢复。`
+恢复示例：`继续执行 .agents/plans/<task-name>/PLAN.md，从 PROGRESS.md 和当前代码恢复。`
 
 如果任务路径不明确，先检查实际目录；只有多个候选无法从请求确定时才询问。若计划缺失、仍为 DRAFT 或有核心未决问题，先说明具体缺口并取得必要决策，不猜测契约，也不把执行请求当作自动接受未决方案。
 
@@ -232,7 +232,7 @@ PLAN 必须为最终验收列出完整清单，按实际任务覆盖：
 每次开始执行、新会话接手或恢复时依次：
 
 1. 阅读 AGENTS 及适用目录规则。
-2. 阅读 `.agent/PLANS.md`。
+2. 阅读 `.agents/PLANS.md`。
 3. 阅读指定任务 PLAN，确认版本、契约成熟度、执行授权及扩展验证的具体用户授权；按第 1.1 节处理旧计划的冲突条款。
 4. 阅读 PROGRESS，分别确认实现状态、验证状态、基线、有效证据、未执行扩展项、执行位置和未决事项。
 5. 检查 `git status --short`，必要时检查 diff、分支及提交；记录用户已有修改。
@@ -705,7 +705,7 @@ PLAN 保留契约和验收定义，默认局部验证和待授权扩展验证分
 
 ## Recovery Instructions
 
-1. 先读 AGENTS.md、.agent/PLANS.md、PLAN.md、当前文件；优先再读 <相关代码/测试/设计章节的真实路径>。
+1. 先读 AGENTS.md、.agents/PLANS.md、PLAN.md、当前文件；优先再读 <相关代码/测试/设计章节的真实路径>。
 2. 当前执行位置：<任务及阶段；已验收部分见 Task/Milestone Status 和证据 ID，不重复完成清单>。
 3. 检查 Git 状态及相关 diff：<用户已有修改、自己的未提交修改、需要保护的文件及基线>。
 4. 核实进度与当前代码一致：<优先核实的实现及失效证据>。

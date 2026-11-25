@@ -9,15 +9,16 @@ recovery; maintain only the compatibility that recovery needs.
 
 - Run compiler, package, test and benchmark commands from this repository root in the `yian-env` conda environment. Python orchestrates native tools.
 - Inspect tracked and untracked changes before editing; preserve unrelated work. Use `apply_patch` for local edits when practical.
+- Before writing or modifying `.an` files, read the [YIAN writing skill](.agents/skills/yian-writing/SKILL.md).
 - Inventory and inspect Git-tracked project documentation for every task. Investigate task-related facts and synchronize every affected document, including related modules; do not expand into unrelated business changes.
 - Complete authorized work through its user-visible boundary and required local acceptance. Keep connected layers, callers, ownership and error paths together. “Continue” resumes that feature without repeated permission; do not stop at scaffolding or a passing low-level slice.
 - Keep `CLAUDE.md` a relative symbolic link to `AGENTS.md`. Do not modify `bak/` or `.conda/` without explicit authorization. Regenerate `build/` artifacts through tools; do not hand-edit or commit them as source.
 
 ## Planning and execution
 
-`.agent/PLANS.md` is inactive unless the user explicitly instructs you to follow
+`.agents/PLANS.md` is inactive unless the user explicitly instructs you to follow
 it. Do not adopt its planning, execution, acceptance, recovery or template
-protocol by default, and do not create or update `.agent/plans/` records merely
+protocol by default, and do not create or update `.agents/plans/` records merely
 because a task is large or crosses modules. An ordinary implementation, fix,
 migration or verification request is not such an instruction; a request for a
 plan, investigation or design also does not activate the protocol unless the
@@ -26,7 +27,7 @@ including the local verification policy and reporting statuses, remain in force
 independently of that file.
 
 - Act directly on the user's request within this guide. Simple, self-contained edits need no plan. For larger work, track the steps in the session and proceed; do not stop at a plan unless the user asked for one.
-- If the user explicitly requests the `.agent/PLANS.md` protocol, follow it for that task only. Its rules then take precedence over conflicting repository engineering rules; user instructions and platform permissions retain their precedence. Do not extend that protocol to later tasks without a new explicit request.
+- If the user explicitly requests the `.agents/PLANS.md` protocol, follow it for that task only. Its rules then take precedence over conflicting repository engineering rules; user instructions and platform permissions retain their precedence. Do not extend that protocol to later tasks without a new explicit request.
 - For changes that add, change or remove public data structures, interfaces or semantic contracts, identify the real paths and symbols, before/after definitions, owners, consumers, compatibility effects and error behavior, then report them with the change. Keep the inventory proportional to the task; it does not require a PLAN document.
 - Changes to confirmed requirements, semantics, core design, public contracts, compatibility or acceptance standards require user confirmation. Make ordinary engineering choices within the established contract autonomously; do not ask again about choices already authorized.
 
@@ -136,19 +137,9 @@ Native pipeline:
 - `?` desugaring evaluates its operand once through trait-qualified `Try.branch` and `FromResidual.from_residual`; preserve generated type/pattern metadata. `IS_RAW_MODE` is supplied by the active compilation configuration.
 - Ordinary `sizeof` retains its queried type through HIR/CFG until backend lowering. Immediate evaluation uses the selected target's layout only when execution reaches the operation. Do not use Python host sizes or infer layouts in semantic passes. Short-circuited operations do not query sizes; unselected compile-time branches are not type-checked.
 - Native `yianc` exposes strict analysis without editor facts/query APIs. LSP owns its source/semantic indexes and detached snapshots. Do not infer native editor capabilities from recovery Python APIs. LSP stdout is protocol-only; logs use stderr or a configured file. See [LSP contracts](docs/manual/27.language_server.md).
-
-## Language and resource contracts
-
-**YIAN has no ownership mechanism.** Its value model is C-like, not Rust-like: assignment, argument passing and return copy the value bitwise, with no move, no source invalidation and no implicit cleanup. A value passed to a function remains usable in the caller; `T&` is not a borrow; locals are not released at scope exit. Do not write code from Rust move/borrow/drop intuition. The ownership rules below are project conventions (one explicit owner, marked transfers, explicit `Clone`/`Drop`, `defer` on error paths), not guarantees enforced by the language.
-
-- Postfix `T&` has no borrow checking or lifetime inference. In the common bare representation, non-ZST references to concrete non-trait `T` have the same data-pointer ABI/size as `T*`; trait references are trait objects with dynamic dispatch. Concrete safety metadata/checks are implementation-specific; do not infer them from the bare ABI. Native `yianc` and the C runtime own daily safety behavior.
-- `Move`, `.move()`, `bitcopy`, `@BitCopy`, compiler-provided `Clone` and simple-type assignment restrictions are absent. `Clone`/`Drop` are explicit library traits. Pointers do not implement `Clone`; `ptr.clone()` auto-dereferences and clones the pointed-to value.
-- Give resources one explicit owner; a shallow-copied `String`, container, arena or session aliases its resources. Mark transfers and use `defer` on error paths. `del` releases an allocation without recursively releasing fields. Do not add implicit move, cleanup or deep-copy behavior to lowering.
-- `Vec`, `HashMap`, `HashSet` and `Arena` release storage without recursively dropping payloads. `Vec`/`HashMap`/`HashSet` clones duplicate storage with shallow element copies; inspect contracts before assuming depth. `String` owns a buffer; `str` borrows it.
-- `Vec` growth and hash-table structural mutation can invalidate references/iterators. Use arena records for references surviving appends and vectors for IDs, queues and temporary buffers. Do not structurally mutate a hash table during iteration.
-- `insert_or_replace`/`remove_entry` return displaced resources; `get_or_insert_with` returns an unused input key on a hit. Callers handle them. Ordinary `insert`/`remove` do not release discarded payloads.
-- `Hash<T>.hash` receives `T&` so nested writes reach the caller's accumulator. Equal values must hash equally; float hashing canonicalizes signed zero. Composite equality/hash use the same identity fields.
-- Flush buffered output explicitly to observe errors; `BufWriter.drop()` frees its buffer without flushing. Keep Linux syscall ABI/errno in the thin C runtime layer, with owned errors and UTF-8 APIs in YIAN. Preserve the shared runtime ABI without requiring general Python/native parity.
+- Preserve shallow copy semantics in lowering. Introduce resource transfers, deep copies and cleanup only through explicit source operations.
+- In the common bare representation, non-ZST references to concrete non-trait `T` have the same data-pointer ABI and size as `T*`. Trait references are trait objects with dynamic dispatch. Native `yianc` and the C runtime define the safety metadata and checks independently of the bare ABI.
+- Keep Linux syscall ABI and `errno` handling in the thin C runtime layer, with owned errors and UTF-8 APIs in YIAN. Preserve the shared runtime ABI. The [cold recovery scope](#daily-commands-and-recovery-boundary) governs Python compatibility.
 
 ## Tests and evidence
 
@@ -176,12 +167,11 @@ Native pipeline:
 - Tests and external consumers such as the LSP do not justify adding a dedicated interface to a core module; adapt within the consumer's own boundary.
 - Organize modules by responsibility and dependency direction. Split functions at meaningful interfaces, use guard clauses and blank lines for logical blocks. Comments explain ownership, prerequisites and non-obvious boundaries.
 - Keep user errors distinct from internal invariant failures. Preserve source identity/locations; do not infer analysis error categories from message text outside the frontend compatibility boundary.
-- Omit numeric suffixes when annotations/context determine the type, such as `const ID: u64 = 0;`. Retain suffixes required for widths, conversions, inference or test semantics; do not change semantics to remove one.
 - For Python structure/references, prefer available Serena/LSP symbol tools; inspect callers before modifying functions/classes and use semantic rename where applicable. Fall back to `rg` and source reading when semantic tools cannot answer. Use targeted diagnostics under the local-verification policy.
 - Python follows strict Pyright (`python/pyproject.toml`): avoid `Any`, `object` and `hasattr()`, keep imports at file top and preserve handler-map dispatch in type checking/LLVM translation. Private functions, constants, methods, attributes and nested helpers use `__`. A module-level private referenced inside a class uses `_` when name mangling would break lookup; names defined/used within that class still use `__`.
 - User-facing language documentation is Chinese; this guide is English. Code comments/docstrings are English, including tests/examples. Keep user-visible text/test data in their intended language, with this directory rule: **all text in `cve/` and `bench/` is English**, including READMEs, comments, docstrings, messages and JSON notes; do not add Chinese text there.
 - Compiler documentation describes native `yianc` only. Omit the Python recovery compiler's CLI, APIs and implementation from product and developer documentation. Installation guides may describe the cold bootstrap script and its prerequisites.
-- Product/implementation docs, comments, docstrings and commit messages state current facts in a neutral voice. No change history, defect stories, plans, promises or comparisons with an earlier state. Explain hazards as properties of the current design. When the user explicitly requests the `.agent/PLANS.md` protocol, that file and `.agent/plans/` are operational exceptions and may contain history, future work and checkpoints.
+- Product/implementation docs, comments, docstrings and commit messages state current facts in a neutral voice. No change history, defect stories, plans, promises or comparisons with an earlier state. Explain hazards as properties of the current design. When the user explicitly requests the `.agents/PLANS.md` protocol, that file and `.agents/plans/` are operational exceptions and may contain history, future work and checkpoints.
 - Product docs/comments must stand alone: no dependency on temporary plans, proposals, TODO/bug/review notes or their rule numbers. State the fact directly; links to persistent documentation are allowed. Protocol/operational documents may link plans, progress and stable IDs but must support independent execution/recovery. Fix existing violations when touching their surrounding text.
 - Verify documentation against source, manifests and command semantics. Documented/planned features are not implementation evidence. There is no repository CI or installed project pre-commit hook.
 
