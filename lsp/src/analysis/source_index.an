@@ -1,4 +1,4 @@
-from yianc.analysis.names import NameInterner;
+from yianc.common.names import NameInterner;
 from yianc.analysis.session.session import AnalysisSession;
 from yianc.common.ids import NameId, TypeId, UnitId;
 from yianc.common.location import SourceSpan;

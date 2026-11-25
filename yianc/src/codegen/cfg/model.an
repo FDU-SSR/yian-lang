@@ -5,7 +5,7 @@ from yianc.common.ids import TypeId, NameId;
 from yianc.common.location import SourceSpan;
 from yianc.frontend.ast.operator import BinaryOperator, UnaryOperator;
 from yianc.frontend.ast.atoms import BuiltinKind;
-from yianc.analysis.ty.store import TypeStore, INT_LITERAL_TYPE_ID, FLOAT_LITERAL_TYPE_ID;
+from yianc.types.store import TypeStore, INT_LITERAL_TYPE_ID, FLOAT_LITERAL_TYPE_ID;
 from std.collections.arena import Arena;
 from std.collections.hash_map import HashMap;
 from std.core.iter import Iterator, IntoIterator;

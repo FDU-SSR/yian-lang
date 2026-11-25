@@ -9,7 +9,8 @@ from yianc.analysis.session.session import AnalysisSession;
 from yianc.frontend.driver import FrontendDriver;
 from yianc.telemetry.trace import CompilerTrace;
 from yianc.analysis.driver import MiddleEndDriver;
-from yianc.analysis.ty.model import AccessMode, AggregateDefinition, DefinitionBody, DefinitionHeader, EnumDefinition, EnumVariant, NominalKind, StructField, TypeData;
+from yianc.types.store import TypeStore;
+from yianc.types.model import AccessMode, AggregateDefinition, DefinitionBody, DefinitionHeader, EnumDefinition, EnumVariant, NominalKind, StructField, TypeData;
 from yianc.codegen.cfg.ids import BlockId, FunctionId, ValueId;
 from yianc.codegen.cfg.model import CfgFunction, CfgModule, Operation, SafetyCheck, Terminator, ValueKind;
 from yianc.codegen.cfg.passes.checks import insert_checks;
@@ -133,9 +134,9 @@ struct Skeleton {
 fn skeleton(session: AnalysisSession&, fixture: Fixture&, location: SourceSpan) -> Skeleton {
     let module = dyn Module.new("enum-storage-probe", 0u8);
     // The probe checks the generic access obligations, which raw mode attaches per access.
-    let types = BackendTypes.new(&session.types, &*module, true);
+    let types = BackendTypes.new(session.types, &*module, true);
     let function = CfgFunction.new(fixture.packet, fixture.nothing, Vec<TypeId>.new());
-    let cfg = CfgModule.new(&session.types, Option<TypeId>.None);
+    let cfg = CfgModule.new(session.types, Option<TypeId>.None);
     let entry = function.add_block();
     let packet_reference = session.types.reference(fixture.packet);
     let packet_address = append(entry, &function, location, Option<TypeId>.Some(packet_reference),
@@ -318,7 +319,7 @@ fn check_tag_type(session: AnalysisSession&, fixture: Fixture&, location: Source
 }
 
 // The probe document supplies the session; the hand-built CFG is the tested graph.
-fn probe_session() -> AnalysisSession* {
+fn probe_session(types: TypeStore&) -> AnalysisSession* {
     let trace = CompilerTrace.disabled();
     defer trace.drop();
     let frontend = FrontendDriver.new(load_source("/tmp/enum-storage-probe.an", "fn main() {}\n"), false, &trace);
@@ -327,13 +328,15 @@ fn probe_session() -> AnalysisSession* {
         Ok(value) => value,
         Err(error) => { error.drop(); @panic("enum storage probe preparation failed"); },
     };
-    dyn AnalysisSession.new(units, false, trust(), Option<PackageMap>.None)
+    dyn AnalysisSession.new(units, false, trust(), Option<PackageMap>.None, types)
 }
 
 // One malformed graph per process; the invariant panic terminates the child.
 fn run_negative(index: u64) {
+    let types = TypeStore.new();
+    defer types.drop();
     let reporter = IgnoreDiagnostics();
-    let driver = MiddleEndDriver.new(probe_session(), AnalysisOptions.new(), &reporter);
+    let driver = MiddleEndDriver.new(probe_session(&types), AnalysisOptions.new(), &reporter);
     defer driver.drop();
     let result = match driver.run() {
         Ok(value) => value,
@@ -395,8 +398,10 @@ fn main() {
     for argument in arguments { argument.drop(); }
     arguments.drop();
 
+    let types = TypeStore.new();
+    defer types.drop();
     let reporter = IgnoreDiagnostics();
-    let driver = MiddleEndDriver.new(probe_session(), AnalysisOptions.new(), &reporter);
+    let driver = MiddleEndDriver.new(probe_session(&types), AnalysisOptions.new(), &reporter);
     defer driver.drop();
     let result = match driver.run() {
         Ok(value) => value,

@@ -2,8 +2,8 @@ from yianc.codegen.llvm.module import LlvmLowering, FunctionLowering;
 from yianc.codegen.cfg.model import CfgModule;
 from yianc.codegen.cfg.ids import FunctionId;
 from yianc.codegen.error import CodegenError;
-from yianc.analysis.ty.model import NominalKind;
-from yianc.analysis.ty.display import stored_type_text;
+from yianc.types.model import NominalKind;
+from yianc.types.display import stored_type_text;
 from yianc.common.ids import TypeId;
 from yianc.package.provenance import within;
 from llvm.object import Function, Module;
@@ -145,7 +145,7 @@ impl LlvmLowering {
             _ => false,
         };
         let owner_type = match receiver {
-            Some(value) => stored_type_text(&self.session.types, &self.session.names, value),
+            Some(value) => stored_type_text(self.session.types, &self.session.names, value),
             None => String.new(),
         };
         let name = self.session.names.text(header.name);
@@ -164,7 +164,7 @@ impl LlvmLowering {
         let argument_index = 0u64;
         while argument_index < arguments.len() {
             if argument_index != 0u64 { concrete_arguments.push_str(", "); }
-            let rendered = stored_type_text(&self.session.types, &self.session.names, arguments[argument_index]);
+            let rendered = stored_type_text(self.session.types, &self.session.names, arguments[argument_index]);
             defer rendered.drop();
             concrete_arguments.push_str(rendered.as_str());
             argument_index += 1u64;

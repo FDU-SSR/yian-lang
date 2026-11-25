@@ -1,19 +1,19 @@
 from yianc.analysis.lowering.checker import ExprChecker;
 from yianc.analysis.resolution.types import scalar_name;
-from yianc.analysis.ty.validation import contains_ffi;
-from yianc.analysis.ty.model import TypeData;
+from yianc.types.model import TypeData;
 from yianc.analysis.hir.node import HirKind;
-from yianc.analysis.constant.value import IntegerValue, IntegerWidth;
-from yianc.analysis.constant.integer import cast_integer, integer_fits;
+from yianc.common.integer_value import IntegerValue, IntegerWidth;
+from yianc.common.integer import cast_integer, integer_fits;
 from yianc.analysis.constant.floating import round_float;
 from yianc.analysis.constant.definitions import evaluate_constant;
 from yianc.common.ids import HirId, TypeId;
-from yianc.analysis.ty.store import C_CHAR_TYPE_ID, C_INT_TYPE_ID, C_UINT_TYPE_ID, C_SIZE_TYPE_ID, BOOL_TYPE_ID, CHAR_TYPE_ID, F64_TYPE_ID, FLOAT_LITERAL_TYPE_ID, I32_TYPE_ID, INT_LITERAL_TYPE_ID, STR_TYPE_ID, U64_TYPE_ID;
+from yianc.types.store import C_CHAR_TYPE_ID, C_INT_TYPE_ID, C_UINT_TYPE_ID, C_SIZE_TYPE_ID, BOOL_TYPE_ID, CHAR_TYPE_ID, F64_TYPE_ID, FLOAT_LITERAL_TYPE_ID, I32_TYPE_ID, INT_LITERAL_TYPE_ID, STR_TYPE_ID, U64_TYPE_ID;
 from yianc.common.location import SourceSpan;
 from yianc.frontend.ast.node import Literal;
 from yianc.frontend.source import Span;
 from yianc.frontend.lex.token import IntSuffix;
 from yianc.diagnostics.model import DiagnosticCode, AnalysisError;
+from yianc.analysis.ty.validation import contains_ffi;
 from std.core.iter import Iterator, IntoIterator;
 
 impl ExprChecker {
@@ -144,7 +144,7 @@ impl ExprChecker {
                 Result<HirId, AnalysisError>.Ok(self.node(span, type_id, false, HirKind.Ty))
             },
             Alias => {
-                if !self.ffi_allowed && contains_ffi(&self.ctx.session.types, type_id, false) {
+                if !self.ffi_allowed && contains_ffi(self.ctx.session.types, type_id, false) {
                     return Result<HirId, AnalysisError>.Err(self.error(span, "C ABI alias requires an ffi function"));
                 }
                 Result<HirId, AnalysisError>.Ok(self.node(span, type_id, false, HirKind.Ty))

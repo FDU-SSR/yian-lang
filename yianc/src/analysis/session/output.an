@@ -1,5 +1,5 @@
 from yianc.common.ids import DefId, TypeId, SymbolId, HirId, UnitId, NameId;
-from yianc.analysis.constant.evaluate import TypeSizeProvider;
+from yianc.types.layout import TypeSizeProvider;
 from yianc.telemetry.trace import CompilerTrace;
 from yianc.common.location import SourceSpan;
 from yianc.diagnostics.model import DiagnosticCode, DiagnosticLocation, UserDiagnostic;

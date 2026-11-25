@@ -1,11 +1,11 @@
 from yianc.analysis.lowering.checker import ExprChecker;
-from std.core.convert import From;
-from yianc.analysis.ty.substitution import infer, substitute;
-from yianc.analysis.ty.callable import instance_substitutions;
 from yianc.analysis.ty.aggregate import payload_fields;
 from yianc.analysis.ty.relations import default_type, has_literal, compatible;
+from std.core.convert import From;
+from yianc.types.substitution import infer, substitute;
+from yianc.analysis.ty.callable import instance_substitutions;
 from yianc.analysis.ty.display import type_text;
-from yianc.analysis.ty.model import StructField, AccessMode, EnumVariant;
+from yianc.types.model import StructField, AccessMode, EnumVariant;
 from yianc.analysis.hir.node import HirKind, StructConstruct, VariantConstruct, FieldAccess, TupleAccess, Unary;
 from yianc.common.ids import TypeId, HirId, NameId, DefId;
 from yianc.common.location import SourceSpan;
@@ -86,7 +86,7 @@ impl ExprChecker {
 
             self.check_field_access(type_id, field, span)?;
             let value = self.expression(args[index].data.value)?;
-            let expected = substitute(&self.ctx.session.types, field.type_id, &substitutions)?;
+            let expected = substitute(self.ctx.session.types, field.type_id, &substitutions)?;
 
             if !has_literal(self.ctx, self.type_of(value)) && !self.match_argument(expected, default_type(self.ctx, self.type_of(value)), &substitutions) {
                 self.coerce(value, expected)?;
@@ -103,7 +103,7 @@ impl ExprChecker {
         for entry in values {
             for field in body.fields {
                 if entry[0] == field.name {
-                    let expected = substitute(&self.ctx.session.types, field.type_id, &substitutions)?;
+                    let expected = substitute(self.ctx.session.types, field.type_id, &substitutions)?;
 
                     if !compatible(self.ctx, self.type_of(entry[1]), expected) && !self.match_argument(expected, default_type(self.ctx, self.type_of(entry[1])), &substitutions) {
                         return Result<HirId, AnalysisError>.Err(self.error(span, "constructor field cannot be matched to its type"));
@@ -134,7 +134,7 @@ impl ExprChecker {
         while index < values.len() {
             for field in body.fields {
                 if field.name == values[index][0] {
-                    let field_type = substitute(&self.ctx.session.types, field.type_id, &substitutions)?;
+                    let field_type = substitute(self.ctx.session.types, field.type_id, &substitutions)?;
                     values[index][1] = self.coerce(values[index][1], field_type)?;
                 }
             }
@@ -227,9 +227,9 @@ impl ExprChecker {
                     }
                 }
 
-                let target = substitute(&self.ctx.session.types, expected[field].type_id, &substitutions)?;
+                let target = substitute(self.ctx.session.types, expected[field].type_id, &substitutions)?;
 
-                if !infer(&self.ctx.session.types, target, default_type(self.ctx, self.type_of(value)), &substitutions) {
+                if !infer(self.ctx.session.types, target, default_type(self.ctx, self.type_of(value)), &substitutions) {
                     self.coerce(value, target)?;
                 }
 
@@ -264,7 +264,7 @@ impl ExprChecker {
             while index < values.len() {
                 for field in expected {
                     if field.name == values[index][0] {
-                        values[index][1] = self.coerce(values[index][1], substitute(&self.ctx.session.types, field.type_id, &substitutions)?)?;
+                        values[index][1] = self.coerce(values[index][1], substitute(self.ctx.session.types, field.type_id, &substitutions)?)?;
                     }
                 }
 
@@ -272,7 +272,7 @@ impl ExprChecker {
             }
 
             let payload = match &variant.payload {
-                Some(payload) => Option<TypeId>.Some(substitute(&self.ctx.session.types, *payload, &substitutions)?), None => Option<TypeId>.None
+                Some(payload) => Option<TypeId>.Some(substitute(self.ctx.session.types, *payload, &substitutions)?), None => Option<TypeId>.None
             };
             let concrete_variant = EnumVariant(variant.name, payload, variant.discriminant, variant.span);
             accepted = true;
@@ -320,7 +320,7 @@ impl ExprChecker {
                         for field in body.fields {
                             if field.name == interned {
                                 self.check_field_access(type_id, *field, error_span)?;
-                                let field_type = substitute(&self.ctx.session.types, field.type_id, &substitutions)?;
+                                let field_type = substitute(self.ctx.session.types, field.type_id, &substitutions)?;
 
                                 let copy = StructField(field.name, field_type, field.access, field.index, field.span);
                                 return Result<HirId, AnalysisError>.Ok(self.node(span, field_type, self.ctx.session.hir.require(value)?.is_place, HirKind.FieldAccess(FieldAccess(value, copy, match name_span { Some(target) => Option<SourceSpan>.Some(self.ctx.span(self.unit, target)), None => Option<SourceSpan>.None }))));

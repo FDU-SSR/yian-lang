@@ -9,10 +9,11 @@
 | 目录           | 职责                                                  |
 | -------------- | ----------------------------------------------------- |
 | `frontend/`    | 源码/单元表、词法、语法、AST、去糖、遍历与转储 |
-| `analysis/`    | 权限分类、解析、类型、符号、HIR、常量求值、lowering、检查与转储 |
+| `types/`       | 共享类型模型、结构驻留存储、替换、常量表达式、显示/属性查询与目标尺寸服务接口 |
+| `analysis/`    | 权限分类、解析、类型登记与关系、符号、HIR、常量求值、lowering、检查与转储 |
 | `codegen/`     | CFG、LLVM lowering、指针安全检查、原生链接与转储      |
 | `telemetry/`   | 日志、计时与 profile 记录                             |
-| `common/`      | 会话内 ID、源码位置等不依赖分析或 codegen 的基础类型  |
+| `common/`      | 会话内 ID、源码位置、名字驻留与共享整数值等不依赖分析或 codegen 的基础类型 |
 | `diagnostics/` | 诊断模型、渲染和 stderr 输出                          |
 | `package/`     | 包图校验与来源信任，不依赖 AST 或 HIR                 |
 | `host.an`、`roots.an` | 主机资源定位、标准库源码根与运行时资源根       |
@@ -21,11 +22,11 @@
 依赖方向从底层到上层：
 
 ```text
-common → frontend → analysis → codegen
+common → frontend → types → analysis → codegen
 host/roots、telemetry、diagnostics 与 package 可被需要它的阶段使用
 ```
 
-`common` 不依赖 `analysis`，`package/` 不依赖 AST/HIR，诊断模型不依赖渲染。
+`common` 不依赖 `analysis`，`types` 不依赖 `analysis` 或 `codegen`，`package/` 不依赖 AST/HIR，诊断模型不依赖渲染。
 每个阶段的 `driver.an` 是阶段组合根，阶段内部模块不导入它；`main.an` 是唯一组合三个阶段驱动的入口。
 新增模块先确定它属于哪个阶段；不要为了复用把阶段专属类型放进 `common`。
 

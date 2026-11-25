@@ -1,7 +1,6 @@
 from yianc.analysis.lowering.checker import ExprChecker;
 from yianc.analysis.ty.callable import signature, schedule;
-from yianc.analysis.ty.substitution import has_generic;
-from yianc.analysis.ty.relations import compatible, is_integer, is_numeric, default_type;
+from yianc.types.substitution import has_generic;
 from yianc.analysis.ty.properties import is_zst;
 from yianc.analysis.hir.node import HirKind, Binary as HirBinary, Unary as HirUnary, Block as HirBlock;
 from yianc.common.ids import HirId, TypeId;
@@ -9,8 +8,9 @@ from yianc.frontend.ast.node import Expr;
 from yianc.frontend.ast.operator import BinaryOperator, UnaryOperator;
 from yianc.frontend.source import Span;
 from yianc.diagnostics.model import AnalysisError;
+from yianc.analysis.ty.relations import compatible, is_integer, is_numeric, default_type;
 from std.core.iter import Iterator, IntoIterator;
-from yianc.analysis.ty.store import BOOL_TYPE_ID, CHAR_TYPE_ID, VOID_TYPE_ID;
+from yianc.types.store import BOOL_TYPE_ID, CHAR_TYPE_ID, VOID_TYPE_ID;
 
 fn assignment_operator(op: BinaryOperator) -> bool {
     match &op {
@@ -84,7 +84,7 @@ impl ExprChecker {
                             types.push(parameter.type_id);
                         }
 
-                        if !callable.is_header && !has_generic(&self.ctx.session.types, type_id) {
+                        if !callable.is_header && !has_generic(self.ctx.session.types, type_id) {
                             schedule(self.ctx, type_id)?;
                         }
 

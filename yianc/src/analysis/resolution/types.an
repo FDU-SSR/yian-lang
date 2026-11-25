@@ -1,23 +1,25 @@
 from yianc.analysis.resolution.context import ResolutionContext, DeclarationState;
 from yianc.analysis.symbol.model import SymbolKind;
-from yianc.analysis.ty.model import TypeData, NominalKind;
-from yianc.analysis.ty.substitution import substitute;
-from yianc.analysis.ty.const_expression import const_unary, const_binary;
-from yianc.analysis.constant.value import IntegerValue, ConstValue;
-from yianc.analysis.ty.relations import compatible;
+from yianc.types.model import TypeData, NominalKind;
+from yianc.types.substitution import substitute;
+from yianc.types.const_expression import const_unary, const_binary;
+from yianc.analysis.constant.value import ConstValue;
+from yianc.common.integer_value import IntegerValue;
 from yianc.analysis.ty.display import type_text;
-from yianc.analysis.constant.integer import magnitude;
+from yianc.common.integer import magnitude;
 from yianc.analysis.constant.definitions import evaluate_constant;
-from yianc.analysis.constant.evaluate import ConstantEvaluator, TypeSizeProvider;
+from yianc.analysis.constant.evaluate import ConstantEvaluator;
+from yianc.types.layout import TypeSizeProvider;
 from yianc.common.ids import UnitId, ScopeId, TypeId, SymbolId;
 from yianc.common.location import SourceSpan;
 from yianc.frontend.ast.node import TypeSyntax, ConstExpr, GenericArgument;
 from yianc.diagnostics.model import DiagnosticCode, AnalysisError;
+from yianc.analysis.ty.relations import compatible;
 from std.core.iter import Iterator, IntoIterator;
 from std.collections.hash_map import HashMap;
 from yianc.frontend.source import Span;
 from std.core.convert import From;
-from yianc.analysis.ty.store import BOOL_TYPE_ID, CHAR_TYPE_ID, C_CHAR_TYPE_ID, C_INT_TYPE_ID, C_SIZE_TYPE_ID, C_UINT_TYPE_ID, ERROR_TYPE_ID, F16_TYPE_ID, F32_TYPE_ID, F64_TYPE_ID, FLOAT_LITERAL_TYPE_ID, I8_TYPE_ID, I16_TYPE_ID, I32_TYPE_ID, I64_TYPE_ID, INT_LITERAL_TYPE_ID, NEVER_TYPE_ID, STR_TYPE_ID, U8_TYPE_ID, U16_TYPE_ID, U32_TYPE_ID, U64_TYPE_ID, VOID_TYPE_ID;
+from yianc.types.store import BOOL_TYPE_ID, CHAR_TYPE_ID, C_CHAR_TYPE_ID, C_INT_TYPE_ID, C_SIZE_TYPE_ID, C_UINT_TYPE_ID, ERROR_TYPE_ID, F16_TYPE_ID, F32_TYPE_ID, F64_TYPE_ID, FLOAT_LITERAL_TYPE_ID, I8_TYPE_ID, I16_TYPE_ID, I32_TYPE_ID, I64_TYPE_ID, INT_LITERAL_TYPE_ID, NEVER_TYPE_ID, STR_TYPE_ID, U8_TYPE_ID, U16_TYPE_ID, U32_TYPE_ID, U64_TYPE_ID, VOID_TYPE_ID;
 
 pub fn scalar_name(ctx: ResolutionContext&, name: str) -> Option<TypeId> {
     match name {
@@ -81,7 +83,7 @@ pub fn apply_arguments(ctx: ResolutionContext&, unit: UnitId, scope: ScopeId, sy
 
                     match ctx.session.types.require(generic)? {
                         ConstGeneric(_, expected) => {
-                            let expected = substitute(&ctx.session.types, *expected, &substitutions)?;
+                            let expected = substitute(ctx.session.types, *expected, &substitutions)?;
                             let actual = match ctx.session.types.require(argument)? {
                                 LiteralValue(_, _, value_type) => *value_type,
                                 ConstGeneric(_, value_type) => *value_type,
@@ -106,7 +108,7 @@ pub fn apply_arguments(ctx: ResolutionContext&, unit: UnitId, scope: ScopeId, sy
             _ => @panic("invalid generic alias"),
         }
 
-        return substitute(&ctx.session.types, base, &substitutions);
+        return substitute(ctx.session.types, base, &substitutions);
     }
 
     match ctx.session.types.require(base)? {

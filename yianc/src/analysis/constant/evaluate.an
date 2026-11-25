@@ -1,19 +1,17 @@
 from yianc.common.ids import TypeId, HirId;
 from yianc.common.location import SourceSpan;
 from yianc.analysis.constant.floating import round_float, float_binary, integer_float, float_integer, is_nan;
-from yianc.analysis.constant.integer import checked_cast_integer, checked_untyped, integer_unary, integer_binary, compare;
-from yianc.analysis.constant.value import ConstValue, IntegerValue, IntegerWidth, ConstEvalError;
+from yianc.common.integer import checked_cast_integer, checked_untyped, integer_unary, integer_binary, compare;
+from yianc.analysis.constant.value import ConstValue;
+from yianc.common.integer_value import IntegerValue, IntegerWidth, ConstEvalError;
 from yianc.analysis.hir.node import HirNode, HirKind, Builtin, Binary, Array as HirArray, ArrayRepeat as HirArrayRepeat, ArrayAccess;
 from yianc.analysis.hir.store import HirStore;
-from yianc.analysis.ty.store import TypeStore;
+from yianc.types.layout import TypeSizeProvider;
+from yianc.types.store import TypeStore;
 from yianc.diagnostics.model import DiagnosticCode, AnalysisError, AnalysisErrorKind;
 from yianc.frontend.ast.atoms import BuiltinKind;
 from yianc.frontend.ast.operator import BinaryOperator, UnaryOperator;
 from std.core.ops import Index;
-
-pub trait TypeSizeProvider {
-    fn size_of(type_id: TypeId) -> Result<u64, AnalysisError>;
-}
 
 pub struct TypedConstant {
     pub value: ConstValue,

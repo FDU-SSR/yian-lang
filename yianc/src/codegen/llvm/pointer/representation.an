@@ -4,7 +4,7 @@ from yianc.codegen.llvm.scalar import cast;
 from yianc.codegen.error import CodegenError;
 from yianc.codegen.abi.runtime import ENV_WORD, LITERAL_WORD, FAT_MAX_EXTENT_BYTES;
 from yianc.common.ids import TypeId;
-from yianc.analysis.ty.model import TypeData;
+from yianc.types.model import TypeData;
 from yianc.codegen.representation import PointerRepresentation;
 from llvm.ir import IrValue, BinaryOp, CastOp, IntCompare;
 
@@ -115,7 +115,7 @@ impl FunctionLowering {
 
     pub fn pointer_cast(source: TypeId, target: TypeId, value: IrValue) -> Result<IrValue, CodegenError> {
         if source == target { return Result<IrValue, CodegenError>.Ok(value); }
-        let store = &self.owner.session.types;
+        let store = self.owner.session.types;
         let source_type = store.require(source)?;
         let target_type = store.require(target)?;
         let source_pointer = match source_type { Pointer(_) | Reference(_) | Slice(_) | Str => true, _ => false, };

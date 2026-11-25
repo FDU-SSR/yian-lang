@@ -2,8 +2,8 @@ from yianc.codegen.llvm.module import LlvmLowering, FunctionLowering;
 from yianc.codegen.cfg.model import GuardKind, GuardSite;
 from yianc.codegen.cfg.ids import ValueId;
 from yianc.codegen.error import CodegenError;
-from yianc.analysis.ty.callable import store_signature;
-from yianc.analysis.ty.trait_object import store_object_methods;
+from yianc.types.callable import store_signature;
+from yianc.types.trait_object import store_object_methods;
 from yianc.common.ids import TypeId;
 from yianc.codegen.abi.runtime import ENV_WORD;
 from llvm.object import Function;
@@ -117,7 +117,7 @@ impl FunctionLowering {
             TraitObject(trait_type) => *trait_type,
             _ => @panic("dynamic call has no trait identity"),
         };
-        let methods = store_object_methods(&self.owner.session.types, &self.owner.session.names, trait_type)?;
+        let methods = store_object_methods(self.owner.session.types, &self.owner.session.names, trait_type)?;
         defer methods.drop();
         if slot >= methods.len() || methods[slot] != method {
             @panic("dynamic call slot has an inconsistent signature");

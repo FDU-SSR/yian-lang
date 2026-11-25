@@ -1,7 +1,7 @@
-from yianc.analysis.names import NameInterner;
-from yianc.analysis.ty.model import DefinitionHeader, NominalKind, TypeData;
-from yianc.analysis.ty.c_scalar import CScalarKind;
-from yianc.analysis.ty.store import TypeStore;
+from yianc.common.names import NameInterner;
+from yianc.types.model import DefinitionHeader, NominalKind, TypeData;
+from yianc.types.c_scalar import CScalarKind;
+from yianc.types.store import TypeStore;
 from yianc.common.ids import UnitId, TypeId;
 from yianc.common.location import SourceSpan;
 from yianc.frontend.source import Position, Span;

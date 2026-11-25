@@ -3,16 +3,16 @@ from yianc.analysis.hir.node import Block, HirKind, HirNode;
 from yianc.analysis.passes.hir_verification_cache import HirVerificationCache, HirVerificationObserver;
 from yianc.analysis.passes.verify_hir import verify_hir_observed;
 from yianc.analysis.resolution.context import ResolutionContext;
-from yianc.analysis.constant.evaluate import TypeSizeProvider;
+from yianc.types.layout import TypeSizeProvider;
 from yianc.analysis.session.output import AnalysisOptions, AnalysisOutput, AnalyzedProcedure;
 from yianc.analysis.session.session import AnalysisSession;
 from yianc.frontend.driver import FrontendDriver;
 from yianc.telemetry.trace import CompilerTrace;
 from yianc.analysis.driver import MiddleEndDriver, MiddleEndResult;
-from yianc.analysis.ty.model import AccessMode, AggregateDefinition, CallableDefinition, DefinitionBody,
+from yianc.types.model import AccessMode, AggregateDefinition, CallableDefinition, DefinitionBody,
 DefinitionHeader, NominalKind, Parameter, StructField;
-from yianc.analysis.ty.store import BOOL_TYPE_ID, ERROR_TYPE_ID, I32_TYPE_ID, NEVER_TYPE_ID, U64_TYPE_ID, VOID_TYPE_ID;
 from yianc.analysis.ty.validation import validate_concrete_value;
+from yianc.types.store import TypeStore, BOOL_TYPE_ID, ERROR_TYPE_ID, I32_TYPE_ID, NEVER_TYPE_ID, U64_TYPE_ID, VOID_TYPE_ID;
 from yianc.common.ids import DefId, HirId, NameId, SymbolId, TypeId, UnitId;
 from yianc.common.location import SourceSpan;
 from yianc.diagnostics.model import AnalysisError, AnalysisErrorKind, DiagnosticLocation, DiagnosticReporter, UserDiagnostic;
@@ -465,7 +465,7 @@ fn shared_break_output(session: AnalysisSession&, context: ResolutionContext&, o
     modified
 }
 
-fn prepare(source: str, path: str) -> AnalysisSession* {
+fn prepare(source: str, path: str, types: TypeStore&) -> AnalysisSession* {
     let trace = CompilerTrace.disabled();
     defer trace.drop();
     let frontend = FrontendDriver.new(load_source(path, source), false, &trace);
@@ -474,7 +474,7 @@ fn prepare(source: str, path: str) -> AnalysisSession* {
         Ok(value) => value,
         Err(error) => { error.drop(); @panic("probe preparation failed"); },
     };
-    dyn AnalysisSession.new(units, false, trust(), Option<PackageMap>.None)
+    dyn AnalysisSession.new(units, false, trust(), Option<PackageMap>.None, types)
 }
 
 fn analyze(session: AnalysisSession*, reporter: DiagnosticReporter&) -> MiddleEndResult {
@@ -487,8 +487,10 @@ fn analyze(session: AnalysisSession*, reporter: DiagnosticReporter&) -> MiddleEn
 
 fn check_trait_integration() {
     let source = "trait Show { fn show() -> i32; }\nstruct Item { value: i32 }\nimpl Show for Item { pub fn show() -> i32 { self.value } }\nfn render(value: Show&) -> i32 { value.show() }\nfn main() { let item = Item(value=7); let shown = render(&item); assert shown == 7: \"dispatch\"; }\n";
+    let types = TypeStore.new();
+    defer types.drop();
     let reporter = IgnoreDiagnostics();
-    let result = analyze(prepare(source, "/tmp/hir-verification-trait.an"), &reporter);
+    let result = analyze(prepare(source, "/tmp/hir-verification-trait.an", &types), &reporter);
     defer result.drop();
     let output = &result.output;
     let session = result.session;
@@ -517,8 +519,10 @@ fn probe_source() -> str {
 
 // The negative cache queries violate type identities; the child process isolates the panic.
 fn non_callable_signature() {
+    let types = TypeStore.new();
+    defer types.drop();
     let reporter = IgnoreDiagnostics();
-    let result = analyze(prepare(probe_source(), "/tmp/hir-verification-probe.an"), &reporter);
+    let result = analyze(prepare(probe_source(), "/tmp/hir-verification-probe.an", &types), &reporter);
     defer result.drop();
     let context = match ResolutionContext.new(result.session, Option<TypeSizeProvider&>.None, Option<DiagnosticReporter&>.None) {
         Ok(value) => value,
@@ -534,8 +538,10 @@ fn non_callable_signature() {
 }
 
 fn non_trait_object() {
+    let types = TypeStore.new();
+    defer types.drop();
     let reporter = IgnoreDiagnostics();
-    let result = analyze(prepare(probe_source(), "/tmp/hir-verification-probe.an"), &reporter);
+    let result = analyze(prepare(probe_source(), "/tmp/hir-verification-probe.an", &types), &reporter);
     defer result.drop();
     let context = match ResolutionContext.new(result.session, Option<TypeSizeProvider&>.None, Option<DiagnosticReporter&>.None) {
         Ok(value) => value,
@@ -551,8 +557,10 @@ fn non_trait_object() {
 }
 
 fn break_outside_loop() {
+    let types = TypeStore.new();
+    defer types.drop();
     let reporter = IgnoreDiagnostics();
-    let result = analyze(prepare(probe_source(), "/tmp/hir-verification-probe.an"), &reporter);
+    let result = analyze(prepare(probe_source(), "/tmp/hir-verification-probe.an", &types), &reporter);
     defer result.drop();
     let output = &result.output;
     let session = result.session;
@@ -615,8 +623,10 @@ fn main() {
     arguments.drop();
 
     let source = probe_source();
+    let types = TypeStore.new();
+    defer types.drop();
     let reporter = IgnoreDiagnostics();
-    let result = analyze(prepare(source, "/tmp/hir-verification-probe.an"), &reporter);
+    let result = analyze(prepare(source, "/tmp/hir-verification-probe.an", &types), &reporter);
     defer result.drop();
     let output = &result.output;
     let session = result.session;

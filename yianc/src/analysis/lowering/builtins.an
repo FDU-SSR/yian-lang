@@ -1,19 +1,19 @@
 from yianc.analysis.lowering.checker import ExprChecker;
 from yianc.analysis.resolution.types import resolve_type;
 from yianc.analysis.hir.node import HirKind, Builtin;
-from yianc.analysis.ty.model import TypeData;
-from yianc.analysis.ty.validation import validate_value;
-from yianc.analysis.ty.relations import is_u64_range;
+from yianc.types.model import TypeData;
 from yianc.common.ids import TypeId, HirId;
 from yianc.frontend.ast.node import TypeSyntax, Argument, ExprData, Literal, FormatPart;
 from yianc.analysis.lowering.format import FormatDestination, lower_format;
 from yianc.frontend.ast.atoms import BuiltinKind;
 from yianc.frontend.source import Span;
 from yianc.diagnostics.model import AnalysisError, DiagnosticCode;
+from yianc.analysis.ty.validation import validate_value;
+from yianc.analysis.ty.relations import is_u64_range;
 from std.core.iter import Iterator, IntoIterator;
 from std.core.convert import From;
 from std.core.fmt import ToString;
-from yianc.analysis.ty.store import I32_TYPE_ID, NEVER_TYPE_ID, STR_TYPE_ID, U64_TYPE_ID, VOID_TYPE_ID;
+from yianc.types.store import I32_TYPE_ID, NEVER_TYPE_ID, STR_TYPE_ID, U64_TYPE_ID, VOID_TYPE_ID;
 
 fn arity(kind: BuiltinKind) -> (u64, u64) {
     match &kind {

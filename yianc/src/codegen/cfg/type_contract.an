@@ -1,5 +1,5 @@
-from yianc.analysis.ty.store import TypeStore, INT_LITERAL_TYPE_ID, FLOAT_LITERAL_TYPE_ID;
-from yianc.analysis.ty.model import TypeData;
+from yianc.types.store import TypeStore, INT_LITERAL_TYPE_ID, FLOAT_LITERAL_TYPE_ID;
+from yianc.types.model import TypeData;
 from yianc.common.ids import TypeId;
 from std.collections.hash_set import HashSet;
 

@@ -1,11 +1,10 @@
 from yianc.analysis.resolution.context import ResolutionContext;
 from yianc.analysis.session.output import AnalysisOutput;
 from yianc.analysis.ty.callable import instance_substitutions;
-from yianc.analysis.ty.substitution import substitute;
-from yianc.analysis.ty.aggregate import payload_fields;
-from yianc.analysis.ty.model import StructField;
+from yianc.types.substitution import substitute;
+from yianc.types.model import StructField;
 from yianc.analysis.constant.floating import round_float;
-from yianc.analysis.ty.substitution import has_generic;
+from yianc.types.substitution import has_generic;
 from yianc.analysis.passes.hir_verification_cache import HirVerificationCache, HirVerificationObserver;
 from yianc.analysis.hir.node import HirNode;
 from yianc.analysis.hir.pattern import PatternNode;
@@ -16,10 +15,11 @@ from yianc.common.location import SourceSpan;
 from yianc.common.traversal import WalkControl;
 from yianc.frontend.ast.operator import BinaryOperator, UnaryOperator;
 from yianc.diagnostics.model import AnalysisError;
+from yianc.analysis.ty.aggregate import payload_fields;
 from std.collections.hash_set import HashSet;
 from std.core.iter import Iterator, IntoIterator;
 from std.num.f64 import to_bits;
-from yianc.analysis.ty.store import BOOL_TYPE_ID, CHAR_TYPE_ID, FLOAT_LITERAL_TYPE_ID, INT_LITERAL_TYPE_ID, NEVER_TYPE_ID, STR_TYPE_ID, VOID_TYPE_ID;
+from yianc.types.store import BOOL_TYPE_ID, CHAR_TYPE_ID, FLOAT_LITERAL_TYPE_ID, INT_LITERAL_TYPE_ID, NEVER_TYPE_ID, STR_TYPE_ID, VOID_TYPE_ID;
 
 fn invalid(span: SourceSpan, message: str) -> ! {
     @panic(message)
@@ -84,7 +84,7 @@ impl HirVerifier {
             let found = false;
             for field in *expected {
                 if field.name == entry[0] {
-                    self.value(entry[1], substitute(&self.ctx.session.types, field.type_id, &substitutions)?, span)?;
+                    self.value(entry[1], substitute(self.ctx.session.types, field.type_id, &substitutions)?, span)?;
                     found = true;
                     break;
                 }
@@ -132,7 +132,7 @@ impl HirVerifier {
     }
 
     fn call(type_id: TypeId, arguments: Vec<HirId>&, result: TypeId, receiver: Option<HirId>, require_body: bool, span: SourceSpan) -> Result<(), AnalysisError> {
-        if has_generic(&self.ctx.session.types, type_id) {
+        if has_generic(self.ctx.session.types, type_id) {
             invalid(span, "exported call contains unresolved generic arguments");
         }
         let callable = self.cache.signature_of(type_id)?;
@@ -368,7 +368,7 @@ impl HirVerifier {
                     let actual = self.cache.signature_of(*method)?;
                     let expected = self.cache.signature_of(slots[index])?;
 
-                    if has_generic(&self.ctx.session.types, *method) || (!actual.is_header && !self.exported.contains(method)) {
+                    if has_generic(self.ctx.session.types, *method) || (!actual.is_header && !self.exported.contains(method)) {
                         invalid(node.span, "exported vtable entry has no concrete checked body");
                     }
 

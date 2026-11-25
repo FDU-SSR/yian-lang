@@ -1,6 +1,6 @@
 from yianc.common.ids import TypeId, DefId;
 from yianc.frontend.ast.operator import UnaryOperator, BinaryOperator;
-from yianc.analysis.ty.c_scalar import CScalarKind;
+from yianc.types.c_scalar import CScalarKind;
 from std.core.hash import Hash, Murmur3Hasher;
 from std.core.ops import PartialEq;
 

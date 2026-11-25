@@ -3,7 +3,7 @@ from yianc.codegen.cfg.ids import LocalId, ValueId;
 from yianc.codegen.cfg.model import Operation;
 from yianc.codegen.error import CodegenError;
 from yianc.analysis.hir.node import HirNode, VariantConstruct;
-from yianc.analysis.ty.model import NominalKind;
+from yianc.types.model import NominalKind;
 from yianc.common.ids import HirId, TypeId;
 from yianc.common.location import SourceSpan;
 from yianc.frontend.ast.operator import UnaryOperator;

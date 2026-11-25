@@ -4,7 +4,8 @@ from yianc.frontend.driver import FrontendDriver;
 from yianc.telemetry.trace import CompilerTrace;
 from yianc.analysis.driver import MiddleEndDriver;
 from yianc.analysis.session.output import AnalysisOptions;
-from yianc.analysis.ty.queries import struct_fields;
+from yianc.types.queries import struct_fields;
+from yianc.types.store import TypeStore;
 from yianc.common.ids import TypeId;
 from yianc.diagnostics.model import AnalysisError, DiagnosticReporter, UserDiagnostic;
 from yianc.frontend.source import SourceFile, SourceTable;
@@ -34,7 +35,7 @@ fn trust() -> SourceTrust {
     }
 }
 
-fn prepare(source: str, path: str) -> AnalysisSession* {
+fn prepare(source: str, path: str, types: TypeStore&) -> AnalysisSession* {
     let trace = CompilerTrace.disabled();
     defer trace.drop();
     let frontend = FrontendDriver.new(load_source(path, source), false, &trace);
@@ -43,12 +44,12 @@ fn prepare(source: str, path: str) -> AnalysisSession* {
         Ok(value) => value,
         Err(error) => { error.drop(); @panic("strict fixture preparation failed"); },
     };
-    dyn AnalysisSession.new(units, IS_RAW_MODE, trust(), Option<PackageMap>.None)
+    dyn AnalysisSession.new(units, IS_RAW_MODE, trust(), Option<PackageMap>.None, types)
 }
 
-fn analyze_success(source: str, path: str) -> AnalysisSession {
+fn analyze_success(source: str, path: str, types: TypeStore&) -> AnalysisSession {
     let reporter = IgnoreDiagnostics();
-    let driver = MiddleEndDriver.new(prepare(source, path), AnalysisOptions.new(), &reporter);
+    let driver = MiddleEndDriver.new(prepare(source, path, types), AnalysisOptions.new(), &reporter);
     match driver.run() {
         Ok(result) => {
             result.output.drop();
@@ -61,9 +62,9 @@ fn analyze_success(source: str, path: str) -> AnalysisSession {
     }
 }
 
-fn analyze_failure(source: str, path: str) -> AnalysisError {
+fn analyze_failure(source: str, path: str, types: TypeStore&) -> AnalysisError {
     let reporter = IgnoreDiagnostics();
-    let driver = MiddleEndDriver.new(prepare(source, path), AnalysisOptions.new(), &reporter);
+    let driver = MiddleEndDriver.new(prepare(source, path, types), AnalysisOptions.new(), &reporter);
     match driver.run() {
         Ok(result) => @panic("invalid fixture passed strict analysis"),
         Err(error) => { driver.drop(); error },
@@ -82,7 +83,9 @@ fn symbol_type(session: AnalysisSession&, name: str) -> TypeId {
 
 fn nested_aliases_share_structural_identity() {
     let source = "typedef Int = i32;\nstruct Box<T> { value: T }\ntrait View<T> { fn get() -> T; }\ntypedef Left = (Box<Int>, Int*, Int&, Int[], Int[4], Fn<(Int,), Int>, View<Int>&);\ntypedef Right = (Box<i32>, i32*, i32&, i32[], i32[4], Fn<(i32,), i32>, View<i32>&);\nstruct Vec<T> { value: T }\ntypedef AliasVec = Vec<Int>;\ntypedef DirectVec = Vec<i32>;\nfn main() { let left: Left; let right: Right; let alias: AliasVec; let direct: DirectVec; }\n";
-    let session = analyze_success(source, "/tmp/yian-native-alias-identities.an");
+    let types = TypeStore.new();
+    defer types.drop();
+    let session = analyze_success(source, "/tmp/yian-native-alias-identities.an", &types);
     assert symbol_type(&session, "Left") == symbol_type(&session, "Right"):
     "transparent aliases preserve nested tuple, pointer, reference, slice, array, function and trait-object TypeIds";
     assert symbol_type(&session, "AliasVec") == symbol_type(&session, "DirectVec"):
@@ -92,7 +95,9 @@ fn nested_aliases_share_structural_identity() {
 
 fn alias_binders_resolve_in_declaration_order() {
     let source = "struct Pair<A, B> { left: A, right: B }\ntypedef Reverse<A, B> = Pair<B, A>;\ntypedef Duplicate<T> = Pair<T, T>;\ntypedef First<A, B> = A;\ntypedef Chain<X, Y> = Reverse<Y, X>;\ntypedef Count = u64;\ntypedef Arr<T, const N: Count> = T[N];\ntypedef Reordered = Chain<i32, u64>;\ntypedef Expected = Pair<i32, u64>;\ntypedef Repeated = Duplicate<i32>;\ntypedef ExpectedRepeated = Pair<i32, i32>;\ntypedef Unused = First<i32, u64>;\ntypedef Array = Arr<i32, 4>;\ntypedef DirectArray = i32[4];\ntypedef Typed<T, const N: T> = T[N];\ntypedef Dependent = Typed<u64, 4>;\ntypedef DirectDependent = u64[4];\ntypedef DirectInt = i32;\nfn check_reordered(value: Reordered) -> Expected { value }\nfn check_repeated(value: Repeated) -> ExpectedRepeated { value }\nfn check_array(value: Array) -> DirectArray { value }\nfn check_dependent(value: Dependent) -> DirectDependent { value }\nfn check_unused(value: Unused) -> DirectInt { value }\nfn main() {}\n";
-    let session = analyze_success(source, "/tmp/yian-native-alias-binders.an");
+    let types = TypeStore.new();
+    defer types.drop();
+    let session = analyze_success(source, "/tmp/yian-native-alias-binders.an", &types);
     assert symbol_type(&session, "Reordered") == symbol_type(&session, "Expected"):
     "generic alias binders apply in the declaration's order";
     assert symbol_type(&session, "Repeated") == symbol_type(&session, "ExpectedRepeated"):
@@ -104,14 +109,18 @@ fn alias_binders_resolve_in_declaration_order() {
 
 fn explicit_and_inferred_alias_calls_analyze() {
     let source = "typedef Int = i32;\nstruct Box<T> { value: T }\ntypedef AliasBox<T> = Box<T>;\nfn identity<T>(value: T) -> T { value }\nfn main() {\n    identity<AliasBox<Int>>(AliasBox<Int>(1));\n    identity<Box<i32>>(Box<i32>(2));\n    identity(AliasBox<i32>(3));\n}\n";
-    let session = analyze_success(source, "/tmp/yian-native-alias-instances.an");
+    let types = TypeStore.new();
+    defer types.drop();
+    let session = analyze_success(source, "/tmp/yian-native-alias-instances.an", &types);
     assert session.definitions.len() == 3u64:
     "two source procedures and one interned identity<i32> instance are registered";
     session.drop();
 }
 
 fn check_alias_failure(source: str, message: str, code: str) {
-    let error = analyze_failure(source, "/tmp/yian-native-alias-cycle.an");
+    let types = TypeStore.new();
+    defer types.drop();
+    let error = analyze_failure(source, "/tmp/yian-native-alias-cycle.an", &types);
     assert error.message.as_str().contains(message):
     "unused alias cycles and undefined alias bodies retain their diagnostic";
     assert error.code.text() == code: "alias diagnostic keeps its code";
@@ -125,9 +134,11 @@ fn alias_cycles_and_recursive_nominal_fields_keep_their_boundaries() {
     check_alias_failure("typedef A = Missing;\nfn main() {}\n", "Undefined type: Missing", "E302");
 
     let source = "typedef Node = Link;\nstruct Link { next: Node* }\nfn main() { let node: Node; }\n";
-    let session = analyze_success(source, "/tmp/yian-native-alias-recursive-field.an");
+    let types = TypeStore.new();
+    defer types.drop();
+    let session = analyze_success(source, "/tmp/yian-native-alias-recursive-field.an", &types);
     let node = symbol_type(&session, "Node");
-    let fields = struct_fields(&session.types, node).unwrap();
+    let fields = struct_fields(session.types, node).unwrap();
     defer fields.drop();
     assert fields.len() == 1u64 && fields[0u64].type_id == session.types.pointer(node):
     "a nominal boundary permits recursive pointer fields with the exact Node pointer identity";
@@ -139,7 +150,9 @@ fn check_alias_argument_failure(declaration: str, use: str, message: str, code: 
     source.push_str("\nfn main() { let value: ");
     source.push_str(use);
     source.push_str("; }\n");
-    let error = analyze_failure(source.as_str(), "/tmp/yian-native-alias-argument.an");
+    let types = TypeStore.new();
+    defer types.drop();
+    let error = analyze_failure(source.as_str(), "/tmp/yian-native-alias-argument.an", &types);
     assert error.code.text() == code: "alias argument diagnostic keeps its code";
     assert error.message.as_str().contains(message):
     "alias argument diagnostic keeps its reason";

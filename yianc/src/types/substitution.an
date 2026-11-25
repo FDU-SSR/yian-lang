@@ -1,6 +1,6 @@
-from yianc.analysis.ty.store import TypeStore;
-from yianc.analysis.ty.model import TypeData;
-from yianc.analysis.ty.const_expression import const_unary, const_binary;
+from yianc.types.store import TypeStore;
+from yianc.types.model import TypeData;
+from yianc.types.const_expression import const_unary, const_binary;
 from yianc.common.location import SourceSpan;
 from yianc.common.ids import TypeId;
 from yianc.diagnostics.model import AnalysisError;

@@ -4,10 +4,10 @@ from yianc.codegen.cfg.model import ValueKind, Operation, Terminator, IndexBound
 from yianc.codegen.cfg.type_contract import assert_cfg_type;
 from yianc.codegen.error import CodegenError;
 from yianc.analysis.hir.node import HirNode, Binary, Builtin;
-from yianc.analysis.ty.queries import struct_fields, enum_variants;
-from yianc.analysis.ty.model import TypeData;
+from yianc.types.queries import struct_fields, enum_variants;
+from yianc.types.model import TypeData;
 from yianc.frontend.ast.atoms import BuiltinKind;
-from yianc.analysis.constant.evaluate import TypeSizeProvider;
+from yianc.types.layout import TypeSizeProvider;
 from yianc.common.ids import HirId, TypeId;
 from yianc.frontend.ast.operator import BinaryOperator, UnaryOperator;
 from std.core.iter import Iterator, IntoIterator;
@@ -16,7 +16,7 @@ from std.core.ops import Index;
 impl Lowering {
     pub fn expression(id: HirId) -> Result<ValueId, CodegenError> {
         let node = self.session.hir.require(id)?;
-        assert_cfg_type(&self.session.types, node.type_id);
+        assert_cfg_type(self.session.types, node.type_id);
         if self.current.is_none() {
             return Result<ValueId, CodegenError>.Ok(self.zero(node.type_id));
         }

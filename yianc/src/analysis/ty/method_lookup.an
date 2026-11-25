@@ -1,13 +1,14 @@
 from yianc.analysis.resolution.context import ResolutionContext;
 from yianc.analysis.session.session import AnalysisSession;
-from yianc.analysis.ty.substitution import infer, substitute;
-from yianc.analysis.ty.store import TypeStore, VOID_TYPE_ID;
-from yianc.analysis.ty.model import Parameter;
-from yianc.analysis.ty.relations import compatible, default_type;
-from yianc.analysis.ty.display import type_text, stored_type_text;
+from yianc.types.substitution import infer, substitute;
+from yianc.types.store import TypeStore, VOID_TYPE_ID;
+from yianc.types.model import Parameter;
+from yianc.types.display import stored_type_text;
+from yianc.analysis.ty.display import type_text;
 from yianc.common.ids import TypeId, NameId, ImplId;
 from yianc.common.location import SourceSpan;
 from yianc.diagnostics.model import AnalysisError, AnalysisErrorKind, DiagnosticCode;
+from yianc.analysis.ty.relations import compatible, default_type;
 from std.collections.hash_map import HashMap;
 from std.core.iter import Iterator, IntoIterator;
 
@@ -32,10 +33,10 @@ fn conditions(session: AnalysisSession&, impl_id: ImplId, substitutions: HashMap
     let record = *session.impls.get(impl_id).unwrap();
 
     for condition in record.conditions {
-        let target = substitute(&session.types, condition.generic, substitutions)?;
+        let target = substitute(session.types, condition.generic, substitutions)?;
 
         for trait_id in condition.traits {
-            let required = substitute(&session.types, *trait_id, substitutions)?;
+            let required = substitute(session.types, *trait_id, substitutions)?;
 
             if !solve_trait(session, target, required, substitutions, depth + 1, budget, active, span)? {
                 return Result<bool, AnalysisError>.Ok(false);
@@ -98,17 +99,17 @@ fn solve_trait(session: AnalysisSession&, target: TypeId, trait_id: TypeId, oute
                 let local = HashMap<TypeId, TypeId>.new();
                 defer local.drop();
 
-                if !infer(&session.types, record.target, target, &local) {
+                if !infer(session.types, record.target, target, &local) {
                     index += 1;
                     continue;
                 }
 
-                let resolved = substitute(&session.types, *pattern, &local)?;
+                let resolved = substitute(session.types, *pattern, &local)?;
                 let trial = outer.clone();
                 defer trial.drop();
 
-                if !infer(&session.types, trait_id, resolved, &trial) {
-                    if !infer(&session.types, *pattern, trait_id, &local) {
+                if !infer(session.types, trait_id, resolved, &trial) {
+                    if !infer(session.types, *pattern, trait_id, &local) {
                         index += 1;
                         continue;
                     }
@@ -119,9 +120,9 @@ fn solve_trait(session: AnalysisSession&, target: TypeId, trait_id: TypeId, oute
                     continue;
                 }
 
-                let completed = substitute(&session.types, *pattern, &local)?;
+                let completed = substitute(session.types, *pattern, &local)?;
 
-                if !infer(&session.types, trait_id, completed, &trial) {
+                if !infer(session.types, trait_id, completed, &trial) {
                     index += 1;
                     continue;
                 }
@@ -181,7 +182,7 @@ fn trait_description(session: AnalysisSession&, trait_id: TypeId, target: TypeId
     let message = String.from(&"trait '");
     message.push_str(session.names.text(definition.header().name));
     message.push_str("' for type '");
-    let target_name = stored_type_text(&session.types, &session.names, target);
+    let target_name = stored_type_text(session.types, &session.names, target);
     defer target_name.drop();
     message.push_str(target_name.as_str());
     message.push_str("'");
@@ -261,7 +262,7 @@ pub fn lookup_method_with_generics(ctx: ResolutionContext&, target: TypeId, name
         let substitutions = HashMap<TypeId, TypeId>.new();
         defer substitutions.drop();
 
-        if !infer(&ctx.session.types, record.target, target, &substitutions) {
+        if !infer(ctx.session.types, record.target, target, &substitutions) {
             index += 1;
             continue;
         }
@@ -270,7 +271,7 @@ pub fn lookup_method_with_generics(ctx: ResolutionContext&, target: TypeId, name
         match required {
             Some(trait_id) => match &record.trait_id {
                 Some(pattern) => {
-                    if !match_trait(&ctx.session.types, *pattern, trait_id, &substitutions) {
+                    if !match_trait(ctx.session.types, *pattern, trait_id, &substitutions) {
                         index += 1;
                         continue;
                     }
@@ -312,7 +313,7 @@ pub fn lookup_method_with_generics(ctx: ResolutionContext&, target: TypeId, name
 
                 while position < method_arguments.len() {
                     let generic = *header.generic(position).unwrap();
-                    let actual = substitute(&ctx.session.types, method_arguments[position], &substitutions)?;
+                    let actual = substitute(ctx.session.types, method_arguments[position], &substitutions)?;
 
                     if generic != actual && !substitutions.contains(&generic) {
                         substitutions.insert(generic, actual);
@@ -327,7 +328,7 @@ pub fn lookup_method_with_generics(ctx: ResolutionContext&, target: TypeId, name
         match required {
             Some(trait_id) => match &record.trait_id {
                 Some(pattern) => {
-                    if !match_trait(&ctx.session.types, *pattern, trait_id, &substitutions) {
+                    if !match_trait(ctx.session.types, *pattern, trait_id, &substitutions) {
                         index += 1;
                         continue;
                     }
@@ -345,7 +346,7 @@ pub fn lookup_method_with_generics(ctx: ResolutionContext&, target: TypeId, name
             continue;
         }
 
-        let candidate = substitute(&ctx.session.types, method, &substitutions)?;
+        let candidate = substitute(ctx.session.types, method, &substitutions)?;
         let rank = if record.trait_id.is_none() {
             2u32
         } elif record.automatic {
@@ -359,7 +360,7 @@ pub fn lookup_method_with_generics(ctx: ResolutionContext&, target: TypeId, name
             _ => false,
         };
         let trait_id = match &record.trait_id {
-            Some(value) => Option<TypeId>.Some(substitute(&ctx.session.types, *value, &substitutions)?),
+            Some(value) => Option<TypeId>.Some(substitute(ctx.session.types, *value, &substitutions)?),
             None => Option<TypeId>.None,
         };
         candidates.push(MethodCandidate(candidate, trait_id, rank, exact, blanket));
@@ -430,14 +431,14 @@ fn match_arguments(ctx: ResolutionContext&, method: TypeId, arguments: Option<Ve
     let index = 0u64;
 
     while index < parameters.len() {
-        let expected = substitute(&ctx.session.types, parameters[index].type_id, substitutions)?;
+        let expected = substitute(ctx.session.types, parameters[index].type_id, substitutions)?;
         let actual = values[index];
         let is_match = compatible(ctx, values[index], expected) || match ctx.session.types.require(expected)? {
             Reference(inner) => match ctx.session.types.require(actual)? {
-                Pointer(value) => compatible(ctx, *value, *inner) || infer(&ctx.session.types, *inner, default_type(ctx, *value), substitutions),
-                _ => infer(&ctx.session.types, expected, default_type(ctx, actual), substitutions)
+                Pointer(value) => compatible(ctx, *value, *inner) || infer(ctx.session.types, *inner, default_type(ctx, *value), substitutions),
+                _ => infer(ctx.session.types, expected, default_type(ctx, actual), substitutions)
             },
-            _ => infer(&ctx.session.types, expected, default_type(ctx, actual), substitutions),
+            _ => infer(ctx.session.types, expected, default_type(ctx, actual), substitutions),
         };
 
         if !is_match {

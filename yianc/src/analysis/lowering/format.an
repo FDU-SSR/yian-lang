@@ -1,10 +1,7 @@
 from yianc.analysis.lowering.checker import ExprChecker;
-from yianc.analysis.ty.method_lookup import lookup_method_args, implements;
-from yianc.analysis.ty.substitution import substitute;
-from yianc.analysis.ty.relations import default_type;
-from yianc.analysis.ty.aggregate import payload_fields;
+from yianc.types.substitution import substitute;
 from yianc.analysis.ty.display import type_text;
-from yianc.analysis.ty.model import EnumVariant;
+from yianc.types.model import EnumVariant;
 from yianc.analysis.ty.callable import instance_substitutions;
 from yianc.analysis.hir.node import HirKind, Block as HirBlock, Let as HirLet, Match as HirMatch, MatchArm as HirMatchArm, Unary as HirUnary, VariantConstruct, Builtin as HirBuiltin, Tuple as HirTuple, Binary as HirBinary;
 from yianc.analysis.symbol.model import SymbolKind;
@@ -15,11 +12,14 @@ from yianc.frontend.source import Span;
 from yianc.common.ids import UnitId, HirId, TypeId, SymbolId, PatternId, ScopeId, NameId, DefId;
 from yianc.common.location import SourceSpan;
 from yianc.diagnostics.model import AnalysisError, DiagnosticCode, AnalysisErrorKind;
+from yianc.analysis.ty.method_lookup import lookup_method_args, implements;
+from yianc.analysis.ty.relations import default_type;
+from yianc.analysis.ty.aggregate import payload_fields;
 from std.core.iter import Iterator, IntoIterator;
 from std.core.convert import From;
 from std.core.ops import Index;
-from yianc.analysis.ty.store import NEVER_TYPE_ID, STR_TYPE_ID, VOID_TYPE_ID, BOOL_TYPE_ID, I64_TYPE_ID, U64_TYPE_ID;
-from yianc.analysis.constant.value import IntegerValue, IntegerWidth;
+from yianc.types.store import NEVER_TYPE_ID, STR_TYPE_ID, VOID_TYPE_ID, BOOL_TYPE_ID, I64_TYPE_ID, U64_TYPE_ID;
+from yianc.common.integer_value import IntegerValue, IntegerWidth;
 
 // The lowering target selects the outer owner and where a write failure goes.
 pub enum FormatDestination {
@@ -662,13 +662,13 @@ fn result_variant(checker: ExprChecker&, span: Span, library: FormatLibrary&, va
         @panic("standard Result variant has an unexpected payload");
     }
 
-    let concrete = substitute(&checker.ctx.session.types, fields[0].type_id, &substitutions)?;
+    let concrete = substitute(checker.ctx.session.types, fields[0].type_id, &substitutions)?;
     let arguments = Vec<(NameId, HirId)>.new();
     arguments.push((fields[0].name, checker.coerce(value, concrete)?));
     let spans = Vec<Option<SourceSpan>>.new();
     spans.push(Option<SourceSpan>.None);
     let payload = match &variant.payload {
-        Some(value) => Option<TypeId>.Some(substitute(&checker.ctx.session.types, *value, &substitutions)?),
+        Some(value) => Option<TypeId>.Some(substitute(checker.ctx.session.types, *value, &substitutions)?),
         None => Option<TypeId>.None,
     };
     let concrete_variant = EnumVariant(variant.name, payload, variant.discriminant, variant.span);

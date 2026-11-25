@@ -1,6 +1,6 @@
-from yianc.analysis.ty.model import TypeData;
-from yianc.analysis.ty.properties import store_is_zst;
-from yianc.analysis.ty.store import TypeStore;
+from yianc.types.model import TypeData;
+from yianc.types.properties import store_is_zst;
+from yianc.types.store import TypeStore;
 from yianc.common.ids import TypeId;
 from yianc.diagnostics.model import AnalysisError;
 

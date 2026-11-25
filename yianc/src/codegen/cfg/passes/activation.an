@@ -5,8 +5,8 @@ from yianc.codegen.cfg.passes.checks import insert_checks, expected_checks, same
 from yianc.codegen.representation import PointerRepresentation, TypeRepresentation, classify_representation;
 from yianc.codegen.types import BackendTypes;
 from yianc.codegen.error import CodegenError;
-from yianc.analysis.ty.model import TypeData, NominalKind;
-from yianc.analysis.ty.store import TypeStore;
+from yianc.types.model import TypeData, NominalKind;
+from yianc.types.store import TypeStore;
 from yianc.common.ids import TypeId;
 from yianc.frontend.ast.atoms import BuiltinKind;
 from yianc.frontend.ast.operator import BinaryOperator;

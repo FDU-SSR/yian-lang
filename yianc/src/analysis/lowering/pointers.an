@@ -1,16 +1,16 @@
 from yianc.analysis.lowering.checker import ExprChecker;
-from yianc.analysis.ty.relations import is_integer, is_u64_range;
-from yianc.analysis.ty.validation import c_abi_type;
-from yianc.analysis.ty.model import TypeData;
+from yianc.types.model import TypeData;
 from yianc.analysis.hir.node import HirKind, Binary, Unary, TupleAccess, ArrayAccess, SliceAccess, Builtin;
-from yianc.analysis.constant.integer import magnitude;
+from yianc.common.integer import magnitude;
 from yianc.common.ids import HirId;
 from yianc.frontend.ast.operator import BinaryOperator, UnaryOperator;
 from yianc.frontend.ast.atoms import BuiltinKind;
 from yianc.frontend.source import Span;
 from yianc.diagnostics.model import AnalysisError;
-from yianc.analysis.ty.store import BOOL_TYPE_ID, U64_TYPE_ID, VOID_TYPE_ID;
+from yianc.types.store import BOOL_TYPE_ID, U64_TYPE_ID, VOID_TYPE_ID;
 from yianc.common.ids import TypeId;
+from yianc.analysis.ty.relations import is_integer, is_u64_range;
+from yianc.analysis.ty.validation import c_abi_type;
 
 impl ExprChecker {
     // Pointer operations preserve the declared pointee; references have identity equality only.
@@ -51,7 +51,7 @@ impl ExprChecker {
         if pointer && is_integer(self.ctx, right_type) && (op == BinaryOperator.Add || op == BinaryOperator.Sub || compound) {
             match left_data {
                 CPointer(inner) => {
-                    if !self.ffi_allowed || !c_abi_type(&self.ctx.session.types, *inner, false, false) {
+                    if !self.ffi_allowed || !c_abi_type(self.ctx.session.types, *inner, false, false) {
                         return Result<Option<HirId>, AnalysisError>.Err(self.error(span, "C pointer arithmetic requires an ffi function and a complete C ABI element"));
                     }
                 },

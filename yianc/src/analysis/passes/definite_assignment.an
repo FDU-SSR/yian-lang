@@ -2,7 +2,7 @@ from yianc.analysis.session.session import AnalysisSession;
 from yianc.analysis.resolution.context import ResolutionContext;
 from yianc.analysis.ty.properties import is_zst;
 from yianc.analysis.ty.callable import instance_substitutions;
-from yianc.analysis.ty.substitution import substitute;
+from yianc.types.substitution import substitute;
 from yianc.analysis.session.output import AnalyzedProcedure;
 from yianc.analysis.hir.node import HirKind;
 from yianc.common.ids import SymbolId, HirId, PatternId, TypeId;
@@ -177,7 +177,7 @@ impl AssignmentChecker {
                     defer substitutions.drop();
 
                     for field in body.fields {
-                        let field_type = substitute(&self.session.types, field.type_id, &substitutions)?;
+                        let field_type = substitute(self.session.types, field.type_id, &substitutions)?;
 
                         if !self.assigned(self.child(place, field.index, field_type), state)? {
                             return Result<bool, AnalysisError>.Ok(false);

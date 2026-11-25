@@ -1,12 +1,12 @@
 from yianc.common.ids import TypeId, DefId, NameId;
 from yianc.common.location import SourceSpan;
-from yianc.analysis.ty.key import TypeKey;
-from yianc.analysis.ty.model import TypeData, TypeDefinition, DefinitionHeader, DefinitionBody, CapturedVar, Parameter;
-from yianc.analysis.ty.c_scalar import CScalarKind;
+from yianc.types.key import TypeKey;
+from yianc.types.model import TypeData, TypeDefinition, DefinitionHeader, DefinitionBody, CapturedVar, Parameter;
+from yianc.types.c_scalar import CScalarKind;
 from yianc.diagnostics.model import DiagnosticCode, AnalysisError;
 from yianc.frontend.ast.operator import UnaryOperator, BinaryOperator;
-from yianc.analysis.constant.value import IntegerValue;
-from yianc.analysis.constant.integer import integer_fits;
+from yianc.common.integer_value import IntegerValue;
+from yianc.common.integer import integer_fits;
 from std.collections.arena import Arena;
 from std.collections.hash_map import HashMap;
 from std.core.hash import Hash;

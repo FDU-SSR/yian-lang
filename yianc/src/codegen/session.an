@@ -1,4 +1,4 @@
-from yianc.analysis.ty.store import TypeStore;
+from yianc.types.store import TypeStore;
 from yianc.codegen.types import BackendTypes;
 from yianc.codegen.error import CodegenError;
 from yianc.config import OutputKind;

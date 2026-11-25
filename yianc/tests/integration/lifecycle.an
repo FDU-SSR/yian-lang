@@ -15,6 +15,7 @@ from std.core.env import args;
 from std.core.ops import Index;
 from std.core.process import Command, ExitStatus;
 from yianc.analysis.session.session import AnalysisSession;
+from yianc.types.store import TypeStore;
 from yianc.frontend.driver import FrontendDriver;
 from yianc.telemetry.trace import CompilerTrace;
 from yianc.analysis.driver import MiddleEndDriver;
@@ -129,7 +130,7 @@ fn trust() -> SourceTrust {
 }
 
 // Prepare the session separately from the driver so the caller controls reporter lifetime.
-fn strict_lifecycle_session(raw: bool) -> AnalysisSession* {
+fn strict_lifecycle_session(raw: bool, types: TypeStore&) -> AnalysisSession* {
     let trace = CompilerTrace.disabled();
     defer trace.drop();
     let frontend = FrontendDriver.new(load_source("/tmp/yian-native-strict-lifecycle.an", "struct Record { field: i32 }\nfn helper(value: Record) -> Record { value }\nconst SIZE: u64 = 8;\nfn main() { helper(Record(1)); }\n"), false, &trace);
@@ -138,12 +139,14 @@ fn strict_lifecycle_session(raw: bool) -> AnalysisSession* {
         Ok(value) => value,
         Err(error) => { error.drop(); @panic("fixture preparation failed"); },
     };
-    dyn AnalysisSession.new(units, raw, trust(), Option<PackageMap>.None)
+    dyn AnalysisSession.new(units, raw, trust(), Option<PackageMap>.None, types)
 }
 
 fn check_strict_lifecycle(raw: bool) {
+    let types = TypeStore.new();
+    defer types.drop();
     let reporter = DiagnosticCounter(0);
-    let driver = MiddleEndDriver.new(strict_lifecycle_session(raw), AnalysisOptions.new(), &reporter);
+    let driver = MiddleEndDriver.new(strict_lifecycle_session(raw, &types), AnalysisOptions.new(), &reporter);
     defer driver.drop();
     let result = match driver.run() {
         Ok(value) => value,
@@ -158,8 +161,10 @@ fn check_strict_lifecycle(raw: bool) {
 
 // The second analysis violates the driver attempt guard; the caller isolates the panic.
 fn repeat_analysis(raw: bool) {
+    let types = TypeStore.new();
+    defer types.drop();
     let reporter = DiagnosticCounter(0);
-    let driver = MiddleEndDriver.new(strict_lifecycle_session(raw), AnalysisOptions.new(), &reporter);
+    let driver = MiddleEndDriver.new(strict_lifecycle_session(raw, &types), AnalysisOptions.new(), &reporter);
     defer driver.drop();
     let result = match driver.run() {
         Ok(value) => value,
@@ -215,8 +220,10 @@ fn strict_analysis_reports_first_error() {
         Ok(value) => value,
         Err(error) => { error.drop(); @panic("fixture preparation failed"); },
     };
+    let types = TypeStore.new();
+    defer types.drop();
     let reporter = DiagnosticCounter(0);
-    let driver = MiddleEndDriver.new(dyn AnalysisSession.new(units, false, trust(), Option<PackageMap>.None), AnalysisOptions.new(), &reporter);
+    let driver = MiddleEndDriver.new(dyn AnalysisSession.new(units, false, trust(), Option<PackageMap>.None, &types), AnalysisOptions.new(), &reporter);
     defer driver.drop();
     match driver.run() {
         Ok(output) => @panic("invalid strict fixture passed analysis"),

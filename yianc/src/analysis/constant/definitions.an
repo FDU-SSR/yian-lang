@@ -1,15 +1,16 @@
 from yianc.analysis.resolution.context import ResolutionContext, DeclarationState;
 from yianc.analysis.lowering.checker import ExprChecker;
-from yianc.analysis.constant.evaluate import ConstantEvaluator, TypeSizeProvider;
+from yianc.analysis.constant.evaluate import ConstantEvaluator;
+from yianc.types.layout import TypeSizeProvider;
 from yianc.analysis.hir.node import HirNode, HirKind, Array as HirArray, ArrayRepeat as HirArrayRepeat;
 from yianc.analysis.constant.value import ConstValue;
-from yianc.analysis.ty.relations import default_type;
 from yianc.analysis.resolution.types import resolve_type;
 from yianc.common.ids import SymbolId, HirId, UnitId;
 from yianc.frontend.source import Span;
 from yianc.diagnostics.model import AnalysisError, DiagnosticCode, AnalysisErrorKind;
+from yianc.analysis.ty.relations import default_type;
 from std.core.iter import Iterator, IntoIterator;
-from yianc.analysis.ty.store import ERROR_TYPE_ID, VOID_TYPE_ID;
+from yianc.types.store import ERROR_TYPE_ID, VOID_TYPE_ID;
 from yianc.common.ids import TypeId;
 
 pub fn evaluate_constants(ctx: ResolutionContext&) -> Result<(), AnalysisError> {

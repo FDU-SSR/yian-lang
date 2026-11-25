@@ -1,17 +1,17 @@
 from yianc.analysis.lowering.checker import ExprChecker;
 from yianc.analysis.ty.callable import signature, schedule, instance_substitutions;
-from yianc.analysis.ty.substitution import infer, substitute, has_generic;
-from yianc.analysis.ty.relations import compatible, default_type, is_numeric, is_integer, has_literal;
-from yianc.analysis.ty.validation import contains_ffi;
-from yianc.analysis.ty.model import NominalKind;
+from yianc.types.substitution import infer, substitute, has_generic;
+from yianc.types.model import NominalKind;
 from yianc.analysis.hir.node import HirKind, Invoke, Cast, Call as HirCall, MethodCall as HirMethodCall;
 from yianc.common.ids import HirId, TypeId;
 from yianc.common.location import SourceSpan;
 from yianc.frontend.ast.node import Expr, Argument;
 from yianc.frontend.source import Span;
 from yianc.diagnostics.model import AnalysisError;
+from yianc.analysis.ty.relations import compatible, default_type, is_numeric, is_integer, has_literal;
+from yianc.analysis.ty.validation import contains_ffi;
 from std.core.iter import Iterator, IntoIterator;
-from yianc.analysis.ty.store import BOOL_TYPE_ID, CHAR_TYPE_ID;
+from yianc.types.store import BOOL_TYPE_ID, CHAR_TYPE_ID;
 
 impl ExprChecker {
     pub fn call(span: Span, callee: Expr&, args: Vec<Argument&>&) -> Result<HirId, AnalysisError> {
@@ -202,7 +202,7 @@ impl ExprChecker {
 
         while index < values.len() {
             if !has_literal(self.ctx, self.type_of(values[index])) {
-                let expected = substitute(&self.ctx.session.types, definition.parameters[index].type_id, &substitutions)?;
+                let expected = substitute(self.ctx.session.types, definition.parameters[index].type_id, &substitutions)?;
 
                 if !compatible(self.ctx, self.type_of(values[index]), expected) && !self.match_argument(expected, self.type_of(values[index]), &substitutions) {
                     return Result<HirId, AnalysisError>.Err(self.inference_error(span, expected, self.type_of(values[index])));
@@ -216,7 +216,7 @@ impl ExprChecker {
 
         while index < values.len() {
             let actual = self.type_of(values[index]);
-            let expected = substitute(&self.ctx.session.types, definition.parameters[index].type_id, &substitutions)?;
+            let expected = substitute(self.ctx.session.types, definition.parameters[index].type_id, &substitutions)?;
 
             if !compatible(self.ctx, self.type_of(values[index]), expected) && !self.match_argument(expected, actual, &substitutions) {
                 return Result<HirId, AnalysisError>.Err(self.inference_error(span, expected, actual));
@@ -242,7 +242,7 @@ impl ExprChecker {
         }
 
         let instance = self.ctx.session.types.instance(nominal, &actual_arguments)?;
-        if !definition.is_header && has_generic(&self.ctx.session.types, instance) {
+        if !definition.is_header && has_generic(self.ctx.session.types, instance) {
             return Result<HirId, AnalysisError>.Err(self.error(span, "function instance requires concrete generic arguments"));
         }
 
@@ -251,10 +251,10 @@ impl ExprChecker {
 
         if !self.ffi_allowed {
             // Permission follows the declaration, rather than a concrete generic binding.
-            let exposed = contains_ffi(&self.ctx.session.types, definition.result, false);
+            let exposed = contains_ffi(self.ctx.session.types, definition.result, false);
 
             for parameter in definition.parameters {
-                if contains_ffi(&self.ctx.session.types, parameter.type_id, false) {
+                if contains_ffi(self.ctx.session.types, parameter.type_id, false) {
                     exposed = true;
                 }
             }

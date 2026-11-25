@@ -1,11 +1,11 @@
 from yianc.analysis.lowering.checker import ExprChecker;
-from yianc.analysis.ty.relations import compatible;
 from yianc.common.ids import TypeId, HirId;
 from yianc.frontend.source import Span;
 from yianc.analysis.hir.node import HirKind, If;
 from yianc.diagnostics.model import AnalysisError;
+from yianc.analysis.ty.relations import compatible;
 from std.core.iter import Iterator, IntoIterator;
-from yianc.analysis.ty.store import NEVER_TYPE_ID, VOID_TYPE_ID;
+from yianc.types.store import NEVER_TYPE_ID, VOID_TYPE_ID;
 
 impl ExprChecker {
     pub fn branch(span: Span, condition: HirId, yes: HirId, no: Option<HirId>) -> Result<HirId, AnalysisError> {

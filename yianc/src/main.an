@@ -1,6 +1,6 @@
 from yianc.analysis.session.session import AnalysisSession;
 from yianc.analysis.session.output import AnalysisOptions;
-from yianc.analysis.constant.evaluate import TypeSizeProvider;
+from yianc.types.layout import TypeSizeProvider;
 from yianc.analysis.dump import hir_dump;
 from yianc.analysis.driver import MiddleEndDriver;
 from yianc.codegen.session import TargetLayout;
@@ -14,6 +14,7 @@ from yianc.preprocess import load_packages, build_trust, collect_sources;
 from yianc.telemetry.log import LogLevel;
 from yianc.telemetry.profile import ProfileKind;
 from yianc.telemetry.trace import CompilerTrace;
+from yianc.types.store import TypeStore;
 from std.core.io import Stderr, Write;
 
 const EXIT_FAILURE: i32 = 1;
@@ -29,6 +30,7 @@ impl DiagnosticReporter for CliReporter {
     }
 }
 
+// The compilation owns one type store; the session and layout borrow it.
 fn main() {
     // Parse command line arguments
     let config = parse_args();
@@ -63,8 +65,10 @@ fn main() {
     trace.finish("frontend");
 
     // Create the analysis session and the target layout before semantic analysis.
-    let session = dyn AnalysisSession.new(units, config.raw_pointers, trust, packages);
-    let layout = match TargetLayout.new(&session.types, config.raw_pointers, config.optimization,
+    let types = TypeStore.new();
+    defer types.drop();
+    let session = dyn AnalysisSession.new(units, config.raw_pointers, trust, packages, &types);
+    let layout = match TargetLayout.new(&types, config.raw_pointers, config.optimization,
         config.runtime_profile_dir.is_some(), Option<CompilerTrace&>.Some(&trace)) {
         Ok(value) => value,
         Err(problem) => {
@@ -72,6 +76,7 @@ fn main() {
             exit(EXIT_FAILURE);
         },
     };
+    defer layout.drop();
 
     let options = AnalysisOptions.new();
     options.require_entry = !check;
@@ -80,10 +85,9 @@ fn main() {
     options.sizes = Option<TypeSizeProvider&>.Some(layout.backend_types());
     options.trace = Option<CompilerTrace&>.Some(&trace);
 
+    // The reporter borrows the unit table for the duration of analysis.
     let reporter = CliReporter(&units);
-    // Run the middle-end driver for semantic analysis
     let middle = MiddleEndDriver.new(session, options, &reporter);
-    defer middle.drop();
 
     trace.start_pass("semantic_analysis", "main", "semantic analysis", ProfileKind.Stage);
     let result = match middle.run() {
@@ -95,14 +99,15 @@ fn main() {
         },
     };
     trace.finish("semantic_analysis");
-    // The layout borrows the session type store; release it before releasing the result.
     defer result.drop();
-    defer layout.drop();
 
     if config.dump {
         match hir_dump(result.session, &result.output) {
             Ok(_) => {},
-            Err(problem) => { report(&problem, &units); exit(EXIT_FAILURE); },
+            Err(problem) => {
+                report(&problem, &units);
+                exit(EXIT_FAILURE);
+            },
         }
     }
     if check {

@@ -1,4 +1,4 @@
-from yianc.analysis.constant.value import IntegerValue, IntegerWidth, ConstEvalError;
+from yianc.common.integer_value import IntegerValue, IntegerWidth, ConstEvalError;
 from yianc.frontend.ast.operator import BinaryOperator, UnaryOperator;
 
 pub fn normalized(bits: u64, width: IntegerWidth, signed: bool) -> IntegerValue {

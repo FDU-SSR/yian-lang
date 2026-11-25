@@ -2,7 +2,7 @@ from yianc.common.ids import HirId, PatternId, TypeId, SymbolId;
 from yianc.common.location import SourceSpan;
 from yianc.analysis.constant.interval import Boundary;
 from yianc.analysis.constant.value import ConstValue;
-from yianc.analysis.ty.model import EnumVariant;
+from yianc.types.model import EnumVariant;
 
 pub struct EnumPattern {
     pub variant: EnumVariant,

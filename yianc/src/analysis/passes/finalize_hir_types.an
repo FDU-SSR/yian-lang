@@ -3,13 +3,13 @@ from yianc.analysis.session.output import AnalysisOutput;
 from yianc.analysis.hir.node import HirNode, HirKind;
 from yianc.analysis.hir.pattern import PatternNode;
 from yianc.analysis.hir.traversal import HirVisitor, walk_expr;
-from yianc.analysis.constant.value import IntegerValue, IntegerWidth;
-from yianc.analysis.constant.integer import cast_integer;
+from yianc.common.integer_value import IntegerValue, IntegerWidth;
+from yianc.common.integer import cast_integer;
 from yianc.analysis.constant.floating import round_float;
 from yianc.common.ids import HirId, PatternId, SymbolId, TypeId;
 from yianc.common.traversal import WalkControl;
 from yianc.diagnostics.model import AnalysisError;
-from yianc.analysis.ty.store import INT_LITERAL_TYPE_ID, FLOAT_LITERAL_TYPE_ID, I32_TYPE_ID, F64_TYPE_ID;
+from yianc.types.store import INT_LITERAL_TYPE_ID, FLOAT_LITERAL_TYPE_ID, I32_TYPE_ID, F64_TYPE_ID;
 
 // Context-free literals use the language defaults only after all contextual typing has run.
 fn concrete(type_id: TypeId) -> TypeId {

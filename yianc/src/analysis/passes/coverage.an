@@ -1,7 +1,6 @@
 from yianc.analysis.resolution.context import ResolutionContext;
 from yianc.analysis.ty.callable import instance_substitutions;
-from yianc.analysis.ty.substitution import substitute;
-from yianc.analysis.ty.aggregate import payload_fields;
+from yianc.types.substitution import substitute;
 from yianc.analysis.constant.interval import Interval, Boundary, scalar_key, scalar_domain;
 from yianc.analysis.constant.value import ConstValue;
 from yianc.analysis.hir.node import HirNode;
@@ -12,11 +11,12 @@ from yianc.common.location import SourceSpan;
 from yianc.common.traversal import WalkControl;
 from yianc.frontend.ast.atoms import MatchArmOrigin;
 from yianc.diagnostics.model import AnalysisError, DiagnosticCode;
+from yianc.analysis.ty.aggregate import payload_fields;
 from std.collections.sort import sort_by;
 from std.core.iter import Iterator, IntoIterator;
 from std.collections.hash_set import HashSet;
 from yianc.frontend.text import is_printable;
-from yianc.analysis.ty.store import CHAR_TYPE_ID;
+from yianc.types.store import CHAR_TYPE_ID;
 
 typedef Cell = Option<PatternId>;
 
@@ -132,7 +132,7 @@ impl CoverageChecker {
                 match self.ctx.session.types.complete_definition(*definition)? {
                     Struct(body) => {
                         for field in body.fields {
-                            let field_type = substitute(&self.ctx.session.types, field.type_id, &substitutions)?;
+                            let field_type = substitute(self.ctx.session.types, field.type_id, &substitutions)?;
                             if !self.potentially_inhabited(field_type, seen)? {
                                 return Result<bool, AnalysisError>.Ok(false);
                             }
@@ -147,7 +147,7 @@ impl CoverageChecker {
                             let variant_inhabited = true;
 
                             for field in fields {
-                                let field_type = substitute(&self.ctx.session.types, field.type_id, &substitutions)?;
+                                let field_type = substitute(self.ctx.session.types, field.type_id, &substitutions)?;
                                 if !self.potentially_inhabited(field_type, seen)? {
                                     variant_inhabited = false;
                                     break;
@@ -328,7 +328,7 @@ impl CoverageChecker {
                             defer descriptors.drop();
 
                             for field in descriptors {
-                                fields.push(substitute(&self.ctx.session.types, field.type_id, &substitutions)?);
+                                fields.push(substitute(self.ctx.session.types, field.type_id, &substitutions)?);
                             }
 
                             result.push(Constructor(ConstructorKind.Variant(variant.discriminant), fields));
@@ -345,7 +345,7 @@ impl CoverageChecker {
                         };
 
                         for field in body.fields {
-                            fields.push(substitute(&self.ctx.session.types, field.type_id, &substitutions)?);
+                            fields.push(substitute(self.ctx.session.types, field.type_id, &substitutions)?);
                         }
 
                         result.push(Constructor(ConstructorKind.Structure, fields));

@@ -1,36 +1,36 @@
 from yianc.analysis.lowering.checker import ExprChecker;
 from yianc.analysis.hir.node import HirNode, HirKind, Binary, Unary, BitCast, Cast, Tuple, Array as HirArray, ArrayRepeat, Block, If, Match, MatchArm;
-from yianc.analysis.constant.value import IntegerValue, IntegerWidth;
-from yianc.analysis.constant.integer import cast_integer, integer_fits;
+from yianc.common.integer_value import IntegerValue, IntegerWidth;
+from yianc.common.integer import cast_integer, integer_fits;
 from yianc.analysis.constant.floating import round_float, integer_float;
-from yianc.analysis.ty.model import TypeData;
-from yianc.analysis.ty.substitution import infer, substitute;
+from yianc.types.model import TypeData;
+from yianc.types.substitution import infer, substitute;
 from yianc.analysis.ty.callable import signature, schedule, instance_substitutions;
-from yianc.analysis.ty.relations import compatible, default_type;
 from yianc.analysis.ty.display import type_text;
 from yianc.common.ids import HirId, TypeId;
 from yianc.frontend.ast.operator import UnaryOperator, BinaryOperator;
 from yianc.diagnostics.model import DiagnosticCode, AnalysisError;
+from yianc.analysis.ty.relations import compatible, default_type;
 from std.collections.hash_map import HashMap;
 from std.core.iter import Iterator, IntoIterator;
-from yianc.analysis.ty.store import FLOAT_LITERAL_TYPE_ID, INT_LITERAL_TYPE_ID;
+from yianc.types.store import FLOAT_LITERAL_TYPE_ID, INT_LITERAL_TYPE_ID;
 
 impl ExprChecker {
     pub fn match_argument(expected: TypeId, actual: TypeId, substitutions: HashMap<TypeId, TypeId>&) -> bool {
         match *self.ctx.session.types.get(expected).unwrap() {
             Reference(inner) => match *self.ctx.session.types.get(actual).unwrap() {
-                Pointer(value) => return compatible(self.ctx, *value, *inner) || infer(&self.ctx.session.types, *inner, default_type(self.ctx, *value), substitutions),
-                Slice(value) => return infer(&self.ctx.session.types, *inner, *value, substitutions),
+                Pointer(value) => return compatible(self.ctx, *value, *inner) || infer(self.ctx.session.types, *inner, default_type(self.ctx, *value), substitutions),
+                Slice(value) => return infer(self.ctx.session.types, *inner, *value, substitutions),
                 _ => {},
             },
             Pointer(inner) => match *self.ctx.session.types.get(actual).unwrap() {
-                Array(value, _) => return infer(&self.ctx.session.types, *inner, *value, substitutions),
+                Array(value, _) => return infer(self.ctx.session.types, *inner, *value, substitutions),
                 _ => {},
             },
             _ => {},
         }
 
-        infer(&self.ctx.session.types, expected, default_type(self.ctx, actual), substitutions)
+        infer(self.ctx.session.types, expected, default_type(self.ctx, actual), substitutions)
     }
 
     // Owning aggregate lists are copied before rewriting IDs; loop exits are finalized during construction.
@@ -349,18 +349,18 @@ impl ExprChecker {
         let index = 0u64;
 
         while index < parameters.len() {
-            if !infer(&self.ctx.session.types, callable.parameters[index].type_id, parameters[index], &substitutions) {
+            if !infer(self.ctx.session.types, callable.parameters[index].type_id, parameters[index], &substitutions) {
                 return Result<Option<HirId>, AnalysisError>.Err(self.error(node.span.span, "function pointer parameter type mismatch"));
             }
 
             index += 1;
         }
 
-        if !infer(&self.ctx.session.types, callable.result, result, &substitutions) {
+        if !infer(self.ctx.session.types, callable.result, result, &substitutions) {
             return Result<Option<HirId>, AnalysisError>.Err(self.error(node.span.span, "function pointer result type mismatch"));
         }
 
-        let instance = substitute(&self.ctx.session.types, template, &substitutions)?;
+        let instance = substitute(self.ctx.session.types, template, &substitutions)?;
 
         if !callable.is_header {
             schedule(self.ctx, instance)?;

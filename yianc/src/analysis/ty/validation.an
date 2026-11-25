@@ -1,10 +1,10 @@
 from yianc.analysis.resolution.context import ResolutionContext;
-from yianc.analysis.ty.store import TypeStore;
+from yianc.types.store import TypeStore;
 from yianc.analysis.ty.callable import instance_substitutions;
-from yianc.analysis.ty.substitution import substitute;
-from yianc.analysis.ty.substitution import has_generic;
+from yianc.types.substitution import substitute;
+from yianc.types.substitution import has_generic;
 from std.collections.hash_set import HashSet;
-from yianc.analysis.ty.model import NominalKind, Parameter;
+from yianc.types.model import NominalKind, Parameter;
 from yianc.analysis.ty.trait_object import object_methods;
 from yianc.analysis.ty.display import type_text;
 from yianc.common.ids import TypeId;
@@ -178,7 +178,7 @@ pub fn validate_value(ctx: ResolutionContext&, type_id: TypeId, span: SourceSpan
 
 // Declaration templates allow generics; scheduled procedure signatures must be concrete.
 pub fn validate_concrete_value(ctx: ResolutionContext&, type_id: TypeId, span: SourceSpan) -> Result<(), AnalysisError> {
-    if has_generic(&ctx.session.types, type_id) {
+    if has_generic(ctx.session.types, type_id) {
         return Result<(), AnalysisError>.Err(AnalysisError.user(DiagnosticCode.GenericArguments,
             Option<SourceSpan>.Some(span), "procedure signature requires concrete generic arguments"));
     }
@@ -189,7 +189,7 @@ pub fn validate_concrete_value(ctx: ResolutionContext&, type_id: TypeId, span: S
 fn validate_inner(ctx: ResolutionContext&, type_id: TypeId, span: SourceSpan, visited: HashSet<TypeId>&) -> Result<(), AnalysisError> {
     if !visited.insert(type_id) { return Result<(), AnalysisError>.Ok(()); }
 
-    if contains_ffi(&ctx.session.types, type_id, true) {
+    if contains_ffi(ctx.session.types, type_id, true) {
         return Result<(), AnalysisError>.Err(AnalysisError.user(DiagnosticCode.Type, Option<SourceSpan>.Some(span), "opaque C type must be used through cptr<T>"));
     }
 
@@ -203,7 +203,7 @@ fn validate_inner(ctx: ResolutionContext&, type_id: TypeId, span: SourceSpan, vi
             match ctx.session.types.complete_definition(*id)? {
                 Struct(body) => {
                     for field in body.fields {
-                        let concrete = substitute(&ctx.session.types, field.type_id, &substitutions)?;
+                        let concrete = substitute(ctx.session.types, field.type_id, &substitutions)?;
                         validate_inner(ctx, concrete, span, visited)?;
                     }
                 },
@@ -211,7 +211,7 @@ fn validate_inner(ctx: ResolutionContext&, type_id: TypeId, span: SourceSpan, vi
                     for variant in body.variants {
                         match &variant.payload {
                             Some(payload) => {
-                                let concrete = substitute(&ctx.session.types, *payload, &substitutions)?;
+                                let concrete = substitute(ctx.session.types, *payload, &substitutions)?;
                                 validate_inner(ctx, concrete, span, visited)?;
                             },
                             None => {},
@@ -333,22 +333,22 @@ pub fn validate_declarations(ctx: ResolutionContext&) -> Result<(), AnalysisErro
 fn validate_callable(ctx: ResolutionContext&, parameters: Vec<Parameter>&, result: TypeId, ffi: bool, external: bool, span: SourceSpan) -> Result<(), AnalysisError> {
     validate_value(ctx, result, span)?;
 
-    if external && !c_abi_type(&ctx.session.types, result, true, false) {
+    if external && !c_abi_type(ctx.session.types, result, true, false) {
         return Result<(), AnalysisError>.Err(AnalysisError.user(DiagnosticCode.Type, Option<SourceSpan>.Some(span), "extern C result requires C ABI scalar, cptr<T>, or void"));
     }
 
-    if !ffi && contains_ffi(&ctx.session.types, result, false) {
+    if !ffi && contains_ffi(ctx.session.types, result, false) {
         return Result<(), AnalysisError>.Err(AnalysisError.user(DiagnosticCode.Type, Option<SourceSpan>.Some(span), "C ABI types require a private or pub(ffi) ffi fn signature"));
     }
 
     for parameter in *parameters {
         validate_value(ctx, parameter.type_id, span)?;
 
-        if external && !c_abi_type(&ctx.session.types, parameter.type_id, false, false) {
+        if external && !c_abi_type(ctx.session.types, parameter.type_id, false, false) {
             return Result<(), AnalysisError>.Err(AnalysisError.user(DiagnosticCode.Type, Option<SourceSpan>.Some(span), "extern C parameters require C ABI scalar or cptr<T>"));
         }
 
-        if !ffi && contains_ffi(&ctx.session.types, parameter.type_id, false) {
+        if !ffi && contains_ffi(ctx.session.types, parameter.type_id, false) {
             return Result<(), AnalysisError>.Err(AnalysisError.user(DiagnosticCode.Type, Option<SourceSpan>.Some(span), "C ABI types require a private or pub(ffi) ffi fn signature"));
         }
     }

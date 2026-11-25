@@ -2,16 +2,16 @@ from yianc.analysis.resolution.context import ResolutionContext;
 from yianc.analysis.lowering.checker import ExprChecker;
 from yianc.analysis.session.output import AnalysisOptions, AnalysisOutput, AnalyzedProcedure;
 from yianc.analysis.symbol.model import SymbolKind;
-from yianc.analysis.ty.model import NominalKind;
+from yianc.types.model import NominalKind;
 from yianc.analysis.ty.callable import signature, schedule;
-from yianc.analysis.ty.substitution import has_generic;
-from yianc.analysis.ty.validation import validate_concrete_value;
+from yianc.types.substitution import has_generic;
 from yianc.analysis.passes.entry import select_entry;
 from yianc.common.ids import TypeId, SymbolId, NameId, ScopeId, UnitId;
 from yianc.telemetry.profile import ProfileKind;
 from yianc.telemetry.log import LogLevel;
 from yianc.common.location import SourceSpan;
 from yianc.diagnostics.model import AnalysisError;
+from yianc.analysis.ty.validation import validate_concrete_value;
 from std.core.iter import Iterator, IntoIterator;
 
 fn root_unit(ctx: ResolutionContext&, unit: UnitId) -> bool {
@@ -57,7 +57,7 @@ pub fn check_procedures(ctx: ResolutionContext&, options: AnalysisOptions&) -> R
     let count = ctx.session.definitions.len();
     for index in 0u64..count {
         let procedure = *ctx.session.definitions.at(index).unwrap();
-        if root_unit(ctx, procedure.unit) && !has_generic(&ctx.session.types, procedure.type_id) {
+        if root_unit(ctx, procedure.unit) && !has_generic(ctx.session.types, procedure.type_id) {
             schedule(ctx, procedure.type_id)?;
         }
     }

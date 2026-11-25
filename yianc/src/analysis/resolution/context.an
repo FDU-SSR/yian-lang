@@ -1,7 +1,8 @@
 from yianc.common.ids import UnitId, ScopeId, SymbolId, DefId, TypeId, HirId;
 from yianc.common.location import SourceSpan;
 from yianc.analysis.session.session import AnalysisSession;
-from yianc.analysis.constant.evaluate import ConstantEvaluator, TypeSizeProvider;
+from yianc.analysis.constant.evaluate import ConstantEvaluator;
+from yianc.types.layout import TypeSizeProvider;
 from yianc.frontend.ast.node import Item;
 from yianc.frontend.source import Position, Span;
 from yianc.diagnostics.model import DiagnosticCode, AnalysisError, DiagnosticReporter, Severity;
@@ -46,7 +47,7 @@ pub struct ResolutionContext {
 
 impl ResolutionContext {
     static pub fn new(session: AnalysisSession&, sizes: Option<TypeSizeProvider&>, reporter: Option<DiagnosticReporter&>) -> Result<Self, AnalysisError> {
-        let evaluator = ConstantEvaluator.new(&session.types, &session.hir, sizes);
+        let evaluator = ConstantEvaluator.new(session.types, &session.hir, sizes);
         let scopes = Vec<ScopeId>.new();
         let accepted = false;
         defer {

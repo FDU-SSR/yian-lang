@@ -1,9 +1,9 @@
-from yianc.analysis.ty.store import TypeStore;
-from yianc.analysis.ty.model import NominalKind, StructField, EnumVariant;
-from yianc.analysis.ty.callable import CallableSignature, store_signature;
-from yianc.analysis.ty.properties import store_is_zst;
-from yianc.analysis.ty.queries import struct_fields, enum_variants;
-from yianc.analysis.constant.evaluate import TypeSizeProvider;
+from yianc.types.store import TypeStore;
+from yianc.types.model import NominalKind, StructField, EnumVariant;
+from yianc.types.callable import CallableSignature, store_signature;
+from yianc.types.properties import store_is_zst;
+from yianc.types.queries import struct_fields, enum_variants;
+from yianc.types.layout import TypeSizeProvider;
 from yianc.common.ids import TypeId;
 from yianc.common.location import SourceSpan;
 from yianc.codegen.representation import PointerRepresentation, TypeRepresentation, classify_representation;

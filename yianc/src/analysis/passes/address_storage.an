@@ -10,7 +10,7 @@ from yianc.common.traversal import WalkControl;
 from yianc.diagnostics.model import AnalysisError;
 from yianc.frontend.ast.operator import UnaryOperator;
 from std.collections.hash_set import HashSet;
-from yianc.analysis.ty.store import VOID_TYPE_ID;
+from yianc.types.store import VOID_TYPE_ID;
 
 fn invalid(span: SourceSpan, message: str) -> ! {
     @panic(message)

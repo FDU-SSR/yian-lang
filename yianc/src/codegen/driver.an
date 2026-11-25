@@ -2,7 +2,7 @@ from yianc.config import CompilerConfig, OutputKind;
 from yianc.analysis.session.session import AnalysisSession;
 from yianc.analysis.session.output import AnalysisOutput;
 from yianc.analysis.driver import MiddleEndResult;
-from yianc.analysis.ty.store import TypeStore;
+from yianc.types.store import TypeStore;
 from yianc.codegen.session import TargetLayout, Emission;
 from yianc.codegen.types import BackendTypes;
 from yianc.codegen.cfg.model import CfgModule;
@@ -221,7 +221,7 @@ impl BackendDriver {
     static pub fn new(result: MiddleEndResult&, layout: TargetLayout&, config: CompilerConfig&,
         trace: Option<CompilerTrace&>) -> Self {
         let layout_store: TypeStore& = layout.backend_types().semantic_store();
-        let session_store: TypeStore& = &result.session.types;
+        let session_store: TypeStore& = result.session.types;
         if !same_type_store(layout_store, session_store) {
             @panic("backend layout uses a different type store");
         }

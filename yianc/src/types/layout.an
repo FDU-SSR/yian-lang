@@ -1,0 +1,7 @@
+from yianc.common.ids import TypeId;
+from yianc.diagnostics.model import AnalysisError;
+
+// Target-specific storage sizes are supplied by the backend that owns the layout.
+pub trait TypeSizeProvider {
+    fn size_of(type_id: TypeId) -> Result<u64, AnalysisError>;
+}

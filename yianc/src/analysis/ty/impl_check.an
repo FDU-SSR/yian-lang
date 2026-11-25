@@ -1,5 +1,5 @@
 from yianc.analysis.resolution.context import ResolutionContext;
-from yianc.analysis.ty.substitution import substitute;
+from yianc.types.substitution import substitute;
 from yianc.analysis.ty.display import type_text;
 from yianc.common.ids import ImplId, TypeId, NameId;
 from yianc.common.location import SourceSpan;
@@ -78,7 +78,7 @@ pub fn check_impls(ctx: ResolutionContext&) -> Result<(), AnalysisError> {
                                 return Result<(), AnalysisError>.Err(AnalysisError.user(DiagnosticCode.Resolution, Option<SourceSpan>.Some(record.span), "impl is missing a required trait method"));
                             }
 
-                            let default_method = substitute(&ctx.session.types, required, &substitutions)?;
+                            let default_method = substitute(ctx.session.types, required, &substitutions)?;
                             record.methods.insert(*entry[0], default_method);
                             continue;
                         },
@@ -115,7 +115,7 @@ pub fn check_impls(ctx: ResolutionContext&) -> Result<(), AnalysisError> {
                     let parameter = 0u64;
 
                     while parameter < actual_body.parameters.len() {
-                        let expected = substitute(&ctx.session.types, required_body.parameters[parameter].type_id, &substitutions)?;
+                        let expected = substitute(ctx.session.types, required_body.parameters[parameter].type_id, &substitutions)?;
 
                         if expected != actual_body.parameters[parameter].type_id {
                             return Result<(), AnalysisError>.Err(signature_error(ctx, record.span, *entry[0], *trait_id, record.target));
@@ -124,7 +124,7 @@ pub fn check_impls(ctx: ResolutionContext&) -> Result<(), AnalysisError> {
                         parameter += 1;
                     }
 
-                    if substitute(&ctx.session.types, required_body.result, &substitutions)? != actual_body.result {
+                    if substitute(ctx.session.types, required_body.result, &substitutions)? != actual_body.result {
                         return Result<(), AnalysisError>.Err(signature_error(ctx, record.span, *entry[0], *trait_id, record.target));
                     }
                 }

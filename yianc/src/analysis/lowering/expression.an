@@ -1,10 +1,8 @@
 from yianc.analysis.lowering.checker import ExprChecker, LoopContext;
 from yianc.analysis.lowering.format import FormatDestination, lower_format;
 from yianc.analysis.resolution.types import resolve_type, apply_arguments, builtin_constructor;
-from yianc.analysis.ty.substitution import has_generic;
-from yianc.analysis.ty.relations import compatible, default_type;
-from yianc.analysis.ty.validation import contains_ffi, validate_value;
-from yianc.analysis.ty.model import NominalKind;
+from yianc.types.substitution import has_generic;
+from yianc.types.model import NominalKind;
 from yianc.analysis.symbol.model import SymbolKind;
 from yianc.analysis.hir.node import HirKind, Block as HirBlock, Let as HirLet, If as HirIf, Match as HirMatch, MatchArm as HirMatchArm, FieldAccess, Builtin as HirBuiltin;
 from yianc.analysis.constant.evaluate import ConstantEvaluator;
@@ -13,11 +11,13 @@ from yianc.frontend.ast.node import Expr, Block, Literal, Condition;
 from yianc.frontend.ast.operator import UnaryOperator;
 from yianc.frontend.ast.atoms import BuiltinKind;
 from yianc.diagnostics.model import DiagnosticCode, AnalysisError, AnalysisErrorKind;
+from yianc.analysis.ty.relations import compatible, default_type;
+from yianc.analysis.ty.validation import contains_ffi, validate_value;
 from std.core.iter import Iterator, IntoIterator;
 from yianc.common.location import SourceSpan;
 from yianc.frontend.source import Span;
 from std.core.convert import From;
-from yianc.analysis.ty.store import BOOL_TYPE_ID, ERROR_TYPE_ID, NEVER_TYPE_ID, STR_TYPE_ID, VOID_TYPE_ID;
+from yianc.types.store import BOOL_TYPE_ID, ERROR_TYPE_ID, NEVER_TYPE_ID, STR_TYPE_ID, VOID_TYPE_ID;
 
 impl ExprChecker {
     fn condition(condition: Condition&) -> Result<HirId, AnalysisError> {
@@ -126,7 +126,7 @@ impl ExprChecker {
 
                         if header.kind == NominalKind.Function || header.kind == NominalKind.Method {
                             for argument in *arguments {
-                                if has_generic(&self.ctx.session.types, *argument) {
+                                if has_generic(self.ctx.session.types, *argument) {
                                     return Result<HirId, AnalysisError>.Err(AnalysisError.named(DiagnosticCode.Type,
                                         Option<SourceSpan>.Some(self.ctx.span(self.unit, (*init.unwrap()).span)), "cannot use generic function '",
                                         self.ctx.session.names.text(header.name), "' as a value; a function variable must bind a concrete function"));

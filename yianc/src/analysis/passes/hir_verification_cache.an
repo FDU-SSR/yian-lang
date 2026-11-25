@@ -1,10 +1,11 @@
 from yianc.analysis.resolution.context import ResolutionContext;
-from yianc.analysis.ty.callable import CallableSignature, signature;
+from yianc.types.callable import CallableSignature;
+from yianc.analysis.ty.callable import signature;
 from yianc.analysis.ty.trait_object import object_methods;
-from yianc.analysis.ty.validation import validate_concrete_value;
 from yianc.common.ids import TypeId;
 from yianc.common.location import SourceSpan;
 from yianc.diagnostics.model import AnalysisError;
+from yianc.analysis.ty.validation import validate_concrete_value;
 from std.collections.arena import Arena;
 from std.collections.hash_map import HashMap;
 from std.collections.hash_set import HashSet;

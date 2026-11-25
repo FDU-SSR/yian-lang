@@ -1,6 +1,6 @@
-from yianc.analysis.constant.integer import cast_integer, checked_cast_integer, checked_untyped;
-from yianc.analysis.constant.integer import compare, integer_binary, integer_fits, integer_unary, magnitude, normalized;
-from yianc.analysis.constant.value import ConstEvalError, IntegerValue, IntegerWidth;
+from yianc.common.integer import cast_integer, checked_cast_integer, checked_untyped;
+from yianc.common.integer import compare, integer_binary, integer_fits, integer_unary, magnitude, normalized;
+from yianc.common.integer_value import ConstEvalError, IntegerValue, IntegerWidth;
 from yianc.frontend.ast.operator import BinaryOperator, UnaryOperator;
 
 fn main() {

@@ -1,13 +1,13 @@
 from yianc.analysis.lowering.checker import ExprChecker;
 from yianc.analysis.resolution.types import resolve_type;
-from yianc.analysis.ty.relations import default_type;
-from yianc.analysis.ty.method_lookup import lookup_method_args;
 from yianc.analysis.ty.callable import signature;
 from yianc.analysis.hir.node import HirKind;
 from yianc.common.ids import TypeId, HirId;
 from yianc.frontend.ast.node import Expr, TypeSource, Argument;
 from yianc.frontend.source import Span;
 from yianc.diagnostics.model import AnalysisError;
+from yianc.analysis.ty.relations import default_type;
+from yianc.analysis.ty.method_lookup import lookup_method_args;
 from std.core.iter import Iterator, IntoIterator;
 
 impl ExprChecker {

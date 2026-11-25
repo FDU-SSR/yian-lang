@@ -1,5 +1,5 @@
 from yianc.analysis.resolution.context import ResolutionContext;
-from yianc.analysis.ty.model import StructField;
+from yianc.types.model import StructField;
 from yianc.common.ids import TypeId;
 from yianc.diagnostics.model import AnalysisError;
 

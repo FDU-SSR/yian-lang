@@ -20,7 +20,7 @@ LLVM 代码生成和原生链接。
 
 | 章 | 标题 | 对应源文件 |
 |----|------|-----------|
-| [05](dev/05.type_system.md) | 类型系统 | `yianc/src/analysis/ty/` |
+| [05](dev/05.type_system.md) | 类型系统 | `yianc/src/types/`、`yianc/src/analysis/ty/` |
 | [06](dev/06.lower_expr.md) | 表达式 Lowering | `yianc/src/analysis/lowering/` |
 | [07](dev/07.lower_call.md) | 调用 Lowering | `yianc/src/analysis/lowering/calls.an`、`methods.an` |
 | [08](dev/08.hir.md) | HIR IR | `yianc/src/analysis/hir/` |

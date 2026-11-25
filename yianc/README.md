@@ -38,11 +38,12 @@ CFG 和 LLVM IR，并按 `-t` 输出可执行文件、`.ll` 或 `.bc`。可执�
 | `src/preprocess.an`、`src/input_error.an` | 包图加载、源码根/信任准备、源码收集和输入诊断 |
 | `src/frontend/driver.an`、`src/analysis/driver.an`、`src/codegen/driver.an` | 各阶段的组合入口：pass 顺序、CFG/LLVM 与发布 |
 | `src/frontend/` | 源码/单元表、词法、语法、AST、去糖、遍历和前端转储 |
-| `src/analysis/` | 权限分类、解析、类型、符号、HIR、常量求值、lowering、检查 pass 和 HIR 转储 |
+| `src/types/` | 共享类型模型、结构驻留存储、替换、常量表达式、显示/属性查询和目标尺寸服务接口 |
+| `src/analysis/` | 权限分类、解析、类型登记与关系、符号、HIR、常量求值、lowering、检查 pass 和 HIR 转储 |
 | `src/codegen/` | CFG、LLVM lowering、指针安全检查、原生链接和阶段转储 |
 | `src/telemetry/` | 日志、计时与 profile 记录 |
 | `src/host.an`、`src/roots.an` | 主机/安装资源定位、标准库源码根与运行时资源根 |
-| `src/common/` | 会话内 ID、源码位置和共享遍历控制 |
+| `src/common/` | 会话内 ID、源码位置、名字驻留、共享整数值和共享遍历控制 |
 | `src/diagnostics/` | 诊断模型、渲染和 stderr 输出 |
 | `src/package/` | v2/v3 包图校验与源码来源信任 |
 | `native/` | LLVM C shim 与 Unicode 字符表 |

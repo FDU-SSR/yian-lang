@@ -1,6 +1,5 @@
 from yianc.analysis.lowering.checker import ExprChecker;
 from yianc.analysis.hir.node import HirKind, Tuple as HirTuple, Array as HirArray, ArrayRepeat as HirArrayRepeat;
-from yianc.analysis.ty.relations import default_type, compatible;
 from yianc.analysis.constant.evaluate import ConstantEvaluator;
 from yianc.analysis.ty.properties import is_zst;
 from yianc.analysis.hir.node import DynBuffer;
@@ -8,8 +7,9 @@ from yianc.common.ids import TypeId, HirId;
 from yianc.frontend.ast.node import Expr;
 from yianc.frontend.source import Span;
 from yianc.diagnostics.model import AnalysisError;
+from yianc.analysis.ty.relations import default_type, compatible;
 from std.core.iter import Iterator, IntoIterator;
-from yianc.analysis.ty.store import NEVER_TYPE_ID, U64_TYPE_ID;
+from yianc.types.store import NEVER_TYPE_ID, U64_TYPE_ID;
 
 impl ExprChecker {
     pub fn dynamic_buffer(span: Span, size: Expr&, element: Expr&) -> Result<HirId, AnalysisError> {

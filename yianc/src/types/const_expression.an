@@ -1,6 +1,6 @@
-from yianc.analysis.ty.store import TypeStore;
-from yianc.analysis.constant.value import IntegerValue;
-from yianc.analysis.constant.integer import integer_unary, integer_binary, magnitude;
+from yianc.types.store import TypeStore;
+from yianc.common.integer_value import IntegerValue;
+from yianc.common.integer import integer_unary, integer_binary, magnitude;
 from yianc.common.ids import TypeId;
 from yianc.common.location import SourceSpan;
 from yianc.frontend.ast.operator import UnaryOperator, BinaryOperator;

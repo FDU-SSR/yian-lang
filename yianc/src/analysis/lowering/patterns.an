@@ -1,8 +1,7 @@
 from yianc.analysis.lowering.checker import ExprChecker;
 from yianc.analysis.resolution.types import resolve_type;
-from yianc.analysis.ty.substitution import substitute;
+from yianc.types.substitution import substitute;
 from yianc.analysis.ty.callable import instance_substitutions;
-from yianc.analysis.ty.aggregate import payload_fields;
 from yianc.analysis.symbol.model import SymbolKind, Symbol;
 from yianc.analysis.hir.pattern import PatternNode, PatternKind, BindPattern, EnumPattern, TuplePattern, StructPattern, LiteralPattern, OrPattern, RangePattern, SequencePattern;
 from yianc.analysis.hir.node import HirKind, Match as HirMatch, MatchArm, PatternLet;
@@ -14,9 +13,10 @@ from yianc.frontend.ast.node import Pattern, PatternArguments, PatternLet as Syn
 from yianc.frontend.source import Span;
 from yianc.frontend.ast.operator import UnaryOperator, BinaryOperator;
 from yianc.diagnostics.model import AnalysisError, DiagnosticCode;
+from yianc.analysis.ty.aggregate import payload_fields;
 from std.core.iter import Iterator, IntoIterator;
 from std.collections.hash_map import HashMap;
-from yianc.analysis.ty.store import ERROR_TYPE_ID, NEVER_TYPE_ID, STR_TYPE_ID, VOID_TYPE_ID;
+from yianc.types.store import ERROR_TYPE_ID, NEVER_TYPE_ID, STR_TYPE_ID, VOID_TYPE_ID;
 
 impl ExprChecker {
     fn bindings(id: PatternId, names: HashMap<NameId, SymbolId>&, replacements: Option<HashMap<SymbolId, SymbolId>&>) -> Result<(), AnalysisError> {
@@ -327,7 +327,7 @@ impl ExprChecker {
                             defer descriptors.drop();
 
                             for field in descriptors {
-                                types.push(substitute(&self.ctx.session.types, field.type_id, &substitutions)?);
+                                types.push(substitute(self.ctx.session.types, field.type_id, &substitutions)?);
                             }
 
                             let fields = Vec<(u64, PatternId)>.new();
@@ -429,7 +429,7 @@ impl ExprChecker {
                                             }
 
                                             self.check_field_access(expected, *field, value.data.name.span)?;
-                                            let type_id = substitute(&self.ctx.session.types, field.type_id, &substitutions)?;
+                                            let type_id = substitute(self.ctx.session.types, field.type_id, &substitutions)?;
                                             fields.push((field.index, self.pattern(value.data.pattern, type_id, borrowed)?));
                                             field_spans.push(Option<SourceSpan>.Some(self.ctx.span(self.unit, value.data.name.span)));
                                             found = true;
@@ -453,7 +453,7 @@ impl ExprChecker {
                                 let index = 0u64;
 
                                 while index < values.len() {
-                                    let type_id = substitute(&self.ctx.session.types, body.fields[index].type_id, &substitutions)?;
+                                    let type_id = substitute(self.ctx.session.types, body.fields[index].type_id, &substitutions)?;
                                     fields.push((index, self.pattern(values[index], type_id, borrowed)?));
                                     field_spans.push(Option<SourceSpan>.None);
                                     index += 1;

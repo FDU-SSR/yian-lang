@@ -1,11 +1,11 @@
 from yianc.analysis.lowering.checker import ExprChecker;
 from yianc.analysis.resolution.types import resolve_type, resolve_alias;
-from yianc.analysis.ty.validation import contains_ffi;
-from yianc.analysis.ty.substitution import has_generic;
+from yianc.types.substitution import has_generic;
 from yianc.analysis.symbol.model import SymbolKind;
 from yianc.common.ids import TypeId;
 from yianc.frontend.ast.node import TypeSyntax;
 from yianc.diagnostics.model import AnalysisError;
+from yianc.analysis.ty.validation import contains_ffi;
 from std.core.iter import Iterator, IntoIterator;
 
 impl ExprChecker {
@@ -13,7 +13,7 @@ impl ExprChecker {
     // Explicit C syntax and aliases exposing C types require an FFI function.
     pub fn local_type(syntax: TypeSyntax&) -> Result<TypeId, AnalysisError> {
         let type_id = resolve_type(self.ctx, self.unit, self.scope, syntax)?;
-        if has_generic(&self.ctx.session.types, type_id) {
+        if has_generic(self.ctx.session.types, type_id) {
             return Result<TypeId, AnalysisError>.Err(self.error(syntax.span, "type requires concrete generic arguments"));
         }
 
@@ -47,7 +47,7 @@ impl ExprChecker {
                         let record = *self.ctx.session.symbols.get(symbol).unwrap();
                         if record.kind == SymbolKind.Alias {
                             let resolved = resolve_alias(self.ctx, symbol)?;
-                            return Result<bool, AnalysisError>.Ok(contains_ffi(&self.ctx.session.types, resolved, false));
+                            return Result<bool, AnalysisError>.Ok(contains_ffi(self.ctx.session.types, resolved, false));
                         }
                     },
                     None => {},

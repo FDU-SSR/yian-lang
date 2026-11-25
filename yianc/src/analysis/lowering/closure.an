@@ -1,9 +1,8 @@
 from yianc.analysis.lowering.checker import ExprChecker;
 from yianc.analysis.resolution.definitions import parameters;
 from yianc.analysis.resolution.types import resolve_type;
-from yianc.analysis.ty.model import DefinitionHeader, NominalKind, DefinitionBody, CallableDefinition, AggregateDefinition, StructField, AccessMode, CapturedVar, Parameter;
+from yianc.types.model import DefinitionHeader, NominalKind, DefinitionBody, CallableDefinition, AggregateDefinition, StructField, AccessMode, CapturedVar, Parameter;
 from yianc.analysis.ty.callable import schedule;
-from yianc.analysis.ty.relations import default_type;
 from yianc.analysis.definition.registry import Procedure, DefinitionKind;
 from yianc.analysis.symbol.model import Symbol, SymbolKind;
 from yianc.analysis.hir.node import HirKind, Closure;
@@ -12,9 +11,10 @@ from yianc.common.location import SourceSpan;
 from yianc.frontend.ast.node import CaptureItem, Parameter as SyntaxParameter, TypeSyntax, Block;
 from yianc.frontend.source import Span;
 from yianc.diagnostics.model import AnalysisError;
+from yianc.analysis.ty.relations import default_type;
 from std.collections.hash_map import HashMap;
 from std.core.iter import Iterator, IntoIterator;
-from yianc.analysis.ty.store import VOID_TYPE_ID;
+from yianc.types.store import VOID_TYPE_ID;
 
 impl ExprChecker {
     pub fn closure(span: Span, captures: Vec<CaptureItem&>&, syntax_parameters: Vec<SyntaxParameter>&, return_type: Option<TypeSyntax&>&, body: Block&) -> Result<HirId, AnalysisError> {

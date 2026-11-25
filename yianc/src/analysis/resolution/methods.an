@@ -4,17 +4,17 @@ from yianc.analysis.resolution.declarations import collect_generics, has_attr;
 from yianc.analysis.resolution.definitions import parameters, annotations;
 from yianc.analysis.definition.registry import Procedure, DefinitionKind;
 from yianc.analysis.symbol.model import Symbol, SymbolKind;
-from yianc.analysis.ty.model import DefinitionHeader, NominalKind, DefinitionBody, CallableDefinition;
-from yianc.analysis.ty.impl_registry import ImplRecord, ImplCondition;
-from yianc.analysis.ty.validation import contains_ffi;
+from yianc.types.model import DefinitionHeader, NominalKind, DefinitionBody, CallableDefinition;
 from yianc.common.ids import UnitId, ScopeId, TypeId, DefId, NameId, SymbolId;
 from yianc.common.location import SourceSpan;
 from yianc.frontend.ast.node import Item, MethodDecl, Block;
 from yianc.frontend.ast.atoms import AttrKind;
 from yianc.diagnostics.model import DiagnosticCode, AnalysisError, AnalysisErrorKind, AnalysisStage;
+from yianc.analysis.ty.impl_registry import ImplRecord, ImplCondition;
+from yianc.analysis.ty.validation import contains_ffi;
 from std.collections.hash_map import HashMap;
 from std.core.iter import Iterator, IntoIterator;
-from yianc.analysis.ty.store import VOID_TYPE_ID;
+from yianc.types.store import VOID_TYPE_ID;
 
 fn drop_conditions(conditions: Vec<ImplCondition>&) {
     for condition in *conditions {
@@ -99,10 +99,10 @@ pub fn resolve_method(ctx: ResolutionContext&, unit: UnitId, parent: ScopeId, re
     let params = parameters(ctx, unit, scope, &syntax.data.params)?;
 
     if has_attr(&syntax.data.attrs, AttrKind.Pub) {
-        let exposed = contains_ffi(&ctx.session.types, result, false);
+        let exposed = contains_ffi(ctx.session.types, result, false);
 
         for parameter in params {
-            if contains_ffi(&ctx.session.types, parameter.type_id, false) {
+            if contains_ffi(ctx.session.types, parameter.type_id, false) {
                 exposed = true;
             }
         }

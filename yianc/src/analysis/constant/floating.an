@@ -1,5 +1,5 @@
-from yianc.analysis.constant.integer import magnitude, is_negative, normalized, integer_fits;
-from yianc.analysis.constant.value import IntegerValue, IntegerWidth, ConstEvalError;
+from yianc.common.integer import magnitude, is_negative, normalized, integer_fits;
+from yianc.common.integer_value import IntegerValue, IntegerWidth, ConstEvalError;
 from yianc.frontend.ast.operator import BinaryOperator;
 from std.num.f64 import from_bits, to_bits;
 

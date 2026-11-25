@@ -1,7 +1,7 @@
-from yianc.analysis.ty.store import TypeStore;
-from yianc.analysis.ty.model import StructField, EnumVariant;
-from yianc.analysis.ty.callable import store_substitutions;
-from yianc.analysis.ty.substitution import substitute;
+from yianc.types.store import TypeStore;
+from yianc.types.model import StructField, EnumVariant;
+from yianc.types.callable import store_substitutions;
+from yianc.types.substitution import substitute;
 from yianc.common.ids import TypeId;
 from yianc.diagnostics.model import AnalysisError;
 from std.core.iter import Iterator, IntoIterator;

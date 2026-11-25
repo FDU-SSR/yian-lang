@@ -1,7 +1,7 @@
 from yianc.codegen.llvm.module import FunctionLowering;
 from yianc.codegen.cfg.ids import ValueId;
 from yianc.codegen.error import CodegenError;
-from yianc.analysis.ty.queries import enum_variants;
+from yianc.types.queries import enum_variants;
 from yianc.common.ids import TypeId;
 from llvm.ir import IrValue, IntCompare;
 from std.core.iter import Iterator, IntoIterator;
