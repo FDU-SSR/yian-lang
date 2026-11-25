@@ -1,6 +1,6 @@
 from yianc.analysis.session.session import AnalysisSession;
 from yianc.analysis.session.output import AnalysisOptions, AnalysisOutput;
-from yianc.codegen.session import BackendOptions, BackendSession;
+from yianc.codegen.session import TargetLayout;
 from yianc.frontend.driver import FrontendDriver;
 from yianc.telemetry.trace import CompilerTrace;
 from yianc.analysis.driver import MiddleEndDriver;
@@ -139,39 +139,45 @@ pub fn analyze(documents: Vec<SourceDocument>&, trust: SourceTrust, packages: Op
             return Result<CompilerAnalysis, CompilerFailure>.Err(CompilerFailure.single(&error, frontend.source_table()));
         },
     };
-    // Argument passing is a shallow copy: the middle-end session owns this table,
-    // and the local handle remains valid for diagnostics while that session lives.
-    let middle = MiddleEndDriver.new(units, raw_pointers, trust, packages);
+    // The session owns the unit table; the layout borrows its type store for target-accurate sizes.
+    let session = dyn AnalysisSession.new(units, raw_pointers, trust, packages);
     inputs_transferred = true;
-    defer middle.drop();
-    let backend_value = match BackendSession.new(middle.analysis_session(), BackendOptions(raw_pointers, 0u8, Option<str>.None, true, true)) {
+    let layout = match TargetLayout.new(&session.types, raw_pointers, 0u8, false, Option<CompilerTrace&>.None) {
         Ok(value) => value,
         Err(error) => {
             defer error.drop();
-            return Result<CompilerAnalysis, CompilerFailure>.Err(CompilerFailure.single(&error, &units));
+            let failure = CompilerFailure.single(&error, &units);
+            session.drop();
+            del session;
+            return Result<CompilerAnalysis, CompilerFailure>.Err(failure);
         },
     };
-    let backend = Option<BackendSession>.Some(backend_value);
-    defer { match backend.take() { Some(value) => value.drop(), None => {}, } };
     let reporter = LspReporter(&units, Vec<LspDiagnostic>.new());
     let transferred = false;
     defer { if !transferred { release_diagnostics(&reporter.warnings); } };
     let options = AnalysisOptions.new();
     options.require_entry = false;
     options.entry_optional = true;
-    options.recover = false;
     options.verify_hir = true;
-    options.sizes = Option<TypeSizeProvider&>.Some(match &backend { Some(value) => value.size_provider(), None => @panic("backend session was released") });
-    let output = match middle.run(options, &reporter) {
-        Ok(Some(value)) => value,
-        Ok(None) => @panic("strict analysis returned no output"),
+    options.sizes = Option<TypeSizeProvider&>.Some(layout.backend_types());
+    let middle = MiddleEndDriver.new(session, options, &reporter);
+    defer middle.drop();
+    let layout_live = true;
+    defer { if layout_live { layout.drop(); } };
+    let result = match middle.run() {
+        Ok(value) => value,
         Err(error) => {
             defer error.drop();
             return Result<CompilerAnalysis, CompilerFailure>.Err(CompilerFailure.single(&error, &units));
         },
     };
-    match backend.take() { Some(value) => value.drop(), None => {}, }
-    let session = middle.take_session();
+    // The layout's type cache borrows the session; release it before transferring session contents.
+    layout.drop();
+    layout_live = false;
+    // Abandon the result shell after moving its session contents and output into CompilerAnalysis.
+    let analysis = CompilerAnalysis(*result.session, result.output,
+        Option<Vec<LspDiagnostic>>.Some(reporter.warnings));
+    del result.session;
     transferred = true;
-    Result<CompilerAnalysis, CompilerFailure>.Ok(CompilerAnalysis(session, output, Option<Vec<LspDiagnostic>>.Some(reporter.warnings)))
+    Result<CompilerAnalysis, CompilerFailure>.Ok(analysis)
 }

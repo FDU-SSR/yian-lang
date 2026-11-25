@@ -11,7 +11,7 @@ from yianc.common.ids import PatternId, TypeId, HirId;
 from yianc.common.location import SourceSpan;
 from yianc.common.traversal import WalkControl;
 from yianc.frontend.ast.atoms import MatchArmOrigin;
-from yianc.diagnostics.model import AnalysisError, AnalysisErrorKind, DiagnosticCode;
+from yianc.diagnostics.model import AnalysisError, DiagnosticCode;
 from std.collections.sort import sort_by;
 from std.core.iter import Iterator, IntoIterator;
 from std.collections.hash_set import HashSet;
@@ -1154,18 +1154,13 @@ impl HirVisitor for CoverageChecker {
     }
 }
 
-pub fn check_coverage(ctx: ResolutionContext&, output: AnalysisOutput&, recover: bool) -> Result<(), AnalysisError> {
+pub fn check_coverage(ctx: ResolutionContext&, output: AnalysisOutput&) -> Result<(), AnalysisError> {
     let checker = CoverageChecker(ctx, output);
 
     for procedure in output.procedures {
         match walk_expr(&ctx.session.hir, procedure.root, &checker) {
             Ok(_) => {},
-            Err(problem) => {
-                if recover && problem.kind == AnalysisErrorKind.Unsupported { problem.kind = AnalysisErrorKind.User; }
-                if !recover || problem.kind != AnalysisErrorKind.User { return Result<(), AnalysisError>.Err(problem); }
-                ctx.report_error(&problem);
-                problem.drop();
-            },
+            Err(problem) => return Result<(), AnalysisError>.Err(problem),
         }
     }
 

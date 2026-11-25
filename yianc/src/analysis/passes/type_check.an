@@ -11,7 +11,7 @@ from yianc.common.ids import TypeId, SymbolId, NameId, ScopeId, UnitId;
 from yianc.telemetry.profile import ProfileKind;
 from yianc.telemetry.log import LogLevel;
 from yianc.common.location import SourceSpan;
-from yianc.diagnostics.model import AnalysisError, AnalysisErrorKind, DiagnosticCode;
+from yianc.diagnostics.model import AnalysisError;
 from std.core.iter import Iterator, IntoIterator;
 
 fn root_unit(ctx: ResolutionContext&, unit: UnitId) -> bool {
@@ -29,8 +29,6 @@ fn root_unit(ctx: ResolutionContext&, unit: UnitId) -> bool {
 }
 
 pub fn check_procedures(ctx: ResolutionContext&, options: AnalysisOptions&) -> Result<AnalysisOutput, AnalysisError> {
-    let diagnostics = Vec<DiagnosticKey>.new();
-    defer diagnostics.drop();
     let output = AnalysisOutput.new();
     let accepted = false;
     defer {
@@ -55,7 +53,7 @@ pub fn check_procedures(ctx: ResolutionContext&, options: AnalysisOptions&) -> R
 
     // Match the reference worklist: entry and reachable calls first, then all concrete root definitions.
     match output.entry { Some(entry) => { schedule(ctx, entry)?; }, None => {}, }
-    drain(ctx, options, &output, &diagnostics)?;
+    drain(ctx, options, &output)?;
     let count = ctx.session.definitions.len();
     for index in 0u64..count {
         let procedure = *ctx.session.definitions.at(index).unwrap();
@@ -63,12 +61,12 @@ pub fn check_procedures(ctx: ResolutionContext&, options: AnalysisOptions&) -> R
             schedule(ctx, procedure.type_id)?;
         }
     }
-    drain(ctx, options, &output, &diagnostics)?;
+    drain(ctx, options, &output)?;
     accepted = true;
     Result<AnalysisOutput, AnalysisError>.Ok(output)
 }
 
-fn drain(ctx: ResolutionContext&, options: AnalysisOptions&, output: AnalysisOutput&, diagnostics: Vec<DiagnosticKey>&) -> Result<(), AnalysisError> {
+fn drain(ctx: ResolutionContext&, options: AnalysisOptions&, output: AnalysisOutput&) -> Result<(), AnalysisError> {
     while true {
         let type_id = match ctx.session.worklist.next() {
             Some(value) => value,
@@ -86,17 +84,7 @@ fn drain(ctx: ResolutionContext&, options: AnalysisOptions&, output: AnalysisOut
         };
         let checked = match check_one(ctx, type_id, options) {
             Ok(value) => value,
-            Err(problem) => {
-                if options.recover && problem.kind == AnalysisErrorKind.Unsupported { problem.kind = AnalysisErrorKind.User; }
-                if !options.recover || problem.kind != AnalysisErrorKind.User {
-                    return Result<(), AnalysisError>.Err(problem);
-                }
-                if !duplicate(diagnostics, &problem) { ctx.report_error(&problem); }
-                problem.drop();
-                ctx.session.worklist.finish(type_id, true)?;
-                finished = true;
-                continue;
-            },
+            Err(problem) => return Result<(), AnalysisError>.Err(problem),
         };
         let definition = checked.definition;
         output.procedures.push(checked);
@@ -215,21 +203,4 @@ fn check_one(ctx: ResolutionContext&, type_id: TypeId, options: AnalysisOptions&
     root = checker.coerce(root, callable.result)?;
     transferred = true;
     Result<AnalyzedProcedure, AnalysisError>.Ok(AnalyzedProcedure(procedure.definition, type_id, parameters, root, procedure.unit, captures))
-}
-
-struct DiagnosticKey {
-    code: DiagnosticCode,
-    unit: UnitId,
-    row: u64,
-    column: u64,
-}
-
-fn duplicate(diagnostics: Vec<DiagnosticKey>&, candidate: AnalysisError&) -> bool {
-    let location = match &candidate.location { Source(value) => *value, _ => return false };
-    for diagnostic in *diagnostics {
-        if diagnostic.code == candidate.code && diagnostic.unit == location.unit &&
-        diagnostic.row == location.span.start.row && diagnostic.column == location.span.start.column { return true; }
-    }
-    diagnostics.push(DiagnosticKey(candidate.code, location.unit, location.span.start.row, location.span.start.column));
-    false
 }

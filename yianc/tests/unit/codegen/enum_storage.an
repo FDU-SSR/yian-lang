@@ -4,7 +4,7 @@ from std.core.fs import resolve;
 // The probe builds a valid graph with EnumInitAt, EnumTagAt, EnumFieldAt and
 // EnumCopyAt, then rejects malformed graphs before LLVM lowering.
 
-from yianc.analysis.session.output import AnalysisOptions, AnalysisOutput;
+from yianc.analysis.session.output import AnalysisOptions;
 from yianc.analysis.session.session import AnalysisSession;
 from yianc.frontend.driver import FrontendDriver;
 from yianc.telemetry.trace import CompilerTrace;
@@ -318,30 +318,29 @@ fn check_tag_type(session: AnalysisSession&, fixture: Fixture&, location: Source
 }
 
 // The probe document supplies the session; the hand-built CFG is the tested graph.
-fn probe_driver() -> MiddleEndDriver {
+fn probe_session() -> AnalysisSession* {
     let trace = CompilerTrace.disabled();
     defer trace.drop();
     let frontend = FrontendDriver.new(load_source("/tmp/enum-storage-probe.an", "fn main() {}\n"), false, &trace);
     defer frontend.drop();
-    let session = match frontend.run() {
+    let units = match frontend.run() {
         Ok(value) => value,
         Err(error) => { error.drop(); @panic("enum storage probe preparation failed"); },
     };
-    MiddleEndDriver.new(session, false, trust(), Option<PackageMap>.None)
+    dyn AnalysisSession.new(units, false, trust(), Option<PackageMap>.None)
 }
 
 // One malformed graph per process; the invariant panic terminates the child.
 fn run_negative(index: u64) {
-    let driver = probe_driver();
-    defer driver.drop();
     let reporter = IgnoreDiagnostics();
-    let output = match driver.run(AnalysisOptions.new(), &reporter) {
-        Ok(Some(value)) => value,
-        Ok(None) => @panic("enum storage probe analysis produced no output"),
-        Err(error) => { error.drop(); @panic("enum storage probe analysis failed"); },
+    let driver = MiddleEndDriver.new(probe_session(), AnalysisOptions.new(), &reporter);
+    defer driver.drop();
+    let result = match driver.run() {
+        Ok(value) => value,
+        Err(_) => @panic("enum storage probe analysis failed"),
     };
-    defer output.drop();
-    let session = driver.analysis_session();
+    defer result.drop();
+    let session = result.session;
     let location = SourceSpan(UnitId(0u64), Span(Position(0u64, 0u64), Position(0u64, 0u64)));
     let fixture = build_types(session, location);
     match index {
@@ -396,16 +395,15 @@ fn main() {
     for argument in arguments { argument.drop(); }
     arguments.drop();
 
-    let driver = probe_driver();
-    defer driver.drop();
     let reporter = IgnoreDiagnostics();
-    let output = match driver.run(AnalysisOptions.new(), &reporter) {
-        Ok(Some(value)) => value,
-        Ok(None) => @panic("enum storage probe analysis produced no output"),
-        Err(error) => { error.drop(); @panic("enum storage probe analysis failed"); },
+    let driver = MiddleEndDriver.new(probe_session(), AnalysisOptions.new(), &reporter);
+    defer driver.drop();
+    let result = match driver.run() {
+        Ok(value) => value,
+        Err(_) => @panic("enum storage probe analysis failed"),
     };
-    defer output.drop();
-    let session = driver.analysis_session();
+    defer result.drop();
+    let session = result.session;
 
     let location = SourceSpan(UnitId(0u64), Span(Position(0u64, 0u64), Position(0u64, 0u64)));
     let fixture = build_types(session, location);

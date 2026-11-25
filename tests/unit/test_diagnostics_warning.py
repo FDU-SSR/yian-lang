@@ -1,4 +1,4 @@
-"""Focused native probes for non-fatal warnings and shared diagnostic layout.
+"""Focused native probes for immediate warnings, strict error termination, and shared diagnostic layout.
 
 The driver requires an explicit native prefix through
 ``YIAN_WARNING_TEST_PREFIX``. It never refreshes tools, discovers other
@@ -29,6 +29,26 @@ fn main() {
 ERROR_SOURCE = """\
 fn main() {
     let value: i32 = "bad";
+}
+"""
+
+MULTIPLE_ERROR_SOURCE = """\
+fn first() {
+    let value: i32 = true;
+}
+
+fn second() {
+    let other: bool = 1;
+}
+
+fn main() {}
+"""
+
+WARNING_ERROR_SOURCE = """\
+from std.core.option import Option;
+
+fn main() {
+    let value: i32 = true;
 }
 """
 
@@ -132,6 +152,33 @@ class WarningDiagnosticTests(unittest.TestCase):
         completed = self.compiler(source, "--check")
         self.assertNotEqual(completed.returncode, 0)
         self.assert_error_block(completed.stderr, source)
+
+    def test_check_and_compile_stop_at_the_same_first_error(self) -> None:
+        source = self.source("multiple_errors.an", MULTIPLE_ERROR_SOURCE)
+        checked = self.compiler(source, "--check")
+        compiled = self.compiler(source, "-t", "ll", "-o", str(self.work / "multiple.ll"))
+        self.assertEqual(checked.returncode, 1, checked.stderr)
+        self.assertEqual(compiled.returncode, 1, compiled.stderr)
+        self.assertEqual(checked.stderr.count("error["), 1, checked.stderr)
+        self.assertEqual(compiled.stderr, checked.stderr)
+
+    def test_warning_precedes_later_error_in_both_modes(self) -> None:
+        source = self.source("warning_error.an", WARNING_ERROR_SOURCE)
+        cases = {
+            "check": ("--check",),
+            "compile": ("-t", "ll", "-o", str(self.work / "warning_error.ll")),
+        }
+        for name, arguments in cases.items():
+            with self.subTest(name=name):
+                completed = self.compiler(source, *arguments)
+                self.assertEqual(completed.returncode, 1, completed.stderr)
+                self.assertEqual(completed.stderr.count("warning["), 1, completed.stderr)
+                self.assertEqual(completed.stderr.count("error["), 1, completed.stderr)
+                self.assertLess(
+                    completed.stderr.index("warning[W502]"),
+                    completed.stderr.index("error[E401]"),
+                    completed.stderr,
+                )
 
     def test_no_warning_for_aliases_non_prelude_and_user_symbols(self) -> None:
         cases = {

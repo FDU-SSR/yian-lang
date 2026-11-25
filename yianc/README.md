@@ -11,7 +11,7 @@ YIAN 编写，由原生 `anx` 构建为不依赖 Python 的 ELF 可执行文件�
 
 原生 `yianc` 提供两类入口：`--check` 完成前端与中端检查，不生成产物；默认编译继续下降为
 CFG 和 LLVM IR，并按 `-t` 输出可执行文件、`.ll` 或 `.bc`。可执行文件由 C 工具链链接。诊断按阶段
-返回具体 `UserDiagnostic`，可恢复警告通过同步 reporter 报告，内部不变量违反在发现处 panic。
+返回具体 `UserDiagnostic`，warning 通过同步 reporter 立即报告；用户错误终止分析并沿 `Result` 返回，内部不变量违反在发现处 panic。
 
 ## 包与依赖
 

@@ -1,5 +1,4 @@
-from yianc.analysis.session.session import AnalysisSession;
-from yianc.analysis.constant.evaluate import TypeSizeProvider;
+from yianc.analysis.ty.store import TypeStore;
 from yianc.codegen.types import BackendTypes;
 from yianc.codegen.error import CodegenError;
 from yianc.config import OutputKind;
@@ -7,14 +6,6 @@ from yianc.telemetry.trace import CompilerTrace;
 from yianc.telemetry.profile import ProfileKind;
 from llvm.core import llvm_version;
 from llvm.object import Module;
-
-pub struct BackendOptions {
-    pub raw_pointers: bool,
-    pub optimization: u8,
-    pub runtime_profile_dir: Option<str>,
-    pub cfg_inline: bool,
-    pub fat_check_elimination: bool,
-}
 
 pub struct EmitOptions {
     pub target: OutputKind,
@@ -41,7 +32,7 @@ impl TargetIdentity {
     pub fn llvm_version() -> (u32, u32, u32) { self.llvm_version }
 }
 
-// target_identity reads the same target gate as BackendSession without analyzing source.
+// target_identity reads the same target gate as TargetLayout without analyzing source.
 pub fn target_identity() -> Result<TargetIdentity, String> {
     let module = match Module.try_new("yian-target", 0u8) {
         Ok(value) => value,
@@ -99,29 +90,26 @@ fn end_profile(trace: Option<CompilerTrace&>, pass_id: str, success: bool) {
 }
 
 // LLVM's owning module has a stable heap address across shallow return-value transfers.
-pub struct BackendSession {
-    analysis: AnalysisSession&,
+// The caller owns the layout and keeps the analysis type store alive for every borrow.
+pub struct TargetLayout {
     module: Module*,
     types: BackendTypes,
 }
 
-impl BackendSession {
-    static pub fn new(analysis: AnalysisSession&, options: BackendOptions) -> Result<Self, CodegenError> {
-        Self.new_observed(analysis, options, Option<CompilerTrace&>.None)
-    }
-
-    static pub fn new_observed(analysis: AnalysisSession&, options: BackendOptions, trace: Option<CompilerTrace&>) -> Result<Self, CodegenError> {
+impl TargetLayout {
+    static pub fn new(store: TypeStore&, raw_pointers: bool, optimization: u8,
+        runtime_profile: bool, trace: Option<CompilerTrace&>) -> Result<Self, CodegenError> {
         start_profile(trace, "backend.initialize");
         let success = false;
         defer end_profile(trace, "backend.initialize", success);
-        if options.raw_pointers != analysis.raw_pointers || options.optimization > 3u8 {
+        if optimization > 3u8 {
             @panic("inconsistent backend configuration");
         }
-        let value = match Module.try_new("yian", options.optimization) {
+        let value = match Module.try_new("yian", optimization) {
             Ok(value) => value,
             Err(message) => return Result<Self, CodegenError>.Err(CodegenError.llvm_error(message)),
         };
-        if options.runtime_profile_dir.is_some() {
+        if runtime_profile {
             value.set_merge_functions(false);
         }
         let accepted = false;
@@ -137,19 +125,17 @@ impl BackendSession {
             return Result<Self, CodegenError>.Err(CodegenError.target("backend requires Linux x86-64 LP64"));
         }
         let module = dyn value;
-        let types = BackendTypes.new(&analysis.types, &*module, options.raw_pointers);
+        let types = BackendTypes.new(store, &*module, raw_pointers);
         accepted = true;
         success = true;
-        Result<Self, CodegenError>.Ok(Self(analysis, module, types))
+        Result<Self, CodegenError>.Ok(Self(module, types))
     }
 
-    pub fn analysis_session() -> AnalysisSession& { self.analysis }
     pub fn backend_types() -> BackendTypes& { &self.types }
     pub fn llvm_module() -> Module& { &*self.module }
-    pub fn size_provider() -> TypeSizeProvider& { &self.types }
 }
 
-impl Drop for BackendSession {
+impl Drop for TargetLayout {
     pub fn drop() {
         self.types.drop();
         self.module.close();

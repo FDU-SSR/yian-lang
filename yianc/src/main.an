@@ -1,11 +1,14 @@
+from yianc.analysis.session.session import AnalysisSession;
 from yianc.analysis.session.output import AnalysisOptions;
 from yianc.analysis.constant.evaluate import TypeSizeProvider;
 from yianc.analysis.dump import hir_dump;
 from yianc.analysis.driver import MiddleEndDriver;
-from yianc.codegen.session import BackendOptions;
+from yianc.codegen.session import TargetLayout;
 from yianc.codegen.driver import BackendDriver;
 from yianc.config import CompilerAction, parse_args;
+from yianc.diagnostics.model import DiagnosticReporter, UserDiagnostic;
 from yianc.diagnostics.report import report;
+from yianc.frontend.source import SourceMap;
 from yianc.frontend.driver import FrontendDriver;
 from yianc.preprocess import load_packages, build_trust, collect_sources;
 from yianc.telemetry.log import LogLevel;
@@ -14,6 +17,17 @@ from yianc.telemetry.trace import CompilerTrace;
 from std.core.io import Stderr, Write;
 
 const EXIT_FAILURE: i32 = 1;
+
+struct CliReporter {
+    // The session owns the unit table; this reporter borrows a local handle while it renders.
+    sources: SourceMap&,
+}
+
+impl DiagnosticReporter for CliReporter {
+    pub fn report(diagnostic: UserDiagnostic&) {
+        report(diagnostic, self.sources);
+    }
+}
 
 fn main() {
     // Parse command line arguments
@@ -48,25 +62,31 @@ fn main() {
     };
     trace.finish("frontend");
 
-    let middle = MiddleEndDriver.new(units, config.raw_pointers, trust, packages);
-    defer middle.drop();
-    let runtime_profile_dir = match &config.runtime_profile_dir { Some(value) => Option<str>.Some(value.as_str()), None => Option<str>.None };
-    let backend = match BackendDriver.new(middle.analysis_session(), BackendOptions(config.raw_pointers, config.optimization, runtime_profile_dir, config.cfg_inline, config.fat_check_elimination), Option<CompilerTrace&>.Some(&trace)) {
+    // Create the analysis session and the target layout before semantic analysis.
+    let session = dyn AnalysisSession.new(units, config.raw_pointers, trust, packages);
+    let layout = match TargetLayout.new(&session.types, config.raw_pointers, config.optimization,
+        config.runtime_profile_dir.is_some(), Option<CompilerTrace&>.Some(&trace)) {
         Ok(value) => value,
-        Err(problem) => { report(&problem, &units); exit(EXIT_FAILURE); },
+        Err(problem) => {
+            report(&problem, &units);
+            exit(EXIT_FAILURE);
+        },
     };
-    defer backend.drop();
 
     let options = AnalysisOptions.new();
     options.require_entry = !check;
     options.entry_optional = check;
-    options.recover = check;
     options.verify_hir = true;
-    options.sizes = Option<TypeSizeProvider&>.Some(backend.size_provider());
+    options.sizes = Option<TypeSizeProvider&>.Some(layout.backend_types());
     options.trace = Option<CompilerTrace&>.Some(&trace);
 
+    let reporter = CliReporter(&units);
+    // Run the middle-end driver for semantic analysis
+    let middle = MiddleEndDriver.new(session, options, &reporter);
+    defer middle.drop();
+
     trace.start_pass("semantic_analysis", "main", "semantic analysis", ProfileKind.Stage);
-    let output = match middle.run_cli(options, &units) {
+    let result = match middle.run() {
         Ok(value) => value,
         Err(problem) => {
             trace.fail("semantic_analysis");
@@ -74,16 +94,15 @@ fn main() {
             exit(EXIT_FAILURE);
         },
     };
-    defer { match &output { Some(value) => value.drop(), None => {}, } };
     trace.finish("semantic_analysis");
+    // The layout borrows the session type store; release it before releasing the result.
+    defer result.drop();
+    defer layout.drop();
 
     if config.dump {
-        match &output {
-            Some(value) => match hir_dump(middle.analysis_session(), value) {
-                Ok(_) => {},
-                Err(problem) => { report(&problem, &units); exit(EXIT_FAILURE); },
-            },
-            None => {},
+        match hir_dump(result.session, &result.output) {
+            Ok(_) => {},
+            Err(problem) => { report(&problem, &units); exit(EXIT_FAILURE); },
         }
     }
     if check {
@@ -93,14 +112,12 @@ fn main() {
             trace.skip(*pass_id, "check stops after semantic analysis");
         }
         trace.finish("compiler.total");
-        if output.is_none() { exit(EXIT_FAILURE); }
     } else {
-        let result = match &output {
-            Some(value) => backend.compile(&config, value, Option<CompilerTrace&>.Some(&trace)),
-            None => @panic("strict analysis returned no output"),
-        };
+        let backend = BackendDriver.new(&result, &layout, &config, Option<CompilerTrace&>.Some(&trace));
+        defer backend.drop();
+        let compile_result = backend.run();
         trace.finish("compiler.total");
-        match result {
+        match compile_result {
             Ok(_) => {},
             Err(error) => {
                 report(&error, &units);

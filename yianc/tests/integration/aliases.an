@@ -34,41 +34,39 @@ fn trust() -> SourceTrust {
     }
 }
 
-fn prepare(source: str, path: str) -> MiddleEndDriver {
+fn prepare(source: str, path: str) -> AnalysisSession* {
     let trace = CompilerTrace.disabled();
     defer trace.drop();
     let frontend = FrontendDriver.new(load_source(path, source), false, &trace);
     defer frontend.drop();
-    let session = match frontend.run() {
+    let units = match frontend.run() {
         Ok(value) => value,
         Err(error) => { error.drop(); @panic("strict fixture preparation failed"); },
     };
-    MiddleEndDriver.new(session, IS_RAW_MODE, trust(), Option<PackageMap>.None)
+    dyn AnalysisSession.new(units, IS_RAW_MODE, trust(), Option<PackageMap>.None)
 }
 
 fn analyze_success(source: str, path: str) -> AnalysisSession {
-    let driver = prepare(source, path);
     let reporter = IgnoreDiagnostics();
-    match driver.run(AnalysisOptions.new(), &reporter) {
-        Ok(Some(output)) => {
-            output.drop();
-            driver.take_session()
+    let driver = MiddleEndDriver.new(prepare(source, path), AnalysisOptions.new(), &reporter);
+    match driver.run() {
+        Ok(result) => {
+            result.output.drop();
+            // Copy the session contents out, then release only the result allocation shell.
+            let session = *result.session;
+            del result.session;
+            session
         },
-        Ok(None) => @panic("strict fixture produced no output"),
-        Err(error) => {
-            error.drop();
-            @panic("strict fixture analysis failed");
-        },
+        Err(_) => @panic("strict fixture analysis failed"),
     }
 }
 
 fn analyze_failure(source: str, path: str) -> AnalysisError {
-    let driver = prepare(source, path);
     let reporter = IgnoreDiagnostics();
-    match driver.run(AnalysisOptions.new(), &reporter) {
-        Ok(Some(output)) => { output.drop(); driver.take_session().drop(); @panic("invalid fixture passed strict analysis"); },
-        Ok(None) => { driver.take_session().drop(); @panic("strict fixture produced no output"); },
-        Err(error) => { driver.take_session().drop(); error },
+    let driver = MiddleEndDriver.new(prepare(source, path), AnalysisOptions.new(), &reporter);
+    match driver.run() {
+        Ok(result) => @panic("invalid fixture passed strict analysis"),
+        Err(error) => { driver.drop(); error },
     }
 }
 

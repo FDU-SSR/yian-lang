@@ -17,19 +17,32 @@ from yianc.analysis.passes.coverage import check_coverage;
 from yianc.analysis.passes.verify_hir import verify_hir;
 from yianc.analysis.passes.address_storage import normalize_address_storage;
 from yianc.analysis.passes.finalize_hir_types import finalize_hir_types;
-from yianc.diagnostics.model import AnalysisError, AnalysisErrorKind, AnalysisStage, DiagnosticReporter, UserDiagnostic;
+from yianc.diagnostics.model import AnalysisError, AnalysisStage, DiagnosticReporter;
 from yianc.telemetry.profile import ProfileKind;
-from yianc.diagnostics.render import render;
-from yianc.diagnostics.report import report;
-from yianc.frontend.source import SourceMap;
-from yianc.frontend.unit import UnitTable;
-from yianc.package.model import PackageMap;
-from yianc.package.provenance import SourceTrust;
 from std.core.iter import Iterator, IntoIterator;
 
-// The middle-end driver owns the semantic session and the exported analysis output.
+// The successful middle-end result owns the session allocation and the exported output.
+// A caller either drops the result or transfers its contents; it must never do both.
+pub struct MiddleEndResult {
+    pub session: AnalysisSession*,
+    pub output: AnalysisOutput,
+}
+
+impl Drop for MiddleEndResult {
+    pub fn drop() {
+        self.output.drop();
+        self.session.drop();
+        del self.session;
+    }
+}
+
+// The driver keeps only the session it has not transferred.
 pub struct MiddleEndDriver {
-    session: Option<AnalysisSession>,
+    session: Option<AnalysisSession*>,
+    // The caller keeps these inputs alive for every run.
+    options: AnalysisOptions,
+    reporter: DiagnosticReporter&,
+    attempted: bool,
 }
 
 fn start_stage(options: AnalysisOptions&, pass_id: str, stage: AnalysisStage) {
@@ -52,59 +65,27 @@ fn at_stage(result: Result<(), AnalysisError>, pass_id: str, stage: AnalysisStag
     match result { Ok(_) => Result<(), AnalysisError>.Ok(()), Err(problem) => Result<(), AnalysisError>.Err(problem.with_stage(stage)) }
 }
 
-struct CliReporter {
-    sources: SourceMap&,
-    immediate: bool,
-    pending: String,
-}
-
-impl DiagnosticReporter for CliReporter {
-    pub fn report(diagnostic: UserDiagnostic&) {
-        if self.immediate { report(diagnostic, self.sources); return; }
-        let text = render(diagnostic, self.sources);
-        defer text.drop();
-        self.pending.push_str(text.as_str());
-        self.pending.push('\n');
-    }
-}
-
 impl MiddleEndDriver {
-    static pub fn new(units: UnitTable, raw_pointers: bool, trust: SourceTrust,
-        packages: Option<PackageMap>) -> Self {
-        Self(Option<AnalysisSession>.Some(AnalysisSession.new(units, raw_pointers, trust, packages)))
+    static pub fn new(session: AnalysisSession*, options: AnalysisOptions,
+        reporter: DiagnosticReporter&) -> Self {
+        Self(Option<AnalysisSession*>.Some(session), options, reporter, false)
     }
 
-    pub fn analysis_session() -> AnalysisSession& {
-        match &self.session {
-            Some(value) => value,
-            None => @panic("E599: analysis session has already been transferred"),
+    // The pass sequence is the middle-end contract; the first error terminates it.
+    pub fn run() -> Result<MiddleEndResult, AnalysisError> {
+        if self.attempted {
+            @panic("analysis session cannot be analyzed twice");
         }
-    }
-
-    pub fn take_session() -> AnalysisSession {
-        match self.session.take() {
-            Some(value) => value,
-            None => @panic("E599: analysis session has already been transferred"),
-        }
-    }
-
-    pub fn run_cli(options: AnalysisOptions, sources: SourceMap&) -> Result<Option<AnalysisOutput>, AnalysisError> {
-        let reporter = CliReporter(sources, options.recover, String.new());
-        defer reporter.pending.drop();
-        let result = self.run(options, &reporter);
-        match &result {
-            Ok(Some(_)) => if !reporter.immediate { @eprint(reporter.pending.as_str()); },
-            _ => {},
-        }
-        result
-    }
-
-    // The pass sequence is the middle-end contract; callers choose recover/strict via options.
-    pub fn run(options: AnalysisOptions, reporter: DiagnosticReporter&) -> Result<Option<AnalysisOutput>, AnalysisError> {
-        let session = self.analysis_session();
+        self.attempted = true;
+        let options = self.options;
+        let session = match &self.session {
+            Some(value) => *value,
+            None => @panic("analysis session has already been transferred"),
+        };
+        let reporter = self.reporter;
         session.begin_analysis();
-        let completed = false;
-        defer { session.complete_analysis(completed); };
+        let phase_completed = false;
+        defer { if !phase_completed { session.complete_analysis(false); } };
 
         start_stage(&options, "analysis.classify_sources", AnalysisStage.Classify);
         at_stage(session.classify_sources(), "analysis.classify_sources", AnalysisStage.Classify, &options)?;
@@ -144,7 +125,7 @@ impl MiddleEndDriver {
         }
         let output = match checked {
             Ok(value) => value,
-            Err(problem) => return Result<Option<AnalysisOutput>, AnalysisError>.Err(problem.with_stage(AnalysisStage.TypeCheck)),
+            Err(problem) => return Result<MiddleEndResult, AnalysisError>.Err(problem.with_stage(AnalysisStage.TypeCheck)),
         };
         let accepted_output = false;
         defer {
@@ -160,30 +141,27 @@ impl MiddleEndDriver {
         }
         match normalized {
             Ok(_) => {},
-            Err(problem) => return Result<Option<AnalysisOutput>, AnalysisError>.Err(problem.with_stage(AnalysisStage.TypeCheck)),
+            Err(problem) => return Result<MiddleEndResult, AnalysisError>.Err(problem.with_stage(AnalysisStage.TypeCheck)),
         }
-        // Successful output is concretely typed regardless of the optional HIR verifier.
-        if !context.has_errors() {
-            start_stage(&options, "analysis.finalize_hir_types", AnalysisStage.TypeCheck);
-            let finalized = finalize_hir_types(&context, &output);
-            match &finalized {
-                Ok(_) => finish_stage(&options, "analysis.finalize_hir_types", true),
-                Err(_) => finish_stage(&options, "analysis.finalize_hir_types", false),
-            }
-            match finalized {
-                Ok(_) => {},
-                Err(problem) => return Result<Option<AnalysisOutput>, AnalysisError>.Err(problem.with_stage(AnalysisStage.TypeCheck)),
-            }
+        start_stage(&options, "analysis.finalize_hir_types", AnalysisStage.TypeCheck);
+        let finalized = finalize_hir_types(&context, &output);
+        match &finalized {
+            Ok(_) => finish_stage(&options, "analysis.finalize_hir_types", true),
+            Err(_) => finish_stage(&options, "analysis.finalize_hir_types", false),
+        }
+        match finalized {
+            Ok(_) => {},
+            Err(problem) => return Result<MiddleEndResult, AnalysisError>.Err(problem.with_stage(AnalysisStage.TypeCheck)),
         }
         // A callee failure leaves a partial call graph. It is never exported to the backend.
-        if !context.has_errors() && options.verify_hir {
+        if options.verify_hir {
             start_stage(&options, "analysis.verify_hir", AnalysisStage.TypeCheck);
             at_stage(verify_hir(&context, &output), "analysis.verify_hir", AnalysisStage.TypeCheck, &options)?;
         } else {
-            match options.trace { Some(trace) => trace.skip("analysis.verify_hir", "disabled or earlier diagnostics prevent HIR verification"), None => {}, }
+            match options.trace { Some(trace) => trace.skip("analysis.verify_hir", "disabled by analysis configuration"), None => {}, }
         }
         start_stage(&options, "analysis.check_coverage", AnalysisStage.Coverage);
-        at_stage(check_coverage(&context, &output, options.recover), "analysis.check_coverage", AnalysisStage.Coverage, &options)?;
+        at_stage(check_coverage(&context, &output), "analysis.check_coverage", AnalysisStage.Coverage, &options)?;
 
         for procedure in output.procedures {
             start_stage(&options, "analysis.check_assignment", AnalysisStage.Assignment);
@@ -194,22 +172,18 @@ impl MiddleEndDriver {
             }
             match checked_assignment {
                 Ok(_) => {},
-                Err(problem) => {
-                    if !options.recover || problem.kind != AnalysisErrorKind.User {
-                        return Result<Option<AnalysisOutput>, AnalysisError>.Err(problem.with_stage(AnalysisStage.Assignment));
-                    }
-                    context.report_error(&problem);
-                    problem.drop();
-                },
+                Err(problem) => return Result<MiddleEndResult, AnalysisError>.Err(problem.with_stage(AnalysisStage.Assignment)),
             }
         }
 
-        completed = !context.has_errors();
-        if completed {
-            accepted_output = true;
-            return Result<Option<AnalysisOutput>, AnalysisError>.Ok(Option<AnalysisOutput>.Some(output));
-        }
-        Result<Option<AnalysisOutput>, AnalysisError>.Ok(Option<AnalysisOutput>.None)
+        accepted_output = true;
+        session.complete_analysis(true);
+        phase_completed = true;
+        let owner = match self.session.take() {
+            Some(value) => value,
+            None => @panic("analysis session has already been transferred"),
+        };
+        Result<MiddleEndResult, AnalysisError>.Ok(MiddleEndResult(session=owner, output=output))
     }
 
 }
@@ -217,7 +191,7 @@ impl MiddleEndDriver {
 impl Drop for MiddleEndDriver {
     pub fn drop() {
         match self.session.take() {
-            Some(value) => value.drop(),
+            Some(value) => { value.drop(); del value; },
             None => {},
         }
     }

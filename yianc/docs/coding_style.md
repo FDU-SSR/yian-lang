@@ -277,7 +277,7 @@ impl Drop for CodegenError {
 
 - 错误联合类型按变体转发 `code`、`location`、`message` 和 `drop`，不要复制下层诊断逻辑。
 - 用户可见诊断码由 `DiagnosticCode` 统一定义；不要在消息文本里临时发明新的 `E`/`W` 编号。
-- 可恢复警告通过同步的 `DiagnosticReporter` 报告；阶段致命错误沿 `Result` 返回 `main`，命令行参数和日志配置错误分别由 `parse_args`、`CompilerTrace.new` 直接输出并以进程状态退出。
+- warning 通过同步的 `DiagnosticReporter` 立即报告；阶段用户错误沿 `Result` 返回 `main`，命令行参数和日志配置错误分别由 `parse_args`、`CompilerTrace.new` 直接输出并以进程状态退出。
 - 不要根据诊断消息文本判断错误类别；需要分类时增加枚举变体或诊断码。
 
 ### 6.2 内部不变量

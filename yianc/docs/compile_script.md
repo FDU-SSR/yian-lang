@@ -55,7 +55,7 @@ yianc <path> [path...]
 | `ll`   | LLVM IR 文本 (.ll)       |
 | `bc`   | LLVM bitcode (.bc)       |
 
-`--check` 是独立的检查模式，不通过 `-t` 选择。
+`--check` 是独立的检查模式，不通过 `-t` 选择；它仍建立目标布局以按真实 LLVM 布局求编译期 `sizeof`，但不构造后端、CFG 或发布路径。
 
 ```bash
 yianc -t ll lib/src tests/basic/array/assign.an
@@ -216,8 +216,9 @@ yianc --check lib/src main.an
 
 运行前端与中端：词法、语法、desugar、名称与类型解析、类型检查、编译期分支选择、模式覆盖与
 definite-assignment 检查；不进入 CFG/LLVM，不生成编译器产物。诊断以文本写到 stderr；退出码
-`0` 表示成功，`1` 表示有错误；只有警告时仍返回 `0`。可恢复错误按发现顺序逐条写出，随后若出现
-致命错误，`main` 在已输出的诊断之后报告该错误。普通编译只在严格分析成功后输出 warning 和提示。
+`0` 表示成功，`1` 表示有错误；只有警告时仍返回 `0`。第一个错误立即终止分析并由 `main`
+写出，warning 在发现时立即写出且不中断编译。`--check` 与普通编译执行相同的前端和中端流程，
+区别仅是不构造后端、不生成产物。
 诊断标题为 `error[E401]: …`、`warning[W501]: …`；编号决定等级，文件级位置带独立路径行，源码
 位置带 `--> path:line:column` 与源码摘录。不要求 `main`，存在时校验其签名。
 `--check` 接受 `--packages`、`--compiler-root`、`--raw-pointers`、`-O`、`--dump`、

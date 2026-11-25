@@ -8,7 +8,7 @@ from yianc.analysis.session.output import AnalysisOptions, AnalysisOutput, Analy
 from yianc.analysis.session.session import AnalysisSession;
 from yianc.frontend.driver import FrontendDriver;
 from yianc.telemetry.trace import CompilerTrace;
-from yianc.analysis.driver import MiddleEndDriver;
+from yianc.analysis.driver import MiddleEndDriver, MiddleEndResult;
 from yianc.analysis.ty.model import AccessMode, AggregateDefinition, CallableDefinition, DefinitionBody,
 DefinitionHeader, NominalKind, Parameter, StructField;
 from yianc.analysis.ty.store import BOOL_TYPE_ID, ERROR_TYPE_ID, I32_TYPE_ID, NEVER_TYPE_ID, U64_TYPE_ID, VOID_TYPE_ID;
@@ -465,34 +465,33 @@ fn shared_break_output(session: AnalysisSession&, context: ResolutionContext&, o
     modified
 }
 
-fn prepare(source: str, path: str) -> MiddleEndDriver {
+fn prepare(source: str, path: str) -> AnalysisSession* {
     let trace = CompilerTrace.disabled();
     defer trace.drop();
     let frontend = FrontendDriver.new(load_source(path, source), false, &trace);
     defer frontend.drop();
-    let session = match frontend.run() {
+    let units = match frontend.run() {
         Ok(value) => value,
         Err(error) => { error.drop(); @panic("probe preparation failed"); },
     };
-    MiddleEndDriver.new(session, false, trust(), Option<PackageMap>.None)
+    dyn AnalysisSession.new(units, false, trust(), Option<PackageMap>.None)
 }
 
-fn analyze(driver: MiddleEndDriver&) -> AnalysisOutput {
-    let reporter = IgnoreDiagnostics();
-    match driver.run(AnalysisOptions.new(), &reporter) {
-        Ok(Some(value)) => value,
-        Ok(None) => @panic("probe analysis produced no output"),
-        Err(error) => { error.drop(); @panic("probe analysis failed"); },
+fn analyze(session: AnalysisSession*, reporter: DiagnosticReporter&) -> MiddleEndResult {
+    let driver = MiddleEndDriver.new(session, AnalysisOptions.new(), reporter);
+    match driver.run() {
+        Ok(value) => value,
+        Err(error) => @panic("probe analysis failed"),
     }
 }
 
 fn check_trait_integration() {
     let source = "trait Show { fn show() -> i32; }\nstruct Item { value: i32 }\nimpl Show for Item { pub fn show() -> i32 { self.value } }\nfn render(value: Show&) -> i32 { value.show() }\nfn main() { let item = Item(value=7); let shown = render(&item); assert shown == 7: \"dispatch\"; }\n";
-    let driver = prepare(source, "/tmp/hir-verification-trait.an");
-    defer driver.drop();
-    let output = analyze(&driver);
-    defer output.drop();
-    let session = driver.analysis_session();
+    let reporter = IgnoreDiagnostics();
+    let result = analyze(prepare(source, "/tmp/hir-verification-trait.an"), &reporter);
+    defer result.drop();
+    let output = &result.output;
+    let session = result.session;
     let context = match ResolutionContext.new(session, Option<TypeSizeProvider&>.None, Option<DiagnosticReporter&>.None) {
         Ok(value) => value,
         Err(error) => { error.drop(); @panic("trait probe context failed"); },
@@ -501,7 +500,7 @@ fn check_trait_integration() {
 
     let observer = MissCounter.new();
     defer observer.drop();
-    match verify_hir_observed(&context, &output, Option<HirVerificationObserver&>.Some(&observer)) {
+    match verify_hir_observed(&context, output, Option<HirVerificationObserver&>.Some(&observer)) {
         Ok(_) => {},
         Err(error) => { error.drop(); @panic("trait probe verification failed"); },
     }
@@ -518,11 +517,10 @@ fn probe_source() -> str {
 
 // The negative cache queries violate type identities; the child process isolates the panic.
 fn non_callable_signature() {
-    let driver = prepare(probe_source(), "/tmp/hir-verification-probe.an");
-    defer driver.drop();
-    let output = analyze(&driver);
-    defer output.drop();
-    let context = match ResolutionContext.new(driver.analysis_session(), Option<TypeSizeProvider&>.None, Option<DiagnosticReporter&>.None) {
+    let reporter = IgnoreDiagnostics();
+    let result = analyze(prepare(probe_source(), "/tmp/hir-verification-probe.an"), &reporter);
+    defer result.drop();
+    let context = match ResolutionContext.new(result.session, Option<TypeSizeProvider&>.None, Option<DiagnosticReporter&>.None) {
         Ok(value) => value,
         Err(error) => { error.drop(); @panic("probe context failed"); },
     };
@@ -536,11 +534,10 @@ fn non_callable_signature() {
 }
 
 fn non_trait_object() {
-    let driver = prepare(probe_source(), "/tmp/hir-verification-probe.an");
-    defer driver.drop();
-    let output = analyze(&driver);
-    defer output.drop();
-    let context = match ResolutionContext.new(driver.analysis_session(), Option<TypeSizeProvider&>.None, Option<DiagnosticReporter&>.None) {
+    let reporter = IgnoreDiagnostics();
+    let result = analyze(prepare(probe_source(), "/tmp/hir-verification-probe.an"), &reporter);
+    defer result.drop();
+    let context = match ResolutionContext.new(result.session, Option<TypeSizeProvider&>.None, Option<DiagnosticReporter&>.None) {
         Ok(value) => value,
         Err(error) => { error.drop(); @panic("probe context failed"); },
     };
@@ -554,17 +551,17 @@ fn non_trait_object() {
 }
 
 fn break_outside_loop() {
-    let driver = prepare(probe_source(), "/tmp/hir-verification-probe.an");
-    defer driver.drop();
-    let output = analyze(&driver);
-    defer output.drop();
-    let session = driver.analysis_session();
+    let reporter = IgnoreDiagnostics();
+    let result = analyze(prepare(probe_source(), "/tmp/hir-verification-probe.an"), &reporter);
+    defer result.drop();
+    let output = &result.output;
+    let session = result.session;
     let context = match ResolutionContext.new(session, Option<TypeSizeProvider&>.None, Option<DiagnosticReporter&>.None) {
         Ok(value) => value,
         Err(error) => { error.drop(); @panic("probe context failed"); },
     };
     defer context.drop();
-    let modified = shared_break_output(session, &context, &output);
+    let modified = shared_break_output(session, &context, output);
     defer modified.drop();
     match verify_hir_observed(&context, &modified, Option<HirVerificationObserver&>.None) {
         Ok(_) => @panic("a break outside every loop was accepted"),
@@ -618,13 +615,13 @@ fn main() {
     arguments.drop();
 
     let source = probe_source();
-    let driver = prepare(source, "/tmp/hir-verification-probe.an");
-    defer driver.drop();
-    let output = analyze(&driver);
-    defer output.drop();
-    let session = driver.analysis_session();
+    let reporter = IgnoreDiagnostics();
+    let result = analyze(prepare(source, "/tmp/hir-verification-probe.an"), &reporter);
+    defer result.drop();
+    let output = &result.output;
+    let session = result.session;
 
-    check_hir_integration(session, &output);
+    check_hir_integration(session, output);
     check_trait_integration();
 
     let context = match ResolutionContext.new(session, Option<TypeSizeProvider&>.None, Option<DiagnosticReporter&>.None) {

@@ -4,7 +4,7 @@ from yianc.analysis.session.session import AnalysisSession;
 from yianc.analysis.constant.evaluate import ConstantEvaluator, TypeSizeProvider;
 from yianc.frontend.ast.node import Item;
 from yianc.frontend.source import Position, Span;
-from yianc.diagnostics.model import DiagnosticCode, AnalysisError, AnalysisErrorKind, DiagnosticReporter, Severity;
+from yianc.diagnostics.model import DiagnosticCode, AnalysisError, DiagnosticReporter, Severity;
 from yianc.analysis.session.output import AnalysisWarning;
 from std.core.convert import From;
 from std.collections.arena import Arena;
@@ -42,7 +42,6 @@ pub struct ResolutionContext {
     pub alias_stack: Vec<SymbolId>,
     pub constant_stack: Vec<SymbolId>,
     reporter: Option<DiagnosticReporter&>,
-    has_errors: bool,
 }
 
 impl ResolutionContext {
@@ -65,7 +64,7 @@ impl ResolutionContext {
         }
 
         accepted = true;
-        Result<Self, AnalysisError>.Ok(Self(session, scopes, Arena<Declaration>.new(), HashMap<DefId, ScopeId>.new(), HashMap<SymbolId, HirId>.new(), HashMap<DefId, Vec<SymbolId>>.new(), evaluator, Vec<SymbolId>.new(), Vec<SymbolId>.new(), reporter, false))
+        Result<Self, AnalysisError>.Ok(Self(session, scopes, Arena<Declaration>.new(), HashMap<DefId, ScopeId>.new(), HashMap<SymbolId, HirId>.new(), HashMap<DefId, Vec<SymbolId>>.new(), evaluator, Vec<SymbolId>.new(), Vec<SymbolId>.new(), reporter))
     }
 
     pub fn span(unit: UnitId, span: Span) -> SourceSpan {
@@ -82,16 +81,6 @@ impl ResolutionContext {
         let warning = AnalysisWarning(code, self.span(unit, span), String.from(&message));
         defer warning.drop();
         match self.reporter { Some(reporter) => reporter.report(&warning), None => {}, }
-    }
-
-    pub fn report_error(error: AnalysisError&) {
-        if error.kind != AnalysisErrorKind.User { @panic("expected user error"); }
-        self.has_errors = true;
-        match self.reporter { Some(reporter) => reporter.report(error), None => {}, }
-    }
-
-    pub fn has_errors() -> bool {
-        self.has_errors
     }
 
     pub fn add(declaration: Declaration) {
