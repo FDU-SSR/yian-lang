@@ -122,7 +122,7 @@ YIAN_ROOT="$PWD" YIAN_LIB="$PWD/lib/src" anx test yianc
 
 | 文档 | 内容 |
 |------|------|
-| [编码规范](docs/coding_style.md) | 模块组织、命名、类型声明、所有权、错误处理、注释、排版和测试约定 |
+| [编码规范](docs/coding_style.md) | 编译阶段的模块边界、会话内 ID、诊断、测试与文档同步 |
 | [编译器命令行手册](docs/compile_script.md) | 参数、编译目标、包图、检查模式、诊断和 profiling |
 
 ### 仓库相关文档

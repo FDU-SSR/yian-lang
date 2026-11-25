@@ -1,11 +1,28 @@
 ---
 name: yian-writing
-description: Write, edit, explain, or debug YIAN language code in .an files. Use for YIAN syntax, standard-library APIs, package imports, explicit resource cleanup, and compiler diagnostics in YIAN programs.
+description: Write, edit, review, explain, or debug YIAN code in .an files. Use for YIAN coding conventions, syntax, standard-library APIs, package imports, explicit resource cleanup, and compiler diagnostics.
 ---
 
 # 编写 YIAN 代码
 
-以下链接指向当前 checkout 的文档和源码。先读适用的 [AGENTS.md](../../../AGENTS.md)，再按任务查找相关章节或现有示例。
+以下链接指向当前 checkout 的文档和源码。先读[仓库指引](../../../AGENTS.md)以及目标目录适用的 AGENTS.md。
+
+## 文件、命名与公开接口
+
+- 每个文件围绕一个主要职责命名。文件顶部放导入，每条 `from ... import ...;` 对应一个来源，按用途分组并清除未使用的导入。接着放常量、类型和实现。
+- 类型、trait 和 enum 变体用 `PascalCase`，缩写按词拼写。函数、方法、字段和局部变量用 `snake_case`，常量用 `UPPER_SNAKE_CASE`。类型参数用短名称，如值类型 `T`、错误 `E`、键值 `K` 和 `V`。保留既有公开名称。
+- 布尔字段和查询用肯定式，如 `ready`、`has_value`。主构造函数用 `new`，其他入口按来源或行为命名，如 `from_str`、`with_capacity`。
+- 模块内部声明保持默认可见性。跨模块调用需要时才加 `pub`，通过构造和查询方法维护类型不变量。接口和字段要有当前调用者或明确契约，消费者专用的适配留在消费者一侧。删除最后一个用途时一并清理相关声明。改变公开契约时同步调用者和文档。
+- 同一类型的方法通常放在一个 `impl` 中，按构造、查询、修改分组。有清晰的职责边界时可拆分。trait 实现单独成块，`impl Drop for T` 紧随该类型的固有实现，放在下一个类型之前。
+- 多字段 struct 按构造或语义顺序排列，通常每行一个字段；紧凑声明可以单行。enum 按语义排列变体，有载荷或注释时每行一个。trait 先写必需方法，再写语义通用的默认实现。
+
+## 函数、分支与错误
+
+- 写明参数和返回类型。一个函数负责一件事，按有意义的职责拆出私有函数。先检查前置条件、提前返回，正常路径使用尾表达式或末尾的 `return`。逻辑块之间留一个空行。
+- 变量在首次使用附近初始化。类型不明或需要固定位宽时写显式类型。长表达式的中间结果用能说明含义的局部名称。位掩码和 ABI 常量用十六进制，计数和索引用十进制。
+- 条件写作 `if ready { ... }`。短函数和单语句分支可以单行。`match` 按变体顺序覆盖各分支，短分支写表达式，长分支写块。确实只关注部分变体时用显式兜底分支。
+- 可恢复的输入或 I/O 错误用 `Result<T, E>` 返回，使用 `?` 传播。调用者需要区分的错误用变体表示。用户输入路径用 `match`、`?` 或显式错误转换；只有构造过程已保证成功或夹具输入已知有效时才用 `.unwrap()`。
+- 内部不变量被破坏时在发现处调用 `@panic`，消息写明违反的条件。遇到不可达状态应显式报错，返回默认值会掩盖问题。
 
 ## 语法与接口
 
@@ -16,13 +33,21 @@ description: Write, edit, explain, or debug YIAN language code in .an files. Use
 
 ## 复制与资源清理
 
-仅在用户询问相关语义，或具体操作会影响当前问题的结果时使用本节。解释时指出哪一步会发生什么，例如“这次追加可能触发扩容，使之前保存的元素地址失效”。容器、哈希与缓冲 I/O 的接口见[标准库参考](../../../docs/grammar/14.standard_library.md)。
+编写代码时按下面的规则管理资源。向用户解释代码时，仅在用户询问或操作影响结果时说明具体后果，例如“这次追加可能触发扩容，使之前保存的元素地址失效”。容器、哈希与缓冲 I/O 的接口见[标准库参考](../../../docs/grammar/14.standard_library.md)。
 
 - 赋值、传参和返回都是浅复制，来源仍可使用。`T&` 没有借用检查或生命周期推断。对资源指定一个清理责任方，标明责任转交，并用 `defer` 覆盖提前返回路径。`Clone` 和 `Drop` 是显式调用的标准库 trait，作用域结束不会自动清理，`del` 只释放当前分配块。见[赋值与内存管理](../../../docs/grammar/15.assign_semantics.md)。
-- 浅复制 `String`、容器或编译器 session 会共享底层资源。`String` 拥有缓冲区，`str` 引用现有数据。需要独立副本时，核对具体类型的 `clone()` 深度。`ptr.clone()` 会解引用并克隆指向的值。
+- 参数和字段用 `T&` 表达借用，用 `Option<T&>` 表达可选借用。用 `&value` 取引用，解引用取值仍遵循浅复制语义。字段保存引用或函数返回引用时，在声明上方说明所有者和有效期。普通代码优先用引用、数组和切片，原始指针留给 C ABI、运行时存储和底层容器。
+- 浅复制 `String` 或容器会共享底层资源。`str` 借用文本，需要在来源释放后保留文本时用 `String.from(...)` 创建拥有缓冲区的值。需要独立副本时核对具体类型的 `clone()` 深度。`ptr.clone()` 会解引用并克隆指向的值。
+- `Drop` 先释放拥有的载荷和嵌套记录，再释放容器存储。成功时转交、出错时清理的局部容器可配合 `defer values.drop();` 和 `values.take()` 使用；没有适用的 `take()` 时，用标记记录是否已转交。直接 `exit` 或 `@panic` 终止进程时不会执行延迟清理，无需为回收进程内存手动调用 `drop()`。
 - `Vec`、`HashMap`、`HashSet` 和 `Arena` 的清理只释放容器存储，元素持有的资源由调用方负责。`Vec`、`HashMap` 和 `HashSet` 的 `clone()` 复制存储，元素依然是浅复制。`Vec` 扩容和哈希表结构修改可能使引用或迭代器失效。需要跨追加保留稳定引用时用 `Arena`，ID、队列和临时缓冲区可用 `Vec`。迭代哈希表时，将结构修改留到迭代结束后。
 - 处理 `insert_or_replace` 和 `remove_entry` 返回的旧资源，以及 `get_or_insert_with` 命中时退回的输入键。普通 `insert` 和 `remove` 丢弃的资源也由调用方负责。实现哈希时，`Hash<T>.hash` 通过 `T&` 更新同一个累加器。相等的值应有相同哈希，复合类型用同一组字段判断相等和计算哈希，浮点哈希将正负零归一。
 - 需要提交缓冲输出并得到写入错误时，显式调用 `flush()`。`BufWriter.drop()` 只释放缓冲区。
+
+## 注释、排版与测试
+
+- 注释说明声明的前置条件、资源归属、有效期或跨模块契约，放在声明上方。行尾注释只作简短的局部说明。用空行组织代码，省略横幅和模板文件头。产品注释和文档描述当前行为，引用稳定的相对路径。仓库内代码注释使用英文。
+- 排版以 [yian-fmt](../../../docs/manual/28.formatter.md) 为准。用 `yian-fmt --check FILE.an` 检查具体文件，需写回时用 `yian-fmt -w FILE.an`。工具处理缩进、空白和标点间距；导入分组和长表达式的断行由作者按语义选择。
+- 测试文件聚焦一组相关行为，断言消息说明期望的行为。错误路径用 `match` 断言具体类别或消息。用 `defer` 清理夹具；若提前释放本身就是测试步骤，注明要观察的行为。测试源码遵循相同的命名、资源和注释规则，测试数据按被测输入选择语言。
 
 ## 局部验证
 
