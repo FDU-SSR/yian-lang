@@ -63,16 +63,16 @@ impl ExprChecker {
                 type_id
             },
             AddrOf => {
-                match &self.ctx.session.hir.get(value).unwrap().kind {
+                match &self.ctx.hir.get(value).unwrap().kind {
                     Unary(unary) => {
                         if unary.op == UnaryOperator.Deref {
-                            match self.ctx.session.types.require(self.type_of(unary.operand))? {
+                            match self.ctx.types.require(self.type_of(unary.operand))? {
                                 Reference(_) => return Result<HirId, AnalysisError>.Ok(unary.operand),
                                 _ => {},
                             }
                         }
 
-                        self.ctx.session.types.pointer(type_id)
+                        self.ctx.types.pointer(type_id)
                     },
                     Ty => {
                         let callable = signature(self.ctx, type_id)?;
@@ -84,16 +84,16 @@ impl ExprChecker {
                             types.push(parameter.type_id);
                         }
 
-                        if !callable.is_header && !has_generic(self.ctx.session.types, type_id) {
+                        if !callable.is_header && !has_generic(self.ctx.types, type_id) {
                             schedule(self.ctx, type_id)?;
                         }
 
-                        self.ctx.session.types.function_pointer(&types, callable.result)
+                        self.ctx.types.function_pointer(&types, callable.result)
                     },
-                    _ => self.ctx.session.types.pointer(type_id),
+                    _ => self.ctx.types.pointer(type_id),
                 }
             },
-            Deref => match self.ctx.session.types.require(type_id)? {
+            Deref => match self.ctx.types.require(type_id)? {
                 Pointer(inner) => *inner,
                 Reference(inner) => *inner,
                 CPointer(inner) => *inner,
@@ -117,7 +117,7 @@ impl ExprChecker {
         }
 
         if (op == BinaryOperator.Shl || op == BinaryOperator.Shr || op == BinaryOperator.ShlAssign || op == BinaryOperator.ShrAssign) && is_integer(self.ctx, lhs_type) && is_integer(self.ctx, rhs_type) {
-            if assignment && !self.ctx.session.hir.require(lhs)?.is_place {
+            if assignment && !self.ctx.hir.require(lhs)?.is_place {
                 return Result<HirId, AnalysisError>.Err(self.error(span, "shift assignment target must be an l-value"));
             }
 
@@ -130,7 +130,7 @@ impl ExprChecker {
         }
 
         if assignment {
-            if !self.ctx.session.hir.get(lhs).unwrap().is_place {
+            if !self.ctx.hir.get(lhs).unwrap().is_place {
                 return Result<HirId, AnalysisError>.Err(self.error(span, "assignment target must be an l-value"));
             }
 

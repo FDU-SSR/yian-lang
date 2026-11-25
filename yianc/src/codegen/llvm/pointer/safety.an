@@ -51,7 +51,7 @@ impl FunctionLowering {
     }
 
     pub fn check_access(type_id: TypeId, value: IrValue) -> Result<(), CodegenError> {
-        let code = match self.owner.session.types.require(type_id)? { Reference(_) => "S003", _ => "S002", };
+        let code = match self.owner.types.semantic_store().require(type_id)? { Reference(_) => "S003", _ => "S002", };
         self.check_access_as(type_id, value, code)
     }
 
@@ -71,7 +71,7 @@ impl FunctionLowering {
     // Alignment is a code-generation representation choice, not a semantic obligation.
     pub fn check_access_bounds(type_id: TypeId, value: IrValue, code: str) -> Result<(), CodegenError> {
         if !self.fat(type_id)? { return Result<(), CodegenError>.Ok(()); }
-        match self.owner.session.types.require(type_id)? {
+        match self.owner.types.semantic_store().require(type_id)? {
             Pointer(element) => {
                 let native = self.owner.types.value_type(*element)?;
                 self.check_pointer_span(value, self.integer(self.owner.module.abi_size(native)), code)?;
@@ -191,7 +191,7 @@ impl FunctionLowering {
         let data = self.builder.extract_value(value, 0u32, "");
         let word = self.pointer_word(type_id, value)?;
         self.checked(self.live(word, "S002")?, "S002")?;
-        let element = match self.owner.session.types.require(type_id)? {
+        let element = match self.owner.types.semantic_store().require(type_id)? {
             Slice(element) => self.owner.types.value_type(*element)?,
             Str => module.int_type(8u32),
             _ => @panic("view check has no element type"),

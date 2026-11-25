@@ -1,4 +1,3 @@
-from yianc.analysis.session.session import AnalysisSession;
 from yianc.analysis.resolution.context import ResolutionContext;
 from yianc.analysis.ty.properties import is_zst;
 from yianc.analysis.ty.callable import instance_substitutions;
@@ -69,7 +68,6 @@ impl Drop for LoopFrame {
 
 struct AssignmentChecker {
     ctx: ResolutionContext&,
-    session: AnalysisSession&,
     deferred: Vec<HirId>,
     loops: Vec<LoopFrame>,
     places: Arena<Place>,
@@ -119,7 +117,7 @@ impl AssignmentChecker {
         }
 
         let id = self.places.len();
-        self.places.alloc(Place(Option<u64>.None, self.session.symbols.get(symbol).unwrap().type_id));
+        self.places.alloc(Place(Option<u64>.None, self.ctx.symbols.get(symbol).unwrap().type_id));
         self.roots.insert(symbol, id);
         id
     }
@@ -157,7 +155,7 @@ impl AssignmentChecker {
             return Result<bool, AnalysisError>.Ok(true);
         }
 
-        match self.session.types.require(type_id)? {
+        match self.ctx.types.require(type_id)? {
             Tuple(elements) => {
                 let index = 0u64;
 
@@ -171,13 +169,13 @@ impl AssignmentChecker {
 
                 Result<bool, AnalysisError>.Ok(true)
             },
-            Nominal(id, _) => match self.session.types.complete_definition(*id)? {
+            Nominal(id, _) => match self.ctx.types.complete_definition(*id)? {
                 Struct(body) => {
                     let substitutions = instance_substitutions(self.ctx, type_id)?;
                     defer substitutions.drop();
 
                     for field in body.fields {
-                        let field_type = substitute(self.session.types, field.type_id, &substitutions)?;
+                        let field_type = substitute(self.ctx.types, field.type_id, &substitutions)?;
 
                         if !self.assigned(self.child(place, field.index, field_type), state)? {
                             return Result<bool, AnalysisError>.Ok(false);
@@ -194,7 +192,7 @@ impl AssignmentChecker {
 
     // Local member places do not read their aggregate until the selected value is used.
     fn place(id: HirId, state: FlowState&) -> Result<Option<u64>, AnalysisError> {
-        let node = self.session.hir.require(id)?;
+        let node = self.ctx.hir.require(id)?;
 
         match &node.kind {
             Var(symbol) => Result<Option<u64>, AnalysisError>.Ok(Option<u64>.Some(self.root(*symbol))),
@@ -227,7 +225,7 @@ impl AssignmentChecker {
     }
 
     fn bind_pattern(id: PatternId, state: FlowState&) -> Result<(), AnalysisError> {
-        let pattern = self.session.hir.require_pattern(id)?;
+        let pattern = self.ctx.hir.require_pattern(id)?;
 
         match &pattern.kind {
             BindPattern(value) => {
@@ -287,14 +285,14 @@ impl AssignmentChecker {
     }
 
     fn uninitialized(id: HirId) -> Result<AnalysisError, AnalysisError> {
-        let original = self.session.hir.require(id)?;
+        let original = self.ctx.hir.require(id)?;
         let current = id;
         loop {
-            match &self.session.hir.require(current)?.kind {
+            match &self.ctx.hir.require(current)?.kind {
                 Var(symbol) => {
-                    let record = self.session.symbols.get(*symbol).unwrap();
+                    let record = self.ctx.symbols.get(*symbol).unwrap();
                     return Result<AnalysisError, AnalysisError>.Ok(AnalysisError.named(DiagnosticCode.Uninitialized,
-                        Option<SourceSpan>.Some(original.span), "variable '", self.session.names.text(record.name),
+                        Option<SourceSpan>.Some(original.span), "variable '", self.ctx.names.text(record.name),
                         "' is used before it is definitely assigned"));
                 },
                 FieldAccess(value) => current = value.receiver,
@@ -335,7 +333,7 @@ impl AssignmentChecker {
             return Result<(), AnalysisError>.Ok(());
         }
 
-        let node = self.session.hir.require(id)?;
+        let node = self.ctx.hir.require(id)?;
 
         match &node.kind {
             Var(symbol) => {
@@ -604,7 +602,7 @@ impl AssignmentChecker {
             IntLiteral(_) => {}, FloatLiteral(_) => {}, CharLiteral(_) => {}, StrLiteral(_) => {}, BoolLiteral(_) => {},
         }
 
-        match self.session.types.require(node.type_id)? {
+        match self.ctx.types.require(node.type_id)? {
             Never => {
                 state.reachable = false;
             },
@@ -616,7 +614,7 @@ impl AssignmentChecker {
 }
 
 pub fn check_assignment(ctx: ResolutionContext&, procedure: AnalyzedProcedure&) -> Result<(), AnalysisError> {
-    let checker = AssignmentChecker(ctx, ctx.session, Vec<HirId>.new(), Vec<LoopFrame>.new(), Arena<Place>.new(), HashMap<SymbolId, u64>.new(), HashMap<FieldKey, u64>.new());
+    let checker = AssignmentChecker(ctx, Vec<HirId>.new(), Vec<LoopFrame>.new(), Arena<Place>.new(), HashMap<SymbolId, u64>.new(), HashMap<FieldKey, u64>.new());
     defer checker.drop();
     let state = FlowState.new();
     defer state.drop();

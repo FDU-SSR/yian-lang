@@ -6,21 +6,21 @@ from yianc.diagnostics.model import AnalysisError;
 from std.collections.hash_map import HashMap;
 
 pub fn instance_substitutions(ctx: ResolutionContext&, type_id: TypeId) -> Result<HashMap<TypeId, TypeId>, AnalysisError> {
-    store_substitutions(ctx.session.types, type_id)
+    store_substitutions(ctx.types, type_id)
 }
 
 pub fn signature(ctx: ResolutionContext&, type_id: TypeId) -> Result<CallableSignature, AnalysisError> {
-    store_signature(ctx.session.types, type_id)
+    store_signature(ctx.types, type_id)
 }
 
 // An instance borrows the template's AST body; registration does not duplicate syntax ownership.
 pub fn schedule(ctx: ResolutionContext&, type_id: TypeId) -> Result<(), AnalysisError> {
-    if ctx.session.definitions.get(type_id).is_none() {
-        let definition = match ctx.session.types.require(type_id)? {
+    if ctx.definitions.get(type_id).is_none() {
+        let definition = match ctx.types.require(type_id)? {
             Nominal(id, _) => *id,
             _ => @panic("invalid scheduled type"),
         };
-        let header = *ctx.session.types.definition(definition).unwrap();
+        let header = *ctx.types.definition(definition).unwrap();
         let arguments = Vec<TypeId>.new();
         defer arguments.drop();
         let index = 0u64;
@@ -30,14 +30,14 @@ pub fn schedule(ctx: ResolutionContext&, type_id: TypeId) -> Result<(), Analysis
             index += 1;
         }
 
-        let template_id = ctx.session.types.instance(definition, &arguments)?;
-        let template = match ctx.session.definitions.get(template_id) {
+        let template_id = ctx.types.instance(definition, &arguments)?;
+        let template = match ctx.definitions.get(template_id) {
             Some(value) => value,
             None => @panic("callable template has no body"),
         };
-        ctx.session.definitions.register(Procedure(definition, type_id, template.unit, template.body, template.kind))?;
+        ctx.definitions.register(Procedure(definition, type_id, template.unit, template.body, template.kind))?;
     }
 
-    ctx.session.worklist.enqueue(type_id);
+    ctx.worklist.enqueue(type_id);
     Result<(), AnalysisError>.Ok(())
 }

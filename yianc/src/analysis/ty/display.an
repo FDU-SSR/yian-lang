@@ -4,5 +4,5 @@ from yianc.common.ids import TypeId;
 
 // The caller owns the resulting message buffer; it borrows no type-store text.
 pub fn type_text(ctx: ResolutionContext&, id: TypeId) -> String {
-    stored_type_text(ctx.session.types, &ctx.session.names, id)
+    stored_type_text(ctx.types, ctx.names, id)
 }

@@ -15,7 +15,7 @@ from std.core.iter import Iterator, IntoIterator;
 from std.core.convert import From;
 from yianc.types.store import NEVER_TYPE_ID, VOID_TYPE_ID;
 
-// The checker owns no session data. Lexical state is restored by defer on every error path.
+// The checker borrows shared analysis tables. Lexical state is restored by defer on every error path.
 pub struct ExprChecker {
     pub ctx: ResolutionContext&,
     pub unit: UnitId,
@@ -71,16 +71,16 @@ impl ExprChecker {
     }
 
     pub fn node(span: Span, type_id: TypeId, place: bool, kind: HirKind) -> HirId {
-        self.ctx.session.hir.add(HirNode(self.ctx.span(self.unit, span), type_id, place, kind))
+        self.ctx.hir.add(HirNode(self.ctx.span(self.unit, span), type_id, place, kind))
     }
 
     pub fn type_of(id: HirId) -> TypeId {
-        self.ctx.session.hir.get(id).unwrap().type_id
+        self.ctx.hir.get(id).unwrap().type_id
     }
 
     // The nearest callable scope supplies the result context; module/const scopes have none.
     fn required_return_type(span: Span) -> Result<TypeId, AnalysisError> {
-        match self.ctx.session.symbols.return_type(self.scope)? {
+        match self.ctx.symbols.return_type(self.scope)? {
             Some(value) => Result<TypeId, AnalysisError>.Ok(value),
             None => Result<TypeId, AnalysisError>.Err(self.error(span, "return is only allowed inside a callable")),
         }
@@ -96,9 +96,9 @@ impl ExprChecker {
         defer wanted.drop();
         let observed = type_text(self.ctx, actual);
         defer observed.drop();
-        let relation = match self.ctx.session.types.get(expected).unwrap() {
+        let relation = match self.ctx.types.get(expected).unwrap() {
             Nominal(expected_definition, _) => {
-                match self.ctx.session.types.get(actual).unwrap() {
+                match self.ctx.types.get(actual).unwrap() {
                     Nominal(actual_definition, _) => {
                         if *expected_definition != *actual_definition {
                             "to"
@@ -135,7 +135,7 @@ impl ExprChecker {
     }
 
     pub fn coerce(id: HirId, expected: TypeId) -> Result<HirId, AnalysisError> {
-        let node = *self.ctx.session.hir.get(id).unwrap();
+        let node = *self.ctx.hir.get(id).unwrap();
 
         if node.type_id == expected || node.type_id == TypeId(NEVER_TYPE_ID) {
             return Result<HirId, AnalysisError>.Ok(id);
@@ -164,16 +164,16 @@ impl ExprChecker {
     }
 
     pub fn bind(name: str, type_id: TypeId, span: Span, kind: SymbolKind) -> Result<SymbolId, AnalysisError> {
-        let interned = self.ctx.session.names.intern(name);
+        let interned = self.ctx.names.intern(name);
 
         if name == "IS_RAW_MODE" {
             return Result<SymbolId, AnalysisError>.Err(self.ctx.error(self.unit, span, DiagnosticCode.Duplicate, "binding uses a reserved compiler name"));
         }
 
         if self.parameter_binding {
-            match self.ctx.session.symbols.lookup(self.scope, interned) {
+            match self.ctx.symbols.lookup(self.scope, interned) {
                 Some(existing) => {
-                    if self.ctx.session.symbols.get(existing).unwrap().kind == SymbolKind.Parameter {
+                    if self.ctx.symbols.get(existing).unwrap().kind == SymbolKind.Parameter {
                         return Result<SymbolId, AnalysisError>.Err(AnalysisError.named(DiagnosticCode.Type,
                             Option<SourceSpan>.Some(self.ctx.span(self.unit, span)), "Variable '", name, "' is already defined in the current scope"));
                     }
@@ -182,11 +182,11 @@ impl ExprChecker {
             }
         }
 
-        let symbol = self.ctx.session.symbols.add(Symbol(interned, kind, type_id, self.unit,
+        let symbol = self.ctx.symbols.add(Symbol(interned, kind, type_id, self.unit,
             Option<SourceSpan>.Some(self.ctx.span(self.unit, span)), false, false, false,
             Option<SymbolId>.None, Option<DefId>.None));
 
-        if !self.ctx.session.symbols.bind(self.scope, interned, symbol)? {
+        if !self.ctx.symbols.bind(self.scope, interned, symbol)? {
             return Result<SymbolId, AnalysisError>.Err(self.ctx.error(self.unit, span, DiagnosticCode.Duplicate, "duplicate local binding"));
         }
 
@@ -195,7 +195,7 @@ impl ExprChecker {
 
     pub fn block(block: Block&) -> Result<HirId, AnalysisError> {
         let previous = self.scope;
-        self.scope = self.ctx.session.symbols.create_scope(Option<ScopeId>.Some(previous))?;
+        self.scope = self.ctx.symbols.create_scope(Option<ScopeId>.Some(previous))?;
         defer self.scope = previous;
         let statements = Vec<HirId>.new();
         let accepted = false;

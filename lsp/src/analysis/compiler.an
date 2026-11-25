@@ -1,5 +1,7 @@
-from yianc.analysis.session.session import AnalysisSession;
 from yianc.analysis.session.output import AnalysisOptions, AnalysisOutput;
+from yianc.analysis.hir.store import HirStore;
+from yianc.analysis.symbol.scope import SymbolStore;
+from yianc.common.names import NameInterner;
 from yianc.codegen.session import TargetLayout;
 from yianc.frontend.driver import FrontendDriver;
 from yianc.telemetry.trace import CompilerTrace;
@@ -8,6 +10,7 @@ from yianc.types.layout import TypeSizeProvider;
 from yianc.types.store import TypeStore;
 from yianc.diagnostics.model import DiagnosticCode, DiagnosticLocation, UserDiagnostic, DiagnosticReporter;
 from yianc.frontend.source import SourceFile, SourceMap, SourceTable;
+from yianc.frontend.unit import UnitTable;
 from lsp.analysis.inputs import SourceDocument;
 from yianc.input_error import InputError;
 from yianc.package.model import PackageMap;
@@ -17,10 +20,14 @@ from std.core.convert import From;
 from std.core.fs import resolve;
 from std.core.iter import Iterator, IntoIterator;
 
-// Output refers to session records and is released before the session.
-// The analysis owns its type store, so moving the session never invalidates the table.
+// Output and HIR IDs refer to these owned tables. Release them before the stable type store.
 pub struct CompilerAnalysis {
-    pub session: AnalysisSession,
+    pub units: UnitTable,
+    pub packages: Option<PackageMap>,
+    pub names: NameInterner,
+    pub symbols: SymbolStore,
+    pub hir: HirStore,
+    pub stdlib: Vec<bool>,
     pub output: AnalysisOutput,
     warnings: Option<Vec<LspDiagnostic>>,
     types: TypeStore*,
@@ -49,7 +56,12 @@ impl Drop for CompilerAnalysis {
     pub fn drop() {
         match self.warnings.take() { Some(values) => release_diagnostics(&values), None => {}, }
         self.output.drop();
-        self.session.drop();
+        self.hir.drop();
+        self.symbols.drop();
+        self.names.drop();
+        self.units.drop();
+        self.stdlib.drop();
+        match self.packages.take() { Some(value) => value.drop(), None => {}, }
         self.types.drop();
         del self.types;
     }
@@ -96,13 +108,12 @@ pub fn analyze(documents: Vec<SourceDocument>&, trust: SourceTrust, packages: Op
     raw_pointers: bool) -> Result<CompilerAnalysis, CompilerFailure> {
     let trace = CompilerTrace.disabled();
     defer trace.drop();
-    let inputs_transferred = false;
+    let trust_transferred = false;
     defer {
-        if !inputs_transferred {
-            trust.drop();
-            match &packages { Some(value) => value.drop(), None => {}, }
-        }
+        if !trust_transferred { trust.drop(); }
     };
+    let analysis_transferred = false;
+    defer { if !analysis_transferred { match &packages { Some(value) => value.drop(), None => {}, } } };
     let files = Vec<SourceFile>.new();
     let files_transferred = false;
     defer { if !files_transferred { release_files(&files); } };
@@ -144,34 +155,44 @@ pub fn analyze(documents: Vec<SourceDocument>&, trust: SourceTrust, packages: Op
             return Result<CompilerAnalysis, CompilerFailure>.Err(CompilerFailure.single(&error, frontend.source_table()));
         },
     };
-    // Each analysis allocates its own table; the session and layout borrow it until both are released.
+    defer { if !analysis_transferred { units.drop(); } };
+
+    // Each analysis owns these shared tables; the middle end borrows them during the run.
     let types = dyn TypeStore.new();
-    let types_live = true;
-    defer { if types_live { types.drop(); del types; } };
-    let session = dyn AnalysisSession.new(units, raw_pointers, trust, packages, &*types);
-    inputs_transferred = true;
+    defer { if !analysis_transferred { types.drop(); del types; } };
+    let names = NameInterner.new();
+    let symbols = SymbolStore.new();
+    let hir = HirStore.new();
+    defer {
+        if !analysis_transferred {
+            hir.drop();
+            symbols.drop();
+            names.drop();
+        }
+    };
+
     let layout = match TargetLayout.new(&*types, raw_pointers, 0u8, false, Option<CompilerTrace&>.None) {
         Ok(value) => value,
         Err(error) => {
             defer error.drop();
-            let failure = CompilerFailure.single(&error, &units);
-            session.drop();
-            del session;
-            return Result<CompilerAnalysis, CompilerFailure>.Err(failure);
+            return Result<CompilerAnalysis, CompilerFailure>.Err(CompilerFailure.single(&error, &units));
         },
     };
+    let layout_live = true;
+    defer { if layout_live { layout.drop(); } };
+
     let reporter = LspReporter(&units, Vec<LspDiagnostic>.new());
-    let transferred = false;
-    defer { if !transferred { release_diagnostics(&reporter.warnings); } };
+    defer { if !analysis_transferred { release_diagnostics(&reporter.warnings); } };
     let options = AnalysisOptions.new();
     options.require_entry = false;
     options.entry_optional = true;
     options.verify_hir = true;
     options.sizes = Option<TypeSizeProvider&>.Some(layout.backend_types());
-    let middle = MiddleEndDriver.new(session, options, &reporter);
-    defer middle.drop();
-    let layout_live = true;
-    defer { if layout_live { layout.drop(); } };
+    let middle = MiddleEndDriver.new(&units, packages.as_ref(), &names, &*types, &symbols, &hir,
+        trust, raw_pointers, options, &reporter);
+    trust_transferred = true;
+    let middle_live = true;
+    defer { if middle_live { middle.drop(); } };
     let result = match middle.run() {
         Ok(value) => value,
         Err(error) => {
@@ -179,14 +200,21 @@ pub fn analyze(documents: Vec<SourceDocument>&, trust: SourceTrust, packages: Op
             return Result<CompilerAnalysis, CompilerFailure>.Err(CompilerFailure.single(&error, &units));
         },
     };
-    // The layout's type cache borrows the table; release it before transferring session contents.
+    // Copy source permissions in UnitId order before releasing their middle-end owner.
+    let stdlib = Vec<bool>.with_capacity(units.len());
+    let source_cursor = 0u64;
+    while source_cursor < units.len() {
+        stdlib.push(middle.permissions[source_cursor].is_stdlib);
+        source_cursor += 1u64;
+    }
+    middle.drop();
+    middle_live = false;
+
+    // The layout's type cache borrows the table; release it before transferring analysis state.
     layout.drop();
     layout_live = false;
-    // Abandon the result shell after moving its session contents and output into CompilerAnalysis.
-    let analysis = CompilerAnalysis(*result.session, result.output,
+    let analysis = CompilerAnalysis(units, packages, names, symbols, hir, stdlib, result,
         Option<Vec<LspDiagnostic>>.Some(reporter.warnings), types);
-    del result.session;
-    transferred = true;
-    types_live = false;
+    analysis_transferred = true;
     Result<CompilerAnalysis, CompilerFailure>.Ok(analysis)
 }

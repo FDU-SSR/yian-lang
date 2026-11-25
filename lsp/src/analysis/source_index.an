@@ -1,5 +1,4 @@
 from yianc.common.names import NameInterner;
-from yianc.analysis.session.session import AnalysisSession;
 from yianc.common.ids import NameId, TypeId, UnitId;
 from yianc.common.location import SourceSpan;
 from yianc.common.traversal import WalkControl;
@@ -13,7 +12,9 @@ from yianc.frontend.lex.lexer import Lexer;
 from yianc.frontend.lex.token import KeywordKind, Token, TokenPayload, drop_tokens;
 from yianc.frontend.parse.items import parse_program;
 from yianc.frontend.parse.state import Parser;
-from yianc.frontend.source import Position, Span;
+from yianc.frontend.source import Position, SourceMap, Span;
+from yianc.frontend.unit import UnitTable;
+from yianc.package.model import PackageMap;
 from std.collections.hash_map import HashMap;
 from std.core.fs import canonicalize;
 from std.core.hash import Hash, Murmur3Hasher;
@@ -729,7 +730,8 @@ impl TryAstVisitor<String> for Binder {
 }
 
 impl SourceIndex {
-    static pub fn build(session: AnalysisSession&, std_root: str)
+    static pub fn build(units: UnitTable&, packages: Option<PackageMap&>, names: NameInterner&,
+        stdlib: Vec<bool>&, std_root: str)
     -> Result<Self, String> {
         let index = Self(
             decls=Vec<DeclInfo>.new(),
@@ -749,7 +751,7 @@ impl SourceIndex {
         let completed = false;
         defer { if !completed { index.drop(); } };
 
-        match session.package_map() {
+        match packages {
             Some(packages) => {
                 let package_index = 0u64;
                 while package_index < packages.len() {
@@ -765,11 +767,11 @@ impl SourceIndex {
         }
 
         let source_index = 0u64;
-        while source_index < session.len() {
+        while source_index < units.len() {
             let source = UnitId(source_index);
-            let file = session.source(source);
+            let file = units.file(source);
             let path = String.from(&file.path());
-            let is_stdlib = session.is_stdlib(source);
+            let is_stdlib = stdlib[source_index];
             let scanned = match Lexer.new(file.text()).run() {
                 Ok(value) => value,
                 Err(error) => {
@@ -798,23 +800,23 @@ impl SourceIndex {
         }
 
         source_index = 0u64;
-        while source_index < session.len() {
+        while source_index < units.len() {
             index.add_module(UnitId(source_index));
             source_index += 1u64;
         }
         source_index = 0u64;
-        while source_index < session.len() {
-            index.collect_source(UnitId(source_index), &session.names);
+        while source_index < units.len() {
+            index.collect_source(UnitId(source_index), names);
             source_index += 1u64;
         }
-        index.resolve_imports(&session.names);
-        index.bind_prelude(&session.names);
+        index.resolve_imports(names);
+        index.bind_prelude(names);
         index.add_module_occurrences();
-        index.add_import_occurrences(&session.names);
+        index.add_import_occurrences(names);
 
         source_index = 0u64;
-        while source_index < session.len() {
-            match index.walk_source(UnitId(source_index), &session.names) {
+        while source_index < units.len() {
+            match index.walk_source(UnitId(source_index), names) {
                 Ok(_) => {},
                 Err(message) => return Result<Self, String>.Err(message),
             }

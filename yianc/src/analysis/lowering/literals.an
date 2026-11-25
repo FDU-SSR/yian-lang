@@ -20,21 +20,21 @@ impl ExprChecker {
     fn integer_literal(span: Span, magnitude: u64, negative: bool, suffix: IntSuffix) -> Result<HirId, AnalysisError> {
         let type_id = match &suffix {
             Unsuffixed => TypeId(INT_LITERAL_TYPE_ID),
-            I8 => self.ctx.session.types.primitive(TypeData.Integer(8, true))?,
-            I16 => self.ctx.session.types.primitive(TypeData.Integer(16, true))?,
-            I32 => self.ctx.session.types.primitive(TypeData.Integer(32, true))?,
-            I64 => self.ctx.session.types.primitive(TypeData.Integer(64, true))?,
-            U8 => self.ctx.session.types.primitive(TypeData.Integer(8, false))?,
-            U16 => self.ctx.session.types.primitive(TypeData.Integer(16, false))?,
-            U32 => self.ctx.session.types.primitive(TypeData.Integer(32, false))?,
+            I8 => self.ctx.types.primitive(TypeData.Integer(8, true))?,
+            I16 => self.ctx.types.primitive(TypeData.Integer(16, true))?,
+            I32 => self.ctx.types.primitive(TypeData.Integer(32, true))?,
+            I64 => self.ctx.types.primitive(TypeData.Integer(64, true))?,
+            U8 => self.ctx.types.primitive(TypeData.Integer(8, false))?,
+            U16 => self.ctx.types.primitive(TypeData.Integer(16, false))?,
+            U32 => self.ctx.types.primitive(TypeData.Integer(32, false))?,
             U64 => TypeId(U64_TYPE_ID),
             Int => TypeId(I32_TYPE_ID),
-            Uint => self.ctx.session.types.primitive(TypeData.Integer(32, false))?,
+            Uint => self.ctx.types.primitive(TypeData.Integer(32, false))?,
         };
         let integer = IntegerValue.untyped(magnitude, negative);
 
         if type_id != TypeId(INT_LITERAL_TYPE_ID) {
-            match self.ctx.session.types.require(type_id)? {
+            match self.ctx.types.require(type_id)? {
                 Integer(bits, signed) => {
                     if !integer_fits(integer, *bits, *signed) {
                         return Result<HirId, AnalysisError>.Err(self.error(span, "integer literal is out of range for its suffix"));
@@ -55,12 +55,12 @@ impl ExprChecker {
             Float(value) => {
                 let type_id = match &value.data.suffix {
                     Unsuffixed => TypeId(FLOAT_LITERAL_TYPE_ID),
-                    F16 => self.ctx.session.types.primitive(TypeData.Float(16))?,
-                    F32 => self.ctx.session.types.primitive(TypeData.Float(32))?,
+                    F16 => self.ctx.types.primitive(TypeData.Float(16))?,
+                    F32 => self.ctx.types.primitive(TypeData.Float(32))?,
                     F64 => TypeId(F64_TYPE_ID),
                     Float => TypeId(F64_TYPE_ID),
                 };
-                let number = match self.ctx.session.types.require(type_id)? {
+                let number = match self.ctx.types.require(type_id)? {
                     Float(bits) => round_float(value.data.value, *bits),
                     _ => value.data.value,
                 };
@@ -68,7 +68,7 @@ impl ExprChecker {
             },
             Boolean(value) => self.node(span, TypeId(BOOL_TYPE_ID), false, HirKind.BoolLiteral(value.data.value)),
             StringLiteral(value) => {
-                let interned = self.ctx.session.names.intern(value.data.value.as_str());
+                let interned = self.ctx.names.intern(value.data.value.as_str());
                 self.node(span, TypeId(STR_TYPE_ID), false, HirKind.StrLiteral(interned))
             },
             Character(value) => {
@@ -107,13 +107,13 @@ impl ExprChecker {
             None => {},
         }
 
-        let interned = self.ctx.session.names.intern(name);
-        let symbol = match self.ctx.session.symbols.lookup(self.scope, interned) {
+        let interned = self.ctx.names.intern(name);
+        let symbol = match self.ctx.symbols.lookup(self.scope, interned) {
             Some(value) => value,
             None => return Result<HirId, AnalysisError>.Err(AnalysisError.named(DiagnosticCode.Undefined,
                 Option<SourceSpan>.Some(self.ctx.span(self.unit, span)), "Unknown identifier '", name, "'")),
         };
-        let record = *self.ctx.session.symbols.get(symbol).unwrap();
+        let record = *self.ctx.symbols.get(symbol).unwrap();
         let type_id = record.type_id;
 
         match &record.kind {
@@ -121,7 +121,7 @@ impl ExprChecker {
             Parameter => Result<HirId, AnalysisError>.Ok(self.node(span, type_id, true, HirKind.Var(symbol))),
             Function => Result<HirId, AnalysisError>.Ok(self.node(span, type_id, false, HirKind.Ty)),
             Type => {
-                match self.ctx.session.types.require(type_id)? {
+                match self.ctx.types.require(type_id)? {
                     LiteralValue(bits, negative, value_type) => {
                         if *value_type == TypeId(BOOL_TYPE_ID) {
                             return Result<HirId, AnalysisError>.Ok(self.node(span, *value_type, false, HirKind.BoolLiteral(*bits != 0)));
@@ -129,7 +129,7 @@ impl ExprChecker {
 
                         let integer = IntegerValue.untyped(*bits, *negative);
 
-                        match self.ctx.session.types.require(*value_type)? {
+                        match self.ctx.types.require(*value_type)? {
                             Integer(width, signed) => {
                                 integer = cast_integer(integer, *IntegerWidth.from_bits(*width).unwrap(), *signed);
                             },
@@ -144,7 +144,7 @@ impl ExprChecker {
                 Result<HirId, AnalysisError>.Ok(self.node(span, type_id, false, HirKind.Ty))
             },
             Alias => {
-                if !self.ffi_allowed && contains_ffi(self.ctx.session.types, type_id, false) {
+                if !self.ffi_allowed && contains_ffi(self.ctx.types, type_id, false) {
                     return Result<HirId, AnalysisError>.Err(self.error(span, "C ABI alias requires an ffi function"));
                 }
                 Result<HirId, AnalysisError>.Ok(self.node(span, type_id, false, HirKind.Ty))

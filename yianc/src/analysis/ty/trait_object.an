@@ -4,5 +4,5 @@ from yianc.common.ids import TypeId;
 from yianc.diagnostics.model import AnalysisError;
 
 pub fn object_methods(ctx: ResolutionContext&, trait_id: TypeId) -> Result<Vec<TypeId>, AnalysisError> {
-    store_object_methods(ctx.session.types, &ctx.session.names, trait_id)
+    store_object_methods(ctx.types, ctx.names, trait_id)
 }

@@ -17,12 +17,12 @@ impl ExprChecker {
     pub fn call(span: Span, callee: Expr&, args: Vec<Argument&>&) -> Result<HirId, AnalysisError> {
         let target = self.expression(callee)?;
         let type_id = self.type_of(target);
-        let type_expression = match &self.ctx.session.hir.require(target)?.kind {
+        let type_expression = match &self.ctx.hir.require(target)?.kind {
             Ty => true,
             _ => false,
         };
 
-        match self.ctx.session.types.require(type_id)? {
+        match self.ctx.types.require(type_id)? {
             FunctionPointer(parameters, result) => return self.invoke(span, target, parameters, *result, args),
             Closure(_, parameters, result, _, _, _) => {
                 let types = Vec<TypeId>.new();
@@ -64,9 +64,9 @@ impl ExprChecker {
         }
 
         if !type_expression {
-            match self.ctx.session.types.require(type_id)? {
+            match self.ctx.types.require(type_id)? {
                 Nominal(definition, _) => {
-                    match self.ctx.session.types.complete_definition(*definition)? {
+                    match self.ctx.types.complete_definition(*definition)? {
                         Struct(_) => return Result<HirId, AnalysisError>.Err(self.error(span, "aggregate construction requires a type expression")),
                         _ => {},
                     }
@@ -110,16 +110,16 @@ impl ExprChecker {
     fn call_arity(span: Span, type_id: TypeId, expected: u64, actual: u64, receiver: bool) -> AnalysisError {
         let subject = String.new();
         defer subject.drop();
-        let definition = match *self.ctx.session.types.get(type_id).unwrap() {
+        let definition = match *self.ctx.types.get(type_id).unwrap() {
             Nominal(id, _) => *id,
             _ => @panic("arity requires a callable identity"),
         };
-        let header = self.ctx.session.types.definition(definition).unwrap().header();
+        let header = self.ctx.types.definition(definition).unwrap().header();
         if header.kind == NominalKind.Method {
             subject.push_str(if receiver { "method call" } else { "static method call" });
         } else {
             subject.push_str("function call '");
-            subject.push_str(self.ctx.session.names.text(header.name));
+            subject.push_str(self.ctx.names.text(header.name));
             subject.push_str("'");
         }
         AnalysisError.arity(Option<SourceSpan>.Some(self.ctx.span(self.unit, span)), subject.as_str(), expected, actual, false)
@@ -131,11 +131,11 @@ impl ExprChecker {
 
     fn call_with_receiver(span: Span, type_id: TypeId, args: Vec<Argument&>&, receiver: Option<HirId>,
         name_span: Option<Span>) -> Result<HirId, AnalysisError> {
-        let nominal = match self.ctx.session.types.require(type_id)? {
+        let nominal = match self.ctx.types.require(type_id)? {
             Nominal(definition, _) => *definition,
             _ => return Result<HirId, AnalysisError>.Err(self.error(span, "expression is not callable")),
         };
-        let definition = match self.ctx.session.types.complete_definition(nominal)? {
+        let definition = match self.ctx.types.complete_definition(nominal)? {
             Function(value) => value,
             Method(value) => value,
             Struct(_) => return self.construct(span, type_id, args, name_span),
@@ -170,11 +170,11 @@ impl ExprChecker {
 
     pub fn call_values(span: Span, type_id: TypeId, arguments: Vec<HirId>&, receiver: Option<HirId>,
         name_span: Option<Span>) -> Result<HirId, AnalysisError> {
-        let nominal = match self.ctx.session.types.require(type_id)? {
+        let nominal = match self.ctx.types.require(type_id)? {
             Nominal(definition, _) => *definition,
             _ => return Result<HirId, AnalysisError>.Err(self.error(span, "call requires a callable definition")),
         };
-        let definition = match self.ctx.session.types.complete_definition(nominal)? {
+        let definition = match self.ctx.types.complete_definition(nominal)? {
             Function(value) => value,
             Method(value) => value,
             _ => return Result<HirId, AnalysisError>.Err(self.error(span, "definition is not callable")),
@@ -202,7 +202,7 @@ impl ExprChecker {
 
         while index < values.len() {
             if !has_literal(self.ctx, self.type_of(values[index])) {
-                let expected = substitute(self.ctx.session.types, definition.parameters[index].type_id, &substitutions)?;
+                let expected = substitute(self.ctx.types, definition.parameters[index].type_id, &substitutions)?;
 
                 if !compatible(self.ctx, self.type_of(values[index]), expected) && !self.match_argument(expected, self.type_of(values[index]), &substitutions) {
                     return Result<HirId, AnalysisError>.Err(self.inference_error(span, expected, self.type_of(values[index])));
@@ -216,7 +216,7 @@ impl ExprChecker {
 
         while index < values.len() {
             let actual = self.type_of(values[index]);
-            let expected = substitute(self.ctx.session.types, definition.parameters[index].type_id, &substitutions)?;
+            let expected = substitute(self.ctx.types, definition.parameters[index].type_id, &substitutions)?;
 
             if !compatible(self.ctx, self.type_of(values[index]), expected) && !self.match_argument(expected, actual, &substitutions) {
                 return Result<HirId, AnalysisError>.Err(self.inference_error(span, expected, actual));
@@ -227,7 +227,7 @@ impl ExprChecker {
 
         let actual_arguments = Vec<TypeId>.new();
         defer actual_arguments.drop();
-        let header = *self.ctx.session.types.definition(nominal).unwrap();
+        let header = *self.ctx.types.definition(nominal).unwrap();
         index = 0;
 
         while index < header.generic_count() {
@@ -241,8 +241,8 @@ impl ExprChecker {
             index += 1;
         }
 
-        let instance = self.ctx.session.types.instance(nominal, &actual_arguments)?;
-        if !definition.is_header && has_generic(self.ctx.session.types, instance) {
+        let instance = self.ctx.types.instance(nominal, &actual_arguments)?;
+        if !definition.is_header && has_generic(self.ctx.types, instance) {
             return Result<HirId, AnalysisError>.Err(self.error(span, "function instance requires concrete generic arguments"));
         }
 
@@ -251,10 +251,10 @@ impl ExprChecker {
 
         if !self.ffi_allowed {
             // Permission follows the declaration, rather than a concrete generic binding.
-            let exposed = contains_ffi(self.ctx.session.types, definition.result, false);
+            let exposed = contains_ffi(self.ctx.types, definition.result, false);
 
             for parameter in definition.parameters {
-                if contains_ffi(self.ctx.session.types, parameter.type_id, false) {
+                if contains_ffi(self.ctx.types, parameter.type_id, false) {
                     exposed = true;
                 }
             }

@@ -1,4 +1,5 @@
 from yianc.common.ids import DefId, TypeId, SymbolId, HirId, UnitId, NameId;
+from yianc.types.store import TypeStore;
 from yianc.types.layout import TypeSizeProvider;
 from yianc.telemetry.trace import CompilerTrace;
 from yianc.common.location import SourceSpan;
@@ -21,7 +22,7 @@ impl AnalysisOptions {
     }
 }
 
-// HIR and symbols belong to the session; only the lists belong to this result.
+// IDs in this result refer to the shared tables kept alive by the compilation entry point.
 pub struct AnalyzedProcedure {
     pub definition: DefId,
     pub type_id: TypeId,
@@ -38,15 +39,19 @@ impl Drop for AnalyzedProcedure {
     }
 }
 
+// The output owns its procedure and definition lists. Its type store is borrowed
+// from the compilation entry point and must remain alive while the output is used.
 pub struct AnalysisOutput {
     pub checked: Vec<DefId>,
     pub procedures: Vec<AnalyzedProcedure>,
     pub entry: Option<TypeId>,
+    pub types: TypeStore&,
+    pub raw_pointers: bool,
 }
 
 impl AnalysisOutput {
-    static pub fn new() -> Self {
-        Self(Vec<DefId>.new(), Vec<AnalyzedProcedure>.new(), Option<TypeId>.None)
+    static pub fn new(types: TypeStore&, raw_pointers: bool) -> Self {
+        Self(Vec<DefId>.new(), Vec<AnalyzedProcedure>.new(), Option<TypeId>.None, types, raw_pointers)
     }
 }
 

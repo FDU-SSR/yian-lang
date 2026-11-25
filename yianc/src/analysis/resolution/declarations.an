@@ -33,7 +33,7 @@ fn attributes(ctx: ResolutionContext&, unit: UnitId, item: Item&, attrs: Vec<Att
         seen.push(attr.data.kind);
 
         if attr.data.kind == AttrKind.Ffi || attr.data.kind == AttrKind.PubFfi {
-            if !ctx.session.allows_ffi(unit) {
+            if !ctx.permissions.get(unit.index).unwrap().allows_ffi {
                 return Result<(), AnalysisError>.Err(ctx.error(unit, attr.span, DiagnosticCode.Access, "FFI requires a package with ffi = true"));
             }
 
@@ -48,7 +48,7 @@ fn attributes(ctx: ResolutionContext&, unit: UnitId, item: Item&, attrs: Vec<Att
     }
 
     if external {
-        if !ctx.session.allows_ffi(unit) || has_attr(attrs, AttrKind.Pub) || has_attr(attrs, AttrKind.Ffi) || has_attr(attrs, AttrKind.Static) {
+        if !ctx.permissions.get(unit.index).unwrap().allows_ffi || has_attr(attrs, AttrKind.Pub) || has_attr(attrs, AttrKind.Ffi) || has_attr(attrs, AttrKind.Static) {
             return Result<(), AnalysisError>.Err(ctx.error(unit, item.span, DiagnosticCode.Access, "invalid or unauthorized FFI declaration"));
         }
     } elif has_attr(attrs, AttrKind.Static) || (function && has_attr(attrs, AttrKind.PubFfi) && !has_attr(attrs, AttrKind.Ffi)) {
@@ -73,16 +73,16 @@ pub fn collect_generics(ctx: ResolutionContext&, unit: UnitId, scope: ScopeId, g
             Type(value) => value.data.name,
             Constant(value) => value.data.name,
         };
-        let interned = ctx.session.names.intern(name.data.name.as_str());
+        let interned = ctx.names.intern(name.data.name.as_str());
         let type_id = match generic {
-            Type(_) => ctx.session.types.generic(interned),
-            Constant(_) => ctx.session.types.const_generic(interned, TypeId(ERROR_TYPE_ID)),
+            Type(_) => ctx.types.generic(interned),
+            Constant(_) => ctx.types.const_generic(interned, TypeId(ERROR_TYPE_ID)),
         };
-        let symbol = ctx.session.symbols.add(Symbol(interned, SymbolKind.Type, type_id, unit,
+        let symbol = ctx.symbols.add(Symbol(interned, SymbolKind.Type, type_id, unit,
             Option<SourceSpan>.Some(ctx.span(unit, name.span)), false, false, false,
             Option<SymbolId>.None, Option<DefId>.None));
 
-        if !ctx.session.symbols.bind(scope, interned, symbol)? {
+        if !ctx.symbols.bind(scope, interned, symbol)? {
             return Result<Vec<TypeId>, AnalysisError>.Err(ctx.error(unit, name.span, DiagnosticCode.Duplicate, "duplicate generic parameter"));
         }
 
@@ -95,17 +95,17 @@ pub fn collect_generics(ctx: ResolutionContext&, unit: UnitId, scope: ScopeId, g
 
 fn collect_named(ctx: ResolutionContext&, unit: UnitId, item: Item&, name: Identifier&, attrs: Vec<Attr&>&, generics: Vec<GenericParam>&, kind: SymbolKind, nominal: Option<NominalKind>, external: bool) -> Result<(), AnalysisError> {
     attributes(ctx, unit, item, attrs, kind == SymbolKind.Function, external)?;
-    let name_id = ctx.session.names.intern(name.data.name.as_str());
+    let name_id = ctx.names.intern(name.data.name.as_str());
 
     if name.data.name.as_str() == "IS_RAW_MODE" || name.data.name.as_str() == "Self" {
         return Result<(), AnalysisError>.Err(ctx.error(unit, name.span, DiagnosticCode.Duplicate, "declaration uses a reserved compiler name"));
     }
 
     let parent = ctx.scopes[unit.index];
-    let scope = ctx.session.symbols.create_scope(Option<ScopeId>.Some(parent))?;
+    let scope = ctx.symbols.create_scope(Option<ScopeId>.Some(parent))?;
     let generic_ids = collect_generics(ctx, unit, scope, generics)?;
     let definition = match nominal {
-        Some(value) => Option<DefId>.Some(ctx.session.types.register(DefinitionHeader(value, name_id, ctx.span(unit, item.span), unit), generic_ids)),
+        Some(value) => Option<DefId>.Some(ctx.types.register(DefinitionHeader(value, name_id, ctx.span(unit, item.span), unit), generic_ids)),
         None => {
             generic_ids.drop();
             Option<DefId>.None
@@ -117,7 +117,7 @@ fn collect_named(ctx: ResolutionContext&, unit: UnitId, item: Item&, name: Ident
             ctx.callable_scopes.insert(id, scope);
             let ids = Vec<TypeId>.new();
             defer ids.drop();
-            let record = *ctx.session.types.definition(id).unwrap();
+            let record = *ctx.types.definition(id).unwrap();
             let index = 0u64;
 
             while index < record.generic_count() {
@@ -125,20 +125,20 @@ fn collect_named(ctx: ResolutionContext&, unit: UnitId, item: Item&, name: Ident
                 index += 1;
             }
 
-            ctx.session.types.instance(id, &ids)?
+            ctx.types.instance(id, &ids)?
         },
         None => if external {
-            ctx.session.types.opaque(name_id, ctx.span(unit, item.span))
+            ctx.types.opaque(name_id, ctx.span(unit, item.span))
         } else {
             TypeId(ERROR_TYPE_ID)
         },
     };
-    let symbol = ctx.session.symbols.add(Symbol(name_id, kind, type_id, unit,
+    let symbol = ctx.symbols.add(Symbol(name_id, kind, type_id, unit,
         Option<SourceSpan>.Some(ctx.span(unit, name.span)),
         has_attr(attrs, AttrKind.Pub) || has_attr(attrs, AttrKind.PubFfi), false,
         has_attr(attrs, AttrKind.PubFfi), Option<SymbolId>.None, definition));
 
-    if !ctx.session.symbols.bind(parent, name_id, symbol)? {
+    if !ctx.symbols.bind(parent, name_id, symbol)? {
         return Result<(), AnalysisError>.Err(AnalysisError.named(DiagnosticCode.Duplicate,
             Option<SourceSpan>.Some(ctx.span(unit, name.span)), "Duplicate symbol name: ", name.data.name.as_str(), ""));
     }
@@ -152,9 +152,9 @@ pub fn collect_declarations(ctx: ResolutionContext&) -> Result<(), AnalysisError
     let empty = Vec<GenericParam>.new();
     defer empty.drop();
 
-    while unit_index < ctx.session.len() {
+    while unit_index < ctx.units.len() {
         let unit = UnitId(unit_index);
-        let record = *ctx.session.unit(unit).unwrap();
+        let record = *ctx.units.get(unit).unwrap();
         let root = record.tree.root;
 
         for item in root.data.items {

@@ -1,5 +1,4 @@
 from yianc.analysis.resolution.context import ResolutionContext;
-from yianc.analysis.session.session import AnalysisSession;
 from yianc.types.substitution import infer, substitute;
 from yianc.types.store import TypeStore, VOID_TYPE_ID;
 from yianc.types.model import Parameter;
@@ -19,26 +18,26 @@ struct TraitQuery {
 
 // The registered type count bounds every graph of query and impl-pattern identities.
 // Active queries detect cycles; this finite budget also bounds growing inference branches.
-fn query_budget(session: AnalysisSession&, target: TypeId, trait_id: TypeId) -> Result<u64, AnalysisError> {
-    session.types.require(target)?;
-    session.types.require(trait_id)?;
-    let count = session.types.len();
+fn query_budget(ctx: ResolutionContext&, target: TypeId, trait_id: TypeId) -> Result<u64, AnalysisError> {
+    ctx.types.require(target)?;
+    ctx.types.require(trait_id)?;
+    let count = ctx.types.len();
     if count > (0xFFFFFFFFFFFFFFFFu64 - 1u64) / 2u64 {
         @panic("trait query budget exceeds the target range");
     }
     Result<u64, AnalysisError>.Ok(count * 2u64 + 1u64)
 }
 
-fn conditions(session: AnalysisSession&, impl_id: ImplId, substitutions: HashMap<TypeId, TypeId>&, depth: u64, budget: u64, active: Vec<TraitQuery>&, span: SourceSpan) -> Result<bool, AnalysisError> {
-    let record = *session.impls.get(impl_id).unwrap();
+fn conditions(ctx: ResolutionContext&, impl_id: ImplId, substitutions: HashMap<TypeId, TypeId>&, depth: u64, budget: u64, active: Vec<TraitQuery>&, span: SourceSpan) -> Result<bool, AnalysisError> {
+    let record = *ctx.impls.get(impl_id).unwrap();
 
     for condition in record.conditions {
-        let target = substitute(session.types, condition.generic, substitutions)?;
+        let target = substitute(ctx.types, condition.generic, substitutions)?;
 
         for trait_id in condition.traits {
-            let required = substitute(session.types, *trait_id, substitutions)?;
+            let required = substitute(ctx.types, *trait_id, substitutions)?;
 
-            if !solve_trait(session, target, required, substitutions, depth + 1, budget, active, span)? {
+            if !solve_trait(ctx, target, required, substitutions, depth + 1, budget, active, span)? {
                 return Result<bool, AnalysisError>.Ok(false);
             }
         }
@@ -53,8 +52,8 @@ pub fn implements(ctx: ResolutionContext&, target: TypeId, trait_id: TypeId, spa
     defer substitutions.drop();
     let active = Vec<TraitQuery>.new();
     defer active.drop();
-    let budget = query_budget(ctx.session, target, trait_id)?;
-    solve_trait(ctx.session, target, trait_id, &substitutions, 0, budget, &active, span)
+    let budget = query_budget(ctx, target, trait_id)?;
+    solve_trait(ctx, target, trait_id, &substitutions, 0, budget, &active, span)
 }
 
 struct TraitSolution {
@@ -71,7 +70,7 @@ fn release_solutions(solutions: Vec<TraitSolution>&) {
 
 // Conditions may infer parameters absent from the receiver, such as an iterator's item type.
 // Candidate-local bindings are committed only after every nested obligation succeeds.
-fn solve_trait(session: AnalysisSession&, target: TypeId, trait_id: TypeId, outer: HashMap<TypeId, TypeId>&, depth: u64, budget: u64, active: Vec<TraitQuery>&, span: SourceSpan) -> Result<bool, AnalysisError> {
+fn solve_trait(ctx: ResolutionContext&, target: TypeId, trait_id: TypeId, outer: HashMap<TypeId, TypeId>&, depth: u64, budget: u64, active: Vec<TraitQuery>&, span: SourceSpan) -> Result<bool, AnalysisError> {
     if depth >= budget {
         return Result<bool, AnalysisError>.Ok(false);
     }
@@ -90,39 +89,39 @@ fn solve_trait(session: AnalysisSession&, target: TypeId, trait_id: TypeId, oute
     defer release_solutions(&solutions);
     let index = 0u64;
 
-    while index < session.impls.len() {
+    while index < ctx.impls.len() {
         let id = ImplId(index);
-        let record = *session.impls.get(id).unwrap();
+        let record = *ctx.impls.get(id).unwrap();
 
         match &record.trait_id {
             Some(pattern) => {
                 let local = HashMap<TypeId, TypeId>.new();
                 defer local.drop();
 
-                if !infer(session.types, record.target, target, &local) {
+                if !infer(ctx.types, record.target, target, &local) {
                     index += 1;
                     continue;
                 }
 
-                let resolved = substitute(session.types, *pattern, &local)?;
+                let resolved = substitute(ctx.types, *pattern, &local)?;
                 let trial = outer.clone();
                 defer trial.drop();
 
-                if !infer(session.types, trait_id, resolved, &trial) {
-                    if !infer(session.types, *pattern, trait_id, &local) {
+                if !infer(ctx.types, trait_id, resolved, &trial) {
+                    if !infer(ctx.types, *pattern, trait_id, &local) {
                         index += 1;
                         continue;
                     }
                 }
 
-                if !conditions(session, id, &local, depth, budget, active, span)? {
+                if !conditions(ctx, id, &local, depth, budget, active, span)? {
                     index += 1;
                     continue;
                 }
 
-                let completed = substitute(session.types, *pattern, &local)?;
+                let completed = substitute(ctx.types, *pattern, &local)?;
 
-                if !infer(session.types, trait_id, completed, &trial) {
+                if !infer(ctx.types, trait_id, completed, &trial) {
                     index += 1;
                     continue;
                 }
@@ -133,7 +132,7 @@ fn solve_trait(session: AnalysisSession&, target: TypeId, trait_id: TypeId, oute
                     1u32
                 };
                 let exact = record.target == target && record.generics.len() == 0;
-                let blanket = record.conditions.len() != 0 && match session.types.require(record.target)? {
+                let blanket = record.conditions.len() != 0 && match ctx.types.require(record.target)? {
                     Generic(_) => true,
                     _ => false,
                 };
@@ -146,7 +145,7 @@ fn solve_trait(session: AnalysisSession&, target: TypeId, trait_id: TypeId, oute
         index += 1;
     }
 
-    let description = trait_description(session, trait_id, target)?;
+    let description = trait_description(ctx, trait_id, target)?;
     defer description.drop();
     let selected = match select_candidate(&candidates, Option<SourceSpan>.Some(span), description.as_str())? {
         Some(value) => value,
@@ -171,18 +170,18 @@ struct MethodCandidate {
     blanket: bool,
 }
 
-fn trait_description(session: AnalysisSession&, trait_id: TypeId, target: TypeId) -> Result<String, AnalysisError> {
-    let definition = match session.types.require(trait_id)? {
-        Nominal(id, _) => match session.types.definition(*id) {
+fn trait_description(ctx: ResolutionContext&, trait_id: TypeId, target: TypeId) -> Result<String, AnalysisError> {
+    let definition = match ctx.types.require(trait_id)? {
+        Nominal(id, _) => match ctx.types.definition(*id) {
             Some(value) => value,
             None => @panic("trait diagnostic has an invalid definition ID"),
         },
         _ => @panic("trait diagnostic requires a nominal trait"),
     };
     let message = String.from(&"trait '");
-    message.push_str(session.names.text(definition.header().name));
+    message.push_str(ctx.names.text(definition.header().name));
     message.push_str("' for type '");
-    let target_name = stored_type_text(session.types, &session.names, target);
+    let target_name = stored_type_text(ctx.types, ctx.names, target);
     defer target_name.drop();
     message.push_str(target_name.as_str());
     message.push_str("'");
@@ -247,11 +246,11 @@ pub fn lookup_method_with_generics(ctx: ResolutionContext&, target: TypeId, name
     let query_trait = match required {
         Some(value) => value, None => TypeId(VOID_TYPE_ID)
     };
-    let budget = query_budget(ctx.session, target, query_trait)?;
+    let budget = query_budget(ctx, target, query_trait)?;
 
-    while index < ctx.session.impls.len() {
+    while index < ctx.impls.len() {
         let id = ImplId(index);
-        let record = *ctx.session.impls.get(id).unwrap();
+        let record = *ctx.impls.get(id).unwrap();
         let method = match record.methods.get(&name) {
             Some(value) => *value,
             None => {
@@ -262,7 +261,7 @@ pub fn lookup_method_with_generics(ctx: ResolutionContext&, target: TypeId, name
         let substitutions = HashMap<TypeId, TypeId>.new();
         defer substitutions.drop();
 
-        if !infer(ctx.session.types, record.target, target, &substitutions) {
+        if !infer(ctx.types, record.target, target, &substitutions) {
             index += 1;
             continue;
         }
@@ -271,7 +270,7 @@ pub fn lookup_method_with_generics(ctx: ResolutionContext&, target: TypeId, name
         match required {
             Some(trait_id) => match &record.trait_id {
                 Some(pattern) => {
-                    if !match_trait(ctx.session.types, *pattern, trait_id, &substitutions) {
+                    if !match_trait(ctx.types, *pattern, trait_id, &substitutions) {
                         index += 1;
                         continue;
                     }
@@ -284,10 +283,10 @@ pub fn lookup_method_with_generics(ctx: ResolutionContext&, target: TypeId, name
             None => {},
         }
 
-        match ctx.session.types.require(method)? {
+        match ctx.types.require(method)? {
             Nominal(definition, method_arguments) => {
-                let header = *ctx.session.types.definition(*definition).unwrap();
-                let body = match ctx.session.types.complete_definition(*definition)? {
+                let header = *ctx.types.definition(*definition).unwrap();
+                let body = match ctx.types.complete_definition(*definition)? {
                     Method(value) => value,
                     _ => @panic("method registry contains a non-method"),
                 };
@@ -313,7 +312,7 @@ pub fn lookup_method_with_generics(ctx: ResolutionContext&, target: TypeId, name
 
                 while position < method_arguments.len() {
                     let generic = *header.generic(position).unwrap();
-                    let actual = substitute(ctx.session.types, method_arguments[position], &substitutions)?;
+                    let actual = substitute(ctx.types, method_arguments[position], &substitutions)?;
 
                     if generic != actual && !substitutions.contains(&generic) {
                         substitutions.insert(generic, actual);
@@ -328,7 +327,7 @@ pub fn lookup_method_with_generics(ctx: ResolutionContext&, target: TypeId, name
         match required {
             Some(trait_id) => match &record.trait_id {
                 Some(pattern) => {
-                    if !match_trait(ctx.session.types, *pattern, trait_id, &substitutions) {
+                    if !match_trait(ctx.types, *pattern, trait_id, &substitutions) {
                         index += 1;
                         continue;
                     }
@@ -341,12 +340,12 @@ pub fn lookup_method_with_generics(ctx: ResolutionContext&, target: TypeId, name
             None => {},
         }
 
-        if !match_arguments(ctx, method, arguments, &substitutions)? || !conditions(ctx.session, id, &substitutions, 0, budget, &active, span)? {
+        if !match_arguments(ctx, method, arguments, &substitutions)? || !conditions(ctx, id, &substitutions, 0, budget, &active, span)? {
             index += 1;
             continue;
         }
 
-        let candidate = substitute(ctx.session.types, method, &substitutions)?;
+        let candidate = substitute(ctx.types, method, &substitutions)?;
         let rank = if record.trait_id.is_none() {
             2u32
         } elif record.automatic {
@@ -355,12 +354,12 @@ pub fn lookup_method_with_generics(ctx: ResolutionContext&, target: TypeId, name
             1u32
         };
         let exact = record.target == target && record.generics.len() == 0;
-        let blanket = record.conditions.len() != 0 && match ctx.session.types.require(record.target)? {
+        let blanket = record.conditions.len() != 0 && match ctx.types.require(record.target)? {
             Generic(_) => true,
             _ => false,
         };
         let trait_id = match &record.trait_id {
-            Some(value) => Option<TypeId>.Some(substitute(ctx.session.types, *value, &substitutions)?),
+            Some(value) => Option<TypeId>.Some(substitute(ctx.types, *value, &substitutions)?),
             None => Option<TypeId>.None,
         };
         candidates.push(MethodCandidate(candidate, trait_id, rank, exact, blanket));
@@ -373,13 +372,13 @@ pub fn lookup_method_with_generics(ctx: ResolutionContext&, target: TypeId, name
     defer target_name.drop();
     match required {
         Some(trait_id) => {
-            let trait_name = trait_description(ctx.session, trait_id, target)?;
+            let trait_name = trait_description(ctx, trait_id, target)?;
             defer trait_name.drop();
             description.push_str(trait_name.as_str());
         },
         None => {
             description.push_str("method '");
-            description.push_str(ctx.session.names.text(name));
+            description.push_str(ctx.names.text(name));
             description.push_str("' on ");
             description.push_str(target_name.as_str());
         },
@@ -393,7 +392,7 @@ pub fn lookup_method_with_generics(ctx: ResolutionContext&, target: TypeId, name
                 defer message.drop();
                 message.push_str(description.as_str());
                 message.push_str(" for '");
-                message.push_str(ctx.session.names.text(name));
+                message.push_str(ctx.names.text(name));
                 message.push_str("'");
                 let problem = AnalysisError.named(DiagnosticCode.Type,
                     Option<SourceSpan>.Some(span), "", message.as_str(), "");
@@ -403,7 +402,7 @@ pub fn lookup_method_with_generics(ctx: ResolutionContext&, target: TypeId, name
 
             let message = String.from(&"Unknown method call '");
             defer message.drop();
-            message.push_str(ctx.session.names.text(name));
+            message.push_str(ctx.names.text(name));
             message.push_str("' on ");
             message.push_str(target_name.as_str());
             let problem = AnalysisError.user(DiagnosticCode.NoSuchMethod, Option<SourceSpan>.Some(span), message.as_str());
@@ -417,10 +416,10 @@ fn match_arguments(ctx: ResolutionContext&, method: TypeId, arguments: Option<Ve
     let values = match arguments {
         Some(value) => value, None => return Result<bool, AnalysisError>.Ok(true)
     };
-    let definition = match ctx.session.types.require(method)? {
+    let definition = match ctx.types.require(method)? {
         Nominal(id, _) => *id, _ => return Result<bool, AnalysisError>.Ok(false)
     };
-    let parameters: Vec<Parameter>& = match ctx.session.types.complete_definition(definition)? {
+    let parameters: Vec<Parameter>& = match ctx.types.complete_definition(definition)? {
         Method(value) => &value.parameters, _ => return Result<bool, AnalysisError>.Ok(false)
     };
 
@@ -431,14 +430,14 @@ fn match_arguments(ctx: ResolutionContext&, method: TypeId, arguments: Option<Ve
     let index = 0u64;
 
     while index < parameters.len() {
-        let expected = substitute(ctx.session.types, parameters[index].type_id, substitutions)?;
+        let expected = substitute(ctx.types, parameters[index].type_id, substitutions)?;
         let actual = values[index];
-        let is_match = compatible(ctx, values[index], expected) || match ctx.session.types.require(expected)? {
-            Reference(inner) => match ctx.session.types.require(actual)? {
-                Pointer(value) => compatible(ctx, *value, *inner) || infer(ctx.session.types, *inner, default_type(ctx, *value), substitutions),
-                _ => infer(ctx.session.types, expected, default_type(ctx, actual), substitutions)
+        let is_match = compatible(ctx, values[index], expected) || match ctx.types.require(expected)? {
+            Reference(inner) => match ctx.types.require(actual)? {
+                Pointer(value) => compatible(ctx, *value, *inner) || infer(ctx.types, *inner, default_type(ctx, *value), substitutions),
+                _ => infer(ctx.types, expected, default_type(ctx, actual), substitutions)
             },
-            _ => infer(ctx.session.types, expected, default_type(ctx, actual), substitutions),
+            _ => infer(ctx.types, expected, default_type(ctx, actual), substitutions),
         };
 
         if !is_match {

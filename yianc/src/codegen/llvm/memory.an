@@ -11,7 +11,7 @@ from llvm.ir import IrValue, BinaryOp, CastOp, IntCompare;
 
 impl FunctionLowering {
     fn pointed_type(type_id: TypeId) -> Result<TypeId, CodegenError> {
-        match self.owner.session.types.require(type_id)? {
+        match self.owner.types.semantic_store().require(type_id)? {
             Pointer(inner) | Reference(inner) | CPointer(inner) => Result<TypeId, CodegenError>.Ok(*inner),
             _ => @panic("memory operation has no pointee"),
         }
@@ -96,8 +96,8 @@ impl FunctionLowering {
         }
         let source_type = self.cfg.value(address)?.type_id;
         let source = self.get(address)?;
-        let result_pointer = match self.owner.session.types.require(type_id)? { Pointer(_) => true, _ => false, };
-        let full_source = match self.owner.session.types.require(source_type)? { Pointer(_) => self.fat(source_type)?, _ => false, };
+        let result_pointer = match self.owner.types.semantic_store().require(type_id)? { Pointer(_) => true, _ => false, };
+        let full_source = match self.owner.types.semantic_store().require(source_type)? { Pointer(_) => self.fat(source_type)?, _ => false, };
         if full_source && result_pointer {
             self.require_guard(GuardKind.IndexOffset, GuardSite.Before)?;
             let stride = self.owner.module.abi_size(self.owner.types.value_type(element)?);
@@ -117,7 +117,7 @@ impl FunctionLowering {
         if self.fat(type_id)? {
             let first = self.get(left)?;
             let second = self.get(right)?;
-            let pointer = match self.owner.session.types.require(type_id)? { Pointer(_) => true, _ => false, };
+            let pointer = match self.owner.types.semantic_store().require(type_id)? { Pointer(_) => true, _ => false, };
             let equal = self.builder.icmp(IntCompare.Eq, self.builder.extract_value(first, 0u32, ""), self.builder.extract_value(second, 0u32, ""), "");
             if op == BinaryOperator.Eq || op == BinaryOperator.Neq {
                 if pointer {

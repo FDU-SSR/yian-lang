@@ -27,9 +27,9 @@ pub fn register_automatic(ctx: ResolutionContext&) -> Result<(), AnalysisError> 
 
     while index < ctx.len() {
         let declaration = ctx.declaration(index);
-        let symbol = *ctx.session.symbols.get(declaration.symbol).unwrap();
+        let symbol = *ctx.symbols.get(declaration.symbol).unwrap();
 
-        if ctx.session.is_stdlib(declaration.unit) && ctx.session.names.text(symbol.name) == "PartialEq" {
+        if ctx.permissions.get(declaration.unit.index).unwrap().is_stdlib && ctx.names.text(symbol.name) == "PartialEq" {
             equality = Option<TypeId>.Some(symbol.type_id);
         }
 
@@ -37,7 +37,7 @@ pub fn register_automatic(ctx: ResolutionContext&) -> Result<(), AnalysisError> 
     }
 
     let trait_definition = match equality {
-        Some(type_id) => match ctx.session.types.require(type_id)? {
+        Some(type_id) => match ctx.types.require(type_id)? {
             Nominal(id, _) => *id, _ => @panic("intrinsic equality is not nominal")
         },
         None => return Result<(), AnalysisError>.Ok(()),
@@ -62,8 +62,8 @@ pub fn register_automatic(ctx: ResolutionContext&) -> Result<(), AnalysisError> 
                     continue;
                 }
 
-                let target = ctx.session.symbols.get(declaration.symbol).unwrap().type_id;
-                let header = *ctx.session.types.definition(*declaration.definition.unwrap()).unwrap();
+                let target = ctx.symbols.get(declaration.symbol).unwrap().type_id;
+                let header = *ctx.types.definition(*declaration.definition.unwrap()).unwrap();
                 let generics = Vec<TypeId>.new();
                 defer generics.drop();
                 let generic = 0u64;
@@ -74,7 +74,7 @@ pub fn register_automatic(ctx: ResolutionContext&) -> Result<(), AnalysisError> 
                 }
 
                 let span = declaration.item.span;
-                let unit_data = *ctx.session.unit(declaration.unit).unwrap();
+                let unit_data = *ctx.units.get(declaration.unit).unwrap();
                 let tree = &unit_data.tree;
                 let arms = Vec<MatchArm&>.new();
 
@@ -94,21 +94,21 @@ pub fn register_automatic(ctx: ResolutionContext&) -> Result<(), AnalysisError> 
                 let receiver = name_expr(&tree.arena, identifier(&tree.arena, span, "self", true));
                 let receiver_value = tree.arena.alloc_expr(ExprData.Unary(UnaryOperator.Deref, receiver), span);
                 let body = one_block(&tree.arena, span, match_expr(&tree.arena, span, receiver_value, arms));
-                let name = ctx.session.names.intern("eq");
-                let identity = ctx.session.types.register(DefinitionHeader(NominalKind.Method, name, ctx.span(declaration.unit, span), declaration.unit), generics.clone());
+                let name = ctx.names.intern("eq");
+                let identity = ctx.types.register(DefinitionHeader(NominalKind.Method, name, ctx.span(declaration.unit, span), declaration.unit), generics.clone());
                 let params = Vec<Parameter>.new();
-                params.push(Parameter(ctx.session.names.intern("other"), ctx.session.types.reference(target), Option<SourceSpan>.Some(ctx.span(declaration.unit, span))));
-                ctx.session.types.finish_definition(identity, DefinitionBody.Method(CallableDefinition(params, TypeId(BOOL_TYPE_ID), Option<TypeId>.Some(target), false, false, false, false, false, true, generics.len())))?;
-                let method = ctx.session.types.instance(identity, &generics)?;
+                params.push(Parameter(ctx.names.intern("other"), ctx.types.reference(target), Option<SourceSpan>.Some(ctx.span(declaration.unit, span))));
+                ctx.types.finish_definition(identity, DefinitionBody.Method(CallableDefinition(params, TypeId(BOOL_TYPE_ID), Option<TypeId>.Some(target), false, false, false, false, false, true, generics.len())))?;
+                let method = ctx.types.instance(identity, &generics)?;
                 ctx.callable_scopes.insert(identity, ctx.scopes[declaration.unit.index]);
-                ctx.session.definitions.register(Procedure(identity, method, declaration.unit, body, DefinitionKind.Method))?;
+                ctx.definitions.register(Procedure(identity, method, declaration.unit, body, DefinitionKind.Method))?;
                 let arguments = Vec<TypeId>.new();
                 defer arguments.drop();
                 arguments.push(target);
-                let trait_id = ctx.session.types.instance(trait_definition, &arguments)?;
+                let trait_id = ctx.types.instance(trait_definition, &arguments)?;
                 let methods = HashMap<NameId, TypeId>.new();
                 methods.insert(name, method);
-                ctx.session.impls.register(ImplRecord(ctx.span(declaration.unit, span), generics.clone(), target, Option<TypeId>.Some(trait_id), Vec<ImplCondition>.new(), methods, true));
+                ctx.impls.register(ImplRecord(ctx.span(declaration.unit, span), generics.clone(), target, Option<TypeId>.Some(trait_id), Vec<ImplCondition>.new(), methods, true));
             },
             _ => {},
         }

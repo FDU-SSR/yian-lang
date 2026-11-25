@@ -28,14 +28,14 @@ impl ExprChecker {
     pub fn trait_call(span: Span, trait_expr: Expr&, self_source: TypeSource&, trait_sources: Vec<Option<TypeSource>>&, name_span: Option<Span>, method_name: str, args: Vec<Argument&>&) -> Result<HirId, AnalysisError> {
         let trait_value = self.expression(trait_expr)?;
         let trait_id = self.type_of(trait_value);
-        let definition = match self.ctx.session.types.require(trait_id)? {
+        let definition = match self.ctx.types.require(trait_id)? {
             Nominal(id, _) => *id,
             _ => return Result<HirId, AnalysisError>.Err(self.error(span, "qualified call requires a trait")),
         };
 
-        match self.ctx.session.types.complete_definition(definition)? {
+        match self.ctx.types.complete_definition(definition)? {
             Trait(methods) => {
-                let name = self.ctx.session.names.intern(method_name);
+                let name = self.ctx.names.intern(method_name);
                 let declared = match methods.get(&name) {
                     Some(value) => *value,
                     None => return Result<HirId, AnalysisError>.Err(self.error(span, "Unknown trait method")),
@@ -62,7 +62,7 @@ impl ExprChecker {
         }
 
         let target = self.source_type(span, self_source, &values)?;
-        let header = *self.ctx.session.types.definition(definition).unwrap();
+        let header = *self.ctx.types.definition(definition).unwrap();
 
         if trait_sources.len() != header.generic_count() {
             return Result<HirId, AnalysisError>.Err(self.error(span, "trait argument count mismatch"));
@@ -80,8 +80,8 @@ impl ExprChecker {
             index += 1;
         }
 
-        let required = self.ctx.session.types.instance(definition, &arguments)?;
-        let name = self.ctx.session.names.intern(method_name);
+        let required = self.ctx.types.instance(definition, &arguments)?;
+        let name = self.ctx.names.intern(method_name);
         let types = Vec<TypeId>.new();
         defer types.drop();
         for value in values { types.push(self.type_of(*value)); }

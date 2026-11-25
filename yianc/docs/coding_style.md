@@ -13,7 +13,7 @@
 | `analysis/`    | 权限分类、解析、类型登记与关系、符号、HIR、常量求值、lowering、检查与转储 |
 | `codegen/`     | CFG、LLVM lowering、指针安全检查、原生链接与转储      |
 | `telemetry/`   | 日志、计时与 profile 记录                             |
-| `common/`      | 会话内 ID、源码位置、名字驻留与共享整数值等不依赖分析或 codegen 的基础类型 |
+| `common/`      | 编译内 ID、源码位置、名字驻留与共享整数值等不依赖分析或 codegen 的基础类型 |
 | `diagnostics/` | 诊断模型、渲染和 stderr 输出                          |
 | `package/`     | 包图校验与来源信任，不依赖 AST 或 HIR                 |
 | `host.an`、`roots.an` | 主机资源定位、标准库源码根与运行时资源根       |
@@ -32,7 +32,11 @@ host/roots、telemetry、diagnostics 与 package 可被需要它的阶段使用
 
 同一目录按编译阶段和概念分组，例如 `analysis/lowering/` 按表达式类别拆分。导入通常先列 `yianc.*`，再列 `std.*` 和 bootstrap 包，同一文件内保持一致。
 
-会话内 ID 使用带 `Id` 后缀的类型名，如 `UnitId`、`HirId` 和 `BlockId`。普通编译器逻辑使用引用、数组、切片和显式 ID。结构类型驻留后，记录及其缓冲区应与驻留键保持一致。LSP 专用的适配由 LSP 实现。
+编译内 ID 使用带 `Id` 后缀的类型名，如 `UnitId`、`HirId` 和 `BlockId`。普通编译器逻辑使用引用、数组、切片和显式 ID。结构类型驻留后，记录及其缓冲区应与驻留键保持一致。LSP 专用的适配由 LSP 实现。
+
+## 资源释放
+
+在 `yianc` 中，可以存活到 `main` 函数退出的对象由操作系统在进程退出时回收，省去仅用于释放这些对象的 `drop()`、`defer` 或 `del`。刷新输出、写完报告等操作仍须在退出前完成。
 
 ## 阶段错误与诊断
 
@@ -43,7 +47,7 @@ host/roots、telemetry、diagnostics 与 package 可被需要它的阶段使用
 - warning 通过同步的 `DiagnosticReporter` 立即报告；阶段用户错误沿 `Result` 返回 `main`，命令行参数和日志配置错误分别由 `parse_args`、`CompilerTrace.new` 直接输出并以进程状态退出。
 - 不要根据诊断消息文本判断错误类别；需要分类时增加枚举变体或诊断码。
 
-诊断消息使用英文。诊断码和消息属于用户可见契约。会话状态错误、无效会话内 ID 等内部不变量在发现处触发 `@panic`。
+诊断消息使用英文。诊断码和消息属于用户可见契约。重复运行阶段驱动、无效编译内 ID 等内部不变量在发现处触发 `@panic`。
 
 ## 编译器测试
 

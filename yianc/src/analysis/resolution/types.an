@@ -54,7 +54,7 @@ pub fn apply_arguments(ctx: ResolutionContext&, unit: UnitId, scope: ScopeId, sy
             });
     }
 
-    if ctx.session.symbols.get(symbol).unwrap().kind == SymbolKind.Alias {
+    if ctx.symbols.get(symbol).unwrap().kind == SymbolKind.Alias {
         let declaration = *ctx.for_symbol(symbol).unwrap();
         let substitutions = HashMap<TypeId, TypeId>.new();
         defer substitutions.drop();
@@ -76,15 +76,15 @@ pub fn apply_arguments(ctx: ResolutionContext&, unit: UnitId, scope: ScopeId, sy
                     let name = match parameter {
                         Type(value) => value.data.name, Constant(value) => value.data.name
                     };
-                    let interned = ctx.session.names.intern(name.data.name.as_str());
-                    let generic_symbol = *ctx.session.symbols.lookup(declaration.scope, interned).unwrap();
-                    let generic = ctx.session.symbols.get(generic_symbol).unwrap().type_id;
+                    let interned = ctx.names.intern(name.data.name.as_str());
+                    let generic_symbol = *ctx.symbols.lookup(declaration.scope, interned).unwrap();
+                    let generic = ctx.symbols.get(generic_symbol).unwrap().type_id;
                     let argument = ids[index];
 
-                    match ctx.session.types.require(generic)? {
+                    match ctx.types.require(generic)? {
                         ConstGeneric(_, expected) => {
-                            let expected = substitute(ctx.session.types, *expected, &substitutions)?;
-                            let actual = match ctx.session.types.require(argument)? {
+                            let expected = substitute(ctx.types, *expected, &substitutions)?;
+                            let actual = match ctx.types.require(argument)? {
                                 LiteralValue(_, _, value_type) => *value_type,
                                 ConstGeneric(_, value_type) => *value_type,
                                 _ => return Result<TypeId, AnalysisError>.Err(ctx.error(unit, span, DiagnosticCode.Type, "alias constant parameter requires a constant argument")),
@@ -94,7 +94,7 @@ pub fn apply_arguments(ctx: ResolutionContext&, unit: UnitId, scope: ScopeId, sy
                                 return Result<TypeId, AnalysisError>.Err(ctx.error(unit, span, DiagnosticCode.Type, "Alias constant argument has an incompatible type"));
                             }
                         },
-                        _ => match ctx.session.types.require(argument)? {
+                        _ => match ctx.types.require(argument)? {
                             LiteralValue(_, _, _) => return Result<TypeId, AnalysisError>.Err(ctx.error(unit, span, DiagnosticCode.Type, "Alias type parameter requires a type argument")),
                             ConstGeneric(_, _) => return Result<TypeId, AnalysisError>.Err(ctx.error(unit, span, DiagnosticCode.Type, "Alias type parameter requires a type argument")),
                             _ => {},
@@ -108,17 +108,17 @@ pub fn apply_arguments(ctx: ResolutionContext&, unit: UnitId, scope: ScopeId, sy
             _ => @panic("invalid generic alias"),
         }
 
-        return substitute(ctx.session.types, base, &substitutions);
+        return substitute(ctx.types, base, &substitutions);
     }
 
-    match ctx.session.types.require(base)? {
-        Nominal(definition, _) => ctx.session.types.instance(*definition, &ids),
+    match ctx.types.require(base)? {
+        Nominal(definition, _) => ctx.types.instance(*definition, &ids),
         _ => Result<TypeId, AnalysisError>.Err(ctx.error(unit, span, DiagnosticCode.GenericArguments, "type does not accept generic arguments")),
     }
 }
 
 pub fn resolve_alias(ctx: ResolutionContext&, symbol: SymbolId) -> Result<TypeId, AnalysisError> {
-    let record = *ctx.session.symbols.get(symbol).unwrap();
+    let record = *ctx.symbols.get(symbol).unwrap();
 
     if record.kind != SymbolKind.Alias {
         return Result<TypeId, AnalysisError>.Ok(record.type_id);
@@ -137,11 +137,11 @@ pub fn resolve_alias(ctx: ResolutionContext&, symbol: SymbolId) -> Result<TypeId
         for entry in ctx.alias_stack {
             if *entry == symbol { started = true; }
             if started {
-                message.push_str(ctx.session.names.text(ctx.session.symbols.get(*entry).unwrap().name));
+                message.push_str(ctx.names.text(ctx.symbols.get(*entry).unwrap().name));
                 message.push_str(" -> ");
             }
         }
-        message.push_str(ctx.session.names.text(record.name));
+        message.push_str(ctx.names.text(record.name));
         return Result<TypeId, AnalysisError>.Err(ctx.error(declaration.unit, declaration.item.span, DiagnosticCode.CircularAlias, message.as_str()));
     }
 
@@ -166,21 +166,21 @@ pub fn resolve_const(ctx: ResolutionContext&, unit: UnitId, scope: ScopeId, expr
             let value_type = match &literal.data.suffix {
                 Unsuffixed => TypeId(U64_TYPE_ID),
                 U64 => TypeId(U64_TYPE_ID),
-                I8 => ctx.session.types.primitive(TypeData.Integer(8, true))?,
-                I16 => ctx.session.types.primitive(TypeData.Integer(16, true))?,
+                I8 => ctx.types.primitive(TypeData.Integer(8, true))?,
+                I16 => ctx.types.primitive(TypeData.Integer(16, true))?,
                 I32 => TypeId(I32_TYPE_ID),
-                I64 => ctx.session.types.primitive(TypeData.Integer(64, true))?,
-                U8 => ctx.session.types.primitive(TypeData.Integer(8, false))?,
-                U16 => ctx.session.types.primitive(TypeData.Integer(16, false))?,
-                U32 => ctx.session.types.primitive(TypeData.Integer(32, false))?,
+                I64 => ctx.types.primitive(TypeData.Integer(64, true))?,
+                U8 => ctx.types.primitive(TypeData.Integer(8, false))?,
+                U16 => ctx.types.primitive(TypeData.Integer(16, false))?,
+                U32 => ctx.types.primitive(TypeData.Integer(32, false))?,
                 Int => TypeId(I32_TYPE_ID),
-                Uint => ctx.session.types.primitive(TypeData.Integer(32, false))?,
+                Uint => ctx.types.primitive(TypeData.Integer(32, false))?,
             };
-            Result<TypeId, AnalysisError>.Ok(ctx.session.types.literal(literal.data.value, literal.data.negative, value_type))
+            Result<TypeId, AnalysisError>.Ok(ctx.types.literal(literal.data.value, literal.data.negative, value_type))
         },
         GenericConstExpr(name) => {
-            let name_id = ctx.session.names.intern(name.data.name.as_str());
-            let symbol = match ctx.session.symbols.lookup(scope, name_id) {
+            let name_id = ctx.names.intern(name.data.name.as_str());
+            let symbol = match ctx.symbols.lookup(scope, name_id) {
                 Some(value) => value,
                 None => return Result<TypeId, AnalysisError>.Err(ctx.error(unit, expr.span, DiagnosticCode.Undefined, "unknown constant parameter")),
             };
@@ -206,7 +206,7 @@ fn resolve_arithmetic(ctx: ResolutionContext&, unit: UnitId, scope: ScopeId, exp
     };
     defer value.drop();
     match &value.value {
-        Integer(integer) => Result<TypeId, AnalysisError>.Ok(ctx.session.types.literal(magnitude(*integer), integer.is_negative(), value.type_id)),
+        Integer(integer) => Result<TypeId, AnalysisError>.Ok(ctx.types.literal(magnitude(*integer), integer.is_negative(), value.type_id)),
         _ => Result<TypeId, AnalysisError>.Err(ctx.error(unit, expr.span, DiagnosticCode.Type, "type-level constants must be integer literals")),
     }
 }
@@ -216,14 +216,14 @@ fn evaluate_const_tree(ctx: ResolutionContext&, unit: UnitId, scope: ScopeId, ex
     match &expr.data {
         LiteralConstExpr(literal) => {
             let id = resolve_const(ctx, unit, scope, expr)?;
-            let type_id = match ctx.session.types.require(id)? { LiteralValue(_, _, type_id) => *type_id, _ => @panic("literal constant has no value"), };
+            let type_id = match ctx.types.require(id)? { LiteralValue(_, _, type_id) => *type_id, _ => @panic("literal constant has no value"), };
             type_id = if literal.data.suffix.spelling() == "" { TypeId(INT_LITERAL_TYPE_ID) } else { type_id };
             let value = ctx.evaluator.convert(ConstValue.Integer(IntegerValue.untyped(literal.data.value, literal.data.negative)), type_id, location)?;
             Result<Option<ConstInteger>, AnalysisError>.Ok(Option<ConstInteger>.Some(ConstInteger(value, type_id)))
         },
         GenericConstExpr(_) => {
             let id = resolve_const(ctx, unit, scope, expr)?;
-            match ctx.session.types.require(id)? {
+            match ctx.types.require(id)? {
                 LiteralValue(bits, negative, type_id) => {
                     let value = ctx.evaluator.convert(ConstValue.Integer(IntegerValue.untyped(*bits, *negative)), *type_id, location)?;
                     Result<Option<ConstInteger>, AnalysisError>.Ok(Option<ConstInteger>.Some(ConstInteger(value, *type_id)))
@@ -269,8 +269,8 @@ pub fn resolve_type(ctx: ResolutionContext&, unit: UnitId, scope: ScopeId, synta
 
 fn resolve_type_inner(ctx: ResolutionContext&, unit: UnitId, scope: ScopeId, syntax: TypeSyntax&) -> Result<TypeId, AnalysisError> {
     match &syntax.data {
-        IntType(signed, width) => ctx.session.types.primitive(TypeData.Integer(u32(*width * 8), *signed)),
-        FloatType(width) => ctx.session.types.primitive(TypeData.Float(u32(*width * 8))),
+        IntType(signed, width) => ctx.types.primitive(TypeData.Integer(u32(*width * 8), *signed)),
+        FloatType(width) => ctx.types.primitive(TypeData.Float(u32(*width * 8))),
         BoolType => Result<TypeId, AnalysisError>.Ok(TypeId(BOOL_TYPE_ID)),
         StrType => Result<TypeId, AnalysisError>.Ok(TypeId(STR_TYPE_ID)),
         CharType => Result<TypeId, AnalysisError>.Ok(TypeId(CHAR_TYPE_ID)),
@@ -278,7 +278,7 @@ fn resolve_type_inner(ctx: ResolutionContext&, unit: UnitId, scope: ScopeId, syn
         NeverType => Result<TypeId, AnalysisError>.Ok(TypeId(NEVER_TYPE_ID)),
         DeducedType => Result<TypeId, AnalysisError>.Ok(TypeId(ERROR_TYPE_ID)),
         CScalarType(name) => {
-            if !ctx.session.allows_ffi(unit) {
+            if !ctx.permissions.get(unit.index).unwrap().allows_ffi {
                 return Result<TypeId, AnalysisError>.Err(ctx.error(unit, syntax.span, DiagnosticCode.Access, "C ABI types require FFI permission"));
             }
 
@@ -302,13 +302,13 @@ fn resolve_type_inner(ctx: ResolutionContext&, unit: UnitId, scope: ScopeId, syn
         },
         NamedType(name) => {
             let text = name.data.name.as_str();
-            let name_id = ctx.session.names.intern(text);
-            let symbol = match ctx.session.symbols.lookup(scope, name_id) {
+            let name_id = ctx.names.intern(text);
+            let symbol = match ctx.symbols.lookup(scope, name_id) {
                 Some(value) => value,
                 None => return Result<TypeId, AnalysisError>.Err(AnalysisError.named(DiagnosticCode.UnknownType,
                     Option<SourceSpan>.Some(ctx.span(unit, syntax.span)), "Undefined type: ", text, "")),
             };
-            let record = *ctx.session.symbols.get(symbol).unwrap();
+            let record = *ctx.symbols.get(symbol).unwrap();
 
             if record.kind != SymbolKind.Type && record.kind != SymbolKind.Alias {
                 return Result<TypeId, AnalysisError>.Err(AnalysisError.named(DiagnosticCode.NotAType,
@@ -319,22 +319,22 @@ fn resolve_type_inner(ctx: ResolutionContext&, unit: UnitId, scope: ScopeId, syn
         },
         PointerType(pointee) => {
             let inner = resolve_type(ctx, unit, scope, *pointee)?;
-            Result<TypeId, AnalysisError>.Ok(ctx.session.types.pointer(inner))
+            Result<TypeId, AnalysisError>.Ok(ctx.types.pointer(inner))
         },
         CPtrType(pointee) => {
-            if !ctx.session.allows_ffi(unit) {
+            if !ctx.permissions.get(unit.index).unwrap().allows_ffi {
                 return Result<TypeId, AnalysisError>.Err(ctx.error(unit, syntax.span, DiagnosticCode.Access, "cptr requires FFI permission"));
             }
 
             let inner = resolve_type(ctx, unit, scope, *pointee)?;
-            Result<TypeId, AnalysisError>.Ok(ctx.session.types.c_pointer(inner))
+            Result<TypeId, AnalysisError>.Ok(ctx.types.c_pointer(inner))
         },
         RefType(pointee) => {
             let inner = resolve_type(ctx, unit, scope, *pointee)?;
 
-            match ctx.session.types.require(inner)? {
+            match ctx.types.require(inner)? {
                 Nominal(id, arguments) => {
-                    if ctx.session.types.definition(*id).unwrap().header().kind == NominalKind.Trait {
+                    if ctx.types.definition(*id).unwrap().header().kind == NominalKind.Trait {
                         if missing_trait_arguments(ctx, scope, *pointee)? {
                             let name = type_text(ctx, inner);
                             defer name.drop();
@@ -342,23 +342,23 @@ fn resolve_type_inner(ctx: ResolutionContext&, unit: UnitId, scope: ScopeId, syn
                                 Option<SourceSpan>.Some(ctx.span(unit, syntax.span)), "trait object type '", name.as_str(), "' requires all generic arguments"));
                         }
 
-                        return Result<TypeId, AnalysisError>.Ok(ctx.session.types.trait_object(inner));
+                        return Result<TypeId, AnalysisError>.Ok(ctx.types.trait_object(inner));
                     }
                 },
                 _ => {},
             }
 
-            Result<TypeId, AnalysisError>.Ok(ctx.session.types.reference(inner))
+            Result<TypeId, AnalysisError>.Ok(ctx.types.reference(inner))
         },
         SliceType(element) => {
             let inner = resolve_type(ctx, unit, scope, *element)?;
-            Result<TypeId, AnalysisError>.Ok(ctx.session.types.slice(inner))
+            Result<TypeId, AnalysisError>.Ok(ctx.types.slice(inner))
         },
         ArrayType(element, size) => {
             let inner = resolve_type(ctx, unit, scope, *element)?;
             let count = resolve_const(ctx, unit, scope, *size)?;
 
-            match ctx.session.types.require(count)? {
+            match ctx.types.require(count)? {
                 LiteralValue(_, negative, _) => {
                     if *negative {
                         return Result<TypeId, AnalysisError>.Err(ctx.error(unit, size.span, DiagnosticCode.Resolution, "array length must be a non-negative integer"));
@@ -366,7 +366,7 @@ fn resolve_type_inner(ctx: ResolutionContext&, unit: UnitId, scope: ScopeId, syn
                 }, _ => {}
             }
 
-            Result<TypeId, AnalysisError>.Ok(ctx.session.types.array(inner, count))
+            Result<TypeId, AnalysisError>.Ok(ctx.types.array(inner, count))
         },
         TupleType(elements) => {
             let ids = Vec<TypeId>.new();
@@ -376,7 +376,7 @@ fn resolve_type_inner(ctx: ResolutionContext&, unit: UnitId, scope: ScopeId, syn
                 ids.push(resolve_type(ctx, unit, scope, *element)?);
             }
 
-            Result<TypeId, AnalysisError>.Ok(ctx.session.types.tuple(&ids))
+            Result<TypeId, AnalysisError>.Ok(ctx.types.tuple(&ids))
         },
         FunctionType(parameters, result) => {
             let ids = Vec<TypeId>.new();
@@ -387,7 +387,7 @@ fn resolve_type_inner(ctx: ResolutionContext&, unit: UnitId, scope: ScopeId, syn
             }
 
             let result_id = resolve_type(ctx, unit, scope, *result)?;
-            Result<TypeId, AnalysisError>.Ok(ctx.session.types.function_pointer(&ids, result_id))
+            Result<TypeId, AnalysisError>.Ok(ctx.types.function_pointer(&ids, result_id))
         },
         InstanceType(base, arguments) => {
             match &base.data {
@@ -397,8 +397,8 @@ fn resolve_type_inner(ctx: ResolutionContext&, unit: UnitId, scope: ScopeId, syn
                         None => {},
                     }
 
-                    let interned = ctx.session.names.intern(name.data.name.as_str());
-                    let symbol = match ctx.session.symbols.lookup(scope, interned) {
+                    let interned = ctx.names.intern(name.data.name.as_str());
+                    let symbol = match ctx.symbols.lookup(scope, interned) {
                         Some(value) => value,
                         None => return Result<TypeId, AnalysisError>.Err(ctx.error(unit, syntax.span, DiagnosticCode.Undefined, "unknown generic type")),
                     };
@@ -408,7 +408,7 @@ fn resolve_type_inner(ctx: ResolutionContext&, unit: UnitId, scope: ScopeId, syn
             }
 
             let original = resolve_type(ctx, unit, scope, *base)?;
-            let definition = match ctx.session.types.require(original)? {
+            let definition = match ctx.types.require(original)? {
                 Nominal(id, _) => *id,
                 _ => return Result<TypeId, AnalysisError>.Err(ctx.error(unit, syntax.span, DiagnosticCode.GenericArguments, "generic application requires a nominal type")),
             };
@@ -422,7 +422,7 @@ fn resolve_type_inner(ctx: ResolutionContext&, unit: UnitId, scope: ScopeId, syn
                     });
             }
 
-            ctx.session.types.instance(definition, &ids)
+            ctx.types.instance(definition, &ids)
         },
     }
 }
@@ -433,12 +433,12 @@ fn missing_trait_arguments(ctx: ResolutionContext&, scope: ScopeId, syntax: Type
     match &syntax.data {
         InstanceType(_, _) => Result<bool, AnalysisError>.Ok(false),
         NamedType(name) => {
-            let interned = ctx.session.names.intern(name.data.name.as_str());
-            let symbol = match ctx.session.symbols.lookup(scope, interned) {
+            let interned = ctx.names.intern(name.data.name.as_str());
+            let symbol = match ctx.symbols.lookup(scope, interned) {
                 Some(value) => value,
                 None => @panic("resolved trait name is absent from its scope"),
             };
-            let record = *ctx.session.symbols.get(symbol).unwrap();
+            let record = *ctx.symbols.get(symbol).unwrap();
 
             if record.kind == SymbolKind.Alias {
                 let declaration = *ctx.for_symbol(symbol).unwrap();
@@ -456,7 +456,7 @@ fn missing_trait_arguments(ctx: ResolutionContext&, scope: ScopeId, syntax: Type
 
             match record.alias {
                 Some(id) => {
-                    let definition = *ctx.session.types.definition(id).unwrap();
+                    let definition = *ctx.types.definition(id).unwrap();
                     Result<bool, AnalysisError>.Ok(definition.header().kind == NominalKind.Trait && definition.generic_count() != 0)
                 },
                 None => Result<bool, AnalysisError>.Ok(false),
@@ -467,21 +467,21 @@ fn missing_trait_arguments(ctx: ResolutionContext&, scope: ScopeId, syntax: Type
 }
 
 fn named_constant(ctx: ResolutionContext&, unit: UnitId, symbol: SymbolId, span: Span) -> Result<TypeId, AnalysisError> {
-    let record = *ctx.session.symbols.get(symbol).unwrap();
+    let record = *ctx.symbols.get(symbol).unwrap();
 
     if record.kind == SymbolKind.Constant {
         let expression = evaluate_constant(ctx, symbol)?;
         let constant = ctx.evaluator.evaluate(expression)?;
         defer constant.drop();
         return match &constant.value {
-            Integer(value) => Result<TypeId, AnalysisError>.Ok(ctx.session.types.literal(magnitude(*value), value.is_negative(), constant.type_id)),
-            Bool(value) => Result<TypeId, AnalysisError>.Ok(ctx.session.types.literal(if *value { 1u64 } else { 0u64 }, false, constant.type_id)),
+            Integer(value) => Result<TypeId, AnalysisError>.Ok(ctx.types.literal(magnitude(*value), value.is_negative(), constant.type_id)),
+            Bool(value) => Result<TypeId, AnalysisError>.Ok(ctx.types.literal(if *value { 1u64 } else { 0u64 }, false, constant.type_id)),
             _ => Result<TypeId, AnalysisError>.Err(ctx.error(unit, span, DiagnosticCode.Constant, "generic constant argument requires an integer or boolean value")),
         };
     }
 
     if record.kind == SymbolKind.Type {
-        match ctx.session.types.require(record.type_id)? {
+        match ctx.types.require(record.type_id)? {
             ConstGeneric(_, _) => return Result<TypeId, AnalysisError>.Ok(record.type_id),
             LiteralValue(_, _, _) => return Result<TypeId, AnalysisError>.Ok(record.type_id),
             _ => {},
@@ -489,18 +489,18 @@ fn named_constant(ctx: ResolutionContext&, unit: UnitId, symbol: SymbolId, span:
     }
 
     Result<TypeId, AnalysisError>.Err(AnalysisError.named(DiagnosticCode.Type, Option<SourceSpan>.Some(ctx.span(unit, span)),
-        "'", ctx.session.names.text(record.name), "' is not a compile-time constant"))
+        "'", ctx.names.text(record.name), "' is not a compile-time constant"))
 }
 
 // The parser represents an identifier generic argument as type syntax until its name is resolved.
 pub fn resolve_argument(ctx: ResolutionContext&, unit: UnitId, scope: ScopeId, syntax: TypeSyntax&) -> Result<TypeId, AnalysisError> {
     match &syntax.data {
         NamedType(name) => {
-            let interned = ctx.session.names.intern(name.data.name.as_str());
+            let interned = ctx.names.intern(name.data.name.as_str());
 
-            match ctx.session.symbols.lookup(scope, interned) {
+            match ctx.symbols.lookup(scope, interned) {
                 Some(symbol) => {
-                    let record = *ctx.session.symbols.get(symbol).unwrap();
+                    let record = *ctx.symbols.get(symbol).unwrap();
 
                     if record.kind == SymbolKind.Constant {
                         return named_constant(ctx, unit, symbol, syntax.span);
@@ -531,15 +531,15 @@ pub fn builtin_constructor(ctx: ResolutionContext&, unit: UnitId, scope: ScopeId
     }
 
     if name == "Tuple" {
-        return Result<Option<TypeId>, AnalysisError>.Ok(Option<TypeId>.Some(ctx.session.types.tuple(&ids)));
+        return Result<Option<TypeId>, AnalysisError>.Ok(Option<TypeId>.Some(ctx.types.tuple(&ids)));
     }
 
     if ids.len() != 2 {
         return Result<Option<TypeId>, AnalysisError>.Err(ctx.error(unit, span, DiagnosticCode.GenericArguments, "Fn requires a parameter tuple and a result type"));
     }
 
-    match ctx.session.types.require(ids[0])? {
-        Tuple(parameters) => Result<Option<TypeId>, AnalysisError>.Ok(Option<TypeId>.Some(ctx.session.types.function_pointer(parameters, ids[1]))),
+    match ctx.types.require(ids[0])? {
+        Tuple(parameters) => Result<Option<TypeId>, AnalysisError>.Ok(Option<TypeId>.Some(ctx.types.function_pointer(parameters, ids[1]))),
         _ => Result<Option<TypeId>, AnalysisError>.Err(ctx.error(unit, span, DiagnosticCode.GenericArguments, "Fn parameters must be a tuple")),
     }
 }

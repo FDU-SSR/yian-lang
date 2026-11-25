@@ -17,7 +17,7 @@ impl ExprChecker {
         let element_type = default_type(self.ctx, self.type_of(value));
         let count = self.expression(size)?;
         count = self.coerce(count, TypeId(U64_TYPE_ID))?;
-        let initializer = match &self.ctx.session.hir.require(value)?.kind {
+        let initializer = match &self.ctx.hir.require(value)?.kind {
             Ty => {
                 if !is_zst(self.ctx, element_type)? {
                     return Result<HirId, AnalysisError>.Err(self.error(span, "uninitialized heap allocation is written '@alloc<T>(n)' and is only allowed in the standard library; otherwise initialize every element with 'dyn[n] <value>' (or use Vec/standard containers)"));
@@ -27,7 +27,7 @@ impl ExprChecker {
             },
             _ => Option<HirId>.Some(self.coerce(value, element_type)?),
         };
-        Result<HirId, AnalysisError>.Ok(self.node(span, self.ctx.session.types.pointer(element_type), false, HirKind.DynBuffer(DynBuffer(element_type, count, initializer))))
+        Result<HirId, AnalysisError>.Ok(self.node(span, self.ctx.types.pointer(element_type), false, HirKind.DynBuffer(DynBuffer(element_type, count, initializer))))
     }
 
     pub fn tuple(span: Span, elements: Vec<Expr&>&) -> Result<HirId, AnalysisError> {
@@ -48,7 +48,7 @@ impl ExprChecker {
             types.push(type_id);
         }
 
-        let type_id = self.ctx.session.types.tuple(&types);
+        let type_id = self.ctx.types.tuple(&types);
         accepted = true;
         Result<HirId, AnalysisError>.Ok(self.node(span, type_id, false, HirKind.Tuple(HirTuple(values))))
     }
@@ -91,8 +91,8 @@ impl ExprChecker {
             index += 1;
         }
 
-        let length = self.ctx.session.types.literal(values.len(), false, TypeId(U64_TYPE_ID));
-        let type_id = self.ctx.session.types.array(element_type, length);
+        let length = self.ctx.types.literal(values.len(), false, TypeId(U64_TYPE_ID));
+        let type_id = self.ctx.types.array(element_type, length);
         accepted = true;
         Result<HirId, AnalysisError>.Ok(self.node(span, type_id, false, HirKind.Array(HirArray(element_type, values))))
     }
@@ -113,8 +113,8 @@ impl ExprChecker {
             },
             _ => return Result<HirId, AnalysisError>.Err(self.error(span, "array length requires an integer constant")),
         };
-        let length_type = self.ctx.session.types.literal(length, false, TypeId(U64_TYPE_ID));
-        let type_id = self.ctx.session.types.array(element_type, length_type);
+        let length_type = self.ctx.types.literal(length, false, TypeId(U64_TYPE_ID));
+        let type_id = self.ctx.types.array(element_type, length_type);
         Result<HirId, AnalysisError>.Ok(self.node(span, type_id, false, HirKind.ArrayRepeat(HirArrayRepeat(element_type, value))))
     }
 }

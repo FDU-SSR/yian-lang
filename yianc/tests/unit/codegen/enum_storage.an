@@ -4,12 +4,15 @@ from std.core.fs import resolve;
 // The probe builds a valid graph with EnumInitAt, EnumTagAt, EnumFieldAt and
 // EnumCopyAt, then rejects malformed graphs before LLVM lowering.
 
-from yianc.analysis.session.output import AnalysisOptions;
-from yianc.analysis.session.session import AnalysisSession;
+from yianc.analysis.session.output import AnalysisOptions, AnalysisOutput;
 from yianc.frontend.driver import FrontendDriver;
+from yianc.frontend.unit import UnitTable;
 from yianc.telemetry.trace import CompilerTrace;
 from yianc.analysis.driver import MiddleEndDriver;
 from yianc.types.store import TypeStore;
+from yianc.common.names import NameInterner;
+from yianc.analysis.symbol.scope import SymbolStore;
+from yianc.analysis.hir.store import HirStore;
 from yianc.types.model import AccessMode, AggregateDefinition, DefinitionBody, DefinitionHeader, EnumDefinition, EnumVariant, NominalKind, StructField, TypeData;
 from yianc.codegen.cfg.ids import BlockId, FunctionId, ValueId;
 from yianc.codegen.cfg.model import CfgFunction, CfgModule, Operation, SafetyCheck, Terminator, ValueKind;
@@ -57,13 +60,13 @@ fn load_source(path: str, text: str) -> SourceTable {
     }
 }
 
-fn definition(session: AnalysisSession&, name_text: str, kind: NominalKind, location: SourceSpan, generics: Vec<TypeId>) -> DefId {
-    let name = session.names.intern(name_text);
-    session.types.register(DefinitionHeader(kind, name, location, UnitId(0u64)), generics)
+fn definition(types: TypeStore&, names: NameInterner&, name_text: str, kind: NominalKind, location: SourceSpan, generics: Vec<TypeId>) -> DefId {
+    let name = names.intern(name_text);
+    types.register(DefinitionHeader(kind, name, location, UnitId(0u64)), generics)
 }
 
-fn field(session: AnalysisSession&, name_text: str, type_id: TypeId, index: u64, location: SourceSpan) -> StructField {
-    StructField(session.names.intern(name_text), type_id, AccessMode.Private, index, Option<SourceSpan>.Some(location))
+fn field(names: NameInterner&, name_text: str, type_id: TypeId, index: u64, location: SourceSpan) -> StructField {
+    StructField(names.intern(name_text), type_id, AccessMode.Private, index, Option<SourceSpan>.Some(location))
 }
 
 struct IgnoreDiagnostics {}
@@ -78,29 +81,29 @@ fn reject(result: Result<(), CodegenError>, label: str) {
 }
 
 // Builds a tagged enum with one unit variant and one two-field payload variant.
-fn build_types(session: AnalysisSession&, location: SourceSpan) -> Fixture {
-    let nothing = *session.types.primitive(TypeData.Void).unwrap();
-    let integer = *session.types.primitive(TypeData.Integer(32u32, true)).unwrap();
-    let long = *session.types.primitive(TypeData.Integer(64u32, true)).unwrap();
-    let tag = *session.types.primitive(TypeData.Integer(32u32, false)).unwrap();
+fn build_types(types: TypeStore&, names: NameInterner&, location: SourceSpan) -> Fixture {
+    let nothing = *types.primitive(TypeData.Void).unwrap();
+    let integer = *types.primitive(TypeData.Integer(32u32, true)).unwrap();
+    let long = *types.primitive(TypeData.Integer(64u32, true)).unwrap();
+    let tag = *types.primitive(TypeData.Integer(32u32, false)).unwrap();
 
     let empty = Vec<TypeId>.new();
     defer empty.drop();
 
-    let payload_definition = definition(session, "Data", NominalKind.Struct, location, Vec<TypeId>.new());
-    let payload = *session.types.instance(payload_definition, &empty).unwrap();
+    let payload_definition = definition(types, names, "Data", NominalKind.Struct, location, Vec<TypeId>.new());
+    let payload = *types.instance(payload_definition, &empty).unwrap();
     let members = Vec<StructField>.new();
-    members.push(field(session, "number", integer, 0u64, location));
-    members.push(field(session, "count", long, 1u64, location));
-    session.types.finish_definition(payload_definition,
+    members.push(field(names, "number", integer, 0u64, location));
+    members.push(field(names, "count", long, 1u64, location));
+    types.finish_definition(payload_definition,
         DefinitionBody.Struct(AggregateDefinition(members, HashMap<NameId, TypeId>.new()))).unwrap();
 
-    let packet_definition = definition(session, "Packet", NominalKind.Enum, location, Vec<TypeId>.new());
-    let packet = *session.types.instance(packet_definition, &empty).unwrap();
+    let packet_definition = definition(types, names, "Packet", NominalKind.Enum, location, Vec<TypeId>.new());
+    let packet = *types.instance(packet_definition, &empty).unwrap();
     let variants = Vec<EnumVariant>.new();
-    variants.push(EnumVariant(session.names.intern("Empty"), Option<TypeId>.None, 0u64, Option<SourceSpan>.Some(location)));
-    variants.push(EnumVariant(session.names.intern("Data"), Option<TypeId>.Some(payload), 1u64, Option<SourceSpan>.Some(location)));
-    session.types.finish_definition(packet_definition,
+    variants.push(EnumVariant(names.intern("Empty"), Option<TypeId>.None, 0u64, Option<SourceSpan>.Some(location)));
+    variants.push(EnumVariant(names.intern("Data"), Option<TypeId>.Some(payload), 1u64, Option<SourceSpan>.Some(location)));
+    types.finish_definition(packet_definition,
         DefinitionBody.Enum(EnumDefinition(variants, HashMap<NameId, TypeId>.new()))).unwrap();
 
     Fixture(packet, payload, integer, long, tag, nothing)
@@ -131,20 +134,20 @@ struct Skeleton {
     integer_address: ValueId,
 }
 
-fn skeleton(session: AnalysisSession&, fixture: Fixture&, location: SourceSpan) -> Skeleton {
+fn skeleton(types: TypeStore&, fixture: Fixture&, location: SourceSpan) -> Skeleton {
     let module = dyn Module.new("enum-storage-probe", 0u8);
     // The probe checks the generic access obligations, which raw mode attaches per access.
-    let types = BackendTypes.new(session.types, &*module, true);
+    let backend_types = BackendTypes.new(types, &*module, true);
     let function = CfgFunction.new(fixture.packet, fixture.nothing, Vec<TypeId>.new());
-    let cfg = CfgModule.new(session.types, Option<TypeId>.None);
+    let cfg = CfgModule.new(types, Option<TypeId>.None);
     let entry = function.add_block();
-    let packet_reference = session.types.reference(fixture.packet);
+    let packet_reference = types.reference(fixture.packet);
     let packet_address = append(entry, &function, location, Option<TypeId>.Some(packet_reference),
         Operation.Address(function.add_local(fixture.packet)));
-    let integer_reference = session.types.reference(fixture.integer);
+    let integer_reference = types.reference(fixture.integer);
     let integer_address = append(entry, &function, location, Option<TypeId>.Some(integer_reference),
         Operation.Address(function.add_local(fixture.integer)));
-    Skeleton(module, types, function, cfg, entry, packet_address, integer_address)
+    Skeleton(module, backend_types, function, cfg, entry, packet_address, integer_address)
 }
 
 fn release(skeleton: Skeleton&) {
@@ -155,7 +158,7 @@ fn release(skeleton: Skeleton&) {
 }
 
 // Verifies the seeded graph and returns the rejection result.
-fn finish(session: AnalysisSession&, fixture: Fixture&, skeleton: Skeleton&) -> Result<(), CodegenError> {
+fn finish(skeleton: Skeleton&) -> Result<(), CodegenError> {
     match skeleton.function.terminate(skeleton.entry, Terminator.Unreachable) {
         Ok(_) => {},
         Err(error) => { error.drop(); @panic("the probe graph could not terminate its entry block"); },
@@ -167,8 +170,8 @@ fn finish(session: AnalysisSession&, fixture: Fixture&, skeleton: Skeleton&) -> 
     verify_cfg(&skeleton.cfg, &skeleton.types)
 }
 
-fn check_valid(session: AnalysisSession&, fixture: Fixture&, location: SourceSpan) {
-    let values = skeleton(session, fixture, location);
+fn check_valid(types: TypeStore&, fixture: Fixture&, location: SourceSpan) {
+    let values = skeleton(types, fixture, location);
     defer release(&values);
     let number = values.function.add_value(fixture.integer, ValueKind.Integer(7u64));
     let count = values.function.add_value(fixture.long, ValueKind.Integer(9u64));
@@ -182,7 +185,7 @@ fn check_valid(session: AnalysisSession&, fixture: Fixture&, location: SourceSpa
     append(values.entry, &values.function, location, Option<TypeId>.Some(fixture.integer),
         Operation.EnumFieldAt(values.packet_address, fixture.packet, 1u64, 0u64));
     let origin = append(values.entry, &values.function, location,
-        Option<TypeId>.Some(session.types.reference(fixture.packet)),
+        Option<TypeId>.Some(types.reference(fixture.packet)),
         Operation.Address(values.function.add_local(fixture.packet)));
     effect(values.entry, &values.function, location,
         Operation.EnumCopyAt(values.packet_address, origin, fixture.packet));
@@ -258,8 +261,8 @@ fn count_of(checks: Vec<SafetyCheck>&, name: str) -> u64 {
     total
 }
 
-fn check_wrong_pointee(session: AnalysisSession&, fixture: Fixture&, location: SourceSpan) {
-    let values = skeleton(session, fixture, location);
+fn check_wrong_pointee(types: TypeStore&, fixture: Fixture&, location: SourceSpan) {
+    let values = skeleton(types, fixture, location);
     defer release(&values);
     let number = values.function.add_value(fixture.integer, ValueKind.Integer(7u64));
     let count = values.function.add_value(fixture.long, ValueKind.Integer(9u64));
@@ -268,19 +271,19 @@ fn check_wrong_pointee(session: AnalysisSession&, fixture: Fixture&, location: S
     fields.push(count);
     effect(values.entry, &values.function, location,
         Operation.EnumInitAt(values.integer_address, fixture.packet, 1u64, fields));
-    reject(finish(session, fixture, &values), "a non-enum destination is rejected");
+    reject(finish(&values), "a non-enum destination is rejected");
 }
 
-fn check_invalid_variant(session: AnalysisSession&, fixture: Fixture&, location: SourceSpan) {
-    let values = skeleton(session, fixture, location);
+fn check_invalid_variant(types: TypeStore&, fixture: Fixture&, location: SourceSpan) {
+    let values = skeleton(types, fixture, location);
     defer release(&values);
     effect(values.entry, &values.function, location,
         Operation.EnumInitAt(values.packet_address, fixture.packet, 7u64, Vec<ValueId>.new()));
-    reject(finish(session, fixture, &values), "an unknown discriminant is rejected");
+    reject(finish(&values), "an unknown discriminant is rejected");
 }
 
-fn check_invalid_field_type(session: AnalysisSession&, fixture: Fixture&, location: SourceSpan) {
-    let values = skeleton(session, fixture, location);
+fn check_invalid_field_type(types: TypeStore&, fixture: Fixture&, location: SourceSpan) {
+    let values = skeleton(types, fixture, location);
     defer release(&values);
     let number = values.function.add_value(fixture.integer, ValueKind.Integer(7u64));
     let count = values.function.add_value(fixture.long, ValueKind.Integer(9u64));
@@ -289,37 +292,37 @@ fn check_invalid_field_type(session: AnalysisSession&, fixture: Fixture&, locati
     fields.push(number);
     effect(values.entry, &values.function, location,
         Operation.EnumInitAt(values.packet_address, fixture.packet, 1u64, fields));
-    reject(finish(session, fixture, &values), "a swapped payload field is rejected");
+    reject(finish(&values), "a swapped payload field is rejected");
 }
 
-fn check_unit_fields(session: AnalysisSession&, fixture: Fixture&, location: SourceSpan) {
-    let values = skeleton(session, fixture, location);
+fn check_unit_fields(types: TypeStore&, fixture: Fixture&, location: SourceSpan) {
+    let values = skeleton(types, fixture, location);
     defer release(&values);
     let fields = Vec<ValueId>.new();
     fields.push(values.function.add_value(fixture.integer, ValueKind.Integer(7u64)));
     effect(values.entry, &values.function, location,
         Operation.EnumInitAt(values.packet_address, fixture.packet, 0u64, fields));
-    reject(finish(session, fixture, &values), "payload fields on a unit variant are rejected");
+    reject(finish(&values), "payload fields on a unit variant are rejected");
 }
 
-fn check_field_on_unit(session: AnalysisSession&, fixture: Fixture&, location: SourceSpan) {
-    let values = skeleton(session, fixture, location);
+fn check_field_on_unit(types: TypeStore&, fixture: Fixture&, location: SourceSpan) {
+    let values = skeleton(types, fixture, location);
     defer release(&values);
     append(values.entry, &values.function, location, Option<TypeId>.Some(fixture.integer),
         Operation.EnumFieldAt(values.packet_address, fixture.packet, 0u64, 0u64));
-    reject(finish(session, fixture, &values), "a field read on a unit variant is rejected");
+    reject(finish(&values), "a field read on a unit variant is rejected");
 }
 
-fn check_tag_type(session: AnalysisSession&, fixture: Fixture&, location: SourceSpan) {
-    let values = skeleton(session, fixture, location);
+fn check_tag_type(types: TypeStore&, fixture: Fixture&, location: SourceSpan) {
+    let values = skeleton(types, fixture, location);
     defer release(&values);
     append(values.entry, &values.function, location, Option<TypeId>.Some(fixture.integer),
         Operation.EnumTagAt(values.packet_address, fixture.packet));
-    reject(finish(session, fixture, &values), "a signed tag result is rejected");
+    reject(finish(&values), "a signed tag result is rejected");
 }
 
-// The probe document supplies the session; the hand-built CFG is the tested graph.
-fn probe_session(types: TypeStore&) -> AnalysisSession* {
+// The probe document supplies source metadata; the hand-built CFG is the tested graph.
+fn probe_units() -> UnitTable {
     let trace = CompilerTrace.disabled();
     defer trace.drop();
     let frontend = FrontendDriver.new(load_source("/tmp/enum-storage-probe.an", "fn main() {}\n"), false, &trace);
@@ -328,31 +331,45 @@ fn probe_session(types: TypeStore&) -> AnalysisSession* {
         Ok(value) => value,
         Err(error) => { error.drop(); @panic("enum storage probe preparation failed"); },
     };
-    dyn AnalysisSession.new(units, false, trust(), Option<PackageMap>.None, types)
+    units
+}
+
+fn analyze_probe(units: UnitTable&, types: TypeStore&, names: NameInterner&,
+    symbols: SymbolStore&, hir: HirStore&, reporter: DiagnosticReporter&) -> AnalysisOutput {
+    let driver = MiddleEndDriver.new(units, Option<PackageMap&>.None, names, types, symbols,
+        hir, trust(), false, AnalysisOptions.new(), reporter);
+    let analysis = driver.run();
+    driver.drop();
+    match analysis {
+        Ok(output) => output,
+        Err(error) => { error.drop(); @panic("enum storage probe analysis failed"); },
+    }
 }
 
 // One malformed graph per process; the invariant panic terminates the child.
 fn run_negative(index: u64) {
     let types = TypeStore.new();
     defer types.drop();
+    let names = NameInterner.new();
+    defer names.drop();
+    let symbols = SymbolStore.new();
+    defer symbols.drop();
+    let hir = HirStore.new();
+    defer hir.drop();
+    let units = probe_units();
+    defer units.drop();
     let reporter = IgnoreDiagnostics();
-    let driver = MiddleEndDriver.new(probe_session(&types), AnalysisOptions.new(), &reporter);
-    defer driver.drop();
-    let result = match driver.run() {
-        Ok(value) => value,
-        Err(_) => @panic("enum storage probe analysis failed"),
-    };
-    defer result.drop();
-    let session = result.session;
+    let output = analyze_probe(&units, &types, &names, &symbols, &hir, &reporter);
+    defer output.drop();
     let location = SourceSpan(UnitId(0u64), Span(Position(0u64, 0u64), Position(0u64, 0u64)));
-    let fixture = build_types(session, location);
+    let fixture = build_types(&types, &names, location);
     match index {
-        0u64 => check_wrong_pointee(session, &fixture, location),
-        1u64 => check_invalid_variant(session, &fixture, location),
-        2u64 => check_invalid_field_type(session, &fixture, location),
-        3u64 => check_unit_fields(session, &fixture, location),
-        4u64 => check_field_on_unit(session, &fixture, location),
-        _ => check_tag_type(session, &fixture, location),
+        0u64 => check_wrong_pointee(&types, &fixture, location),
+        1u64 => check_invalid_variant(&types, &fixture, location),
+        2u64 => check_invalid_field_type(&types, &fixture, location),
+        3u64 => check_unit_fields(&types, &fixture, location),
+        4u64 => check_field_on_unit(&types, &fixture, location),
+        _ => check_tag_type(&types, &fixture, location),
     }
 }
 
@@ -400,19 +417,21 @@ fn main() {
 
     let types = TypeStore.new();
     defer types.drop();
+    let names = NameInterner.new();
+    defer names.drop();
+    let symbols = SymbolStore.new();
+    defer symbols.drop();
+    let hir = HirStore.new();
+    defer hir.drop();
+    let units = probe_units();
+    defer units.drop();
     let reporter = IgnoreDiagnostics();
-    let driver = MiddleEndDriver.new(probe_session(&types), AnalysisOptions.new(), &reporter);
-    defer driver.drop();
-    let result = match driver.run() {
-        Ok(value) => value,
-        Err(_) => @panic("enum storage probe analysis failed"),
-    };
-    defer result.drop();
-    let session = result.session;
+    let output = analyze_probe(&units, &types, &names, &symbols, &hir, &reporter);
+    defer output.drop();
 
     let location = SourceSpan(UnitId(0u64), Span(Position(0u64, 0u64), Position(0u64, 0u64)));
-    let fixture = build_types(session, location);
-    check_valid(session, &fixture, location);
+    let fixture = build_types(&types, &names, location);
+    check_valid(&types, &fixture, location);
 
     assert_child_panic("--wrong-pointee", "CFG operand type is inconsistent");
     assert_child_panic("--invalid-variant", "CFG enum place operation has an invalid discriminant");

@@ -46,7 +46,7 @@ impl FunctionLowering {
         if self.owner.types.is_zst(type_id)? { return Result<(), CodegenError>.Ok(()); }
         let value = self.get(id)?;
         if !self.owner.types.raw_pointers() { return self.release_fat(type_id, value); }
-        let pointer = match self.owner.session.types.require(type_id)? {
+        let pointer = match self.owner.types.semantic_store().require(type_id)? {
             Slice(_) => self.builder.extract_value(value, 0u32, ""),
             _ => value,
         };
@@ -72,7 +72,7 @@ impl FunctionLowering {
             },
             RuntimeFail => {
                 let code = match &self.cfg.value(args[0])?.kind {
-                    Bytes(name) => self.owner.session.names.text(*name),
+                    Bytes(name) => self.owner.names.text(*name),
                     _ => @panic("runtime failure has no constant code"),
                 };
                 // The caller emits the HIR never terminator after this noreturn call.
@@ -115,7 +115,7 @@ impl FunctionLowering {
                 let bounded = self.builder.icmp(IntCompare.Ule, end, length, "");
                 self.require_guard(GuardKind.SliceRange, GuardSite.Before)?;
                 self.checked(self.builder.binary(BinaryOp.And, ordered, bounded, ""), "S001")?;
-                let element = match self.owner.session.types.require(source_type)? {
+                let element = match self.owner.types.semantic_store().require(source_type)? {
                     Slice(element) => *element,
                     _ => @panic("slice_range requires a slice"),
                 };

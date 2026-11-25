@@ -72,20 +72,20 @@ impl HirVisitor for AddressUseCollector {
 }
 
 fn spill(ctx: ResolutionContext&, unit: UnitId, value: HirId, type_id: TypeId, span: SourceSpan) -> HirId {
-    let name = ctx.session.names.intern("%address_temp");
-    let symbol = ctx.session.symbols.add(Symbol(name, SymbolKind.Variable, type_id, unit,
+    let name = ctx.names.intern("%address_temp");
+    let symbol = ctx.symbols.add(Symbol(name, SymbolKind.Variable, type_id, unit,
         Option<SourceSpan>.Some(span), false, false, false, Option<SymbolId>.None, Option<DefId>.None));
-    let init = ctx.session.hir.add(HirNode(span, TypeId(VOID_TYPE_ID), false,
+    let init = ctx.hir.add(HirNode(span, TypeId(VOID_TYPE_ID), false,
         HirKind.Let(HirLet(Option<HirId>.Some(value), Option<SymbolId>.Some(symbol)))));
-    let variable = ctx.session.hir.add(HirNode(span, type_id, true, HirKind.Var(symbol)));
+    let variable = ctx.hir.add(HirNode(span, type_id, true, HirKind.Var(symbol)));
     let statements = Vec<HirId>.new();
     statements.push(init);
     statements.push(variable);
-    ctx.session.hir.add(HirNode(span, type_id, true, HirKind.Block(HirBlock(statements))))
+    ctx.hir.add(HirNode(span, type_id, true, HirKind.Block(HirBlock(statements))))
 }
 
 fn ensure_place(ctx: ResolutionContext&, unit: UnitId, id: HirId) -> Result<HirId, AnalysisError> {
-    let node = ctx.session.hir.require(id)?;
+    let node = ctx.hir.require(id)?;
     let type_id = node.type_id;
     let span = node.span;
     let kind = match &node.kind {
@@ -101,40 +101,40 @@ fn ensure_place(ctx: ResolutionContext&, unit: UnitId, id: HirId) -> Result<HirI
 
     match kind {
         1u8 | 2u8 | 6u8 => {
-            ctx.session.hir.require(id)?.is_place = true;
+            ctx.hir.require(id)?.is_place = true;
             Result<HirId, AnalysisError>.Ok(id)
         },
         3u8 => {
-            let receiver_id = match &ctx.session.hir.require(id)?.kind { FieldAccess(value) => value.receiver, _ => invalid(span, "field place changed during normalization"), };
+            let receiver_id = match &ctx.hir.require(id)?.kind { FieldAccess(value) => value.receiver, _ => invalid(span, "field place changed during normalization"), };
             let place_receiver = ensure_place(ctx, unit, receiver_id)?;
-            let node = ctx.session.hir.require(id)?;
+            let node = ctx.hir.require(id)?;
             match &node.kind { FieldAccess(value) => value.receiver = place_receiver, _ => invalid(span, "field place changed during normalization"), }
             node.is_place = true;
             Result<HirId, AnalysisError>.Ok(id)
         },
         4u8 => {
-            let receiver_id = match &ctx.session.hir.require(id)?.kind { TupleAccess(value) => value.receiver, _ => invalid(span, "tuple place changed during normalization"), };
+            let receiver_id = match &ctx.hir.require(id)?.kind { TupleAccess(value) => value.receiver, _ => invalid(span, "tuple place changed during normalization"), };
             let place_receiver = ensure_place(ctx, unit, receiver_id)?;
-            let node = ctx.session.hir.require(id)?;
+            let node = ctx.hir.require(id)?;
             match &node.kind { TupleAccess(value) => value.receiver = place_receiver, _ => invalid(span, "tuple place changed during normalization"), }
             node.is_place = true;
             Result<HirId, AnalysisError>.Ok(id)
         },
         5u8 => {
-            let array_id = match &ctx.session.hir.require(id)?.kind { ArrayAccess(value) => value.array, _ => invalid(span, "array place changed during normalization"), };
+            let array_id = match &ctx.hir.require(id)?.kind { ArrayAccess(value) => value.array, _ => invalid(span, "array place changed during normalization"), };
             let place_array = ensure_place(ctx, unit, array_id)?;
-            let node = ctx.session.hir.require(id)?;
+            let node = ctx.hir.require(id)?;
             match &node.kind { ArrayAccess(value) => value.array = place_array, _ => invalid(span, "array place changed during normalization"), }
             node.is_place = true;
             Result<HirId, AnalysisError>.Ok(id)
         },
         7u8 => {
-            let (last_id, index) = match &ctx.session.hir.require(id)?.kind {
+            let (last_id, index) = match &ctx.hir.require(id)?.kind {
                 Block(value) if value.stmts.len() != 0 => (value.stmts[value.stmts.len() - 1u64], value.stmts.len() - 1u64),
                 _ => invalid(span, "place block changed during normalization"),
             };
             let place_last = ensure_place(ctx, unit, last_id)?;
-            let node = ctx.session.hir.require(id)?;
+            let node = ctx.hir.require(id)?;
             match &node.kind { Block(value) => value.stmts[index] = place_last, _ => invalid(span, "place block changed during normalization"), }
             Result<HirId, AnalysisError>.Ok(id)
         },
@@ -143,7 +143,7 @@ fn ensure_place(ctx: ResolutionContext&, unit: UnitId, id: HirId) -> Result<HirI
 }
 
 fn normalize_use(ctx: ResolutionContext&, unit: UnitId, id: HirId) -> Result<(), AnalysisError> {
-    let node = ctx.session.hir.require(id)?;
+    let node = ctx.hir.require(id)?;
     let span = node.span;
     let type_id = node.type_id;
     let address_operand = match &node.kind {
@@ -152,16 +152,16 @@ fn normalize_use(ctx: ResolutionContext&, unit: UnitId, id: HirId) -> Result<(),
     };
     match address_operand {
         Some(operand) => {
-            let function_address = match ctx.session.types.require(type_id)? { FunctionPointer(_, _) => true, _ => false, };
+            let function_address = match ctx.types.require(type_id)? { FunctionPointer(_, _) => true, _ => false, };
             if function_address {
-                let is_function = match &ctx.session.hir.require(operand)?.kind { Ty => true, _ => false, };
+                let is_function = match &ctx.hir.require(operand)?.kind { Ty => true, _ => false, };
                 if !is_function {
                     invalid(span, "function address operand is not a function type");
                 }
                 return Result<(), AnalysisError>.Ok(());
             }
             let operand = ensure_place(ctx, unit, operand)?;
-            let node = ctx.session.hir.require(id)?;
+            let node = ctx.hir.require(id)?;
             match &node.kind { Unary(value) => value.operand = operand, _ => invalid(span, "address expression changed during normalization"), }
             return Result<(), AnalysisError>.Ok(());
         },
@@ -186,11 +186,11 @@ fn normalize_use(ctx: ResolutionContext&, unit: UnitId, id: HirId) -> Result<(),
     let callable = match &node.kind { Invoke(value) => Option<HirId>.Some(value.callable), _ => Option<HirId>.None };
     match callable {
         Some(callable) => {
-            let callable_type = ctx.session.hir.require(callable)?.type_id;
-            let is_closure = match ctx.session.types.require(callable_type)? { Closure(_, _, _, _, _, _) => true, _ => false, };
+            let callable_type = ctx.hir.require(callable)?.type_id;
+            let is_closure = match ctx.types.require(callable_type)? { Closure(_, _, _, _, _, _) => true, _ => false, };
             if is_closure {
                 let callable = ensure_place(ctx, unit, callable)?;
-                let node = ctx.session.hir.require(id)?;
+                let node = ctx.hir.require(id)?;
                 match &node.kind { Invoke(value) => { value.callable = callable; }, _ => invalid(span, "closure invocation changed during normalization"), }
             }
         },
@@ -204,7 +204,7 @@ pub fn normalize_address_storage(ctx: ResolutionContext&, output: AnalysisOutput
     for procedure in output.procedures {
         let collector = AddressUseCollector.new();
         defer collector.drop();
-        walk_expr(&ctx.session.hir, procedure.root, &collector)?;
+        walk_expr(ctx.hir, procedure.root, &collector)?;
         let index = 0u64;
         while index < collector.uses.len() {
             normalize_use(ctx, procedure.unit, collector.uses[index])?;

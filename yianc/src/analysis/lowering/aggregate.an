@@ -28,11 +28,11 @@ impl ExprChecker {
             }
         }
 
-        let definition = match self.ctx.session.types.require(type_id)? {
+        let definition = match self.ctx.types.require(type_id)? {
             Nominal(value, _) => *value,
             _ => return Result<HirId, AnalysisError>.Err(self.error(span, "constructor requires an aggregate type")),
         };
-        let body = match self.ctx.session.types.complete_definition(definition)? {
+        let body = match self.ctx.types.complete_definition(definition)? {
             Struct(value) => value,
             _ => return Result<HirId, AnalysisError>.Err(self.error(span, "type cannot be constructed directly")),
         };
@@ -59,7 +59,7 @@ impl ExprChecker {
 
             match &args[index].data.name {
                 Some(name) => {
-                    let requested = self.ctx.session.names.intern(name.data.name.as_str());
+                    let requested = self.ctx.names.intern(name.data.name.as_str());
                     let found = false;
 
                     for candidate in body.fields {
@@ -86,7 +86,7 @@ impl ExprChecker {
 
             self.check_field_access(type_id, field, span)?;
             let value = self.expression(args[index].data.value)?;
-            let expected = substitute(self.ctx.session.types, field.type_id, &substitutions)?;
+            let expected = substitute(self.ctx.types, field.type_id, &substitutions)?;
 
             if !has_literal(self.ctx, self.type_of(value)) && !self.match_argument(expected, default_type(self.ctx, self.type_of(value)), &substitutions) {
                 self.coerce(value, expected)?;
@@ -103,7 +103,7 @@ impl ExprChecker {
         for entry in values {
             for field in body.fields {
                 if entry[0] == field.name {
-                    let expected = substitute(self.ctx.session.types, field.type_id, &substitutions)?;
+                    let expected = substitute(self.ctx.types, field.type_id, &substitutions)?;
 
                     if !compatible(self.ctx, self.type_of(entry[1]), expected) && !self.match_argument(expected, default_type(self.ctx, self.type_of(entry[1])), &substitutions) {
                         return Result<HirId, AnalysisError>.Err(self.error(span, "constructor field cannot be matched to its type"));
@@ -114,7 +114,7 @@ impl ExprChecker {
 
         let arguments = Vec<TypeId>.new();
         defer arguments.drop();
-        let header = *self.ctx.session.types.definition(definition).unwrap();
+        let header = *self.ctx.types.definition(definition).unwrap();
         index = 0;
 
         while index < header.generic_count() {
@@ -128,13 +128,13 @@ impl ExprChecker {
             index += 1;
         }
 
-        let instance = self.ctx.session.types.instance(definition, &arguments)?;
+        let instance = self.ctx.types.instance(definition, &arguments)?;
         index = 0;
 
         while index < values.len() {
             for field in body.fields {
                 if field.name == values[index][0] {
-                    let field_type = substitute(self.ctx.session.types, field.type_id, &substitutions)?;
+                    let field_type = substitute(self.ctx.types, field.type_id, &substitutions)?;
                     values[index][1] = self.coerce(values[index][1], field_type)?;
                 }
             }
@@ -164,11 +164,11 @@ impl ExprChecker {
             }
         }
 
-        let definition = match self.ctx.session.types.require(type_id)? {
+        let definition = match self.ctx.types.require(type_id)? {
             Nominal(value, _) => *value,
             _ => return Result<Option<HirId>, AnalysisError>.Ok(Option<HirId>.None),
         };
-        let body = match self.ctx.session.types.complete_definition(definition)? {
+        let body = match self.ctx.types.complete_definition(definition)? {
             Enum(value) => value,
             _ => return Result<Option<HirId>, AnalysisError>.Ok(Option<HirId>.None),
         };
@@ -204,7 +204,7 @@ impl ExprChecker {
 
                 match &args[index].data.name {
                     Some(name) => {
-                        let requested = self.ctx.session.names.intern(name.data.name.as_str());
+                        let requested = self.ctx.names.intern(name.data.name.as_str());
                         let found = false;
 
                         for candidate in expected {
@@ -227,9 +227,9 @@ impl ExprChecker {
                     }
                 }
 
-                let target = substitute(self.ctx.session.types, expected[field].type_id, &substitutions)?;
+                let target = substitute(self.ctx.types, expected[field].type_id, &substitutions)?;
 
-                if !infer(self.ctx.session.types, target, default_type(self.ctx, self.type_of(value)), &substitutions) {
+                if !infer(self.ctx.types, target, default_type(self.ctx, self.type_of(value)), &substitutions) {
                     self.coerce(value, target)?;
                 }
 
@@ -244,7 +244,7 @@ impl ExprChecker {
 
             let arguments = Vec<TypeId>.new();
             defer arguments.drop();
-            let header = *self.ctx.session.types.definition(definition).unwrap();
+            let header = *self.ctx.types.definition(definition).unwrap();
             index = 0;
 
             while index < header.generic_count() {
@@ -258,13 +258,13 @@ impl ExprChecker {
                 index += 1;
             }
 
-            let instance = self.ctx.session.types.instance(definition, &arguments)?;
+            let instance = self.ctx.types.instance(definition, &arguments)?;
             index = 0;
 
             while index < values.len() {
                 for field in expected {
                     if field.name == values[index][0] {
-                        values[index][1] = self.coerce(values[index][1], substitute(self.ctx.session.types, field.type_id, &substitutions)?)?;
+                        values[index][1] = self.coerce(values[index][1], substitute(self.ctx.types, field.type_id, &substitutions)?)?;
                     }
                 }
 
@@ -272,7 +272,7 @@ impl ExprChecker {
             }
 
             let payload = match &variant.payload {
-                Some(payload) => Option<TypeId>.Some(substitute(self.ctx.session.types, *payload, &substitutions)?), None => Option<TypeId>.None
+                Some(payload) => Option<TypeId>.Some(substitute(self.ctx.types, *payload, &substitutions)?), None => Option<TypeId>.None
             };
             let concrete_variant = EnumVariant(variant.name, payload, variant.discriminant, variant.span);
             accepted = true;
@@ -291,7 +291,7 @@ impl ExprChecker {
         let type_id = self.type_of(receiver);
 
         while true {
-            match self.ctx.session.types.require(type_id)? {
+            match self.ctx.types.require(type_id)? {
                 Reference(inner) => {
                     type_id = *inner;
                     value = self.node(span, type_id, true, HirKind.Unary(Unary(UnaryOperator.Deref, value)));
@@ -306,13 +306,13 @@ impl ExprChecker {
             }
         }
 
-        let interned = self.ctx.session.names.intern(name);
+        let interned = self.ctx.names.intern(name);
 
-        match self.ctx.session.types.require(type_id)? {
+        match self.ctx.types.require(type_id)? {
             Nominal(definition, _) => {
-                let header = *self.ctx.session.types.definition(*definition).unwrap();
+                let header = *self.ctx.types.definition(*definition).unwrap();
 
-                match self.ctx.session.types.complete_definition(*definition)? {
+                match self.ctx.types.complete_definition(*definition)? {
                     Struct(body) => {
                         let substitutions = instance_substitutions(self.ctx, type_id)?;
                         defer substitutions.drop();
@@ -320,10 +320,10 @@ impl ExprChecker {
                         for field in body.fields {
                             if field.name == interned {
                                 self.check_field_access(type_id, *field, error_span)?;
-                                let field_type = substitute(self.ctx.session.types, field.type_id, &substitutions)?;
+                                let field_type = substitute(self.ctx.types, field.type_id, &substitutions)?;
 
                                 let copy = StructField(field.name, field_type, field.access, field.index, field.span);
-                                return Result<HirId, AnalysisError>.Ok(self.node(span, field_type, self.ctx.session.hir.require(value)?.is_place, HirKind.FieldAccess(FieldAccess(value, copy, match name_span { Some(target) => Option<SourceSpan>.Some(self.ctx.span(self.unit, target)), None => Option<SourceSpan>.None }))));
+                                return Result<HirId, AnalysisError>.Ok(self.node(span, field_type, self.ctx.hir.require(value)?.is_place, HirKind.FieldAccess(FieldAccess(value, copy, match name_span { Some(target) => Option<SourceSpan>.Some(self.ctx.span(self.unit, target)), None => Option<SourceSpan>.None }))));
                             }
                         }
 
@@ -374,7 +374,7 @@ impl ExprChecker {
                     return Result<HirId, AnalysisError>.Err(self.error(span, "tuple index is out of bounds"));
                 }
 
-                return Result<HirId, AnalysisError>.Ok(self.node(span, elements[index], self.ctx.session.hir.require(value)?.is_place, HirKind.TupleAccess(TupleAccess(value, index))));
+                return Result<HirId, AnalysisError>.Ok(self.node(span, elements[index], self.ctx.hir.require(value)?.is_place, HirKind.TupleAccess(TupleAccess(value, index))));
             },
             _ => {},
         }
@@ -383,20 +383,20 @@ impl ExprChecker {
     }
 
     pub fn check_field_access(type_id: TypeId, field: StructField, span: Span) -> Result<(), AnalysisError> {
-        let definition = match self.ctx.session.types.require(type_id)? {
+        let definition = match self.ctx.types.require(type_id)? {
             Nominal(id, _) => *id,
             _ => @panic("field access requires a nominal type"),
         };
-        let header = self.ctx.session.types.definition(definition).unwrap().header();
+        let header = self.ctx.types.definition(definition).unwrap().header();
 
         if field.access == AccessMode.Public || header.unit == self.unit {
             return Result<(), AnalysisError>.Ok(());
         }
 
-        let self_name = self.ctx.session.names.intern("Self");
+        let self_name = self.ctx.names.intern("Self");
 
-        match self.ctx.session.symbols.lookup(self.scope, self_name) {
-            Some(symbol) => match self.ctx.session.types.require(self.ctx.session.symbols.get(symbol).unwrap().type_id)? {
+        match self.ctx.symbols.lookup(self.scope, self_name) {
+            Some(symbol) => match self.ctx.types.require(self.ctx.symbols.get(symbol).unwrap().type_id)? {
                 Nominal(id, _) => {
                     if *id == definition {
                         return Result<(), AnalysisError>.Ok(());
@@ -409,7 +409,7 @@ impl ExprChecker {
 
         let message = String.from(&"Field '");
         defer message.drop();
-        message.push_str(self.ctx.session.names.text(field.name));
+        message.push_str(self.ctx.names.text(field.name));
         message.push_str("' of struct '");
         let name = type_text(self.ctx, type_id);
         defer name.drop();

@@ -29,10 +29,10 @@ impl ExprChecker {
     fn typed_loop(span: Span, body: HirId, expected: TypeId) -> Result<HirId, AnalysisError> {
         let collector = ExitCollector(Vec<HirId>.new());
         defer collector.exits.drop();
-        walk_expr(&self.ctx.session.hir, body, &collector)?;
+        walk_expr(self.ctx.hir, body, &collector)?;
 
         for id in collector.exits {
-            match &self.ctx.session.hir.require(*id)?.kind {
+            match &self.ctx.hir.require(*id)?.kind {
                 Break(value) => match value {
                     Some(inner) => { *value = Option<HirId>.Some(self.coerce(*inner, expected)?); },
                     None => {},

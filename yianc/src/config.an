@@ -345,7 +345,7 @@ pub fn parse_args() -> CompilerConfig {
         Err(error) => {
             let usage = match parser.format_usage() {
                 Ok(text) => Option<String>.Some(text),
-                Err(problem) => { problem.drop(); Option<String>.None },
+                Err(_) => Option<String>.None,
             };
             let message = String.new();
             if error.argument() != "" { message.push_str(error.argument()); message.push_str(": "); }

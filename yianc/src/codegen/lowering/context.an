@@ -1,6 +1,6 @@
-from yianc.analysis.session.session import AnalysisSession;
 from yianc.analysis.session.output import AnalysisOutput, AnalyzedProcedure;
-from yianc.types.callable import store_signature;
+from yianc.analysis.hir.store import HirStore;
+from yianc.analysis.symbol.scope import SymbolStore;
 from yianc.codegen.types import BackendTypes;
 from yianc.codegen.cfg.ids import FunctionId, BlockId, ValueId, LocalId, ScopeId;
 from yianc.codegen.cfg.model import CfgModule, CfgFunction, ValueKind, Operation, Terminator;
@@ -33,9 +33,10 @@ impl Drop for LoopTarget {
     pub fn drop() { self.incoming.drop(); }
 }
 
-// Lowering borrows the checked session and owns only per-function maps and cleanup stacks.
+// Lowering borrows the HIR and symbol tables and owns per-function lowering state.
 pub struct Lowering {
-    pub session: AnalysisSession&,
+    pub hir: HirStore&,
+    pub symbols: SymbolStore&,
     pub types: BackendTypes&,
     pub function: CfgFunction&,
     pub current: Option<BlockId>,
@@ -47,19 +48,19 @@ pub struct Lowering {
 }
 
 impl Lowering {
-    static pub fn new(session: AnalysisSession&, types: BackendTypes&, function: CfgFunction&,
-        dependencies: Vec<TypeId>&) -> Self {
-        Self(session, types, function, Option<BlockId>.Some(function.add_block()),
+    static pub fn new(hir: HirStore&, symbols: SymbolStore&, types: BackendTypes&,
+        function: CfgFunction&, dependencies: Vec<TypeId>&) -> Self {
+        Self(hir, symbols, types, function, Option<BlockId>.Some(function.add_block()),
             HashMap<SymbolId, LocalId>.new(), HashMap<SymbolId, ValueId>.new(), Vec<CleanupScope>.new(), Vec<LoopTarget>.new(), dependencies)
     }
 
     pub fn zero(type_id: TypeId) -> ValueId {
-        assert_cfg_type(self.session.types, type_id);
+        assert_cfg_type(self.types.semantic_store(), type_id);
         self.function.add_value(type_id, ValueKind.Zero)
     }
 
     pub fn emit(span: SourceSpan, type_id: TypeId, operation: Operation) -> Result<ValueId, CodegenError> {
-        assert_cfg_type(self.session.types, type_id);
+        assert_cfg_type(self.types.semantic_store(), type_id);
         let block = match self.current {
             Some(value) => value,
             None => {
@@ -98,11 +99,11 @@ impl Lowering {
             Some(value) => return Result<LocalId, CodegenError>.Ok(*value),
             None => {},
         }
-        let record = match self.session.symbols.get(symbol) {
+        let record = match self.symbols.get(symbol) {
             Some(value) => value,
             None => @panic("invalid lowered symbol"),
         };
-        assert_cfg_type(self.session.types, record.type_id);
+        assert_cfg_type(self.types.semantic_store(), record.type_id);
         let local = self.function.add_local(record.type_id);
         self.locals.insert(symbol, local);
         Result<LocalId, CodegenError>.Ok(local)
@@ -126,19 +127,19 @@ impl Lowering {
     }
 
     pub fn finish(procedure: AnalyzedProcedure&) -> Result<(), CodegenError> {
-        let root = self.session.hir.require(procedure.root)?;
+        let root = self.hir.require(procedure.root)?;
         // The root scope enters once before any parameter or local address is observed.
         self.effect(root.span, Operation.ScopeEnter(ScopeId(0u64)))?;
         let parameter_start = 0u64;
         let parameter_position = 0u64;
         match self.types.closure_environment(procedure.type_id) {
             Some(environment) => {
-                let reference = self.session.types.reference(environment);
+                let reference = self.types.semantic_store().reference(environment);
                 let pointer = self.function.add_value(reference, ValueKind.Parameter(0u64));
                 let index = 0u64;
                 for capture in procedure.captures {
-                    let symbol = self.session.symbols.get(capture[1]).unwrap();
-                    let captured_ref = self.session.types.reference(symbol.type_id);
+                    let symbol = self.symbols.get(capture[1]).unwrap();
+                    let captured_ref = self.types.semantic_store().reference(symbol.type_id);
                     let address = self.emit(root.span, captured_ref, Operation.FieldAddress(pointer, environment, index))?;
                     self.captured_places.insert(capture[1], address);
                     index += 1u64;
@@ -186,9 +187,9 @@ impl Drop for Lowering {
     }
 }
 
-pub fn lower_module(session: AnalysisSession&, types: BackendTypes&, output: AnalysisOutput&)
+pub fn lower_module(hir: HirStore&, symbols: SymbolStore&, types: BackendTypes&, output: AnalysisOutput&)
 -> Result<CfgModule, CodegenError> {
-    let module = CfgModule.new(session.types, output.entry);
+    let module = CfgModule.new(types.semantic_store(), output.entry);
     let accepted = false;
     defer { if !accepted { module.drop(); } };
     let pending = Vec<TypeId>.new();
@@ -228,25 +229,25 @@ pub fn lower_module(session: AnalysisSession&, types: BackendTypes&, output: Ana
         let start = 0u64;
         match types.closure_environment(callable) {
             Some(environment) => {
-                parameters.push(session.types.reference(environment));
+                parameters.push(types.semantic_store().reference(environment));
                 start = body.captures.len();
             },
             None => {},
         }
         for index in start..body.parameters.len() {
-            parameters.push(session.symbols.get(body.parameters[index]).unwrap().type_id);
+            parameters.push(symbols.get(body.parameters[index]).unwrap().type_id);
         }
-        assert_cfg_type(session.types, callable);
-        assert_cfg_type(session.types, signature.result);
+        assert_cfg_type(types.semantic_store(), callable);
+        assert_cfg_type(types.semantic_store(), signature.result);
 
         for parameter in parameters {
-            assert_cfg_type(session.types, *parameter);
+            assert_cfg_type(types.semantic_store(), *parameter);
         }
 
         let function = CfgFunction.new(callable, signature.result, parameters);
         let owns_function = true;
         defer { if owns_function { function.drop(); } };
-        let lowering = Lowering.new(session, types, &function, &pending);
+        let lowering = Lowering.new(hir, symbols, types, &function, &pending);
         defer lowering.drop();
         lowering.finish(body)?;
         // Module receives the function after lowering has relinquished its borrowed state.

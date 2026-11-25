@@ -7,7 +7,7 @@ from std.core.iter import Iterator, IntoIterator;
 from yianc.types.store import F64_TYPE_ID, FLOAT_LITERAL_TYPE_ID, I32_TYPE_ID, INT_LITERAL_TYPE_ID, NEVER_TYPE_ID, U64_TYPE_ID;
 
 pub fn is_integer(ctx: ResolutionContext&, id: TypeId) -> bool {
-    match *ctx.session.types.get(id).unwrap() {
+    match *ctx.types.get(id).unwrap() {
         Integer(_, _) => true,
         CScalar(_) => true,
         IntLiteral => true,
@@ -20,7 +20,7 @@ pub fn is_numeric(ctx: ResolutionContext&, id: TypeId) -> bool {
         return true;
     }
 
-    match *ctx.session.types.get(id).unwrap() {
+    match *ctx.types.get(id).unwrap() {
         Float(_) => true,
         FloatLiteral => true,
         _ => false,
@@ -36,9 +36,9 @@ pub fn default_type(ctx: ResolutionContext&, id: TypeId) -> TypeId {
         return TypeId(F64_TYPE_ID);
     }
 
-    match *ctx.session.types.get(id).unwrap() {
-        Pointer(inner) => ctx.session.types.pointer(default_type(ctx, *inner)),
-        Reference(inner) => ctx.session.types.reference(default_type(ctx, *inner)),
+    match *ctx.types.get(id).unwrap() {
+        Pointer(inner) => ctx.types.pointer(default_type(ctx, *inner)),
+        Reference(inner) => ctx.types.reference(default_type(ctx, *inner)),
         Tuple(elements) => {
             let concrete = Vec<TypeId>.new();
             defer concrete.drop();
@@ -47,9 +47,9 @@ pub fn default_type(ctx: ResolutionContext&, id: TypeId) -> TypeId {
                 concrete.push(default_type(ctx, *element));
             }
 
-            ctx.session.types.tuple(&concrete)
+            ctx.types.tuple(&concrete)
         },
-        Array(element, length) => ctx.session.types.array(default_type(ctx, *element), *length),
+        Array(element, length) => ctx.types.array(default_type(ctx, *element), *length),
         _ => id,
     }
 }
@@ -60,40 +60,40 @@ pub fn compatible(ctx: ResolutionContext&, actual: TypeId, expected: TypeId) -> 
     }
 
     if actual == TypeId(INT_LITERAL_TYPE_ID) {
-        return match *ctx.session.types.get(expected).unwrap() {
+        return match *ctx.types.get(expected).unwrap() {
             Integer(_, _) => true, CScalar(_) => true, Float(_) => true, IntLiteral => true, FloatLiteral => true, _ => false
         };
     }
 
     if actual == TypeId(FLOAT_LITERAL_TYPE_ID) {
-        return match *ctx.session.types.get(expected).unwrap() {
+        return match *ctx.types.get(expected).unwrap() {
             Float(_) => true,
             _ => false,
         };
     }
 
-    match *ctx.session.types.get(actual).unwrap() {
-        Pointer(inner) => match *ctx.session.types.get(expected).unwrap() {
+    match *ctx.types.get(actual).unwrap() {
+        Pointer(inner) => match *ctx.types.get(expected).unwrap() {
             Reference(value) => *inner == *value,
-            Slice(value) => !ctx.session.raw_pointers && *inner == *value,
-            Pointer(value) => match *ctx.session.types.get(*inner).unwrap() {
+            Slice(value) => !ctx.raw_pointers && *inner == *value,
+            Pointer(value) => match *ctx.types.get(*inner).unwrap() {
                 Array(element, _) => *element == *value, _ => false
             },
             TraitObject(_) => true,
             _ => false,
         },
-        Reference(inner) => match *ctx.session.types.get(expected).unwrap() {
+        Reference(inner) => match *ctx.types.get(expected).unwrap() {
             TraitObject(_) => true, _ => false
         },
-        Slice(element) => match *ctx.session.types.get(expected).unwrap() {
+        Slice(element) => match *ctx.types.get(expected).unwrap() {
             Reference(value) => *element == *value, _ => false
         },
-        Array(element, length) => match *ctx.session.types.get(expected).unwrap() {
+        Array(element, length) => match *ctx.types.get(expected).unwrap() {
             Pointer(value) => *element == *value,
             Array(value, count) => *length == *count && compatible(ctx, *element, *value),
             _ => false,
         },
-        Tuple(elements) => match *ctx.session.types.get(expected).unwrap() {
+        Tuple(elements) => match *ctx.types.get(expected).unwrap() {
             Tuple(values) => {
                 if elements.len() != values.len() {
                     return false;
@@ -118,7 +118,7 @@ pub fn compatible(ctx: ResolutionContext&, actual: TypeId, expected: TypeId) -> 
 }
 
 pub fn has_literal(ctx: ResolutionContext&, type_id: TypeId) -> bool {
-    match *ctx.session.types.get(type_id).unwrap() {
+    match *ctx.types.get(type_id).unwrap() {
         IntLiteral => true,
         FloatLiteral => true,
         Pointer(inner) => has_literal(ctx, *inner),
@@ -139,7 +139,7 @@ pub fn has_literal(ctx: ResolutionContext&, type_id: TypeId) -> bool {
 
 // A slice range index is the standard Range<u64> nominal aggregate.
 pub fn is_u64_range(ctx: ResolutionContext&, id: TypeId) -> bool {
-    match *ctx.session.types.get(id).unwrap() {
+    match *ctx.types.get(id).unwrap() {
         Nominal(_, arguments) => {
             if arguments.len() != 1u64 || arguments[0] != TypeId(U64_TYPE_ID) {
                 return false;

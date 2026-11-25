@@ -25,7 +25,7 @@ fn concrete(type_id: TypeId) -> TypeId {
 }
 
 fn finalize_symbol(ctx: ResolutionContext&, symbol: SymbolId) {
-    match ctx.session.symbols.get(symbol) {
+    match ctx.symbols.get(symbol) {
         Some(value) => { value.type_id = concrete(value.type_id); },
         None => {},
     }
@@ -94,7 +94,7 @@ pub fn finalize_hir_types(ctx: ResolutionContext&, output: AnalysisOutput&) -> R
         }
 
         let finalizer = TypeFinalizer(ctx);
-        walk_expr(&ctx.session.hir, procedure.root, &finalizer)?;
+        walk_expr(ctx.hir, procedure.root, &finalizer)?;
     }
 
     Result<(), AnalysisError>.Ok(())

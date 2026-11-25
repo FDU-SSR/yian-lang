@@ -34,7 +34,7 @@ fn arity(kind: BuiltinKind) -> (u64, u64) {
 
 impl ExprChecker {
     fn c_element(span: Span, type_id: TypeId, incomplete: bool) -> Result<(), AnalysisError> {
-        let legal = match self.ctx.session.types.require(type_id)? {
+        let legal = match self.ctx.types.require(type_id)? {
             Integer(_, _) => true,
             CScalar(_) => true,
             Float(bits) => *bits == 32 || *bits == 64,
@@ -115,31 +115,31 @@ impl ExprChecker {
             values.push(self.expression(arg.data.value)?);
         }
 
-        let byte = self.ctx.session.types.primitive(TypeData.Integer(8, false))?;
-        let bytes = self.ctx.session.types.slice(byte);
-        let pointer = self.ctx.session.types.pointer(byte);
-        let c_pointer = self.ctx.session.types.c_pointer(byte);
+        let byte = self.ctx.types.primitive(TypeData.Integer(8, false))?;
+        let bytes = self.ctx.types.slice(byte);
+        let pointer = self.ctx.types.pointer(byte);
+        let c_pointer = self.ctx.types.c_pointer(byte);
         let integer = TypeId(I32_TYPE_ID);
         let unsigned = TypeId(U64_TYPE_ID);
         let result = match &kind {
             SizeOf => unsigned,
             Undef => types[0],
-            Dangling => self.ctx.session.types.pointer(types[0]),
+            Dangling => self.ctx.types.pointer(types[0]),
             Alloc => {
                 values[0] = self.coerce(values[0], unsigned)?;
-                self.ctx.session.types.pointer(types[0])
+                self.ctx.types.pointer(types[0])
             },
             Realloc => {
-                let expected = self.ctx.session.types.pointer(types[0]);
+                let expected = self.ctx.types.pointer(types[0]);
                 values[0] = self.coerce(values[0], expected)?;
                 values[1] = self.coerce(values[1], unsigned)?;
                 expected
             },
             BitCast => {
-                let source_ok = match self.ctx.session.types.require(self.type_of(values[0]))? {
+                let source_ok = match self.ctx.types.require(self.type_of(values[0]))? {
                     Pointer(_) => true, Reference(_) => true, _ => false
                 };
-                let target_ok = match self.ctx.session.types.require(types[0])? {
+                let target_ok = match self.ctx.types.require(types[0])? {
                     Pointer(_) => true, _ => false
                 };
 
@@ -172,7 +172,7 @@ impl ExprChecker {
                 let index = 0u64;
 
                 while index < 2 {
-                    match self.ctx.session.types.require(self.type_of(values[index]))? {
+                    match self.ctx.types.require(self.type_of(values[index]))? {
                         Pointer(_) => {},
                         _ => return Result<HirId, AnalysisError>.Err(self.error(span, "memcpy requires pointers")),
                     }
@@ -184,29 +184,29 @@ impl ExprChecker {
                 TypeId(VOID_TYPE_ID)
             },
             SliceFromParts => {
-                let element = match self.ctx.session.types.require(self.type_of(values[0]))? {
+                let element = match self.ctx.types.require(self.type_of(values[0]))? {
                     Pointer(value) => *value,
                     _ => return Result<HirId, AnalysisError>.Err(self.error(span, "slice_from_parts requires a pointer")),
                 };
                 values[1] = self.coerce(values[1], unsigned)?;
-                self.ctx.session.types.slice(element)
+                self.ctx.types.slice(element)
             },
             SliceRange => {
-                let element = match self.ctx.session.types.require(self.type_of(values[0]))? {
+                let element = match self.ctx.types.require(self.type_of(values[0]))? {
                     Slice(value) => *value,
                     _ => return Result<HirId, AnalysisError>.Err(self.error(span, "slice_range requires a slice")),
                 };
                 if !is_u64_range(self.ctx, self.type_of(values[1])) {
                     return Result<HirId, AnalysisError>.Err(self.error(span, "slice_range requires a Range<u64>"));
                 }
-                self.ctx.session.types.slice(element)
+                self.ctx.types.slice(element)
             },
-            SliceGetPtr => match self.ctx.session.types.require(self.type_of(values[0]))? {
-                Slice(element) => self.ctx.session.types.pointer(*element),
+            SliceGetPtr => match self.ctx.types.require(self.type_of(values[0]))? {
+                Slice(element) => self.ctx.types.pointer(*element),
                 _ => return Result<HirId, AnalysisError>.Err(self.error(span, "slice_get_ptr requires a slice")),
             },
             SliceGetLen => {
-                match self.ctx.session.types.require(self.type_of(values[0]))? {
+                match self.ctx.types.require(self.type_of(values[0]))? {
                     Slice(_) => {}, _ => return Result<HirId, AnalysisError>.Err(self.error(span, "slice_get_len requires a slice"))
                 }
 
@@ -230,16 +230,16 @@ impl ExprChecker {
                 bytes
             },
             FfiAddr => {
-                let element = match self.ctx.session.types.require(self.type_of(values[0]))? {
+                let element = match self.ctx.types.require(self.type_of(values[0]))? {
                     Reference(value) => *value,
                     Pointer(value) => *value,
                     _ => return Result<HirId, AnalysisError>.Err(self.error(span, "ffi_addr requires a reference")),
                 };
                 self.c_element(span, element, false)?;
-                self.ctx.session.types.c_pointer(element)
+                self.ctx.types.c_pointer(element)
             },
             FfiParts => {
-                let element = match self.ctx.session.types.require(self.type_of(values[0]))? {
+                let element = match self.ctx.types.require(self.type_of(values[0]))? {
                     Slice(value) => *value,
                     Str => byte,
                     _ => return Result<HirId, AnalysisError>.Err(self.error(span, "ffi_parts requires a slice or str")),
@@ -247,21 +247,21 @@ impl ExprChecker {
                 self.c_element(span, element, false)?;
                 let fields = Vec<TypeId>.new();
                 defer fields.drop();
-                fields.push(self.ctx.session.types.c_pointer(element));
+                fields.push(self.ctx.types.c_pointer(element));
                 fields.push(unsigned);
-                self.ctx.session.types.tuple(&fields)
+                self.ctx.types.tuple(&fields)
             },
             FfiNull => {
                 self.c_element(span, types[0], true)?;
-                self.ctx.session.types.c_pointer(types[0])
+                self.ctx.types.c_pointer(types[0])
             },
             FfiPtrCast => {
-                match self.ctx.session.types.require(self.type_of(values[0]))? {
+                match self.ctx.types.require(self.type_of(values[0]))? {
                     CPointer(_) => {}, _ => return Result<HirId, AnalysisError>.Err(self.error(span, "ffi_ptr_cast requires cptr"))
                 }
 
                 self.c_element(span, types[0], true)?;
-                self.ctx.session.types.c_pointer(types[0])
+                self.ctx.types.c_pointer(types[0])
             },
             Append | Write | Print | Println | Eprint | Eprintln => {
                 @panic("formatting builtins lower through lower_format");

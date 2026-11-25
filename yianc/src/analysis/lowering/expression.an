@@ -70,13 +70,13 @@ impl ExprChecker {
                     return self.identifier(span, name.data.name.as_str(), name.data.synthetic);
                 }
 
-                let interned = self.ctx.session.names.intern(name.data.name.as_str());
-                let symbol = match self.ctx.session.symbols.lookup(self.scope, interned) {
+                let interned = self.ctx.names.intern(name.data.name.as_str());
+                let symbol = match self.ctx.symbols.lookup(self.scope, interned) {
                     Some(value) => value,
                     None => return Result<HirId, AnalysisError>.Err(AnalysisError.named(DiagnosticCode.Type,
                         Option<SourceSpan>.Some(self.ctx.span(self.unit, name.span)), "Unknown type '", name.data.name.as_str(), "'")),
                 };
-                let kind = self.ctx.session.symbols.get(symbol).unwrap().kind;
+                let kind = self.ctx.symbols.get(symbol).unwrap().kind;
                 if kind != SymbolKind.Type && kind != SymbolKind.Function && kind != SymbolKind.Alias {
                     return Result<HirId, AnalysisError>.Err(AnalysisError.named(DiagnosticCode.Type,
                         Option<SourceSpan>.Some(self.ctx.span(self.unit, name.span)), "Unknown type '", name.data.name.as_str(), "'"));
@@ -90,7 +90,7 @@ impl ExprChecker {
                     return Result<HirId, AnalysisError>.Err(self.error(span, "unknown compile-time configuration"));
                 }
 
-                Result<HirId, AnalysisError>.Ok(self.node(span, TypeId(BOOL_TYPE_ID), false, HirKind.BoolLiteral(self.ctx.session.raw_pointers)))
+                Result<HirId, AnalysisError>.Ok(self.node(span, TypeId(BOOL_TYPE_ID), false, HirKind.BoolLiteral(self.ctx.raw_pointers)))
             },
             FormatTemplate(parts) => lower_format(self, span, FormatDestination.OwnedString, parts),
             Block(value) => self.block(*value),
@@ -120,16 +120,16 @@ impl ExprChecker {
                     annotation
                 };
 
-                match self.ctx.session.types.require(type_id)? {
+                match self.ctx.types.require(type_id)? {
                     Nominal(definition, arguments) => {
-                        let header = self.ctx.session.types.definition(*definition).unwrap().header();
+                        let header = self.ctx.types.definition(*definition).unwrap().header();
 
                         if header.kind == NominalKind.Function || header.kind == NominalKind.Method {
                             for argument in *arguments {
-                                if has_generic(self.ctx.session.types, *argument) {
+                                if has_generic(self.ctx.types, *argument) {
                                     return Result<HirId, AnalysisError>.Err(AnalysisError.named(DiagnosticCode.Type,
                                         Option<SourceSpan>.Some(self.ctx.span(self.unit, (*init.unwrap()).span)), "cannot use generic function '",
-                                        self.ctx.session.names.text(header.name), "' as a value; a function variable must bind a concrete function"));
+                                        self.ctx.names.text(header.name), "' as a value; a function variable must bind a concrete function"));
                                 }
                             }
                         }
@@ -159,12 +159,12 @@ impl ExprChecker {
                 let target = self.expression(*value)?;
                 let target_type = default_type(self.ctx, self.type_of(target));
 
-                match &self.ctx.session.hir.require(target)?.kind {
+                match &self.ctx.hir.require(target)?.kind {
                     Unary(address) => {
                         if address.op == UnaryOperator.AddrOf {
-                            match self.ctx.session.types.require(target_type)? {
+                            match self.ctx.types.require(target_type)? {
                                 Pointer(inner) => {
-                                    target_type = self.ctx.session.types.reference(*inner);
+                                    target_type = self.ctx.types.reference(*inner);
                                 }, _ => {}
                             }
                         }
@@ -173,7 +173,7 @@ impl ExprChecker {
                 }
 
                 target = self.coerce(target, target_type)?;
-                match self.ctx.session.types.require(target_type)? {
+                match self.ctx.types.require(target_type)? {
                     Pointer(_) => return Result<HirId, AnalysisError>.Err(self.error((*value).span, "match does not accept pointer scrutinees; use '&value' or a reference")),
                     _ => {},
                 }
@@ -190,7 +190,7 @@ impl ExprChecker {
                 let result_type = TypeId(NEVER_TYPE_ID);
 
                 for arm in *arms {
-                    self.scope = self.ctx.session.symbols.create_scope(Option<ScopeId>.Some(previous))?;
+                    self.scope = self.ctx.symbols.create_scope(Option<ScopeId>.Some(previous))?;
                     let pattern = self.test_pattern(arm.data.pattern, target_type)?;
                     let guard = match &arm.data.guard {
                         Some(condition) => {
@@ -220,7 +220,7 @@ impl ExprChecker {
                 }
 
                 accepted = true;
-                let by_ref = match self.ctx.session.types.require(target_type)? {
+                let by_ref = match self.ctx.types.require(target_type)? {
                     Reference(_) => true, _ => false
                 };
                 Result<HirId, AnalysisError>.Ok(self.node(span, result_type, false, HirKind.Match(HirMatch(target, values, by_ref))))
@@ -383,7 +383,7 @@ impl ExprChecker {
                         self.coerce(lowered, TypeId(STR_TYPE_ID))?
                     },
                     None => {
-                        let interned = self.ctx.session.names.intern("assertion failed");
+                        let interned = self.ctx.names.intern("assertion failed");
                         self.node(span, TypeId(STR_TYPE_ID), false, HirKind.StrLiteral(interned))
                     },
                 };
@@ -400,12 +400,12 @@ impl ExprChecker {
                 let lowered = self.expression(*value)?;
                 let type_id = default_type(self.ctx, self.type_of(lowered));
                 lowered = self.coerce(lowered, type_id)?;
-                Result<HirId, AnalysisError>.Ok(self.node(span, self.ctx.session.types.pointer(type_id), false, HirKind.DynValue(lowered)))
+                Result<HirId, AnalysisError>.Ok(self.node(span, self.ctx.types.pointer(type_id), false, HirKind.DynValue(lowered)))
             },
             DynBuffer(size, element) => self.dynamic_buffer(span, *size, *element),
             Delete(target) => {
                 let value = self.expression(*target)?;
-                let allowed = match self.ctx.session.types.require(self.type_of(value))? {
+                let allowed = match self.ctx.types.require(self.type_of(value))? {
                     Pointer(_) => true, Slice(_) => true, Reference(_) => true, _ => false
                 };
 

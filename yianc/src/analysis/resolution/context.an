@@ -1,10 +1,20 @@
-from yianc.common.ids import UnitId, ScopeId, SymbolId, DefId, TypeId, HirId;
+from yianc.common.ids import UnitId, TypeId, ScopeId, SymbolId, DefId, HirId;
 from yianc.common.location import SourceSpan;
-from yianc.analysis.session.session import AnalysisSession;
+from yianc.common.names import NameInterner;
+from yianc.analysis.permissions import SourcePermissions;
+from yianc.analysis.definition.registry import DefinitionRegistry;
+from yianc.analysis.definition.worklist import DefinitionWorklist;
+from yianc.analysis.hir.store import HirStore;
+from yianc.analysis.ty.impl_registry import ImplRegistry;
+from yianc.analysis.symbol.scope import SymbolStore;
+from yianc.analysis.symbol.model import SymbolKind;
 from yianc.analysis.constant.evaluate import ConstantEvaluator;
+from yianc.types.store import TypeStore;
 from yianc.types.layout import TypeSizeProvider;
+from yianc.frontend.unit import UnitTable;
 from yianc.frontend.ast.node import Item;
-from yianc.frontend.source import Position, Span;
+from yianc.frontend.source import Span;
+from yianc.package.model import PackageMap;
 from yianc.diagnostics.model import DiagnosticCode, AnalysisError, DiagnosticReporter, Severity;
 from yianc.analysis.session.output import AnalysisWarning;
 from std.core.convert import From;
@@ -19,7 +29,7 @@ pub enum DeclarationState {
     Failed,
 }
 
-// Syntax references belong to the session; this record owns no AST resources.
+// Syntax references belong to the frontend table; this record owns no AST resources.
 pub struct Declaration {
     pub item: Item&,
     pub unit: UnitId,
@@ -29,11 +39,20 @@ pub struct Declaration {
     pub state: DeclarationState,
 }
 
-// The fixed builtin type prefix lives in TypeStore; the context keeps no second cache.
-
-// The context lives for one analysis run and borrows its session throughout.
+// The context borrows shared compilation tables and driver-owned semantic registries.
 pub struct ResolutionContext {
-    pub session: AnalysisSession&,
+    pub units: UnitTable&,
+    pub packages: Option<PackageMap&>,
+    pub names: NameInterner&,
+    pub types: TypeStore&,
+    pub symbols: SymbolStore&,
+    pub hir: HirStore&,
+    pub stdlib_root: str,
+    pub permissions: Vec<SourcePermissions>&,
+    pub definitions: DefinitionRegistry&,
+    pub worklist: DefinitionWorklist&,
+    pub impls: ImplRegistry&,
+    pub raw_pointers: bool,
     pub scopes: Vec<ScopeId>,
     declarations: Arena<Declaration>,
     pub callable_scopes: HashMap<DefId, ScopeId>,
@@ -46,8 +65,12 @@ pub struct ResolutionContext {
 }
 
 impl ResolutionContext {
-    static pub fn new(session: AnalysisSession&, sizes: Option<TypeSizeProvider&>, reporter: Option<DiagnosticReporter&>) -> Result<Self, AnalysisError> {
-        let evaluator = ConstantEvaluator.new(session.types, &session.hir, sizes);
+    static pub fn new(units: UnitTable&, packages: Option<PackageMap&>, names: NameInterner&,
+        types: TypeStore&, symbols: SymbolStore&, hir: HirStore&, stdlib_root: str,
+        permissions: Vec<SourcePermissions>&, definitions: DefinitionRegistry&,
+        worklist: DefinitionWorklist&, impls: ImplRegistry&, raw_pointers: bool,
+        sizes: Option<TypeSizeProvider&>, reporter: Option<DiagnosticReporter&>) -> Result<Self, AnalysisError> {
+        let evaluator = ConstantEvaluator.new(types, hir, sizes);
         let scopes = Vec<ScopeId>.new();
         let accepted = false;
         defer {
@@ -58,18 +81,22 @@ impl ResolutionContext {
 
         let index = 0u64;
 
-        while index < session.len() {
-            let scope = session.symbols.create_scope(Option<ScopeId>.None)?;
+        while index < units.len() {
+            let scope = symbols.create_scope(Option<ScopeId>.None)?;
             scopes.push(scope);
             index += 1;
         }
 
         accepted = true;
-        Result<Self, AnalysisError>.Ok(Self(session, scopes, Arena<Declaration>.new(), HashMap<DefId, ScopeId>.new(), HashMap<SymbolId, HirId>.new(), HashMap<DefId, Vec<SymbolId>>.new(), evaluator, Vec<SymbolId>.new(), Vec<SymbolId>.new(), reporter))
+        Result<Self, AnalysisError>.Ok(Self(units, packages, names, types, symbols, hir,
+            stdlib_root, permissions, definitions, worklist, impls, raw_pointers, scopes,
+            Arena<Declaration>.new(), HashMap<DefId, ScopeId>.new(), HashMap<SymbolId, HirId>.new(),
+            HashMap<DefId, Vec<SymbolId>>.new(), evaluator, Vec<SymbolId>.new(),
+            Vec<SymbolId>.new(), reporter))
     }
 
     pub fn span(unit: UnitId, span: Span) -> SourceSpan {
-        self.session.source(unit);
+        self.units.file(unit);
         SourceSpan(unit, span)
     }
 
@@ -107,7 +134,18 @@ impl ResolutionContext {
     }
 
     pub fn intrinsic(name: str) -> Option<TypeId> {
-        self.session.intrinsic_type(name)
+        let index = 0u64;
+        while index < self.symbols.symbol_count() {
+            let symbol = self.symbols.symbol_at(index).unwrap();
+            index += 1;
+            if symbol.kind == SymbolKind.Type && self.permissions.get(symbol.unit.index).unwrap().is_stdlib && self.names.text(symbol.name) == name {
+                match self.types.get(symbol.type_id) {
+                    Some(Nominal(_, _)) => return Option<TypeId>.Some(symbol.type_id),
+                    _ => {},
+                }
+            }
+        }
+        Option<TypeId>.None
     }
 }
 

@@ -11,11 +11,11 @@ from std.core.path import Path, PathBuf;
 fn find_unit(ctx: ResolutionContext&, path: str) -> Option<UnitId> {
     let index = 0u64;
 
-    while index < ctx.session.len() {
+    while index < ctx.units.len() {
         let id = UnitId(index);
         let source = id;
 
-        if ctx.session.source(source).path() == path {
+        if ctx.units.file(source).path() == path {
             return Option<UnitId>.Some(id);
         }
 
@@ -31,17 +31,17 @@ fn target_unit(ctx: ResolutionContext&, unit: UnitId, paths: Vec<Identifier&>&, 
         return Result<UnitId, AnalysisError>.Err(ctx.error(unit, span, DiagnosticCode.Undefined, "empty import path"));
     }
 
-    let source = *ctx.session.source(unit);
+    let source = *ctx.units.file(unit);
     let first = paths[0].data.name.as_str();
     let path = PathBuf.new();
     defer path.drop();
     let start = 0u64;
 
     if first == "std" {
-        path.push(ctx.session.stdlib_root());
+        path.push(ctx.stdlib_root);
         start = 1;
     } else {
-        match ctx.session.package_map() {
+        match ctx.packages {
             Some(packages) => {
                 let spec = match packages.find(first) {
                     Some(value) => value,
@@ -83,7 +83,7 @@ fn target_unit(ctx: ResolutionContext&, unit: UnitId, paths: Vec<Identifier&>&, 
     };
     defer canonical.drop();
 
-    match ctx.session.package_map() {
+    match ctx.packages {
         Some(packages) => {
             if packages.is_entry(canonical.as_str()) {
                 return Result<UnitId, AnalysisError>.Err(ctx.error(unit, span, DiagnosticCode.ImportEntry, "package entry module cannot be imported"));
@@ -99,26 +99,26 @@ fn target_unit(ctx: ResolutionContext&, unit: UnitId, paths: Vec<Identifier&>&, 
 }
 
 fn bind_import(ctx: ResolutionContext&, unit: UnitId, target: UnitId, name: str, alias: str, span: Span) -> Result<bool, AnalysisError> {
-    let name_id = ctx.session.names.intern(name);
-    let symbol = match ctx.session.symbols.lookup(ctx.scopes[target.index], name_id) {
+    let name_id = ctx.names.intern(name);
+    let symbol = match ctx.symbols.lookup(ctx.scopes[target.index], name_id) {
         Some(value) => value,
         None => return Result<bool, AnalysisError>.Ok(false),
     };
-    let record = *ctx.session.symbols.get(symbol).unwrap();
+    let record = *ctx.symbols.get(symbol).unwrap();
 
     if !record.is_public {
         return Result<bool, AnalysisError>.Err(AnalysisError.named(DiagnosticCode.NotPublic,
             Option<SourceSpan>.Some(ctx.span(unit, span)), "Symbol '", name, "' exists in the imported unit but is not declared 'pub'"));
     }
 
-    let alias_id = ctx.session.names.intern(alias);
-    if record.ffi_only && !ctx.session.allows_ffi(unit) {
+    let alias_id = ctx.names.intern(alias);
+    if record.ffi_only && !ctx.permissions.get(unit.index).unwrap().allows_ffi {
         return Result<bool, AnalysisError>.Err(ctx.error(unit, span, DiagnosticCode.Access, "imported symbol requires FFI permission"));
     }
 
     let scope = ctx.scopes[unit.index];
 
-    match ctx.session.symbols.lookup(scope, alias_id) {
+    match ctx.symbols.lookup(scope, alias_id) {
         Some(previous) => {
             if previous == symbol {
                 return Result<bool, AnalysisError>.Ok(true);
@@ -129,7 +129,7 @@ fn bind_import(ctx: ResolutionContext&, unit: UnitId, target: UnitId, name: str,
         None => {},
     }
 
-    ctx.session.symbols.bind(scope, alias_id, symbol)?;
+    ctx.symbols.bind(scope, alias_id, symbol)?;
     Result<bool, AnalysisError>.Ok(true)
 }
 
@@ -137,13 +137,13 @@ fn bind_import(ctx: ResolutionContext&, unit: UnitId, target: UnitId, name: str,
 pub fn resolve_imports(ctx: ResolutionContext&) -> Result<(), AnalysisError> {
     let round = 0u64;
 
-    while round <= ctx.session.len() {
+    while round <= ctx.units.len() {
         let missing = false;
         let index = 0u64;
 
-        while index < ctx.session.len() {
+        while index < ctx.units.len() {
             let unit = UnitId(index);
-            let record = *ctx.session.unit(unit).unwrap();
+            let record = *ctx.units.get(unit).unwrap();
             let root = record.tree.root;
 
             for item in root.data.items {
@@ -163,7 +163,7 @@ pub fn resolve_imports(ctx: ResolutionContext&) -> Result<(), AnalysisError> {
                             Err(error) => return Result<(), AnalysisError>.Err(error),
                         };
                         if !bound {
-                            if round == ctx.session.len() {
+                            if round == ctx.units.len() {
                                 let error = AnalysisError.named(DiagnosticCode.ImportNotFound,
                                     Option<SourceSpan>.Some(ctx.span(unit, target.span)), "Symbol '", target.data.name.as_str(), "' is not found in the imported unit");
                                 return Result<(), AnalysisError>.Err(error);
@@ -199,8 +199,8 @@ fn inject_prelude(ctx: ResolutionContext&) -> Result<(), AnalysisError> {
     let has_stdlib = false;
     let index = 0u64;
 
-    while index < ctx.session.len() {
-        if ctx.session.is_stdlib(UnitId(index)) {
+    while index < ctx.units.len() {
+        if ctx.permissions.get(index).unwrap().is_stdlib {
             has_stdlib = true;
         }
 
@@ -213,13 +213,13 @@ fn inject_prelude(ctx: ResolutionContext&) -> Result<(), AnalysisError> {
 
     index = 0;
 
-    while index < ctx.session.len() {
+    while index < ctx.units.len() {
         let unit = UnitId(index);
-        let record = *ctx.session.unit(unit).unwrap();
+        let record = *ctx.units.get(unit).unwrap();
 
-        if !ctx.session.is_stdlib(unit) {
+        if !ctx.permissions.get(unit.index).unwrap().is_stdlib {
             for entry in entries {
-                let filename = String.from(&ctx.session.stdlib_root());
+                let filename = String.from(&ctx.stdlib_root);
                 defer filename.drop();
                 filename.push_str("/");
                 filename.push_str(entry[0]);
@@ -241,9 +241,9 @@ fn inject_prelude(ctx: ResolutionContext&) -> Result<(), AnalysisError> {
                     }
                 }
 
-                let name = ctx.session.names.intern(entry[1]);
-                let provided = ctx.session.symbols.lookup(ctx.scopes[destination.index], name);
-                let bound = ctx.session.symbols.lookup(ctx.scopes[unit.index], name);
+                let name = ctx.names.intern(entry[1]);
+                let provided = ctx.symbols.lookup(ctx.scopes[destination.index], name);
+                let bound = ctx.symbols.lookup(ctx.scopes[unit.index], name);
                 let redundant = false;
 
                 match &provided {

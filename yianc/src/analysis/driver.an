@@ -1,4 +1,11 @@
-from yianc.analysis.session.session import AnalysisSession;
+from yianc.common.ids import UnitId;
+from yianc.common.names import NameInterner;
+from yianc.analysis.permissions import SourcePermissions;
+from yianc.analysis.definition.registry import DefinitionRegistry;
+from yianc.analysis.definition.worklist import DefinitionWorklist;
+from yianc.analysis.hir.store import HirStore;
+from yianc.analysis.ty.impl_registry import ImplRegistry;
+from yianc.analysis.symbol.scope import SymbolStore;
 from yianc.analysis.session.output import AnalysisOptions, AnalysisOutput;
 from yianc.analysis.resolution.context import ResolutionContext;
 from yianc.analysis.resolution.declarations import collect_declarations;
@@ -18,28 +25,28 @@ from yianc.analysis.passes.verify_hir import verify_hir;
 from yianc.analysis.passes.address_storage import normalize_address_storage;
 from yianc.analysis.passes.finalize_hir_types import finalize_hir_types;
 from yianc.diagnostics.model import AnalysisError, AnalysisStage, DiagnosticReporter;
+from yianc.frontend.unit import UnitTable;
+from yianc.package.model import PackageMap;
+from yianc.package.provenance import SourceTrust;
+from yianc.types.store import TypeStore;
 from yianc.telemetry.profile import ProfileKind;
 from std.core.iter import Iterator, IntoIterator;
 
-// The successful middle-end result owns the session allocation and the exported output.
-// A caller either drops the result or transfers its contents; it must never do both.
-pub struct MiddleEndResult {
-    pub session: AnalysisSession*,
-    pub output: AnalysisOutput,
-}
-
-impl Drop for MiddleEndResult {
-    pub fn drop() {
-        self.output.drop();
-        self.session.drop();
-        del self.session;
-    }
-}
-
-// The driver keeps only the session it has not transferred.
+// The caller keeps the shared tables, package map, reporter and option services alive
+// during analysis. The driver owns source trust, permissions and the analysis registries.
 pub struct MiddleEndDriver {
-    session: Option<AnalysisSession*>,
-    // The caller keeps these inputs alive for every run.
+    units: UnitTable&,
+    packages: Option<PackageMap&>,
+    names: NameInterner&,
+    types: TypeStore&,
+    symbols: SymbolStore&,
+    hir: HirStore&,
+    trust: SourceTrust,
+    raw_pointers: bool,
+    pub permissions: Vec<SourcePermissions>,
+    definitions: DefinitionRegistry,
+    worklist: DefinitionWorklist,
+    impls: ImplRegistry,
     options: AnalysisOptions,
     reporter: DiagnosticReporter&,
     attempted: bool,
@@ -66,33 +73,54 @@ fn at_stage(result: Result<(), AnalysisError>, pass_id: str, stage: AnalysisStag
 }
 
 impl MiddleEndDriver {
-    static pub fn new(session: AnalysisSession*, options: AnalysisOptions,
-        reporter: DiagnosticReporter&) -> Self {
-        Self(Option<AnalysisSession*>.Some(session), options, reporter, false)
+    static pub fn new(units: UnitTable&, packages: Option<PackageMap&>, names: NameInterner&,
+        types: TypeStore&, symbols: SymbolStore&, hir: HirStore&, trust: SourceTrust,
+        raw_pointers: bool, options: AnalysisOptions, reporter: DiagnosticReporter&) -> Self {
+        Self(units, packages, names, types, symbols, hir, trust, raw_pointers,
+            Vec<SourcePermissions>.new(), DefinitionRegistry.new(), DefinitionWorklist.new(),
+            ImplRegistry.new(), options, reporter, false)
+    }
+
+    fn classify_sources() {
+        let count = self.units.len();
+        let index = 0u64;
+        while index < count {
+            let unit = UnitId(index);
+            let canonical = self.units.file(unit).path();
+            let stdlib = self.trust.is_stdlib(canonical);
+            let restricted = self.trust.allows_restricted(canonical);
+            let ffi = stdlib;
+            match self.packages {
+                Some(packages) => match packages.package_of(canonical) {
+                    Some(package) => ffi = package.allows_ffi,
+                    None => {},
+                },
+                None => {},
+            }
+            self.permissions.push(SourcePermissions(stdlib, restricted, ffi));
+            index += 1;
+        }
     }
 
     // The pass sequence is the middle-end contract; the first error terminates it.
-    pub fn run() -> Result<MiddleEndResult, AnalysisError> {
+    pub fn run() -> Result<AnalysisOutput, AnalysisError> {
         if self.attempted {
             @panic("analysis session cannot be analyzed twice");
         }
         self.attempted = true;
         let options = self.options;
-        let session = match &self.session {
-            Some(value) => *value,
-            None => @panic("analysis session has already been transferred"),
-        };
         let reporter = self.reporter;
-        session.begin_analysis();
-        let phase_completed = false;
-        defer { if !phase_completed { session.complete_analysis(false); } };
 
         start_stage(&options, "analysis.classify_sources", AnalysisStage.Classify);
-        at_stage(session.classify_sources(), "analysis.classify_sources", AnalysisStage.Classify, &options)?;
+        self.classify_sources();
+        finish_stage(&options, "analysis.classify_sources", true);
         start_stage(&options, "analysis.restricted", AnalysisStage.Restricted);
-        at_stage(check_restricted(session), "analysis.restricted", AnalysisStage.Restricted, &options)?;
+        at_stage(check_restricted(self.units, &self.permissions), "analysis.restricted", AnalysisStage.Restricted, &options)?;
         start_stage(&options, "analysis.context", AnalysisStage.Resolve);
-        let context_result = ResolutionContext.new(session, options.sizes, Option<DiagnosticReporter&>.Some(reporter));
+        let context_result = ResolutionContext.new(self.units, self.packages, self.names, self.types,
+            self.symbols, self.hir, self.trust.stdlib_root(), &self.permissions, &self.definitions,
+            &self.worklist, &self.impls, self.raw_pointers, options.sizes,
+            Option<DiagnosticReporter&>.Some(reporter));
         match &context_result {
             Ok(_) => finish_stage(&options, "analysis.context", true),
             Err(_) => finish_stage(&options, "analysis.context", false),
@@ -125,7 +153,7 @@ impl MiddleEndDriver {
         }
         let output = match checked {
             Ok(value) => value,
-            Err(problem) => return Result<MiddleEndResult, AnalysisError>.Err(problem.with_stage(AnalysisStage.TypeCheck)),
+            Err(problem) => return Result<AnalysisOutput, AnalysisError>.Err(problem.with_stage(AnalysisStage.TypeCheck)),
         };
         let accepted_output = false;
         defer {
@@ -141,7 +169,7 @@ impl MiddleEndDriver {
         }
         match normalized {
             Ok(_) => {},
-            Err(problem) => return Result<MiddleEndResult, AnalysisError>.Err(problem.with_stage(AnalysisStage.TypeCheck)),
+            Err(problem) => return Result<AnalysisOutput, AnalysisError>.Err(problem.with_stage(AnalysisStage.TypeCheck)),
         }
         start_stage(&options, "analysis.finalize_hir_types", AnalysisStage.TypeCheck);
         let finalized = finalize_hir_types(&context, &output);
@@ -151,7 +179,7 @@ impl MiddleEndDriver {
         }
         match finalized {
             Ok(_) => {},
-            Err(problem) => return Result<MiddleEndResult, AnalysisError>.Err(problem.with_stage(AnalysisStage.TypeCheck)),
+            Err(problem) => return Result<AnalysisOutput, AnalysisError>.Err(problem.with_stage(AnalysisStage.TypeCheck)),
         }
         // A callee failure leaves a partial call graph. It is never exported to the backend.
         if options.verify_hir {
@@ -172,27 +200,21 @@ impl MiddleEndDriver {
             }
             match checked_assignment {
                 Ok(_) => {},
-                Err(problem) => return Result<MiddleEndResult, AnalysisError>.Err(problem.with_stage(AnalysisStage.Assignment)),
+                Err(problem) => return Result<AnalysisOutput, AnalysisError>.Err(problem.with_stage(AnalysisStage.Assignment)),
             }
         }
 
         accepted_output = true;
-        session.complete_analysis(true);
-        phase_completed = true;
-        let owner = match self.session.take() {
-            Some(value) => value,
-            None => @panic("analysis session has already been transferred"),
-        };
-        Result<MiddleEndResult, AnalysisError>.Ok(MiddleEndResult(session=owner, output=output))
+        Result<AnalysisOutput, AnalysisError>.Ok(output)
     }
-
 }
 
 impl Drop for MiddleEndDriver {
     pub fn drop() {
-        match self.session.take() {
-            Some(value) => { value.drop(); del value; },
-            None => {},
-        }
+        self.permissions.drop();
+        self.trust.drop();
+        self.worklist.drop();
+        self.definitions.drop();
+        self.impls.drop();
     }
 }

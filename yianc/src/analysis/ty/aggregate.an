@@ -3,12 +3,12 @@ from yianc.types.model import StructField;
 from yianc.common.ids import TypeId;
 from yianc.diagnostics.model import AnalysisError;
 
-// The list is caller-owned; field records borrow only session identities and positions.
+// The list is caller-owned; field records borrow only analysis-local IDs and source positions.
 pub fn payload_fields(ctx: ResolutionContext&, payload: Option<TypeId>) -> Result<Vec<StructField>, AnalysisError> {
     match payload {
         None => Result<Vec<StructField>, AnalysisError>.Ok(Vec<StructField>.new()),
-        Some(type_id) => match ctx.session.types.require(type_id)? {
-            Nominal(id, _) => match ctx.session.types.complete_definition(*id)? {
+        Some(type_id) => match ctx.types.require(type_id)? {
+            Nominal(id, _) => match ctx.types.complete_definition(*id)? {
                 Struct(body) => Result<Vec<StructField>, AnalysisError>.Ok(body.fields.clone()),
                 _ => @panic("enum payload is not an aggregate"),
             },

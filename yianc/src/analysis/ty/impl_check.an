@@ -14,7 +14,7 @@ fn signature_error(ctx: ResolutionContext&, span: SourceSpan, method: NameId, tr
     defer target_name.drop();
     let message = String.from(&"Method '");
     defer message.drop();
-    message.push_str(ctx.session.names.text(method));
+    message.push_str(ctx.names.text(method));
     message.push_str("' in impl of trait '");
     message.push_str(trait_name.as_str());
     message.push_str("' for type '");
@@ -28,36 +28,36 @@ fn signature_error(ctx: ResolutionContext&, span: SourceSpan, method: NameId, tr
 pub fn check_impls(ctx: ResolutionContext&) -> Result<(), AnalysisError> {
     let index = 0u64;
 
-    while index < ctx.session.impls.len() {
-        let record = *ctx.session.impls.get(ImplId(index)).unwrap();
+    while index < ctx.impls.len() {
+        let record = *ctx.impls.get(ImplId(index)).unwrap();
 
         match &record.trait_id {
             Some(trait_id) => {
-                let trait_definition = match ctx.session.types.require(*trait_id)? {
+                let trait_definition = match ctx.types.require(*trait_id)? {
                     Nominal(definition, _) => *definition,
                     _ => return Result<(), AnalysisError>.Err(AnalysisError.user(DiagnosticCode.Resolution, Option<SourceSpan>.Some(record.span), "impl target is not a trait")),
                 };
-                let trait_body = match ctx.session.types.complete_definition(trait_definition)? {
+                let trait_body = match ctx.types.complete_definition(trait_definition)? {
                     Trait(value) => value,
                     _ => return Result<(), AnalysisError>.Err(AnalysisError.user(DiagnosticCode.Resolution, Option<SourceSpan>.Some(record.span), "impl requires a trait definition")),
                 };
 
                 for entry in trait_body.entries() {
                     let required = *entry[1];
-                    let required_id = match ctx.session.types.require(required)? {
+                    let required_id = match ctx.types.require(required)? {
                         Nominal(definition, _) => *definition,
                         _ => @panic("trait method has invalid identity"),
                     };
-                    let required_header = *ctx.session.types.definition(required_id).unwrap();
-                    let required_body = match ctx.session.types.complete_definition(required_id)? {
+                    let required_header = *ctx.types.definition(required_id).unwrap();
+                    let required_body = match ctx.types.complete_definition(required_id)? {
                         Method(value) => value,
                         _ => @panic("trait member is not a method"),
                     };
                     let substitutions = HashMap<TypeId, TypeId>.new();
                     defer substitutions.drop();
-                    let trait_header = *ctx.session.types.definition(trait_definition).unwrap();
+                    let trait_header = *ctx.types.definition(trait_definition).unwrap();
 
-                    match ctx.session.types.require(*trait_id)? {
+                    match ctx.types.require(*trait_id)? {
                         Nominal(_, arguments) => {
                             let generic = 0u64;
 
@@ -78,16 +78,16 @@ pub fn check_impls(ctx: ResolutionContext&) -> Result<(), AnalysisError> {
                                 return Result<(), AnalysisError>.Err(AnalysisError.user(DiagnosticCode.Resolution, Option<SourceSpan>.Some(record.span), "impl is missing a required trait method"));
                             }
 
-                            let default_method = substitute(ctx.session.types, required, &substitutions)?;
+                            let default_method = substitute(ctx.types, required, &substitutions)?;
                             record.methods.insert(*entry[0], default_method);
                             continue;
                         },
                     };
-                    let actual_id = match ctx.session.types.require(actual)? {
+                    let actual_id = match ctx.types.require(actual)? {
                         Nominal(definition, _) => *definition,
                         _ => @panic("impl method has invalid identity"),
                     };
-                    let actual_header = *ctx.session.types.definition(actual_id).unwrap();
+                    let actual_header = *ctx.types.definition(actual_id).unwrap();
                     let required_own = required_header.generic_count() - trait_header.generic_count() - 1;
                     let actual_own = actual_header.generic_count() - record.generics.len();
 
@@ -103,7 +103,7 @@ pub fn check_impls(ctx: ResolutionContext&) -> Result<(), AnalysisError> {
                         generic += 1;
                     }
 
-                    let actual_body = match ctx.session.types.complete_definition(actual_id)? {
+                    let actual_body = match ctx.types.complete_definition(actual_id)? {
                         Method(value) => value,
                         _ => @panic("impl member is not a method"),
                     };
@@ -115,7 +115,7 @@ pub fn check_impls(ctx: ResolutionContext&) -> Result<(), AnalysisError> {
                     let parameter = 0u64;
 
                     while parameter < actual_body.parameters.len() {
-                        let expected = substitute(ctx.session.types, required_body.parameters[parameter].type_id, &substitutions)?;
+                        let expected = substitute(ctx.types, required_body.parameters[parameter].type_id, &substitutions)?;
 
                         if expected != actual_body.parameters[parameter].type_id {
                             return Result<(), AnalysisError>.Err(signature_error(ctx, record.span, *entry[0], *trait_id, record.target));
@@ -124,7 +124,7 @@ pub fn check_impls(ctx: ResolutionContext&) -> Result<(), AnalysisError> {
                         parameter += 1;
                     }
 
-                    if substitute(ctx.session.types, required_body.result, &substitutions)? != actual_body.result {
+                    if substitute(ctx.types, required_body.result, &substitutions)? != actual_body.result {
                         return Result<(), AnalysisError>.Err(signature_error(ctx, record.span, *entry[0], *trait_id, record.target));
                     }
                 }

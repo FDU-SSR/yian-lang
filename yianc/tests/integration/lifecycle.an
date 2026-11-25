@@ -9,20 +9,23 @@ from yianc.frontend.ast.format import AstFormatter;
 from yianc.frontend.ast.node import Identifier;
 from yianc.frontend.ast.traversal import AstVisitor, walk_program;
 from yianc.frontend.source import SourceFile, SourceMap, SourceTable;
+from yianc.frontend.unit import UnitTable;
 from json.write import Writer;
 from json.parse import parse;
 from std.core.env import args;
 from std.core.ops import Index;
 from std.core.process import Command, ExitStatus;
-from yianc.analysis.session.session import AnalysisSession;
 from yianc.types.store import TypeStore;
+from yianc.common.names import NameInterner;
+from yianc.analysis.symbol.scope import SymbolStore;
+from yianc.analysis.hir.store import HirStore;
 from yianc.frontend.driver import FrontendDriver;
 from yianc.telemetry.trace import CompilerTrace;
 from yianc.analysis.driver import MiddleEndDriver;
 from yianc.analysis.session.output import AnalysisOptions;
 from yianc.diagnostics.model import DiagnosticReporter, UserDiagnostic;
-from yianc.package.model import PackageMap;
 from yianc.package.provenance import SourceTrust;
+from yianc.package.model import PackageMap;
 
 struct DiagnosticCounter { count: u64 }
 impl DiagnosticReporter for DiagnosticCounter {
@@ -129,8 +132,7 @@ fn trust() -> SourceTrust {
     }
 }
 
-// Prepare the session separately from the driver so the caller controls reporter lifetime.
-fn strict_lifecycle_session(raw: bool, types: TypeStore&) -> AnalysisSession* {
+fn strict_lifecycle_units() -> UnitTable {
     let trace = CompilerTrace.disabled();
     defer trace.drop();
     let frontend = FrontendDriver.new(load_source("/tmp/yian-native-strict-lifecycle.an", "struct Record { field: i32 }\nfn helper(value: Record) -> Record { value }\nconst SIZE: u64 = 8;\nfn main() { helper(Record(1)); }\n"), false, &trace);
@@ -139,38 +141,57 @@ fn strict_lifecycle_session(raw: bool, types: TypeStore&) -> AnalysisSession* {
         Ok(value) => value,
         Err(error) => { error.drop(); @panic("fixture preparation failed"); },
     };
-    dyn AnalysisSession.new(units, raw, trust(), Option<PackageMap>.None, types)
+    units
 }
 
 fn check_strict_lifecycle(raw: bool) {
+    let units = strict_lifecycle_units();
+    defer units.drop();
     let types = TypeStore.new();
     defer types.drop();
+    let names = NameInterner.new();
+    defer names.drop();
+    let symbols = SymbolStore.new();
+    defer symbols.drop();
+    let hir = HirStore.new();
+    defer hir.drop();
     let reporter = DiagnosticCounter(0);
-    let driver = MiddleEndDriver.new(strict_lifecycle_session(raw, &types), AnalysisOptions.new(), &reporter);
-    defer driver.drop();
-    let result = match driver.run() {
+    let driver = MiddleEndDriver.new(&units, Option<PackageMap&>.None, &names, &types,
+        &symbols, &hir, trust(), raw, AnalysisOptions.new(), &reporter);
+    let analysis = driver.run();
+    driver.drop();
+    let output = match analysis {
         Ok(value) => value,
         Err(_) => @panic("strict analysis failed"),
     };
-    defer result.drop();
-    assert result.output.procedures.len() >= 2u64: "strict analysis exports checked procedure roots";
+    defer output.drop();
+    assert output.procedures.len() >= 2u64: "strict analysis exports checked procedure roots";
     assert reporter.count == 0u64: "a clean strict analysis emits no warnings";
-    assert result.output.entry.is_some(): "strict analysis selects an entry when main exists";
-    assert result.session.len() == 1u64: "the session keeps its prepared unit until its owner drops";
+    assert output.entry.is_some(): "strict analysis selects an entry when main exists";
+    assert units.len() == 1u64: "the caller keeps its prepared unit alive after analysis";
 }
 
 // The second analysis violates the driver attempt guard; the caller isolates the panic.
 fn repeat_analysis(raw: bool) {
+    let units = strict_lifecycle_units();
+    defer units.drop();
     let types = TypeStore.new();
     defer types.drop();
+    let names = NameInterner.new();
+    defer names.drop();
+    let symbols = SymbolStore.new();
+    defer symbols.drop();
+    let hir = HirStore.new();
+    defer hir.drop();
     let reporter = DiagnosticCounter(0);
-    let driver = MiddleEndDriver.new(strict_lifecycle_session(raw, &types), AnalysisOptions.new(), &reporter);
+    let driver = MiddleEndDriver.new(&units, Option<PackageMap&>.None, &names, &types,
+        &symbols, &hir, trust(), raw, AnalysisOptions.new(), &reporter);
     defer driver.drop();
-    let result = match driver.run() {
+    let output = match driver.run() {
         Ok(value) => value,
         Err(_) => @panic("strict analysis failed"),
     };
-    result.drop();
+    output.drop();
     match driver.run() {
         Ok(again) => @panic("strict session accepted a second analysis"),
         Err(_) => @panic("a repeated analysis returned a value error"),
@@ -220,10 +241,18 @@ fn strict_analysis_reports_first_error() {
         Ok(value) => value,
         Err(error) => { error.drop(); @panic("fixture preparation failed"); },
     };
+    defer units.drop();
     let types = TypeStore.new();
     defer types.drop();
+    let names = NameInterner.new();
+    defer names.drop();
+    let symbols = SymbolStore.new();
+    defer symbols.drop();
+    let hir = HirStore.new();
+    defer hir.drop();
     let reporter = DiagnosticCounter(0);
-    let driver = MiddleEndDriver.new(dyn AnalysisSession.new(units, false, trust(), Option<PackageMap>.None, &types), AnalysisOptions.new(), &reporter);
+    let driver = MiddleEndDriver.new(&units, Option<PackageMap&>.None, &names, &types,
+        &symbols, &hir, trust(), false, AnalysisOptions.new(), &reporter);
     defer driver.drop();
     match driver.run() {
         Ok(output) => @panic("invalid strict fixture passed analysis"),

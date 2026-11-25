@@ -50,7 +50,7 @@ impl ExprChecker {
             } else {
                 "bit_not"
             };
-            let name = self.ctx.session.names.intern(spelling);
+            let name = self.ctx.names.intern(spelling);
             let receiver = value;
             let required = self.ctx.intrinsic(if op == UnaryOperator.Neg {
                     "Neg"
@@ -58,7 +58,7 @@ impl ExprChecker {
                     "BitNot"
                 });
             let method = lookup_method(self.ctx, self.type_of(value), name, required, self.ctx.span(self.unit, span))?;
-            let reference = self.ctx.session.types.reference(self.type_of(receiver));
+            let reference = self.ctx.types.reference(self.type_of(receiver));
             let borrowed = self.node(span, reference, false, HirKind.Unary(Unary(UnaryOperator.AddrOf, receiver)));
             let arguments = Vec<HirId>.new();
             defer arguments.drop();
@@ -66,7 +66,7 @@ impl ExprChecker {
         };
 
         if op == UnaryOperator.Deref {
-            match self.ctx.session.types.require(self.type_of(result))? {
+            match self.ctx.types.require(self.type_of(result))? {
                 Pointer(inner) => {
                     result = self.node(span, *inner, true, HirKind.Unary(Unary(UnaryOperator.Deref, result)));
                 },
@@ -83,14 +83,14 @@ impl ExprChecker {
 
         prefix.push(result);
         transferred = true;
-        Result<HirId, AnalysisError>.Ok(self.node(span, self.type_of(result), self.ctx.session.hir.require(result)?.is_place, HirKind.Block(Block(prefix))))
+        Result<HirId, AnalysisError>.Ok(self.node(span, self.type_of(result), self.ctx.hir.require(result)?.is_place, HirKind.Block(Block(prefix))))
     }
 
     pub fn deref_value(span: Span, value: HirId, prefix: Vec<HirId>&) -> Result<Option<HirId>, AnalysisError> {
         let required = match self.ctx.intrinsic("Deref") {
             Some(value) => value, None => return Result<Option<HirId>, AnalysisError>.Ok(Option<HirId>.None)
         };
-        let name = self.ctx.session.names.intern("deref");
+        let name = self.ctx.names.intern("deref");
         let method = match lookup_method(self.ctx, self.type_of(value), name, Option<TypeId>.Some(required), self.ctx.span(self.unit, span)) {
             Ok(value) => value,
             Err(problem) => {
@@ -103,7 +103,7 @@ impl ExprChecker {
             },
         };
         let receiver = value;
-        let reference = self.ctx.session.types.reference(self.type_of(receiver));
+        let reference = self.ctx.types.reference(self.type_of(receiver));
         let borrowed = self.node(span, reference, false, HirKind.Unary(Unary(UnaryOperator.AddrOf, receiver)));
         let arguments = Vec<HirId>.new();
         defer arguments.drop();
@@ -125,14 +125,14 @@ impl ExprChecker {
             }
         };
         let receiver = left;
-        let name = self.ctx.session.names.intern(spelling);
-        let reference = self.ctx.session.types.reference(self.type_of(receiver));
+        let name = self.ctx.names.intern(spelling);
+        let reference = self.ctx.types.reference(self.type_of(receiver));
         let borrowed = self.node(span, reference, false, HirKind.Unary(Unary(UnaryOperator.AddrOf, receiver)));
         let arguments = Vec<HirId>.new();
         defer arguments.drop();
         let read_only = op == BinaryOperator.Index || op == BinaryOperator.Eq || op == BinaryOperator.Neq || op == BinaryOperator.Lt || op == BinaryOperator.Leq || op == BinaryOperator.Gt || op == BinaryOperator.Geq;
         let argument = if read_only {
-            self.node(span, self.ctx.session.types.pointer(self.type_of(right)), false, HirKind.Unary(Unary(UnaryOperator.AddrOf, right)))
+            self.node(span, self.ctx.types.pointer(self.type_of(right)), false, HirKind.Unary(Unary(UnaryOperator.AddrOf, right)))
         } else {
             right
         };
@@ -145,7 +145,7 @@ impl ExprChecker {
         let result = self.call_values(span, method, &arguments, Option<HirId>.Some(borrowed), Option<Span>.None)?;
 
         if op == BinaryOperator.Index {
-            match self.ctx.session.types.require(self.type_of(result))? {
+            match self.ctx.types.require(self.type_of(result))? {
                 Reference(inner) => {
                     result = self.node(span, *inner, true, HirKind.Unary(Unary(UnaryOperator.Deref, result)));
                 },
@@ -162,6 +162,6 @@ impl ExprChecker {
 
         prefix.push(result);
         transferred = true;
-        Result<HirId, AnalysisError>.Ok(self.node(span, self.type_of(result), self.ctx.session.hir.require(result)?.is_place, HirKind.Block(Block(prefix))))
+        Result<HirId, AnalysisError>.Ok(self.node(span, self.type_of(result), self.ctx.hir.require(result)?.is_place, HirKind.Block(Block(prefix))))
     }
 }

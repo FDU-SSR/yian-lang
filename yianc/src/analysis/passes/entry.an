@@ -37,8 +37,8 @@ fn register(ctx: ResolutionContext&, declaration: Declaration&) -> Result<Option
         },
         _ => @panic("entry is not a function"),
     }
-    let type_id = ctx.session.symbols.get(declaration.symbol).unwrap().type_id;
-    match ctx.session.types.complete_definition(*declaration.definition.unwrap())? {
+    let type_id = ctx.symbols.get(declaration.symbol).unwrap().type_id;
+    match ctx.types.complete_definition(*declaration.definition.unwrap())? {
         Function(signature) => {
             if signature.result != TypeId(VOID_TYPE_ID) {
                 let name = type_text(ctx, signature.result);
@@ -56,7 +56,7 @@ fn register(ctx: ResolutionContext&, declaration: Declaration&) -> Result<Option
 }
 
 pub fn select_entry(ctx: ResolutionContext&, options: AnalysisOptions&) -> Result<Option<TypeId>, AnalysisError> {
-    match ctx.session.package_map() {
+    match ctx.packages {
         Some(map) => match map.root_name() {
             Some(root) => {
                 let spec = map.find(root).unwrap();
@@ -74,9 +74,9 @@ pub fn select_entry(ctx: ResolutionContext&, options: AnalysisOptions&) -> Resul
                     },
                 };
                 let index = 0u64;
-                while index < ctx.session.len() {
-                    let unit = *ctx.session.unit(UnitId(index)).unwrap();
-                    if ctx.session.source(unit.id).path() == entry {
+                while index < ctx.units.len() {
+                    let unit = *ctx.units.get(UnitId(index)).unwrap();
+                    if ctx.units.file(unit.id).path() == entry {
                         return match main_in(ctx, unit.id) {
                             Some(declaration) => register(ctx, declaration),
                             None => {
@@ -105,9 +105,9 @@ pub fn select_entry(ctx: ResolutionContext&, options: AnalysisOptions&) -> Resul
     let candidates = Vec<Declaration&>.new();
     defer candidates.drop();
     let index = 0u64;
-    while index < ctx.session.len() {
-        let unit = *ctx.session.unit(UnitId(index)).unwrap();
-        if !ctx.session.is_stdlib(unit.id) {
+    while index < ctx.units.len() {
+        let unit = *ctx.units.get(UnitId(index)).unwrap();
+        if !ctx.permissions.get(unit.id.index).unwrap().is_stdlib {
             match main_in(ctx, unit.id) {
                 Some(declaration) => candidates.push(declaration), None => {},
             }

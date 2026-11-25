@@ -13,7 +13,7 @@ impl ExprChecker {
     // Explicit C syntax and aliases exposing C types require an FFI function.
     pub fn local_type(syntax: TypeSyntax&) -> Result<TypeId, AnalysisError> {
         let type_id = resolve_type(self.ctx, self.unit, self.scope, syntax)?;
-        if has_generic(self.ctx.session.types, type_id) {
+        if has_generic(self.ctx.types, type_id) {
             return Result<TypeId, AnalysisError>.Err(self.error(syntax.span, "type requires concrete generic arguments"));
         }
 
@@ -41,13 +41,13 @@ impl ExprChecker {
                 self.ffi_syntax(*result)
             },
             NamedType(name) => {
-                let interned = self.ctx.session.names.intern(name.data.name.as_str());
-                match self.ctx.session.symbols.lookup(self.scope, interned) {
+                let interned = self.ctx.names.intern(name.data.name.as_str());
+                match self.ctx.symbols.lookup(self.scope, interned) {
                     Some(symbol) => {
-                        let record = *self.ctx.session.symbols.get(symbol).unwrap();
+                        let record = *self.ctx.symbols.get(symbol).unwrap();
                         if record.kind == SymbolKind.Alias {
                             let resolved = resolve_alias(self.ctx, symbol)?;
-                            return Result<bool, AnalysisError>.Ok(contains_ffi(self.ctx.session.types, resolved, false));
+                            return Result<bool, AnalysisError>.Ok(contains_ffi(self.ctx.types, resolved, false));
                         }
                     },
                     None => {},

@@ -1,10 +1,11 @@
-from yianc.analysis.session.session import AnalysisSession;
+from yianc.analysis.permissions import SourcePermissions;
 from yianc.common.ids import UnitId;
 from yianc.common.location import SourceSpan;
 from yianc.common.traversal import WalkControl;
 from yianc.frontend.ast.node import Expr;
 from yianc.frontend.ast.atoms import BuiltinKind;
 from yianc.frontend.ast.walk import TryAstVisitor, try_walk_program;
+from yianc.frontend.unit import UnitTable;
 from yianc.diagnostics.model import DiagnosticCode, AnalysisError, AnalysisErrorKind, AnalysisStage;
 
 struct RestrictedVisitor {
@@ -43,13 +44,13 @@ impl TryAstVisitor<AnalysisError> for RestrictedVisitor {
     }
 }
 
-pub fn check_restricted(session: AnalysisSession&) -> Result<(), AnalysisError> {
+pub fn check_restricted(units: UnitTable&, permissions: Vec<SourcePermissions>&) -> Result<(), AnalysisError> {
     let index = 0u64;
 
-    while index < session.len() {
-        let unit = *session.unit(UnitId(index)).unwrap();
+    while index < units.len() {
+        let unit = *units.get(UnitId(index)).unwrap();
 
-        if !session.allows_restricted(unit.id) {
+        if !permissions.get(unit.id.index).unwrap().allows_restricted {
             let visitor = RestrictedVisitor(unit.id);
             match try_walk_program<AnalysisError>(unit.tree.root, &visitor) {
                 Ok(_) => {},

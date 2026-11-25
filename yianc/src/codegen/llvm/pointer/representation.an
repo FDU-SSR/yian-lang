@@ -46,14 +46,14 @@ impl FunctionLowering {
             return Result<IrValue, CodegenError>.Ok(self.owner.module.const_null(self.owner.module.pointer_type(0u32)));
         }
         if !self.fat(type_id)? {
-            return Result<IrValue, CodegenError>.Ok(match self.owner.session.types.require(type_id)? {
+            return Result<IrValue, CodegenError>.Ok(match self.owner.types.semantic_store().require(type_id)? {
                     Slice(_) | Str => self.builder.extract_value(value, 0u32, ""),
                     _ => value,
                 });
         }
 
         let data = self.builder.extract_value(value, 0u32, "");
-        match self.owner.session.types.require(type_id)? {
+        match self.owner.types.semantic_store().require(type_id)? {
             Pointer(_) => {
                 let indices = [self.pointer_offset_bytes(value)];
                 Result<IrValue, CodegenError>.Ok(self.builder.gep(self.owner.module.int_type(8u32),
@@ -98,7 +98,7 @@ impl FunctionLowering {
             return Result<IrValue, CodegenError>.Ok(self.owner.module.const_null(native));
         }
         if self.owner.types.raw_pointers() { return Result<IrValue, CodegenError>.Ok(data); }
-        match self.owner.session.types.require(type_id)? {
+        match self.owner.types.semantic_store().require(type_id)? {
             Pointer(element) => {
                 self.require_guard(GuardKind.ByteExtent, GuardSite.Before)?;
                 let stride = self.owner.module.abi_size(self.owner.types.value_type(*element)?);
@@ -115,7 +115,7 @@ impl FunctionLowering {
 
     pub fn pointer_cast(source: TypeId, target: TypeId, value: IrValue) -> Result<IrValue, CodegenError> {
         if source == target { return Result<IrValue, CodegenError>.Ok(value); }
-        let store = self.owner.session.types;
+        let store = self.owner.types.semantic_store();
         let source_type = store.require(source)?;
         let target_type = store.require(target)?;
         let source_pointer = match source_type { Pointer(_) | Reference(_) | Slice(_) | Str => true, _ => false, };

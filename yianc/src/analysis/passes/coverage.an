@@ -99,7 +99,7 @@ impl CoverageChecker {
         seen.insert(type_id);
         defer seen.remove(&type_id);
 
-        match self.ctx.session.types.require(type_id)? {
+        match self.ctx.types.require(type_id)? {
             Never => return Result<bool, AnalysisError>.Ok(false),
             Reference(inner) => return self.potentially_inhabited(*inner, seen),
             Tuple(elements) => {
@@ -112,7 +112,7 @@ impl CoverageChecker {
                 return Result<bool, AnalysisError>.Ok(true);
             },
             Array(element, count) => {
-                match self.ctx.session.types.require(*count)? {
+                match self.ctx.types.require(*count)? {
                     LiteralValue(bits, negative, _) => {
                         if *negative {
                             @panic("negative array length in coverage");
@@ -129,10 +129,10 @@ impl CoverageChecker {
                 let substitutions = instance_substitutions(self.ctx, type_id)?;
                 defer substitutions.drop();
 
-                match self.ctx.session.types.complete_definition(*definition)? {
+                match self.ctx.types.complete_definition(*definition)? {
                     Struct(body) => {
                         for field in body.fields {
-                            let field_type = substitute(self.ctx.session.types, field.type_id, &substitutions)?;
+                            let field_type = substitute(self.ctx.types, field.type_id, &substitutions)?;
                             if !self.potentially_inhabited(field_type, seen)? {
                                 return Result<bool, AnalysisError>.Ok(false);
                             }
@@ -147,7 +147,7 @@ impl CoverageChecker {
                             let variant_inhabited = true;
 
                             for field in fields {
-                                let field_type = substitute(self.ctx.session.types, field.type_id, &substitutions)?;
+                                let field_type = substitute(self.ctx.types, field.type_id, &substitutions)?;
                                 if !self.potentially_inhabited(field_type, seen)? {
                                     variant_inhabited = false;
                                     break;
@@ -182,12 +182,12 @@ impl CoverageChecker {
 
         let types = Vec<TypeId>.new();
         defer types.drop();
-        types.push(self.ctx.session.hir.require_pattern(id)?.type_id);
+        types.push(self.ctx.hir.require_pattern(id)?.type_id);
         Result<bool, AnalysisError>.Ok(!self.useful(&rows, &wildcard, &types)?)
     }
 
     fn opaque(id: PatternId) -> bool {
-        match &self.ctx.session.hir.require_pattern(id).unwrap().kind {
+        match &self.ctx.hir.require_pattern(id).unwrap().kind {
             LiteralPattern(value) => value.condition.is_some(),
             BindPattern(value) => self.opaque(value.inner),
             RefPattern(value) => self.opaque(*value),
@@ -256,7 +256,7 @@ impl CoverageChecker {
         while result.is_some() {
             let id = *result.unwrap();
 
-            match &self.ctx.session.hir.require_pattern(id).unwrap().kind {
+            match &self.ctx.hir.require_pattern(id).unwrap().kind {
                 BindPattern(value) => result = Cell.Some(value.inner),
                 RefPattern(value) => result = Cell.Some(*value),
                 WildcardPattern => return Cell.None,
@@ -274,13 +274,13 @@ impl CoverageChecker {
             return Result<Option<Interval>, AnalysisError>.Ok(Option<Interval>.None);
         }
 
-        let node = self.ctx.session.hir.require_pattern(*cell.unwrap())?;
+        let node = self.ctx.hir.require_pattern(*cell.unwrap())?;
 
         match &node.kind {
             RangePattern(value) => Result<Option<Interval>, AnalysisError>.Ok(Option<Interval>.Some(Interval(value.lower, value.upper))),
             LiteralPattern(value) => {
                 let key = match &value.value {
-                    Integer(integer) => match self.ctx.session.types.require(node.type_id)? {
+                    Integer(integer) => match self.ctx.types.require(node.type_id)? {
                         Integer(bits, signed) => scalar_key(integer.raw_bits(), *bits, *signed),
                         CScalar(kind) => scalar_key(integer.raw_bits(), kind.bits(), kind.is_signed()),
                         _ => @panic("integer pattern has non-integer type"),
@@ -304,7 +304,7 @@ impl CoverageChecker {
             }
         };
 
-        match self.ctx.session.types.require(type_id)? {
+        match self.ctx.types.require(type_id)? {
             Reference(inner) => return self.constructors(*inner, matrix, query),
             Bool => {
                 result.push(Constructor(ConstructorKind.Boolean(false), Vec<TypeId>.new()));
@@ -314,7 +314,7 @@ impl CoverageChecker {
                 let substitutions = instance_substitutions(self.ctx, type_id)?;
                 defer substitutions.drop();
 
-                match self.ctx.session.types.complete_definition(*definition)? {
+                match self.ctx.types.complete_definition(*definition)? {
                     Enum(body) => {
                         for variant in body.variants {
                             let fields = Vec<TypeId>.new();
@@ -328,7 +328,7 @@ impl CoverageChecker {
                             defer descriptors.drop();
 
                             for field in descriptors {
-                                fields.push(substitute(self.ctx.session.types, field.type_id, &substitutions)?);
+                                fields.push(substitute(self.ctx.types, field.type_id, &substitutions)?);
                             }
 
                             result.push(Constructor(ConstructorKind.Variant(variant.discriminant), fields));
@@ -345,7 +345,7 @@ impl CoverageChecker {
                         };
 
                         for field in body.fields {
-                            fields.push(substitute(self.ctx.session.types, field.type_id, &substitutions)?);
+                            fields.push(substitute(self.ctx.types, field.type_id, &substitutions)?);
                         }
 
                         result.push(Constructor(ConstructorKind.Structure, fields));
@@ -360,7 +360,7 @@ impl CoverageChecker {
                 result.push(Constructor(ConstructorKind.Tuple, elements.clone()));
             },
             Array(element, count) => {
-                let length = match self.ctx.session.types.require(*count)? {
+                let length = match self.ctx.types.require(*count)? {
                     LiteralValue(bits, negative, _) => {
                         if *negative {
                             @panic("negative array length");
@@ -401,7 +401,7 @@ impl CoverageChecker {
                 let query = self.peel(query);
 
                 match query {
-                    Some(id) => match &self.ctx.session.hir.require_pattern(id)?.kind {
+                    Some(id) => match &self.ctx.hir.require_pattern(id)?.kind {
                         LiteralPattern(value) => result.push(Constructor(ConstructorKind.Literal(value.value), Vec<TypeId>.new())),
                         _ => result.push(Constructor(ConstructorKind.Other, Vec<TypeId>.new())),
                     },
@@ -410,7 +410,7 @@ impl CoverageChecker {
                             let cell = self.peel(row.cells[0]);
 
                             match cell {
-                                Some(id) => match &self.ctx.session.hir.require_pattern(id)?.kind {
+                                Some(id) => match &self.ctx.hir.require_pattern(id)?.kind {
                                     LiteralPattern(value) => {
                                         result.push(Constructor(ConstructorKind.Literal(value.value), Vec<TypeId>.new()));
                                     },
@@ -443,7 +443,7 @@ impl CoverageChecker {
             };
 
             match self.peel(cell) {
-                Some(id) => match &self.ctx.session.hir.require_pattern(id)?.kind {
+                Some(id) => match &self.ctx.hir.require_pattern(id)?.kind {
                     SequencePattern(value) => {
                         if value.prefix.len() > prefix {
                             prefix = value.prefix.len();
@@ -487,7 +487,7 @@ impl CoverageChecker {
     }
 
     fn scalar_constructors(type_id: TypeId, matrix: Vec<Row>&, query: Cell, result: Vec<Constructor>&) -> Result<(), AnalysisError> {
-        let domain = match self.ctx.session.types.require(type_id)? {
+        let domain = match self.ctx.types.require(type_id)? {
             Integer(bits, _) => scalar_domain(*bits),
             CScalar(kind) => scalar_domain(kind.bits()),
             Char => Interval(Boundary.Finite(0), Boundary.Finite(0x110000)),
@@ -553,7 +553,7 @@ impl CoverageChecker {
             return Result<Option<Row>, AnalysisError>.Ok(Option<Row>.Some(Row(fields)));
         }
 
-        let pattern = self.ctx.session.hir.require_pattern(*cell.unwrap())?;
+        let pattern = self.ctx.hir.require_pattern(*cell.unwrap())?;
         let is_match = match &pattern.kind {
             EnumPattern(value) => match &constructor.kind {
                 Variant(index) => {
@@ -705,7 +705,7 @@ impl CoverageChecker {
             if opaque_column {
                 // An uncovered aggregate needs a structural witness. Repeated recursive columns
                 // can be represented by a wildcard while sibling columns remain checked.
-                let structural = match self.ctx.session.types.require(types[0])? {
+                let structural = match self.ctx.types.require(types[0])? {
                     Nominal(_, _) | Tuple(_) | Array(_, _) | Slice(_) | Reference(_) => true,
                     _ => false,
                 };
@@ -713,9 +713,9 @@ impl CoverageChecker {
             }
 
             if opaque_column {
-                match self.ctx.session.types.require(types[0])? {
+                match self.ctx.types.require(types[0])? {
                     Never => return Result<bool, AnalysisError>.Ok(false),
-                    Nominal(definition, _) => match self.ctx.session.types.complete_definition(*definition)? {
+                    Nominal(definition, _) => match self.ctx.types.complete_definition(*definition)? {
                         Enum(body) => {
                             if body.variants.len() == 0 {
                                 return Result<bool, AnalysisError>.Ok(false);
@@ -771,7 +771,7 @@ impl CoverageChecker {
         }
 
         match head {
-            Some(id) => match &self.ctx.session.hir.require_pattern(id)?.kind {
+            Some(id) => match &self.ctx.hir.require_pattern(id)?.kind {
                 OrPattern(value) => {
                     for alternative in value.alternatives {
                         let candidate = Row(query.cells.clone());
@@ -799,7 +799,7 @@ impl CoverageChecker {
             let expanded_row = false;
 
             match head {
-                Some(id) => match &self.ctx.session.hir.require_pattern(id)?.kind {
+                Some(id) => match &self.ctx.hir.require_pattern(id)?.kind {
                     OrPattern(value) => {
                         for alternative in value.alternatives {
                             let cells = row.cells.clone();
@@ -895,7 +895,7 @@ impl CoverageChecker {
     }
 
     fn constructor_label(type_id: TypeId, constructor: Constructor&, children: Vec<String>&) -> Result<String, AnalysisError> {
-        match self.ctx.session.types.require(type_id)? {
+        match self.ctx.types.require(type_id)? {
             Reference(inner) => {
                 let label = self.constructor_label(*inner, constructor, children)?;
                 defer label.drop();
@@ -912,23 +912,23 @@ impl CoverageChecker {
         defer { if !transferred { label.drop(); } };
         match &constructor.kind {
             Boolean(value) => label.push_str(if *value { "true" } else { "false" }),
-            Variant(index) => match self.ctx.session.types.require(type_id)? {
-                Nominal(id, _) => match self.ctx.session.types.complete_definition(*id)? {
+            Variant(index) => match self.ctx.types.require(type_id)? {
+                Nominal(id, _) => match self.ctx.types.complete_definition(*id)? {
                     Enum(body) => {
                         for variant in body.variants {
-                            if variant.discriminant == *index { label.push_str(self.ctx.session.names.text(variant.name)); }
+                            if variant.discriminant == *index { label.push_str(self.ctx.names.text(variant.name)); }
                         }
                     },
                     _ => @panic("coverage variant requires an enum"),
                 },
                 _ => @panic("coverage variant requires a nominal type"),
             },
-            Structure => match self.ctx.session.types.require(type_id)? {
-                Nominal(id, _) => label.push_str(self.ctx.session.names.text(self.ctx.session.types.definition(*id).unwrap().header().name)),
+            Structure => match self.ctx.types.require(type_id)? {
+                Nominal(id, _) => label.push_str(self.ctx.names.text(self.ctx.types.definition(*id).unwrap().header().name)),
                 _ => @panic("coverage structure requires a nominal type"),
             },
             Tuple => label.push_str("tuple"),
-            Sequence(length, _, _) => match self.ctx.session.types.require(type_id)? {
+            Sequence(length, _, _) => match self.ctx.types.require(type_id)? {
                 Array(_, _) => label.push_str("array"),
                 _ => {
                     label.push_str("slice[");
@@ -947,7 +947,7 @@ impl CoverageChecker {
                 }
                 let bits = 64u32;
                 let signed = false;
-                match self.ctx.session.types.require(type_id)? {
+                match self.ctx.types.require(type_id)? {
                     Integer(width, sign) => { bits = *width; signed = *sign; },
                     CScalar(kind) => { bits = kind.bits(); signed = kind.is_signed(); },
                     _ => {},
@@ -1044,13 +1044,13 @@ impl HirVisitor for CoverageChecker {
                 defer release_rows(&rows);
                 let types = Vec<TypeId>.new();
                 defer types.drop();
-                types.push(self.ctx.session.hir.require(value.value)?.type_id);
+                types.push(self.ctx.hir.require(value.value)?.type_id);
                 let side_effect_seen = false;
                 let unconditional_catchall = false;
 
                 for arm in value.arms {
                     if arm.origin == MatchArmOrigin.ForItem {
-                        let item = match &self.ctx.session.hir.require_pattern(arm.pattern)?.kind {
+                        let item = match &self.ctx.hir.require_pattern(arm.pattern)?.kind {
                             EnumPattern(pattern) => match &pattern.fields {
                                 Some(fields) => {
                                     if fields.len() != 1 {
@@ -1082,7 +1082,7 @@ impl HirVisitor for CoverageChecker {
                     if arm.origin == MatchArmOrigin.Condition {
                         let empty = Vec<Row>.new();
                         defer empty.drop();
-                        let pattern = self.ctx.session.hir.require_pattern(arm.pattern)?;
+                        let pattern = self.ctx.hir.require_pattern(arm.pattern)?;
                         let message = if !self.useful(&empty, &row, &types)? {
                             "pattern condition cannot match"
                         } elif self.irrefutable(arm.pattern)? { "irrefutable pattern condition" } else { "" };
@@ -1124,7 +1124,7 @@ impl HirVisitor for CoverageChecker {
             },
             PatternLet(value) => {
                 if value.else_branch.is_some() && self.irrefutable(value.pattern)? {
-                    let branch = self.ctx.session.hir.require(*value.else_branch.unwrap())?;
+                    let branch = self.ctx.hir.require(*value.else_branch.unwrap())?;
                     self.ctx.warning(branch.span.unit, branch.span.span, DiagnosticCode.UnreachablePattern, "unreachable else block for an irrefutable pattern");
                 }
                 if value.else_branch.is_none() {
@@ -1139,11 +1139,11 @@ impl HirVisitor for CoverageChecker {
                     defer wildcard.drop();
                     let types = Vec<TypeId>.new();
                     defer types.drop();
-                    types.push(self.ctx.session.hir.require(value.value)?.type_id);
+                    types.push(self.ctx.hir.require(value.value)?.type_id);
 
                     if self.useful(&rows, &wildcard, &types)? {
                         return Result<WalkControl, AnalysisError>.Err(AnalysisError.user(DiagnosticCode.Coverage,
-                            Option<SourceSpan>.Some(self.ctx.session.hir.require_pattern(value.pattern)?.span), if value.is_parameter { "parameter pattern may fail; add an else block" } else { "let pattern may fail; add an else block" }));
+                            Option<SourceSpan>.Some(self.ctx.hir.require_pattern(value.pattern)?.span), if value.is_parameter { "parameter pattern may fail; add an else block" } else { "let pattern may fail; add an else block" }));
                     }
                 }
             },
@@ -1158,7 +1158,7 @@ pub fn check_coverage(ctx: ResolutionContext&, output: AnalysisOutput&) -> Resul
     let checker = CoverageChecker(ctx, output);
 
     for procedure in output.procedures {
-        match walk_expr(&ctx.session.hir, procedure.root, &checker) {
+        match walk_expr(ctx.hir, procedure.root, &checker) {
             Ok(_) => {},
             Err(problem) => return Result<(), AnalysisError>.Err(problem),
         }

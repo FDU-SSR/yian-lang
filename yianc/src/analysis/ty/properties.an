@@ -5,5 +5,5 @@ from yianc.diagnostics.model import AnalysisError;
 
 // Finalization rejects storage cycles before these structural queries run.
 pub fn is_zst(ctx: ResolutionContext&, type_id: TypeId) -> Result<bool, AnalysisError> {
-    store_is_zst(ctx.session.types, type_id)
+    store_is_zst(ctx.types, type_id)
 }

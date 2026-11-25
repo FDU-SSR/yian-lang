@@ -17,27 +17,27 @@ from yianc.types.store import FLOAT_LITERAL_TYPE_ID, INT_LITERAL_TYPE_ID;
 
 impl ExprChecker {
     pub fn match_argument(expected: TypeId, actual: TypeId, substitutions: HashMap<TypeId, TypeId>&) -> bool {
-        match *self.ctx.session.types.get(expected).unwrap() {
-            Reference(inner) => match *self.ctx.session.types.get(actual).unwrap() {
-                Pointer(value) => return compatible(self.ctx, *value, *inner) || infer(self.ctx.session.types, *inner, default_type(self.ctx, *value), substitutions),
-                Slice(value) => return infer(self.ctx.session.types, *inner, *value, substitutions),
+        match *self.ctx.types.get(expected).unwrap() {
+            Reference(inner) => match *self.ctx.types.get(actual).unwrap() {
+                Pointer(value) => return compatible(self.ctx, *value, *inner) || infer(self.ctx.types, *inner, default_type(self.ctx, *value), substitutions),
+                Slice(value) => return infer(self.ctx.types, *inner, *value, substitutions),
                 _ => {},
             },
-            Pointer(inner) => match *self.ctx.session.types.get(actual).unwrap() {
-                Array(value, _) => return infer(self.ctx.session.types, *inner, *value, substitutions),
+            Pointer(inner) => match *self.ctx.types.get(actual).unwrap() {
+                Array(value, _) => return infer(self.ctx.types, *inner, *value, substitutions),
                 _ => {},
             },
             _ => {},
         }
 
-        infer(self.ctx.session.types, expected, default_type(self.ctx, actual), substitutions)
+        infer(self.ctx.types, expected, default_type(self.ctx, actual), substitutions)
     }
 
     // Owning aggregate lists are copied before rewriting IDs; loop exits are finalized during construction.
     pub fn convert(id: HirId, expected: TypeId) -> Result<Option<HirId>, AnalysisError> {
-        let node = *self.ctx.session.hir.require(id)?;
-        let actual = self.ctx.session.types.require(node.type_id)?;
-        let target = self.ctx.session.types.require(expected)?;
+        let node = *self.ctx.hir.require(id)?;
+        let actual = self.ctx.types.require(node.type_id)?;
+        let target = self.ctx.types.require(expected)?;
         // Context can type an addressed literal without changing a shared HIR node.
 
         match &node.kind {
@@ -78,7 +78,7 @@ impl ExprChecker {
                 }
                 // Pointer differences expose the same 64-bit pattern in either integer view.
                 if binary.op == BinaryOperator.Sub {
-                    let pointer_difference = match self.ctx.session.types.require(self.type_of(binary.left))? {
+                    let pointer_difference = match self.ctx.types.require(self.type_of(binary.left))? {
                         Pointer(_) => self.type_of(binary.left) == self.type_of(binary.right),
                         _ => false,
                     };
@@ -149,13 +149,13 @@ impl ExprChecker {
                         Reference(pointee) => {
                             if self.type_of(unary.operand) != *pointee {
                                 let value = self.coerce(unary.operand, *pointee)?;
-                                let pointer = self.ctx.session.types.pointer(*pointee);
+                                let pointer = self.ctx.types.pointer(*pointee);
                                 let address = self.node(node.span.span, pointer, false, HirKind.Unary(Unary(UnaryOperator.AddrOf, value)));
                                 return Result<Option<HirId>, AnalysisError>.Ok(Option<HirId>.Some(self.node(node.span.span, expected, false, HirKind.BitCast(BitCast(address, expected)))));
                             }
                         },
                         FunctionPointer(parameters, result) => {
-                            match &self.ctx.session.hir.require(unary.operand)?.kind {
+                            match &self.ctx.hir.require(unary.operand)?.kind {
                                 Ty => return self.convert_function_address(id, expected, parameters, *result),
                                 _ => {},
                             }
@@ -175,7 +175,7 @@ impl ExprChecker {
             Pointer(inner) => match target {
                 Reference(value) => *inner == *value,
                 Slice(value) => {
-                    if self.ctx.session.raw_pointers && *inner == *value {
+                    if self.ctx.raw_pointers && *inner == *value {
                         let source_name = type_text(self.ctx, node.type_id);
                         defer source_name.drop();
                         let target_name = type_text(self.ctx, expected);
@@ -188,9 +188,9 @@ impl ExprChecker {
                         message.push_str("' in raw pointer mode; implicit pointer-to-slice conversion is not supported");
                         return Result<Option<HirId>, AnalysisError>.Err(self.error(node.span.span, message.as_str()));
                     }
-                    !self.ctx.session.raw_pointers && *inner == *value
+                    !self.ctx.raw_pointers && *inner == *value
                 },
-                Pointer(value) => match self.ctx.session.types.require(*inner)? {
+                Pointer(value) => match self.ctx.types.require(*inner)? {
                     Array(element, _) => *element == *value, _ => false
                 },
                 _ => false,
@@ -280,7 +280,7 @@ impl ExprChecker {
             Array(element, _) => match target {
                 Pointer(value) => {
                     if *element == *value {
-                        let pointer = self.ctx.session.types.pointer(node.type_id);
+                        let pointer = self.ctx.types.pointer(node.type_id);
                         let address = self.node(node.span.span, pointer, false, HirKind.Unary(Unary(UnaryOperator.AddrOf, id)));
                         return Result<Option<HirId>, AnalysisError>.Ok(Option<HirId>.Some(self.node(node.span.span, expected, false, HirKind.BitCast(BitCast(address, expected)))));
                     }
@@ -319,7 +319,7 @@ impl ExprChecker {
             }
         }
 
-        let carrier_type = self.ctx.session.types.primitive(TypeData.Integer(carrier_bits, carrier_signed))?;
+        let carrier_type = self.ctx.types.primitive(TypeData.Integer(carrier_bits, carrier_signed))?;
         let width = *IntegerWidth.from_bits(carrier_bits).unwrap();
         let value = cast_integer(IntegerValue.untyped(magnitude, negative), width, carrier_signed);
         let carrier = self.node(node.span.span, carrier_type, false, HirKind.IntLiteral(value));
@@ -332,7 +332,7 @@ impl ExprChecker {
     }
 
     fn convert_function_address(id: HirId, expected: TypeId, parameters: Vec<TypeId>&, result: TypeId) -> Result<Option<HirId>, AnalysisError> {
-        let node = self.ctx.session.hir.require(id)?;
+        let node = self.ctx.hir.require(id)?;
         let operand = match &node.kind {
             Unary(value) => value.operand, _ => @panic("function address lacks an operand")
         };
@@ -349,18 +349,18 @@ impl ExprChecker {
         let index = 0u64;
 
         while index < parameters.len() {
-            if !infer(self.ctx.session.types, callable.parameters[index].type_id, parameters[index], &substitutions) {
+            if !infer(self.ctx.types, callable.parameters[index].type_id, parameters[index], &substitutions) {
                 return Result<Option<HirId>, AnalysisError>.Err(self.error(node.span.span, "function pointer parameter type mismatch"));
             }
 
             index += 1;
         }
 
-        if !infer(self.ctx.session.types, callable.result, result, &substitutions) {
+        if !infer(self.ctx.types, callable.result, result, &substitutions) {
             return Result<Option<HirId>, AnalysisError>.Err(self.error(node.span.span, "function pointer result type mismatch"));
         }
 
-        let instance = substitute(self.ctx.session.types, template, &substitutions)?;
+        let instance = substitute(self.ctx.types, template, &substitutions)?;
 
         if !callable.is_header {
             schedule(self.ctx, instance)?;

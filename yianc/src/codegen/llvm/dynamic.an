@@ -66,7 +66,7 @@ impl LlvmLowering {
             let data = builder.extract_value(thunk.param(0u32), 0u32, "");
             let reference = data;
             if !self.types.raw_pointers() {
-                let reference_type = self.session.types.reference(receiver);
+                let reference_type = self.types.semantic_store().reference(receiver);
                 reference = builder.insert_value(self.module.undef_value(self.types.value_type(reference_type)?), data, 0u32, "");
                 reference = builder.insert_value(reference, builder.extract_value(thunk.param(0u32), 1u32, ""), 1u32, "");
             }
@@ -113,11 +113,11 @@ impl FunctionLowering {
     -> Result<IrValue, CodegenError> {
         let module = self.owner.module;
         let object_type = self.cfg.value(receiver)?.type_id;
-        let trait_type = match self.owner.session.types.require(object_type)? {
+        let trait_type = match self.owner.types.semantic_store().require(object_type)? {
             TraitObject(trait_type) => *trait_type,
             _ => @panic("dynamic call has no trait identity"),
         };
-        let methods = store_object_methods(self.owner.session.types, &self.owner.session.names, trait_type)?;
+        let methods = store_object_methods(self.owner.types.semantic_store(), self.owner.names, trait_type)?;
         defer methods.drop();
         if slot >= methods.len() || methods[slot] != method {
             @panic("dynamic call slot has an inconsistent signature");

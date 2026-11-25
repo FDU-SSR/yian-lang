@@ -4,8 +4,9 @@ from yianc.codegen.error import CodegenError;
 from yianc.codegen.types import BackendTypes;
 from yianc.codegen.llvm.scalar import binary, unary, cast;
 from yianc.codegen.abi.runtime import LITERAL_WORD;
-from yianc.analysis.session.session import AnalysisSession;
-from yianc.types.callable import store_signature;
+from yianc.common.names import NameInterner;
+from yianc.frontend.unit import UnitTable;
+from yianc.package.model import PackageMap;
 from yianc.types.model import NominalKind;
 from yianc.codegen.llvm.dynamic import ThunkKey;
 from yianc.common.ids import TypeId, NameId;
@@ -21,7 +22,9 @@ from std.core.ops import Index;
 
 // All handles are non-owning. The driver closes the module after this view is released.
 pub struct LlvmLowering {
-    pub session: AnalysisSession&,
+    pub names: NameInterner&,
+    pub units: UnitTable&,
+    pub packages: Option<PackageMap&>,
     pub types: BackendTypes&,
     pub module: Module&,
     functions: HashMap<TypeId, Function>,
@@ -38,9 +41,12 @@ pub struct LlvmLowering {
 }
 
 impl LlvmLowering {
-    static pub fn new(session: AnalysisSession&, types: BackendTypes&, module: Module&, entry: Option<TypeId>,
-        program: str, profile_dir: Option<str>) -> Self {
-        Self(session, types, module, HashMap<TypeId, Function>.new(), HashMap<NameId, TypeId>.new(), HashMap<str, Function>.new(), HashMap<str, Global>.new(), HashMap<ThunkKey, Function>.new(), entry,
+    static pub fn new(names: NameInterner&, units: UnitTable&, packages: Option<PackageMap&>,
+        types: BackendTypes&, module: Module&, entry: Option<TypeId>, program: str,
+        profile_dir: Option<str>) -> Self {
+        Self(names, units, packages, types, module, HashMap<TypeId, Function>.new(),
+            HashMap<NameId, TypeId>.new(), HashMap<str, Function>.new(), HashMap<str, Global>.new(),
+            HashMap<ThunkKey, Function>.new(), entry,
             match profile_dir { Some(value) => Option<String>.Some(String.from(&value)), None => Option<String>.None },
             String.from(&program), HashMap<TypeId, u64>.new(), Option<Function>.None, Option<Function>.None)
     }
@@ -72,8 +78,8 @@ impl LlvmLowering {
             None => {},
         }
         let signature = self.types.function_type(type_id)?;
-        let record = match self.session.types.require(type_id)? {
-            Nominal(definition, _) => *self.session.types.definition(*definition).unwrap(),
+        let record = match self.types.semantic_store().require(type_id)? {
+            Nominal(definition, _) => *self.types.semantic_store().definition(*definition).unwrap(),
             _ => @panic("LLVM declaration is not a nominal callable"),
         };
         let external = false;
@@ -95,7 +101,7 @@ impl LlvmLowering {
                 },
                 None => {},
             }
-            name.push_str(self.session.names.text(record.header().name));
+            name.push_str(self.names.text(record.header().name));
             self.externs.insert(record.header().name, type_id);
         } else {
             if is_entry {
@@ -219,8 +225,8 @@ impl FunctionLowering {
         for index in 0u64..cfg.value_count() {
             let id = ValueId(index);
             let type_id = cfg.value(id)?.type_id;
-            let enumeration = match owner.session.types.require(type_id)? {
-                Nominal(definition, _) => owner.session.types.definition(*definition).unwrap().header().kind == NominalKind.Enum,
+            let enumeration = match owner.types.semantic_store().require(type_id)? {
+                Nominal(definition, _) => owner.types.semantic_store().definition(*definition).unwrap().header().kind == NominalKind.Enum,
                 _ => false,
             };
             if enumeration && !owner.types.is_zst(type_id)? && owner.types.niche_payload(type_id)?.is_none() {
@@ -369,7 +375,7 @@ impl FunctionLowering {
     }
 
     fn string_value(type_id: TypeId, name: NameId) -> Result<IrValue, CodegenError> {
-        let text = self.owner.session.names.text(name);
+        let text = self.owner.names.text(name);
         let array = self.owner.module.array_type(self.owner.module.int_type(8u32), text.as_slice().len() + 1);
         let global = self.owner.module.add_global("", array);
         global.set_initializer(self.owner.module.const_bytes(text.as_slice(), true));
@@ -449,8 +455,8 @@ impl FunctionLowering {
                     Unary(op, operand) => unary(&self.builder, types, *op, type_id, self.get(*operand)?)?,
                     Cast(operand) => {
                         let source = self.cfg.value(*operand)?.type_id;
-                        let callable = match self.owner.session.types.require(source)? {
-                            Nominal(definition, _) => match self.owner.session.types.definition(*definition).unwrap().header().kind {
+                        let callable = match self.owner.types.semantic_store().require(source)? {
+                            Nominal(definition, _) => match self.owner.types.semantic_store().definition(*definition).unwrap().header().kind {
                                 Function | Method => true,
                                 _ => false,
                             },

@@ -33,7 +33,7 @@ impl ExprChecker {
         let result = TypeId(NEVER_TYPE_ID);
 
         for id in self.loops[frame].exits() {
-            let type_id = match &self.ctx.session.hir.require(*id)?.kind {
+            let type_id = match &self.ctx.hir.require(*id)?.kind {
                 Break(value) => match value {
                     Some(id) => self.type_of(*id), None => TypeId(VOID_TYPE_ID)
                 },
@@ -48,7 +48,7 @@ impl ExprChecker {
         }
 
         for id in self.loops[frame].exits() {
-            match &self.ctx.session.hir.require(*id)?.kind {
+            match &self.ctx.hir.require(*id)?.kind {
                 Break(value) => match value {
                     Some(id) => {
                         *value = Option<HirId>.Some(self.coerce(*id, result)?);

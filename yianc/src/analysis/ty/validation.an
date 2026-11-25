@@ -14,9 +14,9 @@ from std.core.iter import Iterator, IntoIterator;
 
 fn contains_unsized(ctx: ResolutionContext&, type_id: TypeId, visited: HashSet<TypeId>&) -> Result<bool, AnalysisError> {
     if !visited.insert(type_id) { return Result<bool, AnalysisError>.Ok(false); }
-    match ctx.session.types.require(type_id)? {
+    match ctx.types.require(type_id)? {
         Nominal(id, arguments) => {
-            if ctx.session.types.definition(*id).unwrap().header().kind == NominalKind.Trait {
+            if ctx.types.definition(*id).unwrap().header().kind == NominalKind.Trait {
                 return Result<bool, AnalysisError>.Ok(true);
             }
             for argument in *arguments {
@@ -54,10 +54,10 @@ fn sized_position(ctx: ResolutionContext&, type_id: TypeId, subject: str, suffix
 
 // Run after cycle detection, before body checking, with the reference's declaration-specific locations.
 pub fn validate_unsized(ctx: ResolutionContext&) -> Result<(), AnalysisError> {
-    let count = ctx.session.types.len();
+    let count = ctx.types.len();
     for index in 0u64..count {
         let type_id = TypeId(index);
-        match ctx.session.types.require(type_id)? {
+        match ctx.types.require(type_id)? {
             Pointer(_) | Reference(_) | Array(_, _) | Tuple(_) | FunctionPointer(_, _) => {
                 let name = type_text(ctx, type_id);
                 defer name.drop();
@@ -68,14 +68,14 @@ pub fn validate_unsized(ctx: ResolutionContext&) -> Result<(), AnalysisError> {
                 sized_position(ctx, type_id, subject.as_str(), " contains an unsized trait value", Option<SourceSpan>.None)?;
             },
             Nominal(id, _) => {
-                let definition = ctx.session.types.definition(*id).unwrap();
+                let definition = ctx.types.definition(*id).unwrap();
                 let span = definition.header().span;
                 match definition.body()? {
                     Struct(body) => {
                         for field in body.fields {
                             let subject = String.from(&"field '");
                             defer subject.drop();
-                            subject.push_str(ctx.session.names.text(field.name));
+                            subject.push_str(ctx.names.text(field.name));
                             subject.push_str("'");
                             sized_position(ctx, field.type_id, subject.as_str(), " has unsized trait type", field.span)?;
                         }
@@ -86,7 +86,7 @@ pub fn validate_unsized(ctx: ResolutionContext&) -> Result<(), AnalysisError> {
                                 Some(payload) => {
                                     let subject = String.from(&"variant '");
                                     defer subject.drop();
-                                    subject.push_str(ctx.session.names.text(variant.name));
+                                    subject.push_str(ctx.names.text(variant.name));
                                     subject.push_str("'");
                                     sized_position(ctx, payload, subject.as_str(), " has unsized trait payload", variant.span)?;
                                 },
@@ -98,13 +98,13 @@ pub fn validate_unsized(ctx: ResolutionContext&) -> Result<(), AnalysisError> {
                         for parameter in body.parameters {
                             let subject = String.from(&"parameter '");
                             defer subject.drop();
-                            subject.push_str(ctx.session.names.text(parameter.name));
+                            subject.push_str(ctx.names.text(parameter.name));
                             subject.push_str("'");
                             sized_position(ctx, parameter.type_id, subject.as_str(), " has unsized trait type", parameter.span)?;
                         }
                         let subject = String.from(&"function '");
                         defer subject.drop();
-                        subject.push_str(ctx.session.names.text(definition.header().name));
+                        subject.push_str(ctx.names.text(definition.header().name));
                         subject.push_str("'");
                         sized_position(ctx, body.result, subject.as_str(), " returns unsized trait type", Option<SourceSpan>.Some(span))?;
                     },
@@ -178,7 +178,7 @@ pub fn validate_value(ctx: ResolutionContext&, type_id: TypeId, span: SourceSpan
 
 // Declaration templates allow generics; scheduled procedure signatures must be concrete.
 pub fn validate_concrete_value(ctx: ResolutionContext&, type_id: TypeId, span: SourceSpan) -> Result<(), AnalysisError> {
-    if has_generic(ctx.session.types, type_id) {
+    if has_generic(ctx.types, type_id) {
         return Result<(), AnalysisError>.Err(AnalysisError.user(DiagnosticCode.GenericArguments,
             Option<SourceSpan>.Some(span), "procedure signature requires concrete generic arguments"));
     }
@@ -189,21 +189,21 @@ pub fn validate_concrete_value(ctx: ResolutionContext&, type_id: TypeId, span: S
 fn validate_inner(ctx: ResolutionContext&, type_id: TypeId, span: SourceSpan, visited: HashSet<TypeId>&) -> Result<(), AnalysisError> {
     if !visited.insert(type_id) { return Result<(), AnalysisError>.Ok(()); }
 
-    if contains_ffi(ctx.session.types, type_id, true) {
+    if contains_ffi(ctx.types, type_id, true) {
         return Result<(), AnalysisError>.Err(AnalysisError.user(DiagnosticCode.Type, Option<SourceSpan>.Some(span), "opaque C type must be used through cptr<T>"));
     }
 
-    match ctx.session.types.require(type_id)? {
+    match ctx.types.require(type_id)? {
         Nominal(id, _) => {
-            if ctx.session.types.definition(*id).unwrap().header().kind == NominalKind.Trait {
+            if ctx.types.definition(*id).unwrap().header().kind == NominalKind.Trait {
                 return Result<(), AnalysisError>.Err(AnalysisError.user(DiagnosticCode.Type, Option<SourceSpan>.Some(span), "trait types are unsized; use 'Trait&' for a trait object"));
             }
             let substitutions = instance_substitutions(ctx, type_id)?;
             defer substitutions.drop();
-            match ctx.session.types.complete_definition(*id)? {
+            match ctx.types.complete_definition(*id)? {
                 Struct(body) => {
                     for field in body.fields {
-                        let concrete = substitute(ctx.session.types, field.type_id, &substitutions)?;
+                        let concrete = substitute(ctx.types, field.type_id, &substitutions)?;
                         validate_inner(ctx, concrete, span, visited)?;
                     }
                 },
@@ -211,7 +211,7 @@ fn validate_inner(ctx: ResolutionContext&, type_id: TypeId, span: SourceSpan, vi
                     for variant in body.variants {
                         match &variant.payload {
                             Some(payload) => {
-                                let concrete = substitute(ctx.session.types, *payload, &substitutions)?;
+                                let concrete = substitute(ctx.types, *payload, &substitutions)?;
                                 validate_inner(ctx, concrete, span, visited)?;
                             },
                             None => {},
@@ -233,7 +233,7 @@ fn validate_inner(ctx: ResolutionContext&, type_id: TypeId, span: SourceSpan, vi
         Array(inner, length) => {
             validate_inner(ctx, *inner, span, visited)?;
 
-            match ctx.session.types.require(*length)? {
+            match ctx.types.require(*length)? {
                 LiteralValue(_, negative, _) => {
                     if *negative {
                         return Result<(), AnalysisError>.Err(AnalysisError.user(DiagnosticCode.Constant, Option<SourceSpan>.Some(span), "array length must be nonnegative"));
@@ -267,14 +267,14 @@ fn validate_inner(ctx: ResolutionContext&, type_id: TypeId, span: SourceSpan, vi
 
 pub fn validate_declarations(ctx: ResolutionContext&) -> Result<(), AnalysisError> {
     let index = 0u64;
-    let length = ctx.session.types.len();
+    let length = ctx.types.len();
 
     while index < length {
         let type_id = TypeId(index);
 
-        match ctx.session.types.require(type_id)? {
+        match ctx.types.require(type_id)? {
             Nominal(id, arguments) => {
-                let header = *ctx.session.types.definition(*id).unwrap();
+                let header = *ctx.types.definition(*id).unwrap();
                 let span = header.header().span;
                 let argument = 0u64;
 
@@ -282,10 +282,10 @@ pub fn validate_declarations(ctx: ResolutionContext&) -> Result<(), AnalysisErro
                     let expected = *header.generic(argument).unwrap();
 
                     if expected != arguments[argument] {
-                        let is_constant = match ctx.session.types.require(arguments[argument])? {
+                        let is_constant = match ctx.types.require(arguments[argument])? {
                             LiteralValue(_, _, _) => true, ConstGeneric(_, _) => true, ConstUnary(_, _) => true, ConstBinary(_, _, _) => true, _ => false
                         };
-                        let requires_constant = match ctx.session.types.require(expected)? {
+                        let requires_constant = match ctx.types.require(expected)? {
                             ConstGeneric(_, _) => true, _ => false
                         };
 
@@ -333,22 +333,22 @@ pub fn validate_declarations(ctx: ResolutionContext&) -> Result<(), AnalysisErro
 fn validate_callable(ctx: ResolutionContext&, parameters: Vec<Parameter>&, result: TypeId, ffi: bool, external: bool, span: SourceSpan) -> Result<(), AnalysisError> {
     validate_value(ctx, result, span)?;
 
-    if external && !c_abi_type(ctx.session.types, result, true, false) {
+    if external && !c_abi_type(ctx.types, result, true, false) {
         return Result<(), AnalysisError>.Err(AnalysisError.user(DiagnosticCode.Type, Option<SourceSpan>.Some(span), "extern C result requires C ABI scalar, cptr<T>, or void"));
     }
 
-    if !ffi && contains_ffi(ctx.session.types, result, false) {
+    if !ffi && contains_ffi(ctx.types, result, false) {
         return Result<(), AnalysisError>.Err(AnalysisError.user(DiagnosticCode.Type, Option<SourceSpan>.Some(span), "C ABI types require a private or pub(ffi) ffi fn signature"));
     }
 
     for parameter in *parameters {
         validate_value(ctx, parameter.type_id, span)?;
 
-        if external && !c_abi_type(ctx.session.types, parameter.type_id, false, false) {
+        if external && !c_abi_type(ctx.types, parameter.type_id, false, false) {
             return Result<(), AnalysisError>.Err(AnalysisError.user(DiagnosticCode.Type, Option<SourceSpan>.Some(span), "extern C parameters require C ABI scalar or cptr<T>"));
         }
 
-        if !ffi && contains_ffi(ctx.session.types, parameter.type_id, false) {
+        if !ffi && contains_ffi(ctx.types, parameter.type_id, false) {
             return Result<(), AnalysisError>.Err(AnalysisError.user(DiagnosticCode.Type, Option<SourceSpan>.Some(span), "C ABI types require a private or pub(ffi) ffi fn signature"));
         }
     }

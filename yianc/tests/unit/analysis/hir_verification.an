@@ -5,20 +5,32 @@ from yianc.analysis.passes.verify_hir import verify_hir_observed;
 from yianc.analysis.resolution.context import ResolutionContext;
 from yianc.types.layout import TypeSizeProvider;
 from yianc.analysis.session.output import AnalysisOptions, AnalysisOutput, AnalyzedProcedure;
-from yianc.analysis.session.session import AnalysisSession;
 from yianc.frontend.driver import FrontendDriver;
 from yianc.telemetry.trace import CompilerTrace;
-from yianc.analysis.driver import MiddleEndDriver, MiddleEndResult;
+from yianc.common.names import NameInterner;
+from yianc.analysis.permissions import SourcePermissions;
+from yianc.analysis.definition.registry import DefinitionRegistry;
+from yianc.analysis.definition.worklist import DefinitionWorklist;
+from yianc.analysis.ty.impl_registry import ImplRegistry;
+from yianc.analysis.symbol.scope import SymbolStore;
+from yianc.analysis.hir.store import HirStore;
+from yianc.analysis.resolution.declarations import collect_declarations;
+from yianc.analysis.resolution.definitions import resolve_definitions;
+from yianc.analysis.resolution.methods import resolve_impls;
+from yianc.analysis.passes.type_check import check_procedures;
+from yianc.analysis.passes.address_storage import normalize_address_storage;
+from yianc.analysis.passes.finalize_hir_types import finalize_hir_types;
 from yianc.types.model import AccessMode, AggregateDefinition, CallableDefinition, DefinitionBody,
 DefinitionHeader, NominalKind, Parameter, StructField;
 from yianc.analysis.ty.validation import validate_concrete_value;
 from yianc.types.store import TypeStore, BOOL_TYPE_ID, ERROR_TYPE_ID, I32_TYPE_ID, NEVER_TYPE_ID, U64_TYPE_ID, VOID_TYPE_ID;
 from yianc.common.ids import DefId, HirId, NameId, SymbolId, TypeId, UnitId;
 from yianc.common.location import SourceSpan;
-from yianc.diagnostics.model import AnalysisError, AnalysisErrorKind, DiagnosticLocation, DiagnosticReporter, UserDiagnostic;
+from yianc.diagnostics.model import AnalysisError, AnalysisErrorKind, DiagnosticLocation, DiagnosticReporter;
 from yianc.frontend.source import SourceFile, Position, SourceTable, Span;
-from yianc.package.model import PackageMap;
 from yianc.package.provenance import SourceTrust;
+from yianc.package.model import PackageMap;
+from yianc.frontend.unit import UnitTable;
 from std.collections.hash_map import HashMap;
 from std.core.env import args;
 from std.core.process import Command, ExitStatus;
@@ -85,13 +97,93 @@ fn load_source(path: str, text: str) -> SourceTable {
     }
 }
 
-fn definition(session: AnalysisSession&, name_text: str, kind: NominalKind, location: SourceSpan, generics: Vec<TypeId>) -> DefId {
-    let name = session.names.intern(name_text);
-    session.types.register(DefinitionHeader(kind, name, location, UnitId(0u64)), generics)
+struct VerificationFixture {
+    units: UnitTable,
+    types: TypeStore,
+    names: NameInterner,
+    symbols: SymbolStore,
+    hir: HirStore,
+    trust: SourceTrust,
+    permissions: Vec<SourcePermissions>,
+    definitions: DefinitionRegistry,
+    worklist: DefinitionWorklist,
+    impls: ImplRegistry,
 }
 
-fn field(session: AnalysisSession&, name_text: str, type_id: TypeId, index: u64, location: SourceSpan) -> StructField {
-    StructField(session.names.intern(name_text), type_id, AccessMode.Private, index, Option<SourceSpan>.Some(location))
+impl VerificationFixture {
+    static fn new(source: str, path: str) -> Self {
+        let trace = CompilerTrace.disabled();
+        defer trace.drop();
+        let frontend = FrontendDriver.new(load_source(path, source), false, &trace);
+        defer frontend.drop();
+        let units = match frontend.run() {
+            Ok(value) => value,
+            Err(error) => { error.drop(); @panic("probe preparation failed"); },
+        };
+        let trust = trust();
+        let permissions = Vec<SourcePermissions>.new();
+        let index = 0u64;
+        while index < units.len() {
+            let unit = UnitId(index);
+            let canonical = units.file(unit).path();
+            let stdlib = trust.is_stdlib(canonical);
+            let restricted = trust.allows_restricted(canonical);
+            permissions.push(SourcePermissions(stdlib, restricted, stdlib));
+            index += 1;
+        }
+        Self(units, TypeStore.new(), NameInterner.new(), SymbolStore.new(), HirStore.new(), trust,
+            permissions, DefinitionRegistry.new(), DefinitionWorklist.new(), ImplRegistry.new())
+    }
+
+    fn context() -> ResolutionContext {
+        match ResolutionContext.new(&self.units, Option<PackageMap&>.None, &self.names, &self.types,
+            &self.symbols, &self.hir, self.trust.stdlib_root(), &self.permissions, &self.definitions,
+            &self.worklist, &self.impls, false, Option<TypeSizeProvider&>.None,
+            Option<DiagnosticReporter&>.None) {
+            Ok(value) => value,
+            Err(error) => { error.drop(); @panic("probe context failed"); },
+        }
+    }
+
+    fn lower_hir() -> AnalysisOutput {
+        let context = self.context();
+        defer context.drop();
+        let options = AnalysisOptions.new();
+        collect_declarations(&context).unwrap();
+        resolve_definitions(&context).unwrap();
+        resolve_impls(&context).unwrap();
+        let output = match check_procedures(&context, &options) {
+            Ok(value) => value,
+            Err(error) => { error.drop(); @panic("could not lower the verification fixture"); },
+        };
+        normalize_address_storage(&context, &output).unwrap();
+        finalize_hir_types(&context, &output).unwrap();
+        output
+    }
+}
+
+impl Drop for VerificationFixture {
+    pub fn drop() {
+        self.permissions.drop();
+        self.trust.drop();
+        self.worklist.drop();
+        self.definitions.drop();
+        self.impls.drop();
+        self.hir.drop();
+        self.symbols.drop();
+        self.names.drop();
+        self.types.drop();
+        self.units.drop();
+    }
+}
+
+fn definition(types: TypeStore&, names: NameInterner&, name_text: str, kind: NominalKind, location: SourceSpan, generics: Vec<TypeId>) -> DefId {
+    let name = names.intern(name_text);
+    types.register(DefinitionHeader(kind, name, location, UnitId(0u64)), generics)
+}
+
+fn field(names: NameInterner&, name_text: str, type_id: TypeId, index: u64, location: SourceSpan) -> StructField {
+    StructField(names.intern(name_text), type_id, AccessMode.Private, index, Option<SourceSpan>.Some(location))
 }
 
 fn count_key(keys: Vec<TypeId>&, id: TypeId) -> u64 {
@@ -118,9 +210,6 @@ fn has_duplicate(keys: Vec<TypeId>&) -> bool {
     }
     false
 }
-
-struct IgnoreDiagnostics {}
-impl DiagnosticReporter for IgnoreDiagnostics { pub fn report(diagnostic: UserDiagnostic&) {} }
 
 fn same_location(error: AnalysisError&, location: SourceSpan) -> bool {
     match &error.location {
@@ -149,119 +238,119 @@ struct FixtureTypes {
 
 // Builds the concrete type graph and callable/trait identities used by the
 // cache assertions. All definitions are complete and immutable from here on.
-fn build_types(session: AnalysisSession&, context: ResolutionContext&, location: SourceSpan) -> FixtureTypes {
+fn build_types(fixture: VerificationFixture&, location: SourceSpan) -> FixtureTypes {
     let empty = Vec<TypeId>.new();
     defer empty.drop();
 
-    let node_definition = definition(session, "Node", NominalKind.Struct, location, Vec<TypeId>.new());
-    let node = *session.types.instance(node_definition, &empty).unwrap();
+    let node_definition = definition(&fixture.types, &fixture.names, "Node", NominalKind.Struct, location, Vec<TypeId>.new());
+    let node = *fixture.types.instance(node_definition, &empty).unwrap();
     let node_fields = Vec<StructField>.new();
-    node_fields.push(field(session, "next", session.types.pointer(node), 0u64, location));
-    node_fields.push(field(session, "value", TypeId(I32_TYPE_ID), 1u64, location));
-    session.types.finish_definition(node_definition,
+    node_fields.push(field(&fixture.names, "next", fixture.types.pointer(node), 0u64, location));
+    node_fields.push(field(&fixture.names, "value", TypeId(I32_TYPE_ID), 1u64, location));
+    fixture.types.finish_definition(node_definition,
         DefinitionBody.Struct(AggregateDefinition(node_fields, HashMap<NameId, TypeId>.new()))).unwrap();
 
-    let bad_definition = definition(session, "Bad", NominalKind.Struct, location, Vec<TypeId>.new());
-    let bad = *session.types.instance(bad_definition, &empty).unwrap();
+    let bad_definition = definition(&fixture.types, &fixture.names, "Bad", NominalKind.Struct, location, Vec<TypeId>.new());
+    let bad = *fixture.types.instance(bad_definition, &empty).unwrap();
     let bad_fields = Vec<StructField>.new();
-    bad_fields.push(field(session, "next", session.types.pointer(bad), 0u64, location));
-    bad_fields.push(field(session, "broken", TypeId(ERROR_TYPE_ID), 1u64, location));
-    session.types.finish_definition(bad_definition,
+    bad_fields.push(field(&fixture.names, "next", fixture.types.pointer(bad), 0u64, location));
+    bad_fields.push(field(&fixture.names, "broken", TypeId(ERROR_TYPE_ID), 1u64, location));
+    fixture.types.finish_definition(bad_definition,
         DefinitionBody.Struct(AggregateDefinition(bad_fields, HashMap<NameId, TypeId>.new()))).unwrap();
 
-    let box_generic = session.types.generic(session.names.intern("T"));
+    let box_generic = fixture.types.generic(fixture.names.intern("T"));
     let box_generics = Vec<TypeId>.new();
     box_generics.push(box_generic);
-    let box_definition = definition(session, "Box", NominalKind.Struct, location, box_generics);
+    let box_definition = definition(&fixture.types, &fixture.names, "Box", NominalKind.Struct, location, box_generics);
     let box_fields = Vec<StructField>.new();
-    box_fields.push(field(session, "value", box_generic, 0u64, location));
-    session.types.finish_definition(box_definition,
+    box_fields.push(field(&fixture.names, "value", box_generic, 0u64, location));
+    fixture.types.finish_definition(box_definition,
         DefinitionBody.Struct(AggregateDefinition(box_fields, HashMap<NameId, TypeId>.new()))).unwrap();
     let box_i32_arguments = Vec<TypeId>.new();
     box_i32_arguments.push(TypeId(I32_TYPE_ID));
-    let box_i32 = *session.types.instance(box_definition, &box_i32_arguments).unwrap();
+    let box_i32 = *fixture.types.instance(box_definition, &box_i32_arguments).unwrap();
     box_i32_arguments.drop();
     let box_u64_arguments = Vec<TypeId>.new();
     box_u64_arguments.push(TypeId(U64_TYPE_ID));
-    let box_u64 = *session.types.instance(box_definition, &box_u64_arguments).unwrap();
+    let box_u64 = *fixture.types.instance(box_definition, &box_u64_arguments).unwrap();
     box_u64_arguments.drop();
 
-    let plain_definition = definition(session, "plain", NominalKind.Function, location, Vec<TypeId>.new());
-    session.types.finish_definition(plain_definition, DefinitionBody.Function(
+    let plain_definition = definition(&fixture.types, &fixture.names, "plain", NominalKind.Function, location, Vec<TypeId>.new());
+    fixture.types.finish_definition(plain_definition, DefinitionBody.Function(
         CallableDefinition(Vec<Parameter>.new(), TypeId(I32_TYPE_ID), Option<TypeId>.None,
         true, false, false, false, false, true, 0u64))).unwrap();
-    let plain = *session.types.instance(plain_definition, &empty).unwrap();
+    let plain = *fixture.types.instance(plain_definition, &empty).unwrap();
 
-    let function_generic = session.types.generic(session.names.intern("U"));
+    let function_generic = fixture.types.generic(fixture.names.intern("U"));
     let function_generics = Vec<TypeId>.new();
     function_generics.push(function_generic);
-    let function_definition = definition(session, "identity", NominalKind.Function, location, function_generics);
+    let function_definition = definition(&fixture.types, &fixture.names, "identity", NominalKind.Function, location, function_generics);
     let function_parameters = Vec<Parameter>.new();
-    function_parameters.push(Parameter(session.names.intern("input"), function_generic, Option<SourceSpan>.None));
-    session.types.finish_definition(function_definition, DefinitionBody.Function(
+    function_parameters.push(Parameter(fixture.names.intern("input"), function_generic, Option<SourceSpan>.None));
+    fixture.types.finish_definition(function_definition, DefinitionBody.Function(
         CallableDefinition(function_parameters, function_generic, Option<TypeId>.None,
         true, false, false, false, false, true, 0u64))).unwrap();
     let generic_i32_arguments = Vec<TypeId>.new();
     generic_i32_arguments.push(TypeId(I32_TYPE_ID));
-    let generic_i32 = *session.types.instance(function_definition, &generic_i32_arguments).unwrap();
+    let generic_i32 = *fixture.types.instance(function_definition, &generic_i32_arguments).unwrap();
     generic_i32_arguments.drop();
     let generic_u64_arguments = Vec<TypeId>.new();
     generic_u64_arguments.push(TypeId(U64_TYPE_ID));
-    let generic_u64 = *session.types.instance(function_definition, &generic_u64_arguments).unwrap();
+    let generic_u64 = *fixture.types.instance(function_definition, &generic_u64_arguments).unwrap();
     generic_u64_arguments.drop();
     let generic_bool_arguments = Vec<TypeId>.new();
     generic_bool_arguments.push(TypeId(BOOL_TYPE_ID));
-    let generic_bool = *session.types.instance(function_definition, &generic_bool_arguments).unwrap();
+    let generic_bool = *fixture.types.instance(function_definition, &generic_bool_arguments).unwrap();
     generic_bool_arguments.drop();
 
-    let trait_generic = session.types.generic(session.names.intern("V"));
+    let trait_generic = fixture.types.generic(fixture.names.intern("V"));
     let trait_generics = Vec<TypeId>.new();
     trait_generics.push(trait_generic);
-    let trait_definition = definition(session, "Convert", NominalKind.Trait, location, trait_generics);
+    let trait_definition = definition(&fixture.types, &fixture.names, "Convert", NominalKind.Trait, location, trait_generics);
 
-    let first_self = session.types.generic(session.names.intern("Self"));
+    let first_self = fixture.types.generic(fixture.names.intern("Self"));
     let first_generics = Vec<TypeId>.new();
     first_generics.push(trait_generic);
     first_generics.push(first_self);
-    let first_definition = definition(session, "first", NominalKind.Method, location, first_generics);
+    let first_definition = definition(&fixture.types, &fixture.names, "first", NominalKind.Method, location, first_generics);
     let first_parameters = Vec<Parameter>.new();
-    first_parameters.push(Parameter(session.names.intern("input"), trait_generic, Option<SourceSpan>.None));
-    session.types.finish_definition(first_definition, DefinitionBody.Method(
+    first_parameters.push(Parameter(fixture.names.intern("input"), trait_generic, Option<SourceSpan>.None));
+    fixture.types.finish_definition(first_definition, DefinitionBody.Method(
         CallableDefinition(first_parameters, trait_generic, Option<TypeId>.Some(first_self),
         false, false, false, false, false, true, 0u64))).unwrap();
     let first_arguments = Vec<TypeId>.new();
     first_arguments.push(trait_generic);
     first_arguments.push(first_self);
-    let first_method = *session.types.instance(first_definition, &first_arguments).unwrap();
+    let first_method = *fixture.types.instance(first_definition, &first_arguments).unwrap();
     first_arguments.drop();
 
-    let second_self = session.types.generic(session.names.intern("Self"));
+    let second_self = fixture.types.generic(fixture.names.intern("Self"));
     let second_generics = Vec<TypeId>.new();
     second_generics.push(trait_generic);
     second_generics.push(second_self);
-    let second_definition = definition(session, "second", NominalKind.Method, location, second_generics);
+    let second_definition = definition(&fixture.types, &fixture.names, "second", NominalKind.Method, location, second_generics);
     let second_parameters = Vec<Parameter>.new();
-    second_parameters.push(Parameter(session.names.intern("input"), trait_generic, Option<SourceSpan>.None));
-    session.types.finish_definition(second_definition, DefinitionBody.Method(
+    second_parameters.push(Parameter(fixture.names.intern("input"), trait_generic, Option<SourceSpan>.None));
+    fixture.types.finish_definition(second_definition, DefinitionBody.Method(
         CallableDefinition(second_parameters, trait_generic, Option<TypeId>.Some(second_self),
         false, false, false, false, false, true, 0u64))).unwrap();
     let second_arguments = Vec<TypeId>.new();
     second_arguments.push(trait_generic);
     second_arguments.push(second_self);
-    let second_method = *session.types.instance(second_definition, &second_arguments).unwrap();
+    let second_method = *fixture.types.instance(second_definition, &second_arguments).unwrap();
     second_arguments.drop();
 
     let methods = HashMap<NameId, TypeId>.new();
-    methods.insert(session.names.intern("first"), first_method);
-    methods.insert(session.names.intern("second"), second_method);
-    session.types.finish_definition(trait_definition, DefinitionBody.Trait(methods)).unwrap();
+    methods.insert(fixture.names.intern("first"), first_method);
+    methods.insert(fixture.names.intern("second"), second_method);
+    fixture.types.finish_definition(trait_definition, DefinitionBody.Trait(methods)).unwrap();
     let trait_i32_arguments = Vec<TypeId>.new();
     trait_i32_arguments.push(TypeId(I32_TYPE_ID));
-    let trait_i32 = *session.types.instance(trait_definition, &trait_i32_arguments).unwrap();
+    let trait_i32 = *fixture.types.instance(trait_definition, &trait_i32_arguments).unwrap();
     trait_i32_arguments.drop();
     let trait_u64_arguments = Vec<TypeId>.new();
     trait_u64_arguments.push(TypeId(U64_TYPE_ID));
-    let trait_u64 = *session.types.instance(trait_definition, &trait_u64_arguments).unwrap();
+    let trait_u64 = *fixture.types.instance(trait_definition, &trait_u64_arguments).unwrap();
     trait_u64_arguments.drop();
 
     FixtureTypes(node, bad, box_i32, box_u64, plain, generic_i32, generic_u64, generic_bool,
@@ -389,13 +478,10 @@ fn check_fresh_cache(context: ResolutionContext&, fixture: FixtureTypes&, locati
     assert count_key(&observer.value_keys, fixture.node) == 1u64: "a new cache rebuilds a successful root";
 }
 
-fn check_hir_integration(session: AnalysisSession&, output: AnalysisOutput&) {
+fn check_hir_integration(fixture: VerificationFixture&, output: AnalysisOutput&) {
     let first_observer = MissCounter.new();
     defer first_observer.drop();
-    let first_context = match ResolutionContext.new(session, Option<TypeSizeProvider&>.None, Option<DiagnosticReporter&>.None) {
-        Ok(value) => value,
-        Err(error) => { error.drop(); @panic("could not rebuild the verification context"); },
-    };
+    let first_context = fixture.context();
     defer first_context.drop();
     verify_hir_observed(&first_context, output,
         Option<HirVerificationObserver&>.Some(&first_observer)).unwrap();
@@ -424,20 +510,20 @@ fn check_hir_integration(session: AnalysisSession&, output: AnalysisOutput&) {
 
 // The same Break node is reachable inside a loop and again outside it, so the
 // exported root must be rejected by the context that lacks an enclosing loop.
-fn shared_break_output(session: AnalysisSession&, context: ResolutionContext&, output: AnalysisOutput&) -> AnalysisOutput {
+fn shared_break_output(fixture: VerificationFixture&, output: AnalysisOutput&) -> AnalysisOutput {
     let location = SourceSpan(UnitId(0u64), Span(Position(0u64, 0u64), Position(0u64, 0u64)));
-    let break_id = session.hir.add(HirNode(location, TypeId(NEVER_TYPE_ID), false,
+    let break_id = fixture.hir.add(HirNode(location, TypeId(NEVER_TYPE_ID), false,
         HirKind.Break(Option<HirId>.None)));
     let body_statements = Vec<HirId>.new();
     body_statements.push(break_id);
-    let loop_body = session.hir.add(HirNode(location, TypeId(VOID_TYPE_ID), false,
+    let loop_body = fixture.hir.add(HirNode(location, TypeId(VOID_TYPE_ID), false,
         HirKind.Block(Block(body_statements))));
-    let loop_id = session.hir.add(HirNode(location, TypeId(VOID_TYPE_ID), false,
+    let loop_id = fixture.hir.add(HirNode(location, TypeId(VOID_TYPE_ID), false,
         HirKind.Loop(loop_body)));
     let root_statements = Vec<HirId>.new();
     root_statements.push(loop_id);
     root_statements.push(break_id);
-    let shared_root = session.hir.add(HirNode(location, TypeId(VOID_TYPE_ID), false,
+    let shared_root = fixture.hir.add(HirNode(location, TypeId(VOID_TYPE_ID), false,
         HirKind.Block(Block(root_statements))));
 
     let entry_type = match &output.entry {
@@ -455,7 +541,7 @@ fn shared_break_output(session: AnalysisSession&, context: ResolutionContext&, o
     }
     if !located { @panic("the entry procedure is not exported"); }
 
-    let modified = AnalysisOutput.new();
+    let modified = AnalysisOutput.new(output.types, output.raw_pointers);
     for checked_definition in output.checked {
         modified.checked.push(*checked_definition);
     }
@@ -465,44 +551,18 @@ fn shared_break_output(session: AnalysisSession&, context: ResolutionContext&, o
     modified
 }
 
-fn prepare(source: str, path: str, types: TypeStore&) -> AnalysisSession* {
-    let trace = CompilerTrace.disabled();
-    defer trace.drop();
-    let frontend = FrontendDriver.new(load_source(path, source), false, &trace);
-    defer frontend.drop();
-    let units = match frontend.run() {
-        Ok(value) => value,
-        Err(error) => { error.drop(); @panic("probe preparation failed"); },
-    };
-    dyn AnalysisSession.new(units, false, trust(), Option<PackageMap>.None, types)
-}
-
-fn analyze(session: AnalysisSession*, reporter: DiagnosticReporter&) -> MiddleEndResult {
-    let driver = MiddleEndDriver.new(session, AnalysisOptions.new(), reporter);
-    match driver.run() {
-        Ok(value) => value,
-        Err(error) => @panic("probe analysis failed"),
-    }
-}
-
 fn check_trait_integration() {
     let source = "trait Show { fn show() -> i32; }\nstruct Item { value: i32 }\nimpl Show for Item { pub fn show() -> i32 { self.value } }\nfn render(value: Show&) -> i32 { value.show() }\nfn main() { let item = Item(value=7); let shown = render(&item); assert shown == 7: \"dispatch\"; }\n";
-    let types = TypeStore.new();
-    defer types.drop();
-    let reporter = IgnoreDiagnostics();
-    let result = analyze(prepare(source, "/tmp/hir-verification-trait.an", &types), &reporter);
-    defer result.drop();
-    let output = &result.output;
-    let session = result.session;
-    let context = match ResolutionContext.new(session, Option<TypeSizeProvider&>.None, Option<DiagnosticReporter&>.None) {
-        Ok(value) => value,
-        Err(error) => { error.drop(); @panic("trait probe context failed"); },
-    };
+    let fixture = VerificationFixture.new(source, "/tmp/hir-verification-trait.an");
+    defer fixture.drop();
+    let output = fixture.lower_hir();
+    defer output.drop();
+    let context = fixture.context();
     defer context.drop();
 
     let observer = MissCounter.new();
     defer observer.drop();
-    match verify_hir_observed(&context, output, Option<HirVerificationObserver&>.Some(&observer)) {
+    match verify_hir_observed(&context, &output, Option<HirVerificationObserver&>.Some(&observer)) {
         Ok(_) => {},
         Err(error) => { error.drop(); @panic("trait probe verification failed"); },
     }
@@ -519,15 +579,11 @@ fn probe_source() -> str {
 
 // The negative cache queries violate type identities; the child process isolates the panic.
 fn non_callable_signature() {
-    let types = TypeStore.new();
-    defer types.drop();
-    let reporter = IgnoreDiagnostics();
-    let result = analyze(prepare(probe_source(), "/tmp/hir-verification-probe.an", &types), &reporter);
-    defer result.drop();
-    let context = match ResolutionContext.new(result.session, Option<TypeSizeProvider&>.None, Option<DiagnosticReporter&>.None) {
-        Ok(value) => value,
-        Err(error) => { error.drop(); @panic("probe context failed"); },
-    };
+    let fixture = VerificationFixture.new(probe_source(), "/tmp/hir-verification-probe.an");
+    defer fixture.drop();
+    let output = fixture.lower_hir();
+    defer output.drop();
+    let context = fixture.context();
     defer context.drop();
     let cache = HirVerificationCache.new(&context, Option<HirVerificationObserver&>.None);
     defer cache.drop();
@@ -538,15 +594,11 @@ fn non_callable_signature() {
 }
 
 fn non_trait_object() {
-    let types = TypeStore.new();
-    defer types.drop();
-    let reporter = IgnoreDiagnostics();
-    let result = analyze(prepare(probe_source(), "/tmp/hir-verification-probe.an", &types), &reporter);
-    defer result.drop();
-    let context = match ResolutionContext.new(result.session, Option<TypeSizeProvider&>.None, Option<DiagnosticReporter&>.None) {
-        Ok(value) => value,
-        Err(error) => { error.drop(); @panic("probe context failed"); },
-    };
+    let fixture = VerificationFixture.new(probe_source(), "/tmp/hir-verification-probe.an");
+    defer fixture.drop();
+    let output = fixture.lower_hir();
+    defer output.drop();
+    let context = fixture.context();
     defer context.drop();
     let cache = HirVerificationCache.new(&context, Option<HirVerificationObserver&>.None);
     defer cache.drop();
@@ -557,19 +609,13 @@ fn non_trait_object() {
 }
 
 fn break_outside_loop() {
-    let types = TypeStore.new();
-    defer types.drop();
-    let reporter = IgnoreDiagnostics();
-    let result = analyze(prepare(probe_source(), "/tmp/hir-verification-probe.an", &types), &reporter);
-    defer result.drop();
-    let output = &result.output;
-    let session = result.session;
-    let context = match ResolutionContext.new(session, Option<TypeSizeProvider&>.None, Option<DiagnosticReporter&>.None) {
-        Ok(value) => value,
-        Err(error) => { error.drop(); @panic("probe context failed"); },
-    };
+    let fixture = VerificationFixture.new(probe_source(), "/tmp/hir-verification-probe.an");
+    defer fixture.drop();
+    let output = fixture.lower_hir();
+    defer output.drop();
+    let context = fixture.context();
     defer context.drop();
-    let modified = shared_break_output(session, &context, output);
+    let modified = shared_break_output(&fixture, &output);
     defer modified.drop();
     match verify_hir_observed(&context, &modified, Option<HirVerificationObserver&>.None) {
         Ok(_) => @panic("a break outside every loop was accepted"),
@@ -622,36 +668,29 @@ fn main() {
     for argument in arguments { argument.drop(); }
     arguments.drop();
 
-    let source = probe_source();
-    let types = TypeStore.new();
-    defer types.drop();
-    let reporter = IgnoreDiagnostics();
-    let result = analyze(prepare(source, "/tmp/hir-verification-probe.an", &types), &reporter);
-    defer result.drop();
-    let output = &result.output;
-    let session = result.session;
+    let fixture = VerificationFixture.new(probe_source(), "/tmp/hir-verification-probe.an");
+    defer fixture.drop();
+    let output = fixture.lower_hir();
+    defer output.drop();
 
-    check_hir_integration(session, output);
+    check_hir_integration(&fixture, &output);
     check_trait_integration();
 
-    let context = match ResolutionContext.new(session, Option<TypeSizeProvider&>.None, Option<DiagnosticReporter&>.None) {
-        Ok(value) => value,
-        Err(error) => { error.drop(); @panic("probe context failed"); },
-    };
+    let context = fixture.context();
     defer context.drop();
     let location = SourceSpan(UnitId(0u64), Span(Position(1u64, 4u64), Position(1u64, 9u64)));
     let second_location = SourceSpan(UnitId(0u64), Span(Position(2u64, 4u64), Position(2u64, 9u64)));
-    let fixture = build_types(session, &context, location);
+    let types_fixture = build_types(&fixture, location);
 
     let value_observer = MissCounter.new();
     defer value_observer.drop();
-    check_value_cache(&context, &fixture, location, second_location, &value_observer);
+    check_value_cache(&context, &types_fixture, location, second_location, &value_observer);
 
     let query_observer = MissCounter.new();
     defer query_observer.drop();
-    check_query_cache(&context, &fixture, &query_observer);
+    check_query_cache(&context, &types_fixture, &query_observer);
 
-    check_fresh_cache(&context, &fixture, location);
+    check_fresh_cache(&context, &types_fixture, location);
 
     assert_child_panic("--non-callable-signature", "callable instance is not nominal");
     assert_child_panic("--non-trait-object", "trait object has invalid trait identity");

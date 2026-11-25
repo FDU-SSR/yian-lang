@@ -42,11 +42,11 @@ fn constant_template(ctx: ResolutionContext&, symbol: SymbolId) -> Result<HirId,
         let message = String.from(&"Circular constant dependency: ");
         defer message.drop();
         for dependency in ctx.constant_stack {
-            let record = ctx.session.symbols.get(*dependency).unwrap();
-            message.push_str(ctx.session.names.text(record.name));
+            let record = ctx.symbols.get(*dependency).unwrap();
+            message.push_str(ctx.names.text(record.name));
             message.push_str(" -> ");
         }
-        message.push_str(ctx.session.names.text(ctx.session.symbols.get(symbol).unwrap().name));
+        message.push_str(ctx.names.text(ctx.symbols.get(symbol).unwrap().name));
         let span = match &declaration.item.data { ConstDef(_, name, _, _) => name.span, _ => declaration.item.span, };
         return Result<HirId, AnalysisError>.Err(ctx.error(declaration.unit, span, DiagnosticCode.Resolution, message.as_str()));
     }
@@ -57,7 +57,7 @@ fn constant_template(ctx: ResolutionContext&, symbol: SymbolId) -> Result<HirId,
         ctx.constant_stack.pop();
         if declaration.state != DeclarationState.Complete { declaration.state = DeclarationState.Declared; }
     };
-    let record = *ctx.session.symbols.get(symbol).unwrap();
+    let record = *ctx.symbols.get(symbol).unwrap();
 
     match &declaration.item.data {
         ConstDef(_, _, annotation, _) => {
@@ -113,7 +113,7 @@ fn materialize(ctx: ResolutionContext&, value: ConstValue&, type_id: TypeId, uni
         Char(inner) => Result<HirKind, AnalysisError>.Ok(HirKind.CharLiteral(u32(*inner))),
         String(inner) => Result<HirKind, AnalysisError>.Ok(HirKind.StrLiteral(*inner)),
         Array(elements) => {
-            let element_type = match ctx.session.types.require(type_id)? {
+            let element_type = match ctx.types.require(type_id)? {
                 Array(element, _) => *element,
                 _ => @panic("array constant has no array type"),
             };
@@ -123,26 +123,26 @@ fn materialize(ctx: ResolutionContext&, value: ConstValue&, type_id: TypeId, uni
 
             for element in *elements {
                 let kind = materialize(ctx, &*element, element_type, unit, span)?;
-                nodes.push(ctx.session.hir.add(HirNode(ctx.span(unit, span), element_type, false, kind)));
+                nodes.push(ctx.hir.add(HirNode(ctx.span(unit, span), element_type, false, kind)));
             }
 
             accepted = true;
             Result<HirKind, AnalysisError>.Ok(HirKind.Array(HirArray(element_type, nodes)))
         },
         ArrayRepeat(element, _) => {
-            let element_type = match ctx.session.types.require(type_id)? {
+            let element_type = match ctx.types.require(type_id)? {
                 Array(inner, _) => *inner,
                 _ => @panic("repeat constant has no array type"),
             };
             let kind = materialize(ctx, &**element, element_type, unit, span)?;
-            let node = ctx.session.hir.add(HirNode(ctx.span(unit, span), element_type, false, kind));
+            let node = ctx.hir.add(HirNode(ctx.span(unit, span), element_type, false, kind));
             Result<HirKind, AnalysisError>.Ok(HirKind.ArrayRepeat(HirArrayRepeat(element_type, node)))
         },
     }
 }
 
 fn copy_constant(ctx: ResolutionContext&, id: HirId) -> Result<HirId, AnalysisError> {
-    let node = *ctx.session.hir.require(id)?;
+    let node = *ctx.hir.require(id)?;
     let kind = match &node.kind {
         IntLiteral(value) => HirKind.IntLiteral(*value),
         FloatLiteral(value) => HirKind.FloatLiteral(*value),
@@ -164,5 +164,5 @@ fn copy_constant(ctx: ResolutionContext&, id: HirId) -> Result<HirId, AnalysisEr
         ArrayRepeat(value) => HirKind.ArrayRepeat(HirArrayRepeat(value.element_type, copy_constant(ctx, value.element)?)),
         _ => @panic("constant template contains a non-value node"),
     };
-    Result<HirId, AnalysisError>.Ok(ctx.session.hir.add(HirNode(node.span, node.type_id, false, kind)))
+    Result<HirId, AnalysisError>.Ok(ctx.hir.add(HirNode(node.span, node.type_id, false, kind)))
 }

@@ -27,7 +27,7 @@ pub fn parameters(ctx: ResolutionContext&, unit: UnitId, scope: ScopeId, syntax:
     for parameter in *syntax {
         match parameter {
             Named(value) => {
-                let name = ctx.session.names.intern(value.data.name.data.name.as_str());
+                let name = ctx.names.intern(value.data.name.data.name.as_str());
 
                 for previous in result {
                     if previous.name == name {
@@ -59,18 +59,18 @@ pub fn annotations(ctx: ResolutionContext&, unit: UnitId, scope: ScopeId, generi
             Constant(value) => {
                 let type_id = resolve_type(ctx, unit, scope, value.data.const_type)?;
 
-                match ctx.session.types.require(type_id)? {
+                match ctx.types.require(type_id)? {
                     Integer(_, _) => {},
                     Bool => {},
                     Generic(_) if allow_dependent_constants => {},
                     _ => return Result<(), AnalysisError>.Err(ctx.error(unit, value.span, DiagnosticCode.GenericArguments, "constant parameter requires an integer or boolean type")),
                 }
 
-                let name = ctx.session.names.intern(value.data.name.data.name.as_str());
-                let symbol = *ctx.session.symbols.lookup(scope, name).unwrap();
-                let generic_id = ctx.session.symbols.get(symbol).unwrap().type_id;
+                let name = ctx.names.intern(value.data.name.data.name.as_str());
+                let symbol = *ctx.symbols.lookup(scope, name).unwrap();
+                let generic_id = ctx.symbols.get(symbol).unwrap().type_id;
 
-                match ctx.session.types.require(generic_id)? {
+                match ctx.types.require(generic_id)? {
                     ConstGeneric(_, annotation) => *annotation = type_id,
                     _ => @panic("constant parameter has invalid type"),
                 };
@@ -120,10 +120,10 @@ fn resolve_one_definition(ctx: ResolutionContext&, index: u64) -> Result<(), Ana
             };
             let params = parameters(ctx, unit, scope, params)?;
             let definition = *declaration.definition.unwrap();
-            let type_id = ctx.session.symbols.get(declaration.symbol).unwrap().type_id;
-            ctx.session.types.finish_definition(definition, DefinitionBody.Function(CallableDefinition(params, result, Option<TypeId>.None,
+            let type_id = ctx.symbols.get(declaration.symbol).unwrap().type_id;
+            ctx.types.finish_definition(definition, DefinitionBody.Function(CallableDefinition(params, result, Option<TypeId>.None,
                 false, false, has_attr(attrs, AttrKind.Ffi), false, has_attr(attrs, AttrKind.PubFfi), has_attr(attrs, AttrKind.Pub), 0)))?;
-            ctx.session.definitions.register(Procedure(definition, type_id, unit, *body, DefinitionKind.Function))?;
+            ctx.definitions.register(Procedure(definition, type_id, unit, *body, DefinitionKind.Function))?;
         },
         StructDef(attrs, _, _, fields) => {
             let values = Vec<StructField>.new();
@@ -139,7 +139,7 @@ fn resolve_one_definition(ctx: ResolutionContext&, index: u64) -> Result<(), Ana
                     return Result<(), AnalysisError>.Err(ctx.error(unit, field.span, DiagnosticCode.Access, "invalid structure field modifier"));
                 }
 
-                let name = ctx.session.names.intern(field.data.name.data.name.as_str());
+                let name = ctx.names.intern(field.data.name.data.name.as_str());
 
                 for previous in values {
                     if previous.name == name {
@@ -154,7 +154,7 @@ fn resolve_one_definition(ctx: ResolutionContext&, index: u64) -> Result<(), Ana
                     AccessMode.Private
                 };
 
-                if access == AccessMode.Public && has_attr(attrs, AttrKind.Pub) && contains_ffi(ctx.session.types, type_id, false) {
+                if access == AccessMode.Public && has_attr(attrs, AttrKind.Pub) && contains_ffi(ctx.types, type_id, false) {
                     return Result<(), AnalysisError>.Err(ctx.error(unit, field.span, DiagnosticCode.Access, "public structure field cannot expose a C ABI type"));
                 }
 
@@ -162,7 +162,7 @@ fn resolve_one_definition(ctx: ResolutionContext&, index: u64) -> Result<(), Ana
             }
 
             accepted = true;
-            ctx.session.types.finish_definition(*declaration.definition.unwrap(), DefinitionBody.Struct(AggregateDefinition(values, HashMap<NameId, TypeId>.new())))?;
+            ctx.types.finish_definition(*declaration.definition.unwrap(), DefinitionBody.Struct(AggregateDefinition(values, HashMap<NameId, TypeId>.new())))?;
         },
         EnumDef(attrs, _, _, variants) => {
             let values = Vec<EnumVariant>.new();
@@ -174,7 +174,7 @@ fn resolve_one_definition(ctx: ResolutionContext&, index: u64) -> Result<(), Ana
             };
 
             for variant in *variants {
-                let name = ctx.session.names.intern(variant.data.name.data.name.as_str());
+                let name = ctx.names.intern(variant.data.name.data.name.as_str());
 
                 for previous in values {
                     if previous.name == name {
@@ -191,7 +191,7 @@ fn resolve_one_definition(ctx: ResolutionContext&, index: u64) -> Result<(), Ana
                 };
 
                 for field in variant.data.fields {
-                    let field_name = ctx.session.names.intern(field.data.name.data.name.as_str());
+                    let field_name = ctx.names.intern(field.data.name.data.name.as_str());
 
                     for previous in payloads {
                         if previous.name == field_name {
@@ -201,7 +201,7 @@ fn resolve_one_definition(ctx: ResolutionContext&, index: u64) -> Result<(), Ana
 
                     let type_id = resolve_type(ctx, unit, scope, field.data.var_type)?;
 
-                    if has_attr(attrs, AttrKind.Pub) && contains_ffi(ctx.session.types, type_id, false) {
+                    if has_attr(attrs, AttrKind.Pub) && contains_ffi(ctx.types, type_id, false) {
                         return Result<(), AnalysisError>.Err(ctx.error(unit, field.span, DiagnosticCode.Access, "public enum payload cannot expose a C ABI type"));
                     }
 
@@ -213,7 +213,7 @@ fn resolve_one_definition(ctx: ResolutionContext&, index: u64) -> Result<(), Ana
                 if payloads.len() != 0 {
                     let arguments = Vec<TypeId>.new();
                     defer arguments.drop();
-                    let owner = *ctx.session.types.definition(*declaration.definition.unwrap()).unwrap();
+                    let owner = *ctx.types.definition(*declaration.definition.unwrap()).unwrap();
                     let index = 0u64;
 
                     while index < owner.generic_count() {
@@ -221,31 +221,31 @@ fn resolve_one_definition(ctx: ResolutionContext&, index: u64) -> Result<(), Ana
                         index += 1;
                     }
 
-                    let identity = ctx.session.types.register(DefinitionHeader(NominalKind.Struct, name, ctx.span(unit, variant.span), unit), arguments.clone());
+                    let identity = ctx.types.register(DefinitionHeader(NominalKind.Struct, name, ctx.span(unit, variant.span), unit), arguments.clone());
                     moved = true;
-                    ctx.session.types.finish_definition(identity, DefinitionBody.Struct(AggregateDefinition(payloads, HashMap<NameId, TypeId>.new())))?;
-                    payload = Option<TypeId>.Some(ctx.session.types.instance(identity, &arguments)?);
+                    ctx.types.finish_definition(identity, DefinitionBody.Struct(AggregateDefinition(payloads, HashMap<NameId, TypeId>.new())))?;
+                    payload = Option<TypeId>.Some(ctx.types.instance(identity, &arguments)?);
                 }
 
                 values.push(EnumVariant(name, payload, values.len(), Option<SourceSpan>.Some(ctx.span(unit, variant.data.name.span))));
             }
 
             accepted = true;
-            ctx.session.types.finish_definition(*declaration.definition.unwrap(), DefinitionBody.Enum(EnumDefinition(values, HashMap<NameId, TypeId>.new())))?;
+            ctx.types.finish_definition(*declaration.definition.unwrap(), DefinitionBody.Enum(EnumDefinition(values, HashMap<NameId, TypeId>.new())))?;
         },
         TraitDef(_, _, _, _) => {
             resolve_trait(ctx, index)?;
         },
         ConstDef(_, _, syntax, _) => {
             let type_id = resolve_type(ctx, unit, scope, *syntax)?;
-            ctx.session.symbols.get(declaration.symbol).unwrap().type_id = type_id;
+            ctx.symbols.get(declaration.symbol).unwrap().type_id = type_id;
         },
         OpaqueTypeDef(_, _) => {},
         ExternBlock(_, _, functions) => {
-            let symbol = *ctx.session.symbols.get(declaration.symbol).unwrap();
+            let symbol = *ctx.symbols.get(declaration.symbol).unwrap();
 
             for function in *functions {
-                if ctx.session.names.intern(function.data.name.data.name.as_str()) == symbol.name {
+                if ctx.names.intern(function.data.name.data.name.as_str()) == symbol.name {
                     let values = Vec<Parameter>.new();
                     let accepted = false;
                     defer {
@@ -255,7 +255,7 @@ fn resolve_one_definition(ctx: ResolutionContext&, index: u64) -> Result<(), Ana
                     };
 
                     for parameter in function.data.params {
-                        let name = ctx.session.names.intern(parameter.data.name.data.name.as_str());
+                        let name = ctx.names.intern(parameter.data.name.data.name.as_str());
                         let type_id = resolve_type(ctx, unit, scope, parameter.data.var_type)?;
                         values.push(Parameter(name, type_id, Option<SourceSpan>.Some(ctx.span(unit, parameter.span))));
                     }
@@ -265,7 +265,7 @@ fn resolve_one_definition(ctx: ResolutionContext&, index: u64) -> Result<(), Ana
                         None => TypeId(VOID_TYPE_ID),
                     };
                     accepted = true;
-                    ctx.session.types.finish_definition(*declaration.definition.unwrap(), DefinitionBody.Function(CallableDefinition(values, result, Option<TypeId>.None, false, true, true, true, false, false, 0)))?;
+                    ctx.types.finish_definition(*declaration.definition.unwrap(), DefinitionBody.Function(CallableDefinition(values, result, Option<TypeId>.None, false, true, true, true, false, false, 0)))?;
                 }
             }
         },

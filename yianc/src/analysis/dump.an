@@ -1,8 +1,8 @@
 from yianc.analysis.hir.node import HirNode;
 from yianc.analysis.hir.pattern import PatternNode;
 from yianc.analysis.hir.traversal import HirVisitor, walk_expr;
+from yianc.analysis.hir.store import HirStore;
 from yianc.analysis.session.output import AnalysisOutput;
-from yianc.analysis.session.session import AnalysisSession;
 from yianc.common.ids import HirId, PatternId;
 from yianc.common.traversal import WalkControl;
 from yianc.diagnostics.model import AnalysisError;
@@ -83,7 +83,7 @@ impl HirVisitor for HirDump {
     }
 }
 
-pub fn hir_dump(session: AnalysisSession&, result: AnalysisOutput&) -> Result<(), OutputError> {
+pub fn hir_dump(hir: HirStore&, result: AnalysisOutput&) -> Result<(), OutputError> {
     let output = Writer.with_max_depth(512u64);
     defer output.drop();
     let visitor = HirDump(&output);
@@ -101,7 +101,7 @@ pub fn hir_dump(session: AnalysisSession&, result: AnalysisOutput&) -> Result<()
         for parameter in procedure.parameters { output.write_u64(parameter.index); }
         output.end_array();
         output.key("root");
-        match walk_expr(&session.hir, procedure.root, &visitor) {
+        match walk_expr(hir, procedure.root, &visitor) {
             Ok(_) => {},
             Err(problem) => { @panic("invalid HIR while dumping"); },
         }

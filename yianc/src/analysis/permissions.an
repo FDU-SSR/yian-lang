@@ -1,0 +1,5 @@
+pub struct SourcePermissions {
+    pub is_stdlib: bool,
+    pub allows_restricted: bool,
+    pub allows_ffi: bool,
+}

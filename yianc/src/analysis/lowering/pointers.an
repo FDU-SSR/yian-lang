@@ -17,8 +17,8 @@ impl ExprChecker {
     pub fn pointer_binary(span: Span, op: BinaryOperator, left: HirId, right: HirId) -> Result<Option<HirId>, AnalysisError> {
         let left_type = self.type_of(left);
         let right_type = self.type_of(right);
-        let left_data = self.ctx.session.types.require(left_type)?;
-        let right_data = self.ctx.session.types.require(right_type)?;
+        let left_data = self.ctx.types.require(left_type)?;
+        let right_data = self.ctx.types.require(right_type)?;
         let pointer = match left_data {
             Pointer(_) => true, CPointer(_) => true, _ => false
         };
@@ -39,7 +39,7 @@ impl ExprChecker {
         if same && op == BinaryOperator.Sub {
             match left_data {
                 Pointer(_) => {
-                    let difference = self.ctx.session.types.primitive(TypeData.Integer(64, true))?;
+                    let difference = self.ctx.types.primitive(TypeData.Integer(64, true))?;
                     return Result<Option<HirId>, AnalysisError>.Ok(Option<HirId>.Some(self.node(span, difference, false, HirKind.Binary(Binary(op, left, right)))));
                 },
                 _ => {},
@@ -51,14 +51,14 @@ impl ExprChecker {
         if pointer && is_integer(self.ctx, right_type) && (op == BinaryOperator.Add || op == BinaryOperator.Sub || compound) {
             match left_data {
                 CPointer(inner) => {
-                    if !self.ffi_allowed || !c_abi_type(self.ctx.session.types, *inner, false, false) {
+                    if !self.ffi_allowed || !c_abi_type(self.ctx.types, *inner, false, false) {
                         return Result<Option<HirId>, AnalysisError>.Err(self.error(span, "C pointer arithmetic requires an ffi function and a complete C ABI element"));
                     }
                 },
                 _ => {},
             }
 
-            if compound && !self.ctx.session.hir.require(left)?.is_place {
+            if compound && !self.ctx.hir.require(left)?.is_place {
                 return Result<Option<HirId>, AnalysisError>.Err(self.error(span, "pointer assignment requires a place"));
             }
 
@@ -86,7 +86,7 @@ impl ExprChecker {
         // References address their object. A pointer keeps its own Index implementation.
 
         while true {
-            match self.ctx.session.types.require(self.type_of(object))? {
+            match self.ctx.types.require(self.type_of(object))? {
                 Reference(inner) => {
                     object = self.node(span, *inner, true, HirKind.Unary(Unary(UnaryOperator.Deref, object)));
                 },
@@ -96,11 +96,11 @@ impl ExprChecker {
             }
         }
 
-        let place = self.ctx.session.hir.require(object)?.is_place;
+        let place = self.ctx.hir.require(object)?.is_place;
 
-        match self.ctx.session.types.require(self.type_of(object))? {
+        match self.ctx.types.require(self.type_of(object))? {
             Tuple(elements) => {
-                let position = match &self.ctx.session.hir.require(index)?.kind {
+                let position = match &self.ctx.hir.require(index)?.kind {
                     IntLiteral(integer) => {
                         if integer.is_negative() {
                             return Result<HirId, AnalysisError>.Err(self.error(span, "tuple index is negative"));
@@ -119,7 +119,7 @@ impl ExprChecker {
             },
             Array(element, count) => {
                 if is_integer(self.ctx, self.type_of(index)) {
-                    match self.ctx.session.types.require(*count)? {
+                    match self.ctx.types.require(*count)? {
                         LiteralValue(length, _, _) => {
                             let offset = self.coerce(index, TypeId(U64_TYPE_ID))?;
                             return Result<HirId, AnalysisError>.Ok(self.node(span, *element, place, HirKind.ArrayAccess(ArrayAccess(object, offset, *element, *length))));
@@ -141,7 +141,7 @@ impl ExprChecker {
                     let arguments = Vec<HirId>.new();
                     arguments.push(object);
                     arguments.push(index);
-                    return Result<HirId, AnalysisError>.Ok(self.node(span, self.ctx.session.types.slice(*element), false,
+                    return Result<HirId, AnalysisError>.Ok(self.node(span, self.ctx.types.slice(*element), false,
                         HirKind.Builtin(Builtin(BuiltinKind.SliceRange, types, arguments))));
                 }
             },
@@ -151,14 +151,14 @@ impl ExprChecker {
                 // a dereference. Lower it directly so the generic trait call and
                 // its reference arguments stay out of the hot path.
                 let index_type = self.type_of(index);
-                let valid_index = match self.ctx.session.types.require(index_type)? {
+                let valid_index = match self.ctx.types.require(index_type)? {
                     TypeData.Integer(bits, signed) => *bits == 64u32 && !*signed,
                     TypeData.IntLiteral => true,
                     _ => false,
                 };
                 if valid_index {
                     let offset = self.coerce(index, TypeId(U64_TYPE_ID))?;
-                    let address = self.node(span, self.ctx.session.types.pointer(*element), false,
+                    let address = self.node(span, self.ctx.types.pointer(*element), false,
                         HirKind.Binary(Binary(BinaryOperator.Add, object, offset)));
                     return Result<HirId, AnalysisError>.Ok(self.node(span, *element, true,
                         HirKind.Unary(Unary(UnaryOperator.Deref, address))));

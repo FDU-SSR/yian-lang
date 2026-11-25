@@ -12,8 +12,8 @@ from std.core.iter import Iterator, IntoIterator;
 
 impl ExprChecker {
     pub fn make_trait_object(id: HirId, expected: TypeId, trait_id: TypeId) -> Result<HirId, AnalysisError> {
-        let node = self.ctx.session.hir.require(id)?;
-        let concrete = match self.ctx.session.types.require(node.type_id)? {
+        let node = self.ctx.hir.require(id)?;
+        let concrete = match self.ctx.types.require(node.type_id)? {
             Pointer(inner) => *inner,
             Reference(inner) => *inner,
             _ => return Result<HirId, AnalysisError>.Err(self.error(node.span.span, "trait object requires a concrete pointer or reference")),
@@ -45,10 +45,10 @@ impl ExprChecker {
         };
 
         for method in required {
-            let definition = match self.ctx.session.types.require(*method)? {
+            let definition = match self.ctx.types.require(*method)? {
                 Nominal(id, _) => *id, _ => @panic("dynamic slot is not nominal")
             };
-            let name = self.ctx.session.types.definition(definition).unwrap().header().name;
+            let name = self.ctx.types.definition(definition).unwrap().header().name;
             let implementation = lookup_method(self.ctx, concrete, name, Option<TypeId>.Some(trait_id), node.span)?;
             let callable = signature(self.ctx, implementation)?;
             defer callable.drop();
@@ -70,11 +70,11 @@ impl ExprChecker {
         let slot = 0u64;
 
         for method in methods {
-            let definition = match self.ctx.session.types.require(*method)? {
+            let definition = match self.ctx.types.require(*method)? {
                 Nominal(id, _) => *id, _ => @panic("dynamic slot is not nominal")
             };
 
-            if self.ctx.session.types.definition(definition).unwrap().header().name == name {
+            if self.ctx.types.definition(definition).unwrap().header().name == name {
                 let callable = signature(self.ctx, *method)?;
                 defer callable.drop();
 

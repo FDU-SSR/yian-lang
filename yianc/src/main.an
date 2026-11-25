@@ -1,4 +1,3 @@
-from yianc.analysis.session.session import AnalysisSession;
 from yianc.analysis.session.output import AnalysisOptions;
 from yianc.types.layout import TypeSizeProvider;
 from yianc.analysis.dump import hir_dump;
@@ -15,12 +14,14 @@ from yianc.telemetry.log import LogLevel;
 from yianc.telemetry.profile import ProfileKind;
 from yianc.telemetry.trace import CompilerTrace;
 from yianc.types.store import TypeStore;
+from yianc.common.names import NameInterner;
+from yianc.analysis.symbol.scope import SymbolStore;
+from yianc.analysis.hir.store import HirStore;
 from std.core.io import Stderr, Write;
 
 const EXIT_FAILURE: i32 = 1;
 
 struct CliReporter {
-    // The session owns the unit table; this reporter borrows a local handle while it renders.
     sources: SourceMap&,
 }
 
@@ -30,16 +31,13 @@ impl DiagnosticReporter for CliReporter {
     }
 }
 
-// The compilation owns one type store; the session and layout borrow it.
 fn main() {
     // Parse command line arguments
     let config = parse_args();
-    defer config.drop();
     let check = &config.action matches Check;
 
     // Initialize the compiler trace for telemetry and profiling
     let trace = CompilerTrace.new(&config);
-    defer trace.drop();
     trace.start_pass("compiler.total", "main", "compiler.total", ProfileKind.Stage);
     if !check { trace.event("main", LogLevel.Info, "compiling source inputs", Option<str>.None); }
 
@@ -53,7 +51,6 @@ fn main() {
     // Run the frontend driver
     trace.start_pass("frontend", "main", "frontend", ProfileKind.Stage);
     let frontend = FrontendDriver.new(sources, config.dump, &trace);
-    defer frontend.drop();
     let units = match frontend.run() {
         Ok(value) => value,
         Err(problem) => {
@@ -64,10 +61,13 @@ fn main() {
     };
     trace.finish("frontend");
 
-    // Create the analysis session and the target layout before semantic analysis.
+    // Shared semantic tables remain owned by the compiler entry point.
     let types = TypeStore.new();
-    defer types.drop();
-    let session = dyn AnalysisSession.new(units, config.raw_pointers, trust, packages, &types);
+    let names = NameInterner.new();
+    let symbols = SymbolStore.new();
+    let hir = HirStore.new();
+
+    // The target layout uses the same type table as semantic analysis.
     let layout = match TargetLayout.new(&types, config.raw_pointers, config.optimization,
         config.runtime_profile_dir.is_some(), Option<CompilerTrace&>.Some(&trace)) {
         Ok(value) => value,
@@ -76,7 +76,6 @@ fn main() {
             exit(EXIT_FAILURE);
         },
     };
-    defer layout.drop();
 
     let options = AnalysisOptions.new();
     options.require_entry = !check;
@@ -87,10 +86,10 @@ fn main() {
 
     // The reporter borrows the unit table for the duration of analysis.
     let reporter = CliReporter(&units);
-    let middle = MiddleEndDriver.new(session, options, &reporter);
-
     trace.start_pass("semantic_analysis", "main", "semantic analysis", ProfileKind.Stage);
-    let result = match middle.run() {
+    let middle = MiddleEndDriver.new(&units, packages.as_ref(), &names, &types, &symbols, &hir,
+        trust, config.raw_pointers, options, &reporter);
+    let output = match middle.run() {
         Ok(value) => value,
         Err(problem) => {
             trace.fail("semantic_analysis");
@@ -99,10 +98,9 @@ fn main() {
         },
     };
     trace.finish("semantic_analysis");
-    defer result.drop();
 
     if config.dump {
-        match hir_dump(result.session, &result.output) {
+        match hir_dump(&hir, &output) {
             Ok(_) => {},
             Err(problem) => {
                 report(&problem, &units);
@@ -118,8 +116,8 @@ fn main() {
         }
         trace.finish("compiler.total");
     } else {
-        let backend = BackendDriver.new(&result, &layout, &config, Option<CompilerTrace&>.Some(&trace));
-        defer backend.drop();
+        let backend = BackendDriver.new(&output, &units, packages.as_ref(), &names, &hir, &symbols,
+            &layout, &config, Option<CompilerTrace&>.Some(&trace));
         let compile_result = backend.run();
         trace.finish("compiler.total");
         match compile_result {
@@ -127,9 +125,7 @@ fn main() {
             Err(error) => {
                 report(&error, &units);
                 match &error {
-                    Native(problem) => match Stderr.new().write_all(problem.stderr.as_slice()) {
-                        Ok(_) => {}, Err(write_error) => write_error.drop(),
-                    },
+                    Native(problem) => { Stderr.new().write_all(problem.stderr.as_slice()); },
                     _ => {},
                 }
                 exit(EXIT_FAILURE);
@@ -137,7 +133,7 @@ fn main() {
         }
     }
     match trace.finalize(true) {
-        Some(warning) => { report(&warning, &units); warning.drop(); },
+        Some(warning) => report(&warning, &units),
         None => {},
     }
 }

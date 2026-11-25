@@ -20,11 +20,11 @@ from yianc.types.store import ERROR_TYPE_ID, NEVER_TYPE_ID, STR_TYPE_ID, VOID_TY
 
 impl ExprChecker {
     fn bindings(id: PatternId, names: HashMap<NameId, SymbolId>&, replacements: Option<HashMap<SymbolId, SymbolId>&>) -> Result<(), AnalysisError> {
-        let node = self.ctx.session.hir.require_pattern(id)?;
+        let node = self.ctx.hir.require_pattern(id)?;
 
         match &node.kind {
             BindPattern(value) => {
-                let symbol = *self.ctx.session.symbols.get(value.symbol_id).unwrap();
+                let symbol = *self.ctx.symbols.get(value.symbol_id).unwrap();
                 names.insert(symbol.name, value.symbol_id);
 
                 match replacements {
@@ -86,7 +86,7 @@ impl ExprChecker {
         defer constant.drop();
 
         match &constant.value {
-            Integer(value) => match self.ctx.session.types.require(type_id)? {
+            Integer(value) => match self.ctx.types.require(type_id)? {
                 Integer(bits, signed) => Result<u64, AnalysisError>.Ok(scalar_key(value.raw_bits(), *bits, *signed)),
                 CScalar(kind) => Result<u64, AnalysisError>.Ok(scalar_key(value.raw_bits(), kind.bits(), kind.is_signed())),
                 _ => Result<u64, AnalysisError>.Err(self.error(span, "range requires an integer or character type")),
@@ -106,9 +106,9 @@ impl ExprChecker {
         };
 
         if annotation == TypeId(ERROR_TYPE_ID) && self.pattern_tests_value(binding.data.pattern) {
-            match self.ctx.session.types.require(expected)? {
+            match self.ctx.types.require(expected)? {
                 Pointer(inner) => {
-                    let direct_address = match &self.ctx.session.hir.require(value)?.kind {
+                    let direct_address = match &self.ctx.hir.require(value)?.kind {
                         Unary(value) => value.op == UnaryOperator.AddrOf, _ => false
                     };
 
@@ -116,7 +116,7 @@ impl ExprChecker {
                         return Result<HirId, AnalysisError>.Err(self.error(binding.data.pattern.span, "Pointer values cannot be destructured; use '&place'"));
                     }
 
-                    expected = self.ctx.session.types.reference(*inner);
+                    expected = self.ctx.types.reference(*inner);
                 },
                 _ => {},
             }
@@ -144,7 +144,7 @@ impl ExprChecker {
     }
 
     fn pattern_node(span: Span, type_id: TypeId, kind: PatternKind) -> PatternId {
-        self.ctx.session.hir.add_pattern(PatternNode(self.ctx.span(self.unit, span), type_id, kind))
+        self.ctx.hir.add_pattern(PatternNode(self.ctx.span(self.unit, span), type_id, kind))
     }
 
     pub fn pattern_tests_value(syntax: Pattern&) -> bool {
@@ -171,7 +171,7 @@ impl ExprChecker {
     pub fn test_pattern(syntax: Pattern&, expected: TypeId) -> Result<PatternId, AnalysisError> {
         let borrowed = false;
 
-        match self.ctx.session.types.require(expected)? {
+        match self.ctx.types.require(expected)? {
             Reference(inner) => {
                 expected = *inner;
                 borrowed = true;
@@ -179,8 +179,8 @@ impl ExprChecker {
             _ => {},
         }
 
-        let root_enum = match self.ctx.session.types.require(expected)? {
-            Nominal(definition, _) => match self.ctx.session.types.complete_definition(*definition)? {
+        let root_enum = match self.ctx.types.require(expected)? {
+            Nominal(definition, _) => match self.ctx.types.complete_definition(*definition)? {
                 Enum(_) => true, _ => false
             },
             _ => false,
@@ -193,7 +193,7 @@ impl ExprChecker {
             LiteralPattern(_) => true, RangePattern(_) => true, ConstructPattern(_, _, _, _) => true, TuplePattern(_) => true, SequencePattern(_, _, _) => true, _ => false
         };
 
-        match self.ctx.session.types.require(expected)? {
+        match self.ctx.types.require(expected)? {
             Reference(inner) => {
                 if structural {
                     let pattern = self.pattern(syntax, *inner, true)?;
@@ -207,11 +207,11 @@ impl ExprChecker {
         let kind = match &syntax.data {
             WildcardPattern => PatternKind.WildcardPattern,
             NamePattern(name) => {
-                let interned = self.ctx.session.names.intern(name.data.name.as_str());
+                let interned = self.ctx.names.intern(name.data.name.as_str());
 
                 if root_enum {
-                    match self.ctx.session.types.require(expected)? {
-                        Nominal(definition, _) => match self.ctx.session.types.complete_definition(*definition)? {
+                    match self.ctx.types.require(expected)? {
+                        Nominal(definition, _) => match self.ctx.types.complete_definition(*definition)? {
                             Enum(body) => {
                                 for variant in body.variants {
                                     if variant.name == interned {
@@ -228,7 +228,7 @@ impl ExprChecker {
                 }
 
                 let type_id = if borrowed {
-                    self.ctx.session.types.reference(expected)
+                    self.ctx.types.reference(expected)
                 } else {
                     expected
                 };
@@ -239,7 +239,7 @@ impl ExprChecker {
             BindPattern(name, inner) => {
                 let inner = self.pattern_inner(*inner, expected, borrowed, root_enum)?;
                 let type_id = if borrowed {
-                    self.ctx.session.types.reference(expected)
+                    self.ctx.types.reference(expected)
                 } else {
                     expected
                 };
@@ -256,8 +256,8 @@ impl ExprChecker {
                 let constant = self.ctx.evaluator.evaluate(converted)?;
 
                 if expected == TypeId(STR_TYPE_ID) {
-                    let name = self.ctx.session.names.intern("%literal_pattern");
-                    let symbol = self.ctx.session.symbols.add(Symbol(name, SymbolKind.Variable, expected, self.unit, Option<SourceSpan>.Some(self.ctx.span(self.unit, span)), false, false, false, Option<SymbolId>.None, Option<DefId>.None));
+                    let name = self.ctx.names.intern("%literal_pattern");
+                    let symbol = self.ctx.symbols.add(Symbol(name, SymbolKind.Variable, expected, self.unit, Option<SourceSpan>.Some(self.ctx.span(self.unit, span)), false, false, false, Option<SymbolId>.None, Option<DefId>.None));
                     let actual = self.node(span, expected, true, HirKind.Var(symbol));
                     let condition = self.overloaded_binary(span, BinaryOperator.Eq, actual, converted)?;
                     PatternKind.LiteralPattern(LiteralPattern(constant.value, Option<HirId>.Some(condition), Option<SymbolId>.Some(symbol)))
@@ -266,7 +266,7 @@ impl ExprChecker {
                 }
             },
             TuplePattern(elements) => {
-                let types = match self.ctx.session.types.require(expected)? {
+                let types = match self.ctx.types.require(expected)? {
                     Tuple(values) => values,
                     _ => return Result<PatternId, AnalysisError>.Err(self.error(span, "tuple pattern requires a tuple")),
                 };
@@ -304,15 +304,15 @@ impl ExprChecker {
                     None => {},
                 }
 
-                let definition = match self.ctx.session.types.require(expected)? {
+                let definition = match self.ctx.types.require(expected)? {
                     Nominal(value, _) => *value,
                     _ => return Result<PatternId, AnalysisError>.Err(self.error(span, "constructor pattern requires a nominal type")),
                 };
                 let substitutions = instance_substitutions(self.ctx, expected)?;
                 defer substitutions.drop();
-                let interned = self.ctx.session.names.intern(name.data.name.as_str());
+                let interned = self.ctx.names.intern(name.data.name.as_str());
 
-                match self.ctx.session.types.complete_definition(definition)? {
+                match self.ctx.types.complete_definition(definition)? {
                     Enum(body) => {
                         let selected = Option<PatternId>.None;
 
@@ -327,7 +327,7 @@ impl ExprChecker {
                             defer descriptors.drop();
 
                             for field in descriptors {
-                                types.push(substitute(self.ctx.session.types, field.type_id, &substitutions)?);
+                                types.push(substitute(self.ctx.types, field.type_id, &substitutions)?);
                             }
 
                             let fields = Vec<(u64, PatternId)>.new();
@@ -361,7 +361,7 @@ impl ExprChecker {
                                 },
                                 Named(values) => {
                                     for value in *values {
-                                        let requested = self.ctx.session.names.intern(value.data.name.data.name.as_str());
+                                        let requested = self.ctx.names.intern(value.data.name.data.name.as_str());
                                         let found = false;
 
                                         for field in descriptors {
@@ -398,7 +398,7 @@ impl ExprChecker {
                         }
                     },
                     Struct(body) => {
-                        let header = self.ctx.session.types.definition(definition).unwrap().header().name;
+                        let header = self.ctx.types.definition(definition).unwrap().header().name;
 
                         if header != interned {
                             return Result<PatternId, AnalysisError>.Err(self.error(span, "structure pattern has the wrong name"));
@@ -417,7 +417,7 @@ impl ExprChecker {
                         match arguments {
                             Named(values) => {
                                 for value in *values {
-                                    let name = self.ctx.session.names.intern(value.data.name.data.name.as_str());
+                                    let name = self.ctx.names.intern(value.data.name.data.name.as_str());
                                     let found = false;
 
                                     for field in body.fields {
@@ -429,7 +429,7 @@ impl ExprChecker {
                                             }
 
                                             self.check_field_access(expected, *field, value.data.name.span)?;
-                                            let type_id = substitute(self.ctx.session.types, field.type_id, &substitutions)?;
+                                            let type_id = substitute(self.ctx.types, field.type_id, &substitutions)?;
                                             fields.push((field.index, self.pattern(value.data.pattern, type_id, borrowed)?));
                                             field_spans.push(Option<SourceSpan>.Some(self.ctx.span(self.unit, value.data.name.span)));
                                             found = true;
@@ -453,7 +453,7 @@ impl ExprChecker {
                                 let index = 0u64;
 
                                 while index < values.len() {
-                                    let type_id = substitute(self.ctx.session.types, body.fields[index].type_id, &substitutions)?;
+                                    let type_id = substitute(self.ctx.types, body.fields[index].type_id, &substitutions)?;
                                     fields.push((index, self.pattern(values[index], type_id, borrowed)?));
                                     field_spans.push(Option<SourceSpan>.None);
                                     index += 1;
@@ -486,7 +486,7 @@ impl ExprChecker {
                 };
 
                 for alternative in *alternatives {
-                    self.scope = self.ctx.session.symbols.create_scope(Option<ScopeId>.Some(previous))?;
+                    self.scope = self.ctx.symbols.create_scope(Option<ScopeId>.Some(previous))?;
                     let pattern = self.pattern_inner(*alternative, expected, borrowed, root_enum)?;
                     let names = HashMap<NameId, SymbolId>.new();
                     defer names.drop();
@@ -510,10 +510,10 @@ impl ExprChecker {
                                 None => return Result<PatternId, AnalysisError>.Err(self.error(alternative.span, "OR alternatives must bind the same names")),
                             };
 
-                            if self.ctx.session.symbols.get(*entry[1]).unwrap().type_id != self.ctx.session.symbols.get(original).unwrap().type_id {
-                                let record = self.ctx.session.symbols.get(*entry[1]).unwrap();
+                            if self.ctx.symbols.get(*entry[1]).unwrap().type_id != self.ctx.symbols.get(original).unwrap().type_id {
+                                let record = self.ctx.symbols.get(*entry[1]).unwrap();
                                 return Result<PatternId, AnalysisError>.Err(AnalysisError.named(DiagnosticCode.Type,
-                                    record.span, "OR binding '", self.ctx.session.names.text(record.name), "' has a different type or mode"));
+                                    record.span, "OR binding '", self.ctx.names.text(record.name), "' has a different type or mode"));
                             }
 
                             replacements.insert(*entry[1], original);
@@ -528,7 +528,7 @@ impl ExprChecker {
                 self.scope = previous;
 
                 for entry in first.entries() {
-                    if !self.ctx.session.symbols.bind(previous, *entry[0], *entry[1])? {
+                    if !self.ctx.symbols.bind(previous, *entry[0], *entry[1])? {
                         return Result<PatternId, AnalysisError>.Err(self.error(span, "pattern binding conflicts with a local name"));
                     }
                 }
@@ -552,7 +552,7 @@ impl ExprChecker {
                 PatternKind.RangePattern(RangePattern(Boundary.Finite(low), end))
             },
             SequencePattern(prefix, suffix, rest) => {
-                let element = match self.ctx.session.types.require(expected)? {
+                let element = match self.ctx.types.require(expected)? {
                     Array(element, _) => *element,
                     Slice(element) => *element,
                     _ => return Result<PatternId, AnalysisError>.Err(self.error(span, "sequence pattern requires an array or slice")),

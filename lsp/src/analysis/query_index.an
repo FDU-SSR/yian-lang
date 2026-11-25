@@ -4,7 +4,7 @@ from lsp.analysis.source_index import DeclKind, SourceIndex;
 from yianc.common.ids import UnitId;
 from lsp.analysis.diagnostic import LspDiagnostic;
 from yianc.frontend.lex.token import KeywordKind, TokenPayload;
-from yianc.frontend.source import Span;
+from yianc.frontend.source import SourceMap, Span;
 from std.collections.hash_map import HashMap;
 from std.core.path import Path;
 from std.core.text import LineIndex;
@@ -171,7 +171,7 @@ fn release_file_map(map: HashMap<String, u64>&) {
 fn module_name_for_path(analysis: CompilerAnalysis&, path: str) -> Option<String> {
     let package_name = Option<String>.None;
     let package_root = Option<String>.None;
-    match analysis.session.package_map() {
+    match &analysis.packages {
         Some(packages) => match packages.package_of(path) {
             Some(package) => {
                 package_name = Option<String>.Some(String.from(&package.name.as_str()));
@@ -536,15 +536,15 @@ impl QuerySnapshot {
 impl QuerySnapshot {
     // Extraction copies every value the protocol needs, detaches warning
     // locations and rebuilds position tables. The caller releases the compiler
-    // session, output, source index and semantic index after this returns.
+    // analysis and indexes after this returns.
     static pub fn extract(index: SourceIndex&, analysis: CompilerAnalysis&) -> Result<Self, String> {
         let files = Vec<QueryFile>.new();
         let accepted = false;
         defer { if !accepted { release_files(&files); } };
 
         let document_cursor = 0u64;
-        while document_cursor < analysis.session.len() {
-            let document = analysis.session.source(UnitId(document_cursor));
+        while document_cursor < analysis.units.len() {
+            let document = analysis.units.file(UnitId(document_cursor));
             let path = String.from(&document.path());
             let module = module_name_for_path(analysis, document.path());
             let file = QueryFile.new(path, String.from(&document.text()),

@@ -15,10 +15,10 @@ from yianc.analysis.ty.validation import validate_concrete_value;
 from std.core.iter import Iterator, IntoIterator;
 
 fn root_unit(ctx: ResolutionContext&, unit: UnitId) -> bool {
-    let record = *ctx.session.unit(unit).unwrap();
+    let record = *ctx.units.get(unit).unwrap();
 
-    match ctx.session.package_map() {
-        Some(packages) => match packages.package_of(ctx.session.source(record.id).path()) {
+    match ctx.packages {
+        Some(packages) => match packages.package_of(ctx.units.file(record.id).path()) {
             Some(owner) => match packages.root_name() {
                 Some(name) => owner.name.as_str() == name, None => true
             },
@@ -29,7 +29,7 @@ fn root_unit(ctx: ResolutionContext&, unit: UnitId) -> bool {
 }
 
 pub fn check_procedures(ctx: ResolutionContext&, options: AnalysisOptions&) -> Result<AnalysisOutput, AnalysisError> {
-    let output = AnalysisOutput.new();
+    let output = AnalysisOutput.new(ctx.types, ctx.raw_pointers);
     let accepted = false;
     defer {
         if !accepted {
@@ -54,10 +54,10 @@ pub fn check_procedures(ctx: ResolutionContext&, options: AnalysisOptions&) -> R
     // Match the reference worklist: entry and reachable calls first, then all concrete root definitions.
     match output.entry { Some(entry) => { schedule(ctx, entry)?; }, None => {}, }
     drain(ctx, options, &output)?;
-    let count = ctx.session.definitions.len();
+    let count = ctx.definitions.len();
     for index in 0u64..count {
-        let procedure = *ctx.session.definitions.at(index).unwrap();
-        if root_unit(ctx, procedure.unit) && !has_generic(ctx.session.types, procedure.type_id) {
+        let procedure = *ctx.definitions.at(index).unwrap();
+        if root_unit(ctx, procedure.unit) && !has_generic(ctx.types, procedure.type_id) {
             schedule(ctx, procedure.type_id)?;
         }
     }
@@ -68,7 +68,7 @@ pub fn check_procedures(ctx: ResolutionContext&, options: AnalysisOptions&) -> R
 
 fn drain(ctx: ResolutionContext&, options: AnalysisOptions&, output: AnalysisOutput&) -> Result<(), AnalysisError> {
     while true {
-        let type_id = match ctx.session.worklist.next() {
+        let type_id = match ctx.worklist.next() {
             Some(value) => value,
             None => {
                 break;
@@ -77,7 +77,7 @@ fn drain(ctx: ResolutionContext&, options: AnalysisOptions&, output: AnalysisOut
         let finished = false;
         defer {
             if !finished {
-                match ctx.session.worklist.finish(type_id, true) {
+                match ctx.worklist.finish(type_id, true) {
                     Ok(_) => {}, Err(problem) => problem.drop()
                 }
             }
@@ -100,7 +100,7 @@ fn drain(ctx: ResolutionContext&, options: AnalysisOptions&, output: AnalysisOut
             output.checked.push(definition);
         }
 
-        ctx.session.worklist.finish(type_id, false)?;
+        ctx.worklist.finish(type_id, false)?;
         finished = true;
     }
 
@@ -113,7 +113,7 @@ fn check_one(ctx: ResolutionContext&, type_id: TypeId, options: AnalysisOptions&
         Some(trace) => trace.event("type_check", LogLevel.Trace, "checking concrete procedure", Option<str>.None),
         None => {},
     }
-    let procedure = match ctx.session.definitions.get(type_id) {
+    let procedure = match ctx.definitions.get(type_id) {
         Some(value) => value,
         None => @panic("scheduled function has no body"),
     };
@@ -126,7 +126,7 @@ fn check_one(ctx: ResolutionContext&, type_id: TypeId, options: AnalysisOptions&
         validate_concrete_value(ctx, parameter.type_id, location)?;
     }
 
-    let scope = ctx.session.symbols.create_callable_scope(*parent, callable.result)?;
+    let scope = ctx.symbols.create_callable_scope(*parent, callable.result)?;
     let checker = ExprChecker.new(ctx, procedure.unit, scope);
     defer checker.drop();
     checker.ffi_allowed = callable.is_ffi;
@@ -144,26 +144,26 @@ fn check_one(ctx: ResolutionContext&, type_id: TypeId, options: AnalysisOptions&
         Some(symbols) => {
             for symbol in *symbols {
                 parameters.push(*symbol);
-                captures.push((ctx.session.symbols.get(*symbol).unwrap().name, *symbol));
+                captures.push((ctx.symbols.get(*symbol).unwrap().name, *symbol));
             }
         },
         None => {},
     }
 
-    match ctx.session.types.require(type_id)? {
+    match ctx.types.require(type_id)? {
         Nominal(id, arguments) => {
-            let header = *ctx.session.types.definition(*id).unwrap();
+            let header = *ctx.types.definition(*id).unwrap();
             let index = 0u64;
 
             while index < arguments.len() {
                 let generic = *header.generic(index).unwrap();
-                let name = match ctx.session.types.require(generic)? {
+                let name = match ctx.types.require(generic)? {
                     Generic(name) => *name,
                     ConstGeneric(name, _) => *name,
-                    SelfType(_) => ctx.session.names.intern("Self"),
+                    SelfType(_) => ctx.names.intern("Self"),
                     _ => @panic("invalid generic identity"),
                 };
-                checker.bind(ctx.session.names.text(name), arguments[index], procedure.body.span, SymbolKind.Type)?;
+                checker.bind(ctx.names.text(name), arguments[index], procedure.body.span, SymbolKind.Type)?;
                 index += 1;
             }
         },
@@ -172,14 +172,14 @@ fn check_one(ctx: ResolutionContext&, type_id: TypeId, options: AnalysisOptions&
 
     match &callable.receiver {
         Some(receiver) => {
-            let name = ctx.session.names.intern("Self");
+            let name = ctx.names.intern("Self");
 
-            if ctx.session.symbols.scope(scope).unwrap().get(name).is_none() {
+            if ctx.symbols.scope(scope).unwrap().get(name).is_none() {
                 checker.bind("Self", *receiver, procedure.body.span, SymbolKind.Type)?;
             }
 
             if !callable.is_static {
-                let reference = ctx.session.types.reference(*receiver);
+                let reference = ctx.types.reference(*receiver);
                 parameters.push(checker.bind("self", reference, procedure.body.span, SymbolKind.Parameter)?);
             }
         },
@@ -191,7 +191,7 @@ fn check_one(ctx: ResolutionContext&, type_id: TypeId, options: AnalysisOptions&
             Some(location) => location.span,
             None => procedure.body.span,
         };
-        parameters.push(checker.bind(ctx.session.names.text(parameter.name), parameter.type_id, span, SymbolKind.Parameter)?);
+        parameters.push(checker.bind(ctx.names.text(parameter.name), parameter.type_id, span, SymbolKind.Parameter)?);
     }
 
     let root = match checker.block(procedure.body) {

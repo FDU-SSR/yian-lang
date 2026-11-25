@@ -27,7 +27,7 @@ fn invalid(span: SourceSpan, message: str) -> ! {
 
 fn addressable_path(ctx: ResolutionContext&, id: HirId, active: HashSet<HirId>&) -> Result<bool, AnalysisError> {
     if !active.insert(id) { return Result<bool, AnalysisError>.Ok(false); }
-    let node = ctx.session.hir.require(id)?;
+    let node = ctx.hir.require(id)?;
     let addressable = match &node.kind {
         Var(_) => node.is_place,
         Unary(value) => node.is_place && value.op == UnaryOperator.Deref,
@@ -84,7 +84,7 @@ impl HirVerifier {
             let found = false;
             for field in *expected {
                 if field.name == entry[0] {
-                    self.value(entry[1], substitute(self.ctx.session.types, field.type_id, &substitutions)?, span)?;
+                    self.value(entry[1], substitute(self.ctx.types, field.type_id, &substitutions)?, span)?;
                     found = true;
                     break;
                 }
@@ -97,7 +97,7 @@ impl HirVerifier {
     }
 
     fn node(id: HirId, span: SourceSpan) -> Result<HirNode&, AnalysisError> {
-        match self.ctx.session.hir.get(id) {
+        match self.ctx.hir.get(id) {
             Some(value) => Result<HirNode&, AnalysisError>.Ok(value),
             None => invalid(span, "exported HIR contains an invalid expression ID"),
         }
@@ -112,7 +112,7 @@ impl HirVerifier {
     }
 
     fn symbol(id: SymbolId, expected: TypeId, span: SourceSpan) -> Result<(), AnalysisError> {
-        let symbol = match self.ctx.session.symbols.get(id) {
+        let symbol = match self.ctx.symbols.get(id) {
             Some(value) => value,
             None => invalid(span, "exported HIR contains an invalid symbol ID"),
         };
@@ -132,7 +132,7 @@ impl HirVerifier {
     }
 
     fn call(type_id: TypeId, arguments: Vec<HirId>&, result: TypeId, receiver: Option<HirId>, require_body: bool, span: SourceSpan) -> Result<(), AnalysisError> {
-        if has_generic(self.ctx.session.types, type_id) {
+        if has_generic(self.ctx.types, type_id) {
             invalid(span, "exported call contains unresolved generic arguments");
         }
         let callable = self.cache.signature_of(type_id)?;
@@ -156,9 +156,9 @@ impl HirVerifier {
                     invalid(span, "exported instance call has no receiver signature");
                 }
                 let self_type = *callable.receiver.unwrap();
-                let expected = match self.ctx.session.types.require(self_type)? {
+                let expected = match self.ctx.types.require(self_type)? {
                     TraitObject(_) => self_type,
-                    _ => self.ctx.session.types.reference(self_type),
+                    _ => self.ctx.types.reference(self_type),
                 };
                 self.value(value, expected, span)?;
             },
@@ -184,12 +184,12 @@ impl HirVerifier {
                 }
             },
             StrLiteral(name) => {
-                if node.type_id != TypeId(STR_TYPE_ID) || node.is_place || self.ctx.session.names.get(*name).is_none() {
+                if node.type_id != TypeId(STR_TYPE_ID) || node.is_place || self.ctx.names.get(*name).is_none() {
                     invalid(node.span, "exported string literal is invalid");
                 }
             },
             IntLiteral(value) => {
-                let valid = match self.ctx.session.types.require(node.type_id)? {
+                let valid = match self.ctx.types.require(node.type_id)? {
                     IntLiteral => false,
                     Integer(bits, signed) => !value.is_untyped() && value.storage_width().bits() == *bits && value.is_signed() == *signed,
                     CScalar(kind) => !value.is_untyped() && value.storage_width().bits() == kind.bits() && value.is_signed() == kind.is_signed(),
@@ -200,7 +200,7 @@ impl HirVerifier {
                 }
             },
             FloatLiteral(value) => {
-                let valid = match self.ctx.session.types.require(node.type_id)? {
+                let valid = match self.ctx.types.require(node.type_id)? {
                     FloatLiteral => false,
                     Float(width) => to_bits(*value) == to_bits(round_float(*value, *width)),
                     _ => false,
@@ -221,11 +221,11 @@ impl HirVerifier {
                 if value.struct_id != node.type_id {
                     invalid(node.span, "exported constructor type is inconsistent");
                 }
-                let definition = match self.ctx.session.types.require(node.type_id)? {
+                let definition = match self.ctx.types.require(node.type_id)? {
                     Nominal(id, _) => *id,
                     _ => invalid(node.span, "exported struct has no nominal identity"),
                 };
-                let fields = match self.ctx.session.types.complete_definition(definition)? {
+                let fields = match self.ctx.types.complete_definition(definition)? {
                     Struct(body) => &body.fields,
                     _ => invalid(node.span, "exported struct constructor does not refer to a struct"),
                 };
@@ -248,7 +248,7 @@ impl HirVerifier {
                     },
                 }
             },
-            Tuple(value) => match self.ctx.session.types.require(node.type_id)? {
+            Tuple(value) => match self.ctx.types.require(node.type_id)? {
                 Tuple(types) => {
                     if types.len() != value.field_values.len() {
                         invalid(node.span, "exported tuple arity is inconsistent");
@@ -261,12 +261,12 @@ impl HirVerifier {
                 },
                 _ => invalid(node.span, "exported tuple has a non-tuple type"),
             },
-            Array(value) => match self.ctx.session.types.require(node.type_id)? {
+            Array(value) => match self.ctx.types.require(node.type_id)? {
                 Array(element, count) => {
                     if *element != value.element_type {
                         invalid(node.span, "exported array element type is inconsistent");
                     }
-                    match self.ctx.session.types.require(*count)? {
+                    match self.ctx.types.require(*count)? {
                         LiteralValue(length, negative, _) => {
                             if *negative || *length != value.elements.len() {
                                 invalid(node.span, "exported array length is inconsistent");
@@ -280,7 +280,7 @@ impl HirVerifier {
                 },
                 _ => invalid(node.span, "exported array has a non-array type"),
             },
-            ArrayRepeat(value) => match self.ctx.session.types.require(node.type_id)? {
+            ArrayRepeat(value) => match self.ctx.types.require(node.type_id)? {
                 Array(element, _) => {
                     if *element != value.element_type {
                         invalid(node.span, "exported repeated array element type is inconsistent");
@@ -302,7 +302,7 @@ impl HirVerifier {
             },
             Let(value) => match &value.symbol_id {
                 Some(symbol) => {
-                    let record = match self.ctx.session.symbols.get(*symbol) {
+                    let record = match self.ctx.symbols.get(*symbol) {
                         Some(value) => value,
                         None => invalid(node.span, "exported binding contains an invalid symbol ID"),
                     };
@@ -334,7 +334,7 @@ impl HirVerifier {
                 // A dynamic slot describes an interface signature, including default methods.
                 // Concrete vtable entries own the executable body references.
                 self.call(value.method_id, &value.args, node.type_id, Option<HirId>.Some(value.receiver), false, node.span)?;
-                let expected = self.ctx.session.types.trait_object(value.trait_type_id);
+                let expected = self.ctx.types.trait_object(value.trait_type_id);
                 self.value(value.receiver, expected, node.span)?;
                 let slots = self.cache.object_methods_of(value.trait_type_id)?;
                 if value.slot_index >= slots.len() || slots[value.slot_index] != value.method_id {
@@ -342,12 +342,12 @@ impl HirVerifier {
                 }
             },
             TraitObjectCoerce(value) => {
-                if node.type_id != self.ctx.session.types.trait_object(value.trait_type_id) {
+                if node.type_id != self.ctx.types.trait_object(value.trait_type_id) {
                     invalid(node.span, "exported trait object has an inconsistent type");
                 }
 
                 let source = self.node(value.value, node.span)?.type_id;
-                let valid_source = match self.ctx.session.types.require(source)? {
+                let valid_source = match self.ctx.types.require(source)? {
                     Pointer(inner) | Reference(inner) => *inner == value.concrete_type_id,
                     _ => false,
                 };
@@ -368,7 +368,7 @@ impl HirVerifier {
                     let actual = self.cache.signature_of(*method)?;
                     let expected = self.cache.signature_of(slots[index])?;
 
-                    if has_generic(self.ctx.session.types, *method) || (!actual.is_header && !self.exported.contains(method)) {
+                    if has_generic(self.ctx.types, *method) || (!actual.is_header && !self.exported.contains(method)) {
                         invalid(node.span, "exported vtable entry has no concrete checked body");
                     }
 
@@ -398,7 +398,7 @@ impl HirVerifier {
                 let target = self.node(value.callable, node.span)?.type_id;
                 let parameters = Vec<TypeId>.new();
                 defer parameters.drop();
-                let result = match self.ctx.session.types.require(target)? {
+                let result = match self.ctx.types.require(target)? {
                     FunctionPointer(types, result) => {
                         for type_id in *types {
                             parameters.push(*type_id);
@@ -513,7 +513,7 @@ impl HirVerifier {
                     invalid(node.span, "exported dereference is not a place");
                 }
                 if value.op == UnaryOperator.AddrOf {
-                    let function_address = match self.ctx.session.types.require(node.type_id)? { FunctionPointer(_, _) => true, _ => false, };
+                    let function_address = match self.ctx.types.require(node.type_id)? { FunctionPointer(_, _) => true, _ => false, };
                     if function_address {
                         let is_function = match &self.node(value.operand, node.span)?.kind { Ty => true, _ => false, };
                         if !is_function {
@@ -538,7 +538,7 @@ impl HirVerifier {
             },
             Invoke(value) => {
                 let callable_type = self.node(value.callable, node.span)?.type_id;
-                let is_closure = match self.ctx.session.types.require(callable_type)? { Closure(_, _, _, _, _, _) => true, _ => false, };
+                let is_closure = match self.ctx.types.require(callable_type)? { Closure(_, _, _, _, _, _) => true, _ => false, };
                 if is_closure { self.require_addressable(value.callable, node.span)?; }
             },
             Block(value) if node.is_place => {
@@ -568,7 +568,7 @@ impl HirVerifier {
                                     Some(symbol_id) => {
                                         let same_variable = match &last.kind { Var(variable) => *variable == symbol_id, _ => false, };
                                         if same_variable {
-                                            let symbol = match self.ctx.session.symbols.get(symbol_id) {
+                                            let symbol = match self.ctx.symbols.get(symbol_id) {
                                                 Some(value) => value,
                                                 None => invalid(node.span, "exported address temporary has an invalid symbol"),
                                             };
@@ -588,7 +588,7 @@ impl HirVerifier {
             },
             Builtin(value) => {
                 for type_id in value.type_args {
-                    self.ctx.session.types.require(*type_id)?;
+                    self.ctx.types.require(*type_id)?;
                 }
             },
             _ => {},
@@ -599,7 +599,7 @@ impl HirVerifier {
 
     fn check_closure(node: HirNode&) -> Result<(), AnalysisError> {
         match &node.kind {
-            Closure(value) => match self.ctx.session.types.require(node.type_id)? {
+            Closure(value) => match self.ctx.types.require(node.type_id)? {
                 Closure(captures, _, _, _, environment, call_method) => {
                     if captures.len() != value.captures.len() || environment.is_none() || call_method.is_none() {
                         invalid(node.span, "exported closure metadata is incomplete");
@@ -633,8 +633,8 @@ impl HirVisitor for HirVerifier {
         }
         self.active.insert(id);
 
-        self.ctx.session.source(node.span.unit);
-        self.ctx.session.types.require(node.type_id)?;
+        self.ctx.units.file(node.span.unit);
+        self.ctx.types.require(node.type_id)?;
         if node.type_id.index == INT_LITERAL_TYPE_ID || node.type_id.index == FLOAT_LITERAL_TYPE_ID {
             invalid(node.span, "exported HIR contains an unresolved literal type");
         }
@@ -672,7 +672,7 @@ impl HirVisitor for HirVerifier {
         }
         self.active_patterns.insert(id);
 
-        self.ctx.session.source(node.span.unit);
+        self.ctx.units.file(node.span.unit);
         if node.type_id.index == INT_LITERAL_TYPE_ID || node.type_id.index == FLOAT_LITERAL_TYPE_ID {
             invalid(node.span, "exported pattern contains an unresolved literal type");
         }
@@ -680,13 +680,13 @@ impl HirVisitor for HirVerifier {
         self.cache.validate_value(node.type_id, node.span)?;
         match &node.kind {
             BindPattern(value) => {
-                let symbol = match self.ctx.session.symbols.get(value.symbol_id) {
+                let symbol = match self.ctx.symbols.get(value.symbol_id) {
                     Some(record) => record,
                     None => invalid(node.span, "exported pattern contains an invalid symbol ID"),
                 };
 
                 // Borrowed matching binds references while pattern nodes describe the tested value.
-                if symbol.type_id != node.type_id && symbol.type_id != self.ctx.session.types.reference(node.type_id) {
+                if symbol.type_id != node.type_id && symbol.type_id != self.ctx.types.reference(node.type_id) {
                     invalid(node.span, "exported pattern binding type is inconsistent");
                 }
             },
@@ -721,7 +721,7 @@ pub fn verify_hir_observed(ctx: ResolutionContext&, output: AnalysisOutput&, obs
     defer checked.drop();
 
     for definition in output.checked {
-        let record = match ctx.session.types.definition(*definition) {
+        let record = match ctx.types.definition(*definition) {
             Some(value) => value,
             None => @panic("analysis output contains an invalid definition ID"),
         };
@@ -732,7 +732,7 @@ pub fn verify_hir_observed(ctx: ResolutionContext&, output: AnalysisOutput&, obs
     }
 
     for procedure in output.procedures {
-        let root = ctx.session.hir.require(procedure.root)?;
+        let root = ctx.hir.require(procedure.root)?;
         if !exported.insert(procedure.type_id) {
             invalid(root.span, "function instance is exported twice");
         }
@@ -753,15 +753,15 @@ pub fn verify_hir_observed(ctx: ResolutionContext&, output: AnalysisOutput&, obs
 
     // Visit shared nodes by each incoming edge; break and return validity depend on context.
     for procedure in output.procedures {
-        let root = ctx.session.hir.require(procedure.root)?;
-        let record = match ctx.session.definitions.get(procedure.type_id) {
+        let root = ctx.hir.require(procedure.root)?;
+        let record = match ctx.definitions.get(procedure.type_id) {
             Some(value) => value,
             None => invalid(root.span, "exported function has no procedure record"),
         };
         if record.definition != procedure.definition || record.unit != procedure.unit {
             invalid(root.span, "exported procedure identity is inconsistent");
         }
-        match ctx.session.worklist.state(procedure.type_id) {
+        match ctx.worklist.state(procedure.type_id) {
             Some(Complete) => {},
             _ => invalid(root.span, "exported procedure has not completed analysis"),
         }
@@ -780,7 +780,7 @@ pub fn verify_hir_observed(ctx: ResolutionContext&, output: AnalysisOutput&, obs
 
         let position = 0u64;
         for capture in procedure.captures {
-            let symbol = match ctx.session.symbols.get(capture[1]) {
+            let symbol = match ctx.symbols.get(capture[1]) {
                 Some(value) => value,
                 None => invalid(root.span, "exported capture contains an invalid symbol ID"),
             };
@@ -792,7 +792,7 @@ pub fn verify_hir_observed(ctx: ResolutionContext&, output: AnalysisOutput&, obs
         }
 
         if receiver_count != 0 {
-            checker.symbol(procedure.parameters[position], ctx.session.types.reference(*callable.receiver.unwrap()), root.span)?;
+            checker.symbol(procedure.parameters[position], ctx.types.reference(*callable.receiver.unwrap()), root.span)?;
             position += 1;
         }
         for parameter in callable.parameters {
@@ -800,7 +800,7 @@ pub fn verify_hir_observed(ctx: ResolutionContext&, output: AnalysisOutput&, obs
             position += 1;
         }
         checker.value(procedure.root, callable.result, root.span)?;
-        walk_expr(&ctx.session.hir, procedure.root, &checker)?;
+        walk_expr(ctx.hir, procedure.root, &checker)?;
     }
     Result<(), AnalysisError>.Ok(())
 }

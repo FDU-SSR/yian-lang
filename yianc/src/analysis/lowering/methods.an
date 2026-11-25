@@ -19,11 +19,11 @@ impl ExprChecker {
         let error_span = match name_span { Some(value) => value, None => span };
         let receiver_id = self.expression(receiver)?;
         let receiver_type = self.type_of(receiver_id);
-        let static_call = match &self.ctx.session.hir.require(receiver_id)?.kind {
+        let static_call = match &self.ctx.hir.require(receiver_id)?.kind {
             Ty => true,
             _ => false,
         };
-        let name = self.ctx.session.names.intern(spelling);
+        let name = self.ctx.names.intern(spelling);
 
         if static_call {
             match self.variant(span, name_span, receiver_type, name, args)? {
@@ -53,8 +53,8 @@ impl ExprChecker {
         let generic_start = 0u64;
 
         if static_call {
-            match self.ctx.session.types.require(receiver_type)? {
-                Nominal(id, _) => match self.ctx.session.types.complete_definition(*id)? {
+            match self.ctx.types.require(receiver_type)? {
+                Nominal(id, _) => match self.ctx.types.complete_definition(*id)? {
                     Trait(methods) => {
                         if generics.len() == 0 {
                             return Result<HirId, AnalysisError>.Err(self.error(span, "trait-qualified static call requires an explicit Self type"));
@@ -113,14 +113,14 @@ impl ExprChecker {
                 return Result<HirId, AnalysisError>.Err(self.error(span, "automatic dereference cycle"));
             }
 
-            match self.ctx.session.types.require(receiver_type)? {
+            match self.ctx.types.require(receiver_type)? {
                 TraitObject(trait_id) => {
                     if generics.len() != 0 {
                         return Result<HirId, AnalysisError>.Err(self.error(span, "dynamic method cannot have generic arguments"));
                     }
 
-                    match self.ctx.session.types.require(*trait_id)? {
-                        Nominal(definition, _) => match self.ctx.session.types.complete_definition(*definition)? {
+                    match self.ctx.types.require(*trait_id)? {
+                        Nominal(definition, _) => match self.ctx.types.complete_definition(*definition)? {
                             Trait(methods) => {},
                             _ => @panic("trait object has a non-trait type"),
                         },
@@ -159,7 +159,7 @@ impl ExprChecker {
                         return Result<HirId, AnalysisError>.Err(problem);
                     }
 
-                    let inner = match self.ctx.session.types.require(receiver_type)? {
+                    let inner = match self.ctx.types.require(receiver_type)? {
                         Reference(value) => Option<TypeId>.Some(*value),
                         Pointer(value) => Option<TypeId>.Some(*value),
                         _ => Option<TypeId>.None,
@@ -204,7 +204,7 @@ impl ExprChecker {
             return Result<HirId, AnalysisError>.Err(self.error(span, message.as_str()));
         }
 
-        let reference = self.ctx.session.types.reference(receiver_type);
+        let reference = self.ctx.types.reference(receiver_type);
         let borrowed = self.node(span, reference, false, HirKind.Unary(Unary(UnaryOperator.AddrOf, receiver_id)));
         let call = self.call_values(span, method_type, &values, Option<HirId>.Some(borrowed), name_span)?;
 

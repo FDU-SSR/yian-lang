@@ -26,8 +26,8 @@ impl Lowering {
     // Tagged enums use an explicit tag word plus a payload area. Zero-sized and
     // niche representations keep their value-level operations.
     pub fn enum_place_supported(type_id: TypeId) -> Result<bool, CodegenError> {
-        let enumeration = match self.session.types.require(type_id)? {
-            Nominal(definition, _) => self.session.types.definition(*definition).unwrap().header().kind == NominalKind.Enum,
+        let enumeration = match self.types.semantic_store().require(type_id)? {
+            Nominal(definition, _) => self.types.semantic_store().definition(*definition).unwrap().header().kind == NominalKind.Enum,
             _ => false,
         };
         if !enumeration { return Result<bool, CodegenError>.Ok(false); }
@@ -37,7 +37,7 @@ impl Lowering {
 
     // Normalized storage forms can supply an enum address without materializing a value.
     fn enum_place_addressable(id: HirId) -> Result<bool, CodegenError> {
-        let node = self.session.hir.require(id)?;
+        let node = self.hir.require(id)?;
         let addressable = match &node.kind {
             Var(_) => true,
             FieldAccess(_) | TupleAccess(_) | ArrayAccess(_) | SliceAccess(_) | Block(_) => node.is_place,
@@ -48,14 +48,14 @@ impl Lowering {
     }
 
     fn enum_place_type(address: ValueId) -> Result<Option<TypeId>, CodegenError> {
-        match self.session.types.require(self.function.value(address)?.type_id)? {
+        match self.types.semantic_store().require(self.function.value(address)?.type_id)? {
             Pointer(inner) | Reference(inner) => Result<Option<TypeId>, CodegenError>.Ok(Option<TypeId>.Some(*inner)),
             _ => Result<Option<TypeId>, CodegenError>.Ok(Option<TypeId>.None),
         }
     }
 
     fn enum_destination(span: SourceSpan, local: LocalId, type_id: TypeId) -> Result<EnumPlace, CodegenError> {
-        let reference = self.session.types.reference(type_id);
+        let reference = self.types.semantic_store().reference(type_id);
         let address = self.emit(span, reference, Operation.Address(local))?;
         Result<EnumPlace, CodegenError>.Ok(EnumPlace(type_id, address, EnumPlaceKind.FreshDestination))
     }
@@ -63,7 +63,7 @@ impl Lowering {
     // Reads a by-value enum operand into an independent snapshot place so later
     // guards cannot observe the source and later source writes cannot change it.
     pub fn enum_snapshot(id: HirId, type_id: TypeId) -> Result<EnumPlace, CodegenError> {
-        let node = self.session.hir.require(id)?;
+        let node = self.hir.require(id)?;
         let span = node.span;
         let local = self.function.add_local(type_id);
         if self.enum_place_addressable(id)? {
@@ -74,7 +74,7 @@ impl Lowering {
         }
         let value = self.expression(id)?;
         self.effect(span, Operation.Store(local, value))?;
-        let reference = self.session.types.reference(type_id);
+        let reference = self.types.semantic_store().reference(type_id);
         let address = self.emit(span, reference, Operation.Address(local))?;
         Result<EnumPlace, CodegenError>.Ok(EnumPlace(type_id, address, EnumPlaceKind.Snapshot))
     }
@@ -136,7 +136,7 @@ impl Lowering {
 
     // Direct enum initializers store into the destination instead of rebuilding a value.
     pub fn enum_construct(id: HirId, destination: EnumPlace&) -> Result<bool, CodegenError> {
-        let node = self.session.hir.require(id)?;
+        let node = self.hir.require(id)?;
         let construction = match &node.kind {
             VariantConstruct(value) => value,
             _ => return Result<bool, CodegenError>.Ok(false),
@@ -150,7 +150,7 @@ impl Lowering {
     // Initializes a fresh local in place; returns the value to store when the
     // initializer keeps the general value path.
     pub fn enum_let(span: SourceSpan, local: LocalId, expression: HirId) -> Result<Option<ValueId>, CodegenError> {
-        let node = self.session.hir.require(expression)?;
+        let node = self.hir.require(expression)?;
         let direct = match &node.kind { VariantConstruct(_) => true, _ => false };
         if !direct || !self.enum_place_supported(node.type_id)? {
             return Result<Option<ValueId>, CodegenError>.Ok(Option<ValueId>.Some(self.expression(expression)?));

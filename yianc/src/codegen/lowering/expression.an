@@ -15,8 +15,8 @@ from std.core.ops import Index;
 
 impl Lowering {
     pub fn expression(id: HirId) -> Result<ValueId, CodegenError> {
-        let node = self.session.hir.require(id)?;
-        assert_cfg_type(self.session.types, node.type_id);
+        let node = self.hir.require(id)?;
+        assert_cfg_type(self.types.semantic_store(), node.type_id);
         if self.current.is_none() {
             return Result<ValueId, CodegenError>.Ok(self.zero(node.type_id));
         }
@@ -27,7 +27,7 @@ impl Lowering {
     }
 
     fn lower_expression(id: HirId) -> Result<ValueId, CodegenError> {
-        let node = self.session.hir.require(id)?;
+        let node = self.hir.require(id)?;
         let result = match &node.kind {
             IntLiteral(value) => {
                 self.function.add_value(node.type_id, ValueKind.Integer(
@@ -40,8 +40,8 @@ impl Lowering {
             CharLiteral(value) => self.function.add_value(node.type_id, ValueKind.Integer(u64(*value))),
             StrLiteral(value) => self.function.add_value(node.type_id, ValueKind.Bytes(*value)),
             Ty => {
-                let callable = match self.session.types.require(node.type_id)? {
-                    Nominal(definition, _) => match self.session.types.definition(*definition).unwrap().header().kind {
+                let callable = match self.types.semantic_store().require(node.type_id)? {
+                    Nominal(definition, _) => match self.types.semantic_store().definition(*definition).unwrap().header().kind {
                         Function | Method => true,
                         _ => false,
                     },
@@ -53,7 +53,7 @@ impl Lowering {
                 } else { self.zero(node.type_id) }
             },
             Var(symbol) => {
-                let record = self.session.symbols.get(*symbol).unwrap();
+                let record = self.symbols.get(*symbol).unwrap();
                 match record.kind {
                     Function => {
                         self.dependencies.push(record.type_id);
@@ -121,7 +121,7 @@ impl Lowering {
             Binary(value) => self.binary_value(node, value)?,
             Unary(value) => {
                 if value.op == UnaryOperator.AddrOf {
-                    let function_pointer = match self.session.types.require(node.type_id)? { FunctionPointer(_, _) => true, _ => false, };
+                    let function_pointer = match self.types.semantic_store().require(node.type_id)? { FunctionPointer(_, _) => true, _ => false, };
                     if function_pointer {
                         let callable = self.expression(value.operand)?;
                         return self.emit(node.span, node.type_id, Operation.Cast(callable));
@@ -142,8 +142,8 @@ impl Lowering {
             },
             Cast(value) => {
                 let operand = self.expression(value.value)?;
-                match self.session.types.require(self.function.value(operand)?.type_id)? {
-                    Nominal(definition, _) => match self.session.types.definition(*definition).unwrap().header().kind {
+                match self.types.semantic_store().require(self.function.value(operand)?.type_id)? {
+                    Nominal(definition, _) => match self.types.semantic_store().definition(*definition).unwrap().header().kind {
                         Function | Method => self.dependencies.push(self.function.value(operand)?.type_id),
                         _ => {},
                     },
@@ -160,8 +160,8 @@ impl Lowering {
                 let arguments = Vec<ValueId>.new();
                 let transferred = false;
                 defer { if !transferred { arguments.drop(); } };
-                let callable_type = self.session.hir.require(value.callable)?.type_id;
-                let closure_method = match self.session.types.require(callable_type)? {
+                let callable_type = self.hir.require(value.callable)?.type_id;
+                let closure_method = match self.types.semantic_store().require(callable_type)? {
                     Closure(_, _, _, _, _, method) => {
                         let address = self.address(value.callable)?;
                         arguments.push(address);
@@ -209,8 +209,8 @@ impl Lowering {
             Array(value) => self.aggregate(node, &value.elements)?,
             ArrayRepeat(value) => {
                 let element = self.expression(value.element)?;
-                let count = match self.session.types.require(node.type_id)? {
-                    Array(_, length) => match self.session.types.require(*length)? {
+                let count = match self.types.semantic_store().require(node.type_id)? {
+                    Array(_, length) => match self.types.semantic_store().require(*length)? {
                         LiteralValue(bits, _, _) => *bits,
                         _ => @panic("repeated array has no concrete length"),
                     },
@@ -308,7 +308,7 @@ impl Lowering {
             },
             DynValue(value) => {
                 let initial = self.expression(*value)?;
-                let unsigned = self.session.types.primitive(TypeData.Integer(64u32, false))?;
+                let unsigned = self.types.semantic_store().primitive(TypeData.Integer(64u32, false))?;
                 let count = self.function.add_value(unsigned, ValueKind.Integer(1u64));
                 let types = Vec<TypeId>.new();
                 types.push(self.function.value(initial)?.type_id);
@@ -335,7 +335,7 @@ impl Lowering {
                 pointer
             },
         };
-        match self.session.types.require(node.type_id)? {
+        match self.types.semantic_store().require(node.type_id)? {
             Never => { if self.current.is_some() { self.end(Terminator.Unreachable)?; } },
             _ => {},
         }
@@ -343,7 +343,7 @@ impl Lowering {
     }
 
     pub fn address(id: HirId) -> Result<ValueId, CodegenError> {
-        let node = self.session.hir.require(id)?;
+        let node = self.hir.require(id)?;
         match self.lower_address(id) {
             Ok(value) => Result<ValueId, CodegenError>.Ok(value),
             Err(problem) => Result<ValueId, CodegenError>.Err(problem.with_location(node.span)),
@@ -351,8 +351,8 @@ impl Lowering {
     }
 
     fn lower_address(id: HirId) -> Result<ValueId, CodegenError> {
-        let node = self.session.hir.require(id)?;
-        let reference = self.session.types.reference(node.type_id);
+        let node = self.hir.require(id)?;
+        let reference = self.types.semantic_store().reference(node.type_id);
         match &node.kind {
             Block(value) => {
                 if node.is_place { return self.block_address(node, value); }
@@ -371,29 +371,29 @@ impl Lowering {
                 @panic("non-dereference unary expression reached address lowering")
             },
             FieldAccess(value) => {
-                let receiver = self.session.hir.require(value.receiver)?;
+                let receiver = self.hir.require(value.receiver)?;
                 let address = self.address(value.receiver)?;
                 self.emit(node.span, reference, Operation.FieldAddress(address, receiver.type_id, value.field.index))
             },
             TupleAccess(value) => {
-                let receiver = self.session.hir.require(value.receiver)?;
+                let receiver = self.hir.require(value.receiver)?;
                 let address = self.address(value.receiver)?;
                 self.emit(node.span, reference, Operation.FieldAddress(address, receiver.type_id, value.index))
             },
             ArrayAccess(value) => {
                 let base = self.address(value.array)?;
-                let pointer = self.session.types.pointer(value.element_type);
+                let pointer = self.types.semantic_store().pointer(value.element_type);
                 let elements = self.emit(node.span, pointer, Operation.Cast(base))?;
                 let index = self.expression(value.index)?;
-                let unsigned = self.session.types.primitive(TypeData.Integer(64u32, false))?;
+                let unsigned = self.types.semantic_store().primitive(TypeData.Integer(64u32, false))?;
                 let length = self.function.add_value(unsigned, ValueKind.Integer(value.length));
                 self.emit(node.span, pointer, Operation.IndexAddress(elements, value.element_type, index, IndexBounds.Array(length)))
             },
             SliceAccess(value) => {
                 let view = self.expression(value.slice)?;
                 let index = self.expression(value.index)?;
-                let unsigned = self.session.types.primitive(TypeData.Integer(64u32, false))?;
-                let pointer = self.session.types.pointer(value.element_type);
+                let unsigned = self.types.semantic_store().primitive(TypeData.Integer(64u32, false))?;
+                let pointer = self.types.semantic_store().pointer(value.element_type);
                 let arguments = Vec<ValueId>.new();
                 arguments.push(view);
                 let base = self.emit(node.span, pointer, Operation.Builtin(BuiltinKind.SliceGetPtr, Vec<TypeId>.new(), arguments))?;
@@ -486,10 +486,10 @@ impl Lowering {
         };
         if op != value.op {
             let address = self.address(value.left)?;
-            let lhs_type = self.session.hir.require(value.left)?.type_id;
+            let lhs_type = self.hir.require(value.left)?.type_id;
             let lhs = self.emit(node.span, lhs_type, Operation.Read(address))?;
             let rhs = self.expression(value.right)?;
-            let pointer = match self.session.types.require(lhs_type)? { Pointer(_) | CPointer(_) => true, _ => false, };
+            let pointer = match self.types.semantic_store().require(lhs_type)? { Pointer(_) | CPointer(_) => true, _ => false, };
             let result = if pointer && (op == BinaryOperator.Add || op == BinaryOperator.Sub) {
                 self.emit(node.span, lhs_type, Operation.PointerOffset(lhs, rhs, op == BinaryOperator.Sub))?
             } else {
@@ -501,7 +501,7 @@ impl Lowering {
 
         let left = self.expression(value.left)?;
         let right = self.expression(value.right)?;
-        let pointer = match self.session.types.require(self.function.value(left)?.type_id)? {
+        let pointer = match self.types.semantic_store().require(self.function.value(left)?.type_id)? {
             Pointer(_) | CPointer(_) => true, _ => false,
         };
         if pointer && (value.op == BinaryOperator.Add || value.op == BinaryOperator.Sub) {

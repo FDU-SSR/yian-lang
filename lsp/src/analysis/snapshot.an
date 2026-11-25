@@ -14,7 +14,7 @@ pub enum SnapshotState {
 }
 
 // A snapshot fixes the input text, the configuration identity and the successful result lifetime.
-// Ready owns only query records: the compiler session and its indexes are released after extraction.
+// Ready owns only query records: compiler analysis data and its indexes are released after extraction.
 pub struct Snapshot {
     pub revision: u64,
     pub topology_revision: u64,
@@ -98,7 +98,8 @@ impl Snapshot {
             Ok(analysis) => {
                 let strict_finished_ns = timing_now_ns();
                 let source_started_ns = timing_now_ns();
-                let index = match SourceIndex.build(&analysis.session, std_root) {
+                let index = match SourceIndex.build(&analysis.units, analysis.packages.as_ref(),
+                    &analysis.names, &analysis.stdlib, std_root) {
                     Ok(value) => value,
                     Err(message) => {
                         analysis.drop();

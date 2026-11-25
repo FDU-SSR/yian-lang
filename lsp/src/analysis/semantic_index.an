@@ -1,8 +1,6 @@
 from yianc.analysis.hir.node import HirKind, HirNode;
 from yianc.analysis.hir.pattern import PatternKind, PatternNode;
-from yianc.analysis.hir.store import HirStore;
 from yianc.analysis.hir.traversal import HirVisitor, walk_expr;
-from yianc.analysis.session.session import AnalysisSession;
 from yianc.types.model import CallableDefinition;
 from lsp.analysis.compiler import CompilerAnalysis;
 from yianc.types.callable import store_signature;
@@ -26,8 +24,8 @@ impl Drop for SemanticIndex {
     pub fn drop() {}
 }
 
-fn unit_source(session: AnalysisSession&, unit: UnitId) -> Option<UnitId> {
-    match session.unit(unit) {
+fn unit_source(analysis: CompilerAnalysis&, unit: UnitId) -> Option<UnitId> {
+    match analysis.units.get(unit) {
         Some(value) => Option<UnitId>.Some(value.id),
         None => Option<UnitId>.None,
     }
@@ -45,10 +43,10 @@ fn declaration_kind(kind: NominalKind) -> DeclKind {
 
 // The definition header records the whole item span, while the source index declares the name.
 // The defining symbol carries the name span, so use it first and keep the header as a fallback.
-fn definition_symbol_span(session: AnalysisSession&, definition: DefId) -> Option<SourceSpan> {
+fn definition_symbol_span(analysis: CompilerAnalysis&, definition: DefId) -> Option<SourceSpan> {
     let cursor = 0u64;
-    while cursor < session.symbols.symbol_count() {
-        let symbol = match session.symbols.symbol_at(cursor) {
+    while cursor < analysis.symbols.symbol_count() {
+        let symbol = match analysis.symbols.symbol_at(cursor) {
             Some(value) => value,
             None => { cursor += 1u64; continue; },
         };
@@ -68,56 +66,56 @@ fn definition_symbol_span(session: AnalysisSession&, definition: DefId) -> Optio
     Option<SourceSpan>.None
 }
 
-fn definition_target(session: AnalysisSession&, index: SourceIndex&, type_id: TypeId) -> Option<u64> {
-    let definition = match session.types.get(type_id) {
+fn definition_target(analysis: CompilerAnalysis&, index: SourceIndex&, type_id: TypeId) -> Option<u64> {
+    let definition = match analysis.output.types.get(type_id) {
         Some(Nominal(value, _)) => *value,
         _ => return Option<u64>.None,
     };
-    let record = match session.types.definition(definition) {
+    let record = match analysis.output.types.definition(definition) {
         Some(value) => value,
         None => return Option<u64>.None,
     };
     let header = record.header();
-    match definition_symbol_span(session, definition) {
+    match definition_symbol_span(analysis, definition) {
         Some(span) => match index.find_decl_at_span(span.unit, span) {
             Some(value) => return Option<u64>.Some(value),
             None => {},
         },
         None => {},
     }
-    let source = match unit_source(session, header.unit) {
+    let source = match unit_source(analysis, header.unit) {
         Some(value) => value,
         None => return Option<u64>.None,
     };
     index.find_decl_exact(source, header.span, declaration_kind(header.kind))
 }
 
-fn signature_text(session: AnalysisSession&, type_id: TypeId) -> Option<String> {
-    let signature = match store_signature(session.types, type_id) {
+fn signature_text(analysis: CompilerAnalysis&, type_id: TypeId) -> Option<String> {
+    let signature = match store_signature(analysis.output.types, type_id) {
         Ok(value) => value,
         Err(problem) => { problem.drop(); return Option<String>.None; },
     };
     defer signature.drop();
-    let header = match session.types.definition(signature.definition) {
+    let header = match analysis.output.types.definition(signature.definition) {
         Some(value) => value.header(),
         None => return Option<String>.None,
     };
     let text = String.new();
     text.push_str("fn ");
-    text.push_str(session.names.text(header.name));
+    text.push_str(analysis.names.text(header.name));
     text.push('(');
     let index = 0u64;
     for parameter in signature.parameters {
         if index != 0u64 { text.push_str(", "); }
-        text.push_str(session.names.text(parameter.name));
+        text.push_str(analysis.names.text(parameter.name));
         text.push_str(": ");
-        let rendered = stored_type_text(session.types, &session.names, parameter.type_id);
+        let rendered = stored_type_text(analysis.output.types, &analysis.names, parameter.type_id);
         text.push_str(rendered.as_str());
         rendered.drop();
         index += 1u64;
     }
     text.push(')');
-    let rendered = stored_type_text(session.types, &session.names, signature.result);
+    let rendered = stored_type_text(analysis.output.types, &analysis.names, signature.result);
     if rendered.as_str() != "void" {
         text.push_str(" -> ");
         text.push_str(rendered.as_str());
@@ -126,7 +124,7 @@ fn signature_text(session: AnalysisSession&, type_id: TypeId) -> Option<String> 
     Option<String>.Some(text)
 }
 
-fn callable_text(session: AnalysisSession&, name: str, body: CallableDefinition&) -> String {
+fn callable_text(analysis: CompilerAnalysis&, name: str, body: CallableDefinition&) -> String {
     let text = String.new();
     text.push_str("fn ");
     text.push_str(name);
@@ -134,15 +132,15 @@ fn callable_text(session: AnalysisSession&, name: str, body: CallableDefinition&
     let index = 0u64;
     for parameter in body.parameters {
         if index != 0u64 { text.push_str(", "); }
-        text.push_str(session.names.text(parameter.name));
+        text.push_str(analysis.names.text(parameter.name));
         text.push_str(": ");
-        let rendered = stored_type_text(session.types, &session.names, parameter.type_id);
+        let rendered = stored_type_text(analysis.output.types, &analysis.names, parameter.type_id);
         text.push_str(rendered.as_str());
         rendered.drop();
         index += 1u64;
     }
     text.push(')');
-    let rendered = stored_type_text(session.types, &session.names, body.result);
+    let rendered = stored_type_text(analysis.output.types, &analysis.names, body.result);
     if rendered.as_str() != "void" {
         text.push_str(" -> ");
         text.push_str(rendered.as_str());
@@ -231,28 +229,28 @@ fn member_decl(index: SourceIndex&, span: SourceSpan, kind: DeclKind) -> Option<
     index.find_decl_exact(span.unit, span, kind)
 }
 
-fn enrich_definitions(session: AnalysisSession&, index: SourceIndex&) {
-    let count = session.types.definition_count();
+fn enrich_definitions(analysis: CompilerAnalysis&, index: SourceIndex&) {
+    let count = analysis.output.types.definition_count();
     let cursor = 0u64;
     while cursor < count {
-        let record = match session.types.definition(DefId(cursor)) {
+        let record = match analysis.output.types.definition(DefId(cursor)) {
             Some(value) => value,
             None => { cursor += 1u64; continue; },
         };
         let header = record.header();
-        let source = match unit_source(session, header.unit) {
+        let source = match unit_source(analysis, header.unit) {
             Some(value) => value,
             None => { cursor += 1u64; continue; },
         };
         let target = index.find_decl_exact(source, header.span, declaration_kind(header.kind));
         match record.body() {
             Ok(Struct(body)) => {
-                match &target { Some(decl) => assign_detail(index, *decl, format_kind("struct", session.names.text(header.name))), None => {}, }
+                match &target { Some(decl) => assign_detail(index, *decl, format_kind("struct", analysis.names.text(header.name))), None => {}, }
                 for field in body.fields {
                     match &field.span {
                         Some(span) => match member_decl(index, *span, DeclKind.Field) {
                             Some(decl) => {
-                                let rendered = stored_type_text(session.types, &session.names, field.type_id);
+                                let rendered = stored_type_text(analysis.output.types, &analysis.names, field.type_id);
                                 assign_type_text(index, decl, rendered);
                             },
                             None => {},
@@ -262,25 +260,25 @@ fn enrich_definitions(session: AnalysisSession&, index: SourceIndex&) {
                 }
             },
             Ok(Enum(body)) => {
-                match &target { Some(decl) => assign_detail(index, *decl, format_kind("enum", session.names.text(header.name))), None => {}, }
+                match &target { Some(decl) => assign_detail(index, *decl, format_kind("enum", analysis.names.text(header.name))), None => {}, }
                 for variant in body.variants {
                     match &variant.span {
                         Some(span) => match member_decl(index, *span, DeclKind.Variant) {
-                            Some(decl) => assign_detail(index, decl, format_kind("variant", session.names.text(variant.name))),
+                            Some(decl) => assign_detail(index, decl, format_kind("variant", analysis.names.text(variant.name))),
                             None => {},
                         },
                         None => {},
                     }
                     match &variant.payload {
-                        Some(payload) => match session.types.get(*payload) {
-                            Some(Nominal(def, _)) => match session.types.definition(*def) {
+                        Some(payload) => match analysis.output.types.get(*payload) {
+                            Some(Nominal(def, _)) => match analysis.output.types.definition(*def) {
                                 Some(payload_record) => match payload_record.body() {
                                     Ok(Struct(payload_body)) => {
                                         for field in payload_body.fields {
                                             match &field.span {
                                                 Some(span) => match member_decl(index, *span, DeclKind.Field) {
                                                     Some(decl) => {
-                                                        let rendered = stored_type_text(session.types, &session.names, field.type_id);
+                                                        let rendered = stored_type_text(analysis.output.types, &analysis.names, field.type_id);
                                                         assign_type_text(index, decl, rendered);
                                                     },
                                                     None => {},
@@ -300,15 +298,15 @@ fn enrich_definitions(session: AnalysisSession&, index: SourceIndex&) {
                 }
             },
             Ok(Trait(_)) => {
-                match &target { Some(decl) => assign_detail(index, *decl, format_kind("trait", session.names.text(header.name))), None => {}, }
+                match &target { Some(decl) => assign_detail(index, *decl, format_kind("trait", analysis.names.text(header.name))), None => {}, }
             },
             Ok(Function(body)) => {
                 match &target { Some(decl) => assign_detail(index, *decl,
-                    callable_text(session, session.names.text(header.name), body)), None => {}, }
+                    callable_text(analysis, analysis.names.text(header.name), body)), None => {}, }
             },
             Ok(Method(body)) => {
                 match &target { Some(decl) => assign_detail(index, *decl,
-                    callable_text(session, session.names.text(header.name), body)), None => {}, }
+                    callable_text(analysis, analysis.names.text(header.name), body)), None => {}, }
             },
             Err(problem) => problem.drop(),
         }
@@ -323,10 +321,10 @@ fn format_kind(kind: str, name: str) -> String {
     text
 }
 
-fn enrich_symbols(session: AnalysisSession&, index: SourceIndex&) {
+fn enrich_symbols(analysis: CompilerAnalysis&, index: SourceIndex&) {
     let cursor = 0u64;
-    while cursor < session.symbols.symbol_count() {
-        let symbol = match session.symbols.symbol_at(cursor) {
+    while cursor < analysis.symbols.symbol_count() {
+        let symbol = match analysis.symbols.symbol_at(cursor) {
             Some(value) => value,
             None => { cursor += 1u64; continue; },
         };
@@ -341,7 +339,7 @@ fn enrich_symbols(session: AnalysisSession&, index: SourceIndex&) {
         let target = *found.unwrap();
         match symbol.kind {
             Function => {
-                match signature_text(session, symbol.type_id) {
+                match signature_text(analysis, symbol.type_id) {
                     Some(text) => {
                         if index.decls[target].detail.is_none() { assign_detail(index, target, text); } else { text.drop(); }
                     },
@@ -350,13 +348,13 @@ fn enrich_symbols(session: AnalysisSession&, index: SourceIndex&) {
             },
             Alias | Constant | Variable | Parameter => {
                 if index.decls[target].type_text.is_none() {
-                    let rendered = stored_type_text(session.types, &session.names, symbol.type_id);
+                    let rendered = stored_type_text(analysis.output.types, &analysis.names, symbol.type_id);
                     assign_type_text(index, target, rendered);
                 }
                 if index.decls[target].binding && !index.decls[target].annotated &&
                     index.decls[target].type_hint.is_none() &&
-                    displayable_type(session.types, symbol.type_id, 0u64) {
-                    let rendered = stored_type_text(session.types, &session.names, symbol.type_id);
+                    displayable_type(analysis.output.types, symbol.type_id, 0u64) {
+                    let rendered = stored_type_text(analysis.output.types, &analysis.names, symbol.type_id);
                     index.decls[target].type_hint = Option<String>.Some(rendered);
                 }
             },
@@ -374,14 +372,14 @@ fn nominal_definition(types: TypeStore&, type_id: TypeId) -> Option<DefId> {
 }
 
 struct SemanticCollector {
-    session: AnalysisSession&,
+    analysis: CompilerAnalysis&,
     index: SourceIndex&,
     semantic: SemanticIndex&,
 }
 
 impl SemanticCollector {
     fn symbol_target(symbol_id: SymbolId) -> Option<u64> {
-        let symbol = match self.session.symbols.get(symbol_id) {
+        let symbol = match self.analysis.symbols.get(symbol_id) {
             Some(value) => value,
             None => return Option<u64>.None,
         };
@@ -397,7 +395,7 @@ impl SemanticCollector {
         let id = *target.unwrap();
         let kind = self.index.decls[id].kind;
         let type_text = match type_id {
-            Some(value) => Option<String>.Some(stored_type_text(self.session.types, &self.session.names, value)),
+            Some(value) => Option<String>.Some(stored_type_text(self.analysis.output.types, &self.analysis.names, value)),
             None => Option<String>.None,
         };
         self.index.add_occurrence(span.unit, span, Option<u64>.Some(id), kind, declaration,
@@ -413,11 +411,11 @@ impl SemanticCollector {
     }
 
     fn field_declaration(type_id: TypeId, name: NameId) -> Option<SourceSpan> {
-        let definition = match nominal_definition(self.session.types, type_id) {
+        let definition = match nominal_definition(self.analysis.output.types, type_id) {
             Some(value) => value,
             None => return Option<SourceSpan>.None,
         };
-        match self.session.types.complete_definition(definition) {
+        match self.analysis.output.types.complete_definition(definition) {
             Ok(Struct(body)) => {
                 for field in body.fields {
                     if field.name == name {
@@ -431,11 +429,11 @@ impl SemanticCollector {
     }
 
     fn field_declaration_at(type_id: TypeId, index: u64) -> Option<SourceSpan> {
-        let definition = match nominal_definition(self.session.types, type_id) {
+        let definition = match nominal_definition(self.analysis.output.types, type_id) {
             Some(value) => value,
             None => return Option<SourceSpan>.None,
         };
-        match self.session.types.complete_definition(definition) {
+        match self.analysis.output.types.complete_definition(definition) {
             Ok(Struct(body)) => {
                 for field in body.fields {
                     if field.index == index {
@@ -451,7 +449,7 @@ impl SemanticCollector {
     // A static method call spells the owner type as its callee, so the recorded name span points
     // at the type item. Resolve that receiver type instead of the method it dispatches to.
     fn static_receiver_type(func: TypeId) -> Option<TypeId> {
-        let signature = match store_signature(self.session.types, func) {
+        let signature = match store_signature(self.analysis.output.types, func) {
             Ok(value) => value,
             Err(problem) => { problem.drop(); return Option<TypeId>.None; },
         };
@@ -473,13 +471,13 @@ impl SemanticCollector {
             Ty => {
                 // A type item in value position lowers to a Ty node with the nominal type but no
                 // symbol identity, so resolve the definition from the type.
-                let target = definition_target(self.session, self.index, node.type_id);
+                let target = definition_target(self.analysis, self.index, node.type_id);
                 let signature = Option<String>.None;
                 self.add(target, node.span, Option<TypeId>.Some(node.type_id), signature, false);
             },
             Call(value) => {
-                let target = definition_target(self.session, self.index, value.func);
-                let signature = signature_text(self.session, value.func);
+                let target = definition_target(self.analysis, self.index, value.func);
+                let signature = signature_text(self.analysis, value.func);
                 match &value.name_span {
                     Some(span) => {
                         self.add(target, *span, Option<TypeId>.Some(node.type_id), signature, false);
@@ -487,7 +485,7 @@ impl SemanticCollector {
                         // type item as the call span, so add a second occurrence for the type.
                         match self.static_receiver_type(value.func) {
                             Some(receiver_type) => {
-                                let receiver_target = definition_target(self.session, self.index, receiver_type);
+                                let receiver_target = definition_target(self.analysis, self.index, receiver_type);
                                 self.add(receiver_target, node.span, Option<TypeId>.Some(receiver_type),
                                     Option<String>.None, false);
                             },
@@ -498,7 +496,7 @@ impl SemanticCollector {
                 }
             },
             StructConstruct(value) => {
-                let target = definition_target(self.session, self.index, value.struct_id);
+                let target = definition_target(self.analysis, self.index, value.struct_id);
                 match &value.name_span {
                     Some(span) => {
                         let signature = Option<String>.None;
@@ -521,16 +519,16 @@ impl SemanticCollector {
                 }
             },
             MethodCall(value) => {
-                let target = definition_target(self.session, self.index, value.method_id);
-                let signature = signature_text(self.session, value.method_id);
+                let target = definition_target(self.analysis, self.index, value.method_id);
+                let signature = signature_text(self.analysis, value.method_id);
                 match &value.name_span {
                     Some(span) => self.add(target, *span, Option<TypeId>.Some(node.type_id), signature, false),
                     None => { match &signature { Some(text) => text.drop(), None => {}, } },
                 }
             },
             TraitObjectMethodCall(value) => {
-                let target = definition_target(self.session, self.index, value.method_id);
-                let signature = signature_text(self.session, value.method_id);
+                let target = definition_target(self.analysis, self.index, value.method_id);
+                let signature = signature_text(self.analysis, value.method_id);
                 match &value.name_span {
                     Some(span) => self.add(target, *span, Option<TypeId>.Some(node.type_id), signature, false),
                     None => { match &signature { Some(text) => text.drop(), None => {}, } },
@@ -579,11 +577,11 @@ impl SemanticCollector {
     }
 
     fn fill_field_type(struct_id: TypeId, name: NameId) -> Option<TypeId> {
-        let definition = match nominal_definition(self.session.types, struct_id) {
+        let definition = match nominal_definition(self.analysis.output.types, struct_id) {
             Some(value) => value,
             None => return Option<TypeId>.None,
         };
-        match self.session.types.complete_definition(definition) {
+        match self.analysis.output.types.complete_definition(definition) {
             Ok(Struct(body)) => {
                 for field in body.fields {
                     if field.name == name { return Option<TypeId>.Some(field.type_id); }
@@ -660,14 +658,14 @@ impl HirVisitor for SemanticCollector {
     }
 }
 
-// One successful session and its output are read once; the result adds links to the source index.
+// One successful analysis and its output are read once; the result adds links to the source index.
 pub fn build(index: SourceIndex&, analysis: CompilerAnalysis&) -> Result<SemanticIndex, String> {
     let semantic = SemanticIndex(procedure_count=analysis.output.procedures.len(), reference_count=0u64);
-    enrich_definitions(&analysis.session, index);
-    enrich_symbols(&analysis.session, index);
-    let collector = SemanticCollector(session=&analysis.session, index=index, semantic=&semantic);
+    enrich_definitions(analysis, index);
+    enrich_symbols(analysis, index);
+    let collector = SemanticCollector(analysis=analysis, index=index, semantic=&semantic);
     for procedure in analysis.output.procedures {
-        match walk_expr(&analysis.session.hir, procedure.root, &collector) {
+        match walk_expr(&analysis.hir, procedure.root, &collector) {
             Ok(_) => {},
             Err(problem) => {
                 problem.drop();

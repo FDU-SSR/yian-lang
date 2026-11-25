@@ -57,7 +57,7 @@ impl FunctionLowering {
         match types.niche_payload(type_id)? {
             Some(payload) => {
                 let candidate = self.get(value)?;
-                let pointer = match self.owner.session.types.require(payload)? {
+                let pointer = match self.owner.types.semantic_store().require(payload)? {
                     Slice(_) | Str => self.builder.extract_value(candidate, 0u32, ""),
                     Pointer(_) | Reference(_) => if self.owner.types.raw_pointers() { candidate } else { self.builder.extract_value(candidate, 0u32, "") },
                     _ => candidate,

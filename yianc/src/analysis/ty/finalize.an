@@ -48,9 +48,9 @@ fn check_value(ctx: ResolutionContext&, type_id: TypeId, active_types: HashSet<T
             LeavePath => { path.pop(); continue; },
         };
 
-        match ctx.session.types.require(current)? {
+        match ctx.types.require(current)? {
             Nominal(id, _) => {
-                let definition = *ctx.session.types.definition(*id).unwrap();
+                let definition = *ctx.types.definition(*id).unwrap();
                 let recursive = if expand {
                     active_types.contains(&current)
                 } else {
@@ -92,7 +92,7 @@ fn check_value(ctx: ResolutionContext&, type_id: TypeId, active_types: HashSet<T
                             index -= 1;
                             let field = &value.fields[index];
                             let field_type = if expand {
-                                substitute(ctx.session.types, field.type_id, &substitutions)?
+                                substitute(ctx.types, field.type_id, &substitutions)?
                             } else {
                                 field.type_id
                             };
@@ -107,7 +107,7 @@ fn check_value(ctx: ResolutionContext&, type_id: TypeId, active_types: HashSet<T
                             match &variant.payload {
                                 Some(payload) => {
                                     let payload_type = if expand {
-                                        substitute(ctx.session.types, *payload, &substitutions)?
+                                        substitute(ctx.types, *payload, &substitutions)?
                                     } else {
                                         *payload
                                     };
@@ -149,7 +149,7 @@ pub fn finalize_types(ctx: ResolutionContext&) -> Result<(), AnalysisError> {
 
     while index < ctx.len() {
         let declaration = ctx.declaration(index);
-        let symbol = *ctx.session.symbols.get(declaration.symbol).unwrap();
+        let symbol = *ctx.symbols.get(declaration.symbol).unwrap();
         // Template cycles and concrete storage cycles need distinct identities.
         check_value(ctx, symbol.type_id, &active_types, &active_definitions, false, ctx.span(declaration.unit, declaration.item.span))?;
         check_value(ctx, symbol.type_id, &active_types, &active_definitions, true, ctx.span(declaration.unit, declaration.item.span))?;
@@ -157,9 +157,9 @@ pub fn finalize_types(ctx: ResolutionContext&) -> Result<(), AnalysisError> {
     }
 
     validate_unsized(ctx)?;
-    let count = ctx.session.types.len();
+    let count = ctx.types.len();
     for type_index in 0u64..count {
-        match ctx.session.types.require(TypeId(type_index))? {
+        match ctx.types.require(TypeId(type_index))? {
             TraitObject(trait_id) => {
                 let methods = object_methods(ctx, *trait_id)?;
                 methods.drop();

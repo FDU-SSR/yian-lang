@@ -83,7 +83,7 @@ impl FunctionLowering {
         let anchor = self.heap_anchor(data, word);
         let data_integer = self.builder.cast(CastOp.Ptrtoint, data, module.int_type(64u32), "");
         let valid = self.builder.icmp(IntCompare.Eq, data_integer, anchor, "");
-        match self.owner.session.types.require(type_id)? {
+        match self.owner.types.semantic_store().require(type_id)? {
             Pointer(_) => {
                 valid = self.builder.binary(BinaryOp.And, valid,
                     self.builder.icmp(IntCompare.Eq, self.pointer_offset_bytes(value), self.integer(0u64), ""), "");
