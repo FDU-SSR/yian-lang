@@ -192,8 +192,6 @@ def parse_cli(argv: list[str] | None = None) -> argparse.Namespace:
             "CFG and LLVM layers. Diagnostic mode only; raw pointers provide no memory-safety guarantee."
         ),
     ))
-    __register(parser.add_argument("--allow-ffi", action="store_true", default=False,
-                        help="Allow FFI declarations and operations in standalone sources."))
     arguments = sys.argv[1:] if argv is None else argv
     return parse_arguments(parser, options, arguments)
 
@@ -241,7 +239,6 @@ def __analyze(args: argparse.Namespace) -> int:
         compiler_root=args.compiler_root,
         packages=packages,
         raw_pointers=args.raw_pointers,
-        allow_ffi=args.allow_ffi,
         type_size_factory=type_size_provider,
     )
     result = session.analyze(args.paths, require_entry=False)
@@ -528,7 +525,6 @@ def __run(argv: list[str] | None = None) -> int:
             return 1
     session = AnalysisSession(
         compiler_root=args.compiler_root, packages=packages, raw_pointers=args.raw_pointers,
-        allow_ffi=args.allow_ffi,
         type_size_factory=type_size_provider,
     )
     trust_root = session.std_root

@@ -43,7 +43,7 @@ fn prepare(source: str, path: str) -> MiddleEndDriver {
         Ok(value) => value,
         Err(error) => { error.drop(); @panic("strict fixture preparation failed"); },
     };
-    MiddleEndDriver.new(session, IS_RAW_MODE, trust(), Option<PackageMap>.None, false)
+    MiddleEndDriver.new(session, IS_RAW_MODE, trust(), Option<PackageMap>.None)
 }
 
 fn analyze_success(source: str, path: str) -> AnalysisSession {

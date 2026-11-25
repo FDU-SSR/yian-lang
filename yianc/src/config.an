@@ -53,7 +53,6 @@ pub struct CompilerConfig {
     pub root_explicit: bool,
     pub packages: Option<String>,
     pub raw_pointers: bool,
-    pub allow_ffi: bool,
     pub target: OutputKind,
     pub target_explicit: bool,
     pub output: Option<String>,
@@ -134,7 +133,6 @@ impl CompilerConfig {
             _ => Option<String>.None,
         };
         let raw = *arg_matches.get_bool("raw-pointers").unwrap().unwrap();
-        let ffi = *arg_matches.get_bool("allow-ffi").unwrap().unwrap();
         let target_explicit = match arg_matches.was_provided("target") { Ok(value) => value, Err(_) => false, };
         let target = match arg_matches.get_string("target") {
             Ok(Some(text)) => match text {
@@ -168,7 +166,7 @@ impl CompilerConfig {
         let cfg_inline_disabled = *arg_matches.get_bool("no-cfg-inline").unwrap().unwrap();
         let eliminate_disabled = *arg_matches.get_bool("no-fat-check-elimination").unwrap().unwrap();
         let action = if check { CompilerAction.Check } else { CompilerAction.Compile };
-        let config = Self(action, inputs, root, arg_matches.get_string("compiler-root").unwrap().is_some(), packages, raw, ffi, target, target_explicit, output, optimization,
+        let config = Self(action, inputs, root, arg_matches.get_string("compiler-root").unwrap().is_some(), packages, raw, target, target_explicit, output, optimization,
             dump, profile, profile_output, runtime_profile_dir, log_enabled, log_spec, log_file, link_libraries, link_searches,
             true, true);
         let transferred = false;
@@ -269,10 +267,6 @@ pub fn parse_args() -> CompilerConfig {
     parser.add_argument("raw-pointers")
     .long("raw-pointers").action(Action.StoreTrue)
     .help("analyze sources for raw-pointer mode");
-
-    parser.add_argument("allow-ffi")
-    .long("allow-ffi").action(Action.StoreTrue)
-    .help("allow FFI in standalone sources");
 
     parser.add_argument("target")
     .long("target").short('t').choices(["exe", "ll", "bc"].as_slice()).default_value("exe").metavar("TARGET")

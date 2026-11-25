@@ -1,1 +1,1 @@
-FFI requires package ffi = true or --allow-ffi
+FFI requires a package with ffi = true

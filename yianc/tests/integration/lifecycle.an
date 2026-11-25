@@ -138,7 +138,7 @@ fn strict_lifecycle_driver(raw: bool) -> MiddleEndDriver {
         Ok(value) => value,
         Err(error) => { error.drop(); @panic("fixture preparation failed"); },
     };
-    MiddleEndDriver.new(session, raw, trust(), Option<PackageMap>.None, false)
+    MiddleEndDriver.new(session, raw, trust(), Option<PackageMap>.None)
 }
 
 fn check_strict_lifecycle(raw: bool) {
@@ -218,7 +218,7 @@ fn strict_analysis_reports_first_error() {
         Ok(value) => value,
         Err(error) => { error.drop(); @panic("fixture preparation failed"); },
     };
-    let driver = MiddleEndDriver.new(session, false, trust(), Option<PackageMap>.None, false);
+    let driver = MiddleEndDriver.new(session, false, trust(), Option<PackageMap>.None);
     defer driver.drop();
     let reporter = DiagnosticCounter(0);
     match driver.run(AnalysisOptions.new(), &reporter) {

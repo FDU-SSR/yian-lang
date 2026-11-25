@@ -140,9 +140,9 @@ class GlobalResolve:
             if len({attr.kind for attr in attrs}) != len(attrs):
                 raise AnalysisError("Duplicate declaration modifier", item.span)
             if any(attr.kind in (AST.AttrKind.Ffi, AST.AttrKind.PubFfi) for attr in attrs) and not unit.allows_ffi:
-                raise AnalysisError("FFI requires package ffi = true or --allow-ffi", item.span)
+                raise AnalysisError("FFI requires a package with ffi = true", item.span)
             if isinstance(item, (AST.ExternBlock, AST.OpaqueTypeDef)) and not unit.allows_ffi:
-                raise AnalysisError("FFI declaration requires package ffi = true or --allow-ffi", item.span)
+                raise AnalysisError("FFI declaration requires a package with ffi = true", item.span)
             if AST.AttrKind.PubFfi in {attr.kind for attr in attrs} and AST.AttrKind.Pub in {attr.kind for attr in attrs}:
                 raise AnalysisError("Use either pub or pub(ffi)", item.span)
             if isinstance(item, AST.FuncDef):
@@ -769,7 +769,7 @@ class GlobalResolve:
         if AST.AttrKind.PubFfi in {attr.kind for attr in decl.attrs} and AST.AttrKind.Ffi not in {attr.kind for attr in decl.attrs}:
             raise AnalysisError("pub(ffi) method must be ffi fn", decl.span)
         if any(attr.kind in (AST.AttrKind.Ffi, AST.AttrKind.PubFfi) for attr in decl.attrs) and not unit.allows_ffi:
-            raise AnalysisError("FFI method requires package ffi = true or --allow-ffi", decl.span)
+            raise AnalysisError("FFI method requires a package with ffi = true", decl.span)
         if is_header and any(attr.kind == AST.AttrKind.Ffi for attr in decl.attrs):
             raise AnalysisError("FFI method requires a body", decl.span)
         # alloc in type space

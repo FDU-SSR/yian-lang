@@ -70,8 +70,8 @@ impl DiagnosticReporter for CliReporter {
 
 impl MiddleEndDriver {
     static pub fn new(units: UnitTable, raw_pointers: bool, trust: SourceTrust,
-        packages: Option<PackageMap>, allow_ffi: bool) -> Self {
-        Self(Option<AnalysisSession>.Some(AnalysisSession.new(units, raw_pointers, trust, packages, allow_ffi)))
+        packages: Option<PackageMap>) -> Self {
+        Self(Option<AnalysisSession>.Some(AnalysisSession.new(units, raw_pointers, trust, packages)))
     }
 
     pub fn analysis_session() -> AnalysisSession& {

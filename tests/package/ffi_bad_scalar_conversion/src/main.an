@@ -1,0 +1,9 @@
+ffi fn to_c_int(value: bool) -> c_int {
+    return c_int(value);
+}
+
+ffi fn to_c_size(value: bool) -> c_size {
+    return c_size(value);
+}
+
+fn main() {}

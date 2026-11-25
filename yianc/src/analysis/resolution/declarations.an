@@ -34,7 +34,7 @@ fn attributes(ctx: ResolutionContext&, unit: UnitId, item: Item&, attrs: Vec<Att
 
         if attr.data.kind == AttrKind.Ffi || attr.data.kind == AttrKind.PubFfi {
             if !ctx.session.allows_ffi(unit) {
-                return Result<(), AnalysisError>.Err(ctx.error(unit, attr.span, DiagnosticCode.Access, "FFI requires package ffi = true or --allow-ffi"));
+                return Result<(), AnalysisError>.Err(ctx.error(unit, attr.span, DiagnosticCode.Access, "FFI requires a package with ffi = true"));
             }
 
             if !function && !external {

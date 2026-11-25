@@ -69,7 +69,7 @@ fn same_document_text(left: Vec<SourceDocument>&, right: Vec<SourceDocument>&) -
 impl Snapshot {
     static pub fn analyze(revision: u64, topology_revision: u64, configuration_identity: str,
         documents: Vec<SourceDocument>&, trust: SourceTrust, packages: Option<PackageMap>,
-        raw_pointers: bool, allow_ffi: bool, std_root: str) -> Result<Self, String> {
+        raw_pointers: bool, std_root: str) -> Result<Self, String> {
         let owned = copy_documents(documents);
         let identity = InputIdentity.build(configuration_identity, documents);
         let accepted = false;
@@ -81,7 +81,7 @@ impl Snapshot {
         };
 
         let strict_started_ns = timing_now_ns();
-        match compiler_analyze(documents, trust, packages, raw_pointers, allow_ffi) {
+        match compiler_analyze(documents, trust, packages, raw_pointers) {
             Err(failure) => {
                 let strict_finished_ns = timing_now_ns();
                 let diagnostics = failure.take_diagnostics();

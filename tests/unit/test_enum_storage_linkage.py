@@ -189,16 +189,28 @@ class NativeProbe(unittest.TestCase):
         path.write_text(text, encoding="utf-8")
         return path
 
+    def package_map(self, source: Path) -> Path:
+        mapping = self.work / "package.json"
+        mapping.write_text(json.dumps({
+            "format": 2,
+            "root": "probe",
+            "packages": {
+                "probe": {"sourceRoot": str(self.work), "kind": "bin", "entry": str(source.resolve()),
+                          "dependencies": [], "ffi": True},
+                "std": {"sourceRoot": str((ROOT / "lib" / "src").resolve()), "kind": "lib",
+                        "dependencies": [], "ffi": True},
+            },
+        }), encoding="utf-8")
+        return mapping
+
     def compiler(self, source: Path, output: Path, *, target: str, raw: bool = False,
-                 optimization: int = 0, dump: bool = False, allow_ffi: bool = False) -> subprocess.CompletedProcess[str]:
-        arguments = [str(self.yianc), "--compiler-root", str(ROOT), f"-O{optimization}", "-t", target,
-                     "-o", str(output)]
+                 optimization: int = 0, dump: bool = False) -> subprocess.CompletedProcess[str]:
+        arguments = [str(self.yianc), "--packages", str(self.package_map(source)),
+                     "--compiler-root", str(ROOT), f"-O{optimization}", "-t", target, "-o", str(output)]
         if raw:
             arguments.append("--raw-pointers")
         if dump:
             arguments.append("--dump")
-        if allow_ffi:
-            arguments.append("--allow-ffi")
         arguments.extend([str(ROOT / "lib" / "src"), str(source)])
         completed = subprocess.run(arguments, cwd=output.parent, env=self.environment, text=True,
                                    capture_output=True, check=False, timeout=600)
@@ -207,10 +219,9 @@ class NativeProbe(unittest.TestCase):
         self.assertEqual(completed.stderr, "", f"compilation wrote diagnostics for {source.name}:\n{completed.stderr}")
         return completed
 
-    def executable(self, source: Path, name: str, *, raw: bool, optimization: int = 0,
-                   allow_ffi: bool = False) -> Path:
+    def executable(self, source: Path, name: str, *, raw: bool, optimization: int = 0) -> Path:
         output = self.work / name
-        self.compiler(source, output, target="exe", raw=raw, optimization=optimization, allow_ffi=allow_ffi)
+        self.compiler(source, output, target="exe", raw=raw, optimization=optimization)
         return output
 
     def run_program(self, executable: Path) -> subprocess.CompletedProcess[str]:
@@ -323,7 +334,7 @@ class LinkageTests(NativeProbe):
             "exe": self.work / "linkage",
         }
         for target, output in outputs.items():
-            self.compiler(source, output, target=target, allow_ffi=True)
+            self.compiler(source, output, target=target)
             self.assertTrue(output.is_file(), f"target {target} produced no artifact")
 
         ir = outputs["ll"].read_text(encoding="utf-8")
@@ -380,11 +391,10 @@ class LinkageTests(NativeProbe):
         source = self.source("consumers.an", CONSUMERS_PROBE)
         for raw in (False, True):
             mode = "raw" if raw else "fat"
-            self.run_program(self.executable(source, f"consumers-{mode}", raw=raw, optimization=2,
-                                             allow_ffi=True))
+            self.run_program(self.executable(source, f"consumers-{mode}", raw=raw, optimization=2))
 
         signature = self.work / "consumers.ll"
-        self.compiler(source, signature, target="ll", raw=True, allow_ffi=True)
+        self.compiler(source, signature, target="ll", raw=True)
         ir = signature.read_text(encoding="utf-8")
         enums = re.findall(r"(?m)^(%yian\.type\.\d+) = type \{ i32, \[\d+ x i32\] \}$", ir)
         self.assertEqual(len(enums), 1, "the probe declares one tagged enum")

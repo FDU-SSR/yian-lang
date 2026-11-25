@@ -48,7 +48,7 @@ fn main() {
     };
     trace.finish("frontend");
 
-    let middle = MiddleEndDriver.new(units, config.raw_pointers, trust, packages, config.allow_ffi);
+    let middle = MiddleEndDriver.new(units, config.raw_pointers, trust, packages);
     defer middle.drop();
     let runtime_profile_dir = match &config.runtime_profile_dir { Some(value) => Option<str>.Some(value.as_str()), None => Option<str>.None };
     let backend = match BackendDriver.new(middle.analysis_session(), BackendOptions(config.raw_pointers, config.optimization, runtime_profile_dir, config.cfg_inline, config.fat_check_elimination), Option<CompilerTrace&>.Some(&trace)) {

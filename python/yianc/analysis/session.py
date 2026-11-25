@@ -159,7 +159,6 @@ class AnalysisSession:
         compiler_root: Path | None = None,
         packages: PackageMap | None = None,
         raw_pointers: bool = False,
-        allow_ffi: bool = False,
         type_size_factory: TypeSizeFactory,
     ) -> None:
         """Configure one session.
@@ -172,7 +171,6 @@ class AnalysisSession:
         """
         self.__packages = packages
         self.__raw_pointers = raw_pointers
-        self.__allow_ffi = allow_ffi
         self.__type_size_factory = type_size_factory
         self.__std_root = (
             packages.packages["std"].source_root
@@ -304,7 +302,7 @@ class AnalysisSession:
             unit.allows_ffi = (
                 self.__packages.packages[package_name].ffi
                 if package_name is not None and self.__packages is not None
-                else unit.is_stdlib or self.__allow_ffi
+                else unit.is_stdlib
             )
             unit.symbol_ctx.allows_ffi = unit.allows_ffi
 

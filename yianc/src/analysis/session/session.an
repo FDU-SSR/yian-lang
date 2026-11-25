@@ -32,7 +32,6 @@ pub struct AnalysisSession {
     units: UnitTable,
     trust: SourceTrust,
     packages: Option<PackageMap>,
-    allow_ffi: bool,
     permissions: Vec<SourcePermissions>,
     permissions_ready: bool,
     pub names: NameInterner,
@@ -48,8 +47,8 @@ pub struct AnalysisSession {
 
 impl AnalysisSession {
     static pub fn new(units: UnitTable, raw_pointers: bool, trust: SourceTrust,
-        packages: Option<PackageMap>, allow_ffi: bool) -> Self {
-        Self(units, trust, packages, allow_ffi, Vec<SourcePermissions>.new(), false,
+        packages: Option<PackageMap>) -> Self {
+        Self(units, trust, packages, Vec<SourcePermissions>.new(), false,
             NameInterner.new(), TypeStore.new(), SymbolStore.new(), HirStore.new(),
             DefinitionRegistry.new(), DefinitionWorklist.new(), ImplRegistry.new(),
             raw_pointers, AnalysisPhase.Prepared)
@@ -90,7 +89,7 @@ impl AnalysisSession {
             let canonical = self.units.file(unit).path();
             let stdlib = self.trust.is_stdlib(canonical);
             let restricted = self.trust.allows_restricted(canonical);
-            let ffi = stdlib || self.allow_ffi;
+            let ffi = stdlib;
             match &self.packages {
                 Some(packages) => match packages.package_of(canonical) {
                     Some(package) => ffi = package.allows_ffi,

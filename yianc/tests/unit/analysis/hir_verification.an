@@ -474,7 +474,7 @@ fn prepare(source: str, path: str) -> MiddleEndDriver {
         Ok(value) => value,
         Err(error) => { error.drop(); @panic("probe preparation failed"); },
     };
-    MiddleEndDriver.new(session, false, trust(), Option<PackageMap>.None, false)
+    MiddleEndDriver.new(session, false, trust(), Option<PackageMap>.None)
 }
 
 fn analyze(driver: MiddleEndDriver&) -> AnalysisOutput {

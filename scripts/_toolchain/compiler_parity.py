@@ -76,12 +76,11 @@ def __cases() -> list[Case]:
         Case("nonfinite-cast", "analyze", ("tests/basic/diagnostics/comptime_nonfinite_cast.err.an",), ("--check",)),
         Case("bool-float-cast", "analyze", ("tests/basic/diagnostics/comptime_bool_float_cast.err.an",), ("--check",)),
         Case("bool-integer-constant-error", "analyze", ("tests/basic/diagnostics/comptime_bool_integer_cast.err.an",), ("--check",)),
-        Case("bool-integer-casts", "analyze", ("tests/compiler_parity/bool_conversion.an",), ("--check", "--allow-ffi"), expected_error="cannot convert bool to an integer", expected_error_count=12),
+        Case("bool-integer-casts", "analyze", ("tests/compiler_parity/bool_conversion.an",), ("--check",), expected_error="cannot convert bool to an integer", expected_error_count=10),
         Case("division-by-zero", "analyze", ("tests/basic/error/comptime_if_div_zero.err.an",), ("--check",), expected_error_code="E503", expected_error_count=1),
         Case("defer-uninitialized", "analyze", ("tests/basic/error/defer_uninitialized.err.an",), ("--check",), expected_error_code="E502", expected_error_count=1),
         Case("uncalled-concrete-definition", "analyze", ("tests/basic/error/uncalled_concrete_definition.err.an",), ("--check",), expected_error_code="E502", expected_error_count=1),
         Case("uncalled-comptime-condition", "analyze", ("tests/basic/error/uncalled_comptime_condition.err.an",), ("--check",), expected_error_code="E503", expected_error_count=1),
-        Case("ffi-alias-permission", "analyze", ("tests/basic/type/alias/ffi_alias_permission.err.an",), ("--check", "--allow-ffi"), expected_error="C ABI types require an ffi fn", expected_error_count=1),
         Case("negative-shift", "analyze", ("tests/basic/error/comptime_if_negative_shift.err.an",), ("--check",)),
         Case("multiple-errors", "analyze", ("tests/compiler_parity/multiple_errors.an",), ("--check",)),
         Case("strict-partial-input", "analyze", ("tests/compiler_parity/partial_analysis_invalid.an",), ("--check",), expected_error="Unknown identifier 'missing'", expected_error_code="E301", expected_error_count=1),
@@ -161,7 +160,7 @@ def __cases() -> list[Case]:
     cases.append(Case("integer-conversion-run", "native", ("tests/basic/control_flow/comptime_untyped_integer.an",), ("-O3", "-o", "result"), run=True))
     cases.append(Case("float-conversion-run", "native", ("tests/basic/control_flow/comptime_untyped_integer.an",), ("-O3", "-o", "result"), run=True))
     cases.append(Case("untyped-runtime-comparison", "native", ("tests/basic/control_flow/assert.an",), ("-O3", "-o", "result"), run=True))
-    cases.append(Case("boolean-conversion", "native", ("tests/compiler_parity/bool_conversion.an",), ("--allow-ffi", "-O0", "-o", "result"), expected_error="cannot convert bool to an integer"))
+    cases.append(Case("boolean-conversion", "native", ("tests/compiler_parity/bool_conversion.an",), ("-O0", "-o", "result"), expected_error="cannot convert bool to an integer"))
     cases.append(Case("boolean-integer-conversion", "native", ("tests/basic/type/bool_integer_cast.err.an",), ("-O0", "-o", "result"), expected_error="cannot convert bool to an integer"))
     cases.append(Case("llvm-consumer", "native", ("tests/package/ffi_llvm/src/main.an",), ("-O2", "-o", "result"), run=True, fixture="tests/package/ffi_llvm"))
     # Dangling and out-of-bounds programs have defined failure behavior only in fat mode.

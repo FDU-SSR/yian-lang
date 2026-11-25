@@ -89,8 +89,6 @@ fn semantic_input_identity(unit_key: str, mode: str, raw_pointers: bool,
     writer.write_string(mode);
     writer.key("pointer_mode");
     writer.write_string(if raw_pointers { "raw" } else { "fat" });
-    writer.key("allow_ffi");
-    writer.write_bool(false);
     writer.key("standard_library_root");
     writer.write_string(std_root);
     writer.key("package_map");
@@ -1522,7 +1520,7 @@ impl WorkerState {
                                     },
                                 };
                                 match Snapshot.analyze(unit_revision_value, topology, configuration_identity.as_str(),
-                                    &primary_documents, trust, package_map, self.raw_pointers, false, self.std_root.as_str()) {
+                                    &primary_documents, trust, package_map, self.raw_pointers, self.std_root.as_str()) {
                                     Ok(value) => value,
                                     Err(message) => { configuration_identity.drop(); return Result<Value, String>.Err(message); },
                                 }
@@ -1658,7 +1656,7 @@ impl WorkerState {
                     },
                 };
                 match Snapshot.analyze(unit_revision_value, topology, identity.as_str(),
-                    &documents, trust, Option<PackageMap>.None, self.raw_pointers, false,
+                    &documents, trust, Option<PackageMap>.None, self.raw_pointers,
                     self.std_root.as_str()) {
                     Ok(value) => value,
                     Err(message) => { identity.drop(); unit_key.drop(); return Result<Value, String>.Err(message); },

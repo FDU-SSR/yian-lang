@@ -220,7 +220,7 @@ definite-assignment 检查；不进入 CFG/LLVM，不生成编译器产物。诊
 致命错误，`main` 在已输出的诊断之后报告该错误。普通编译只在严格分析成功后输出 warning 和提示。
 诊断标题为 `error[E401]: …`、`warning[W501]: …`；编号决定等级，文件级位置带独立路径行，源码
 位置带 `--> path:line:column` 与源码摘录。不要求 `main`，存在时校验其签名。
-`--check` 接受 `--packages`、`--compiler-root`、`--raw-pointers`、`--allow-ffi`、`-O`、`--dump`、
+`--check` 接受 `--packages`、`--compiler-root`、`--raw-pointers`、`-O`、`--dump`、
 `--profile`、`--profile-output` 和日志选项；显式 `-t`、`-o`、`--link-lib`、`--link-search` 会报配置错误。
 `--runtime-profile-dir` 只用于插桩 `exe` 构建，与 `--check` 组合会报配置错误。
 `--dump` 只写 `tokens.txt`、`ast.txt` 和成功分析时的 `hir.txt`。
@@ -256,17 +256,17 @@ yian-fmt --stdin --stdin-filepath label.an < main.an
 输出格式化文本。`anx fmt` 与语言服务器通过子进程调用同一命令。完整契约见
 [格式化器](../../docs/manual/28.formatter.md)。
 
-### 2.12 `--allow-ffi` / `--link-lib` / `--link-search` — FFI 与原生链接
+### 2.13 `--link-lib` / `--link-search` — 原生链接
 
 ```bash
-yianc --allow-ffi --link-lib m --link-search /path/to/libs lib/src main.an
+yianc --link-lib m --link-search /path/to/libs lib/src main.an
 ```
 
-`--allow-ffi` 只授予独立编译源码 FFI 权限；包模式的权限由各包的 `ffi` 字段决定。`--link-lib NAME` 和 `--link-search DIR` 可重复，分别向生成可执行文件时的链接命令加入 `-lNAME` 和 `-LDIR`。它们只在 `-t exe` 的最终链接步骤使用；`-t ll` 与 `-t bc` 保留外部符号。编译器会拒绝非法库名。
+FFI 权限由包清单的 `ffi` 字段授予；不属于任何包的源码没有 FFI 权限，独立编译不能声明或调用 C 接口。`--link-lib NAME` 和 `--link-search DIR` 可重复，分别向生成可执行文件时的链接命令加入 `-lNAME` 和 `-LDIR`。它们只在 `-t exe` 的最终链接步骤使用；`-t ll` 与 `-t bc` 保留外部符号。编译器会拒绝非法库名。
 
 声明 `[native.llvm]` 的包使用 LLVM 22 的 `llvm-config` 确定组件及系统库参数，要求 Linux x86-64 LP64 环境和 x86-64 Linux C 链接器。`[native.c]` 的 shim 使用 `-O2 -fPIC -std=c11` 和所属包的 include dirs；所有程序、运行时和 shim 对象先链接，之后按可达包顺序将显式归档放入一个 linker group。没有 LLVM 声明时不查询 `llvm-config`。`-t exe` 编译并链接包内 native 输入、YIAN 运行时及所需系统库。语言层的 C ABI 限制与封送操作见 [FFI 参考](../../docs/grammar/17.ffi.md)。
 
-### 2.13 前端观察
+### 2.14 前端观察
 
 `--dump` 输出已完成阶段的中间文件。前端写出 `tokens.txt` 和 `ast.txt`，中端写出 `hir.txt`。
 

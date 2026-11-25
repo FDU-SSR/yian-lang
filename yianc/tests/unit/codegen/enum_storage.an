@@ -327,7 +327,7 @@ fn probe_driver() -> MiddleEndDriver {
         Ok(value) => value,
         Err(error) => { error.drop(); @panic("enum storage probe preparation failed"); },
     };
-    MiddleEndDriver.new(session, false, trust(), Option<PackageMap>.None, false)
+    MiddleEndDriver.new(session, false, trust(), Option<PackageMap>.None)
 }
 
 // One malformed graph per process; the invariant panic terminates the child.
