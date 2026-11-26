@@ -18,7 +18,7 @@ from yianc.analysis.ty.aggregate import payload_fields;
 from std.core.iter import Iterator, IntoIterator;
 from std.core.convert import From;
 from std.core.ops import Index;
-from yianc.types.store import NEVER_TYPE_ID, STR_TYPE_ID, VOID_TYPE_ID, BOOL_TYPE_ID, I64_TYPE_ID, U64_TYPE_ID;
+from yianc.types.space import NEVER_TYPE_ID, STR_TYPE_ID, VOID_TYPE_ID, BOOL_TYPE_ID, I64_TYPE_ID, U64_TYPE_ID;
 from yianc.common.integer_value import IntegerValue, IntegerWidth;
 
 // The lowering target selects the outer owner and where a write failure goes.

@@ -13,7 +13,7 @@ from yianc.diagnostics.model import DiagnosticCode, AnalysisError;
 from yianc.analysis.ty.relations import compatible, default_type;
 from std.collections.hash_map import HashMap;
 from std.core.iter import Iterator, IntoIterator;
-from yianc.types.store import FLOAT_LITERAL_TYPE_ID, INT_LITERAL_TYPE_ID;
+from yianc.types.space import FLOAT_LITERAL_TYPE_ID, INT_LITERAL_TYPE_ID;
 
 impl ExprChecker {
     pub fn match_argument(expected: TypeId, actual: TypeId, substitutions: HashMap<TypeId, TypeId>&) -> bool {

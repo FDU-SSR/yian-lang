@@ -6,7 +6,7 @@ from yianc.codegen.representation import PointerRepresentation, TypeRepresentati
 from yianc.codegen.types import BackendTypes;
 from yianc.codegen.error import CodegenError;
 from yianc.types.model import TypeData, NominalKind;
-from yianc.types.store import TypeStore;
+from yianc.types.space import TypeSpace;
 from yianc.common.ids import TypeId;
 from yianc.frontend.ast.atoms import BuiltinKind;
 from yianc.frontend.ast.operator import BinaryOperator;
@@ -23,13 +23,13 @@ impl Drop for TypeSet {
 }
 
 impl TypeSet {
-    static fn new(store: TypeStore&) -> Self {
+    static fn new(store: TypeSpace&) -> Self {
         let seen = Vec<bool>.new();
         for index in 0u64..store.len() { seen.push(false); }
         Self(seen)
     }
 
-    fn add(store: TypeStore&, types: BackendTypes&, type_id: TypeId) -> Result<(), CodegenError> {
+    fn add(store: TypeSpace&, types: BackendTypes&, type_id: TypeId) -> Result<(), CodegenError> {
         // Interning hidden receivers can grow the store while the closure is collected.
         while type_id.index >= self.seen.len() { self.seen.push(false); }
         if self.seen[type_id.index] { return Result<(), CodegenError>.Ok(()); }
@@ -69,7 +69,7 @@ impl TypeSet {
         Result<(), CodegenError>.Ok(())
     }
 
-    fn add_callable(store: TypeStore&, types: BackendTypes&, callable: TypeId) -> Result<(), CodegenError> {
+    fn add_callable(store: TypeSpace&, types: BackendTypes&, callable: TypeId) -> Result<(), CodegenError> {
         self.add(store, types, callable)?;
         match store.require(callable)? {
             Nominal(_, _) => {
@@ -99,7 +99,7 @@ impl TypeSet {
     }
 }
 
-fn collect_operation(store: TypeStore&, types: BackendTypes&, set: TypeSet&, instruction: Instruction&)
+fn collect_operation(store: TypeSpace&, types: BackendTypes&, set: TypeSet&, instruction: Instruction&)
 -> Result<(), CodegenError> {
     match &instruction.operation {
         Call(callable, _) => { set.add_callable(store, types, *callable)?; },

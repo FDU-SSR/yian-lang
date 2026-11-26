@@ -2,7 +2,7 @@ from yianc.analysis.resolution.context import ResolutionContext;
 from yianc.types.display import stored_type_text;
 from yianc.common.ids import TypeId;
 
-// The caller owns the resulting message buffer; it borrows no type-store text.
+// The caller owns the resulting message buffer; it borrows no type-space text.
 pub fn type_text(ctx: ResolutionContext&, id: TypeId) -> String {
     stored_type_text(ctx.types, ctx.names, id)
 }

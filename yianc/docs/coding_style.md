@@ -57,7 +57,7 @@ host/roots、telemetry、diagnostics 与 package 可被需要它的阶段使用
 yianc/tests/unit/lex/           词法与 token
 yianc/tests/unit/parse/         语法分析
 yianc/tests/unit/desugar/       去糖
-yianc/tests/unit/analysis/      类型存储与 HIR 验证
+yianc/tests/unit/analysis/      类型空间与 HIR 验证
 yianc/tests/unit/codegen/       CFG/表示
 yianc/tests/unit/constant/      常量求值
 yianc/tests/integration/        前端单元表、源码、生命周期和端到端行为

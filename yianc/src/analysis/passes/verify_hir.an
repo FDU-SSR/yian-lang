@@ -19,7 +19,7 @@ from yianc.analysis.ty.aggregate import payload_fields;
 from std.collections.hash_set import HashSet;
 from std.core.iter import Iterator, IntoIterator;
 from std.num.f64 import to_bits;
-from yianc.types.store import BOOL_TYPE_ID, CHAR_TYPE_ID, FLOAT_LITERAL_TYPE_ID, INT_LITERAL_TYPE_ID, NEVER_TYPE_ID, STR_TYPE_ID, VOID_TYPE_ID;
+from yianc.types.space import BOOL_TYPE_ID, CHAR_TYPE_ID, FLOAT_LITERAL_TYPE_ID, INT_LITERAL_TYPE_ID, NEVER_TYPE_ID, STR_TYPE_ID, VOID_TYPE_ID;
 
 fn invalid(span: SourceSpan, message: str) -> ! {
     @panic(message)

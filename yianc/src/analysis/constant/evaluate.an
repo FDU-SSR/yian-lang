@@ -7,7 +7,7 @@ from yianc.common.integer_value import IntegerValue, IntegerWidth, ConstEvalErro
 from yianc.analysis.hir.node import HirNode, HirKind, Builtin, Binary, Array as HirArray, ArrayRepeat as HirArrayRepeat, ArrayAccess;
 from yianc.analysis.hir.store import HirStore;
 from yianc.types.layout import TypeSizeProvider;
-from yianc.types.store import TypeStore;
+from yianc.types.space import TypeSpace;
 from yianc.diagnostics.model import DiagnosticCode, AnalysisError, AnalysisErrorKind;
 from yianc.frontend.ast.atoms import BuiltinKind;
 from yianc.frontend.ast.operator import BinaryOperator, UnaryOperator;
@@ -24,13 +24,13 @@ impl Drop for TypedConstant {
 
 // The evaluator borrows immutable stores and an optional target-specific service.
 pub struct ConstantEvaluator {
-    types: TypeStore&,
+    types: TypeSpace&,
     hir: HirStore&,
     sizes: Option<TypeSizeProvider&>
 }
 
 impl ConstantEvaluator {
-    static pub fn new(types: TypeStore&, hir: HirStore&, sizes: Option<TypeSizeProvider&>) -> Self {
+    static pub fn new(types: TypeSpace&, hir: HirStore&, sizes: Option<TypeSizeProvider&>) -> Self {
         Self(types, hir, sizes)
     }
 

@@ -16,7 +16,7 @@ from yianc.diagnostics.model import AnalysisError, DiagnosticCode;
 from yianc.analysis.ty.aggregate import payload_fields;
 from std.core.iter import Iterator, IntoIterator;
 from std.collections.hash_map import HashMap;
-from yianc.types.store import ERROR_TYPE_ID, NEVER_TYPE_ID, STR_TYPE_ID, VOID_TYPE_ID;
+from yianc.types.space import ERROR_TYPE_ID, NEVER_TYPE_ID, STR_TYPE_ID, VOID_TYPE_ID;
 
 impl ExprChecker {
     fn bindings(id: PatternId, names: HashMap<NameId, SymbolId>&, replacements: Option<HashMap<SymbolId, SymbolId>&>) -> Result<(), AnalysisError> {

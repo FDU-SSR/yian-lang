@@ -4,7 +4,7 @@ from yianc.types.model import TypeData;
 from yianc.analysis.ty.display import type_text;
 from yianc.diagnostics.model import AnalysisError;
 from std.core.iter import Iterator, IntoIterator;
-from yianc.types.store import F64_TYPE_ID, FLOAT_LITERAL_TYPE_ID, I32_TYPE_ID, INT_LITERAL_TYPE_ID, NEVER_TYPE_ID, U64_TYPE_ID;
+from yianc.types.space import F64_TYPE_ID, FLOAT_LITERAL_TYPE_ID, I32_TYPE_ID, INT_LITERAL_TYPE_ID, NEVER_TYPE_ID, U64_TYPE_ID;
 
 pub fn is_integer(ctx: ResolutionContext&, id: TypeId) -> bool {
     match *ctx.types.get(id).unwrap() {

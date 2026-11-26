@@ -28,7 +28,7 @@ from yianc.diagnostics.model import AnalysisError, AnalysisStage, DiagnosticRepo
 from yianc.frontend.unit import UnitTable;
 from yianc.package.model import PackageMap;
 from yianc.package.provenance import SourceTrust;
-from yianc.types.store import TypeStore;
+from yianc.types.space import TypeSpace;
 from yianc.telemetry.profile import ProfileKind;
 from std.core.iter import Iterator, IntoIterator;
 
@@ -38,7 +38,7 @@ pub struct MiddleEndDriver {
     units: UnitTable&,
     packages: Option<PackageMap&>,
     names: NameInterner&,
-    types: TypeStore&,
+    types: TypeSpace&,
     symbols: SymbolStore&,
     hir: HirStore&,
     trust: SourceTrust,
@@ -74,7 +74,7 @@ fn at_stage(result: Result<(), AnalysisError>, pass_id: str, stage: AnalysisStag
 
 impl MiddleEndDriver {
     static pub fn new(units: UnitTable&, packages: Option<PackageMap&>, names: NameInterner&,
-        types: TypeStore&, symbols: SymbolStore&, hir: HirStore&, trust: SourceTrust,
+        types: TypeSpace&, symbols: SymbolStore&, hir: HirStore&, trust: SourceTrust,
         raw_pointers: bool, options: AnalysisOptions, reporter: DiagnosticReporter&) -> Self {
         Self(units, packages, names, types, symbols, hir, trust, raw_pointers,
             Vec<SourcePermissions>.new(), DefinitionRegistry.new(), DefinitionWorklist.new(),

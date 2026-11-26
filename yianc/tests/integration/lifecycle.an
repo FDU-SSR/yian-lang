@@ -14,7 +14,7 @@ from json.parse import parse;
 from std.core.env import args;
 from std.core.ops import Index;
 from std.core.process import Command, ExitStatus;
-from yianc.types.store import TypeStore;
+from yianc.types.space import TypeSpace;
 from yianc.common.names import NameInterner;
 from yianc.analysis.symbol.scope import SymbolStore;
 from yianc.analysis.hir.store import HirStore;
@@ -162,7 +162,7 @@ fn check_strict_lifecycle(raw: bool) {
     defer names.drop();
     let units = strict_lifecycle_units(&names);
     defer units.drop();
-    let types = TypeStore.new();
+    let types = TypeSpace.new();
     defer types.drop();
     let symbols = SymbolStore.new();
     defer symbols.drop();
@@ -190,7 +190,7 @@ fn repeat_analysis(raw: bool) {
     defer names.drop();
     let units = strict_lifecycle_units(&names);
     defer units.drop();
-    let types = TypeStore.new();
+    let types = TypeSpace.new();
     defer types.drop();
     let symbols = SymbolStore.new();
     defer symbols.drop();
@@ -257,7 +257,7 @@ fn strict_analysis_reports_first_error() {
         Err(error) => { error.drop(); @panic("fixture preparation failed"); },
     };
     defer units.drop();
-    let types = TypeStore.new();
+    let types = TypeSpace.new();
     defer types.drop();
     let symbols = SymbolStore.new();
     defer symbols.drop();

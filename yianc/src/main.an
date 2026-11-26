@@ -13,7 +13,7 @@ from yianc.preprocess import load_packages, build_trust, collect_sources;
 from yianc.telemetry.log import LogLevel;
 from yianc.telemetry.profile import ProfileKind;
 from yianc.telemetry.trace import CompilerTrace;
-from yianc.types.store import TypeStore;
+from yianc.types.space import TypeSpace;
 from yianc.common.names import NameInterner;
 from yianc.analysis.symbol.scope import SymbolStore;
 from yianc.analysis.hir.store import HirStore;
@@ -41,6 +41,7 @@ fn main() {
     trace.start_pass("compiler.total", "main", "compiler.total", ProfileKind.Stage);
     if !check { trace.event("main", LogLevel.Info, "compiling source inputs", Option<str>.None); }
 
+    // Name interner is used to manage all immutable strings in the compiler
     let names = NameInterner.new();
 
     // Load packages, build trust, and collect source files
@@ -64,7 +65,7 @@ fn main() {
     trace.finish("frontend");
 
     // Shared semantic tables remain owned by the compiler entry point.
-    let types = TypeStore.new();
+    let types = TypeSpace.new();
     let symbols = SymbolStore.new();
     let hir = HirStore.new();
 

@@ -1,4 +1,4 @@
-from yianc.types.store import TypeStore;
+from yianc.types.space import TypeSpace;
 from yianc.types.model import NominalKind, StructField, EnumVariant;
 from yianc.types.callable import CallableSignature, store_signature;
 from yianc.types.properties import store_is_zst;
@@ -61,7 +61,7 @@ impl<T> Drop for QueryCache<T> if T: Drop {
 
 // LLVM handles borrow module. Both module and semantic store outlive this cache.
 pub struct BackendTypes {
-    store: TypeStore&,
+    store: TypeSpace&,
     module: Module&,
     raw: bool,
     records: Arena<BackendType>,
@@ -85,7 +85,7 @@ fn unavailable(message: str) -> AnalysisError {
 impl BackendTypes {
     pub fn raw_pointers() -> bool { self.raw }
 
-    static pub fn new(store: TypeStore&, module: Module&, raw: bool) -> Self {
+    static pub fn new(store: TypeSpace&, module: Module&, raw: bool) -> Self {
         Self(store, module, raw, Arena<BackendType>.new(),
             HashMap<TypeId, BackendTypeId>.new(), HashSet<TypeId>.new(), HashMap<TypeId, TypeId>.new(), 0u64,
             HashMap<TypeId, bool>.new(), false, QueryCache<Vec<StructField>>.new(),
@@ -93,7 +93,7 @@ impl BackendTypes {
             HashMap<TypeId, PointerRepresentation>.new(), false)
     }
 
-    pub fn semantic_store() -> TypeStore& {
+    pub fn semantic_store() -> TypeSpace& {
         self.store
     }
 

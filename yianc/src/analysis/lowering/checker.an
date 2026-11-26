@@ -13,7 +13,7 @@ from yianc.diagnostics.model import DiagnosticCode, AnalysisError;
 from yianc.analysis.ty.relations import compatible;
 from std.core.iter import Iterator, IntoIterator;
 from std.core.convert import From;
-from yianc.types.store import NEVER_TYPE_ID, VOID_TYPE_ID;
+from yianc.types.space import NEVER_TYPE_ID, VOID_TYPE_ID;
 
 // The checker borrows shared analysis tables. Lexical state is restored by defer on every error path.
 pub struct ExprChecker {

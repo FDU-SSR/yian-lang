@@ -19,7 +19,7 @@ from std.core.iter import Iterator, IntoIterator;
 from std.collections.hash_map import HashMap;
 from yianc.frontend.source import Span;
 from std.core.convert import From;
-from yianc.types.store import BOOL_TYPE_ID, CHAR_TYPE_ID, C_CHAR_TYPE_ID, C_INT_TYPE_ID, C_SIZE_TYPE_ID, C_UINT_TYPE_ID, ERROR_TYPE_ID, F16_TYPE_ID, F32_TYPE_ID, F64_TYPE_ID, FLOAT_LITERAL_TYPE_ID, I8_TYPE_ID, I16_TYPE_ID, I32_TYPE_ID, I64_TYPE_ID, INT_LITERAL_TYPE_ID, NEVER_TYPE_ID, STR_TYPE_ID, U8_TYPE_ID, U16_TYPE_ID, U32_TYPE_ID, U64_TYPE_ID, VOID_TYPE_ID;
+from yianc.types.space import BOOL_TYPE_ID, CHAR_TYPE_ID, C_CHAR_TYPE_ID, C_INT_TYPE_ID, C_SIZE_TYPE_ID, C_UINT_TYPE_ID, ERROR_TYPE_ID, F16_TYPE_ID, F32_TYPE_ID, F64_TYPE_ID, FLOAT_LITERAL_TYPE_ID, I8_TYPE_ID, I16_TYPE_ID, I32_TYPE_ID, I64_TYPE_ID, INT_LITERAL_TYPE_ID, NEVER_TYPE_ID, STR_TYPE_ID, U8_TYPE_ID, U16_TYPE_ID, U32_TYPE_ID, U64_TYPE_ID, VOID_TYPE_ID;
 
 pub fn scalar_name(ctx: ResolutionContext&, name: str) -> Option<TypeId> {
     match name {

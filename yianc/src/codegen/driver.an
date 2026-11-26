@@ -3,7 +3,7 @@ from yianc.analysis.session.output import AnalysisOutput;
 from yianc.common.names import NameInterner;
 from yianc.analysis.hir.store import HirStore;
 from yianc.analysis.symbol.scope import SymbolStore;
-from yianc.types.store import TypeStore;
+from yianc.types.space import TypeSpace;
 from yianc.frontend.unit import UnitTable;
 from yianc.package.model import PackageMap;
 from yianc.codegen.session import TargetLayout, Emission;
@@ -75,8 +75,8 @@ fn llvm_observer(trace: Option<CompilerTrace&>) -> Option<OperationObserver&> {
     match trace { Some(value) => Option<OperationObserver&>.Some(value), None => Option<OperationObserver&>.None }
 }
 
-// Reference equality compares the store address; TypeStore has no structural equality.
-fn same_type_store(left: TypeStore&, right: TypeStore&) -> bool {
+// Reference equality compares the type space address; TypeSpace has no structural equality.
+fn same_type_space(left: TypeSpace&, right: TypeSpace&) -> bool {
     left == right
 }
 
@@ -232,10 +232,10 @@ impl BackendDriver {
     static pub fn new(output: AnalysisOutput&, units: UnitTable&, packages: Option<PackageMap&>,
         names: NameInterner&, hir: HirStore&, symbols: SymbolStore&, layout: TargetLayout&,
         config: CompilerConfig&, trace: Option<CompilerTrace&>) -> Self {
-        let layout_store: TypeStore& = layout.backend_types().semantic_store();
-        let output_store: TypeStore& = output.types;
-        if !same_type_store(layout_store, output_store) {
-            @panic("backend layout uses a different type store");
+        let layout_store: TypeSpace& = layout.backend_types().semantic_store();
+        let output_store: TypeSpace& = output.types;
+        if !same_type_space(layout_store, output_store) {
+            @panic("backend layout uses a different type space");
         }
         if layout.backend_types().raw_pointers() != output.raw_pointers
         || config.raw_pointers != output.raw_pointers {

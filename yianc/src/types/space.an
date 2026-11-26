@@ -37,13 +37,13 @@ pub const C_INT_TYPE_ID: u64 = 20;
 pub const C_UINT_TYPE_ID: u64 = 21;
 pub const C_SIZE_TYPE_ID: u64 = 22;
 
-pub struct TypeStore {
+pub struct TypeSpace {
     values: Arena<TypeData>,
     definitions: Arena<TypeDefinition>,
     index: HashMap<TypeKey, TypeId>
 }
 
-impl TypeStore {
+impl TypeSpace {
     static pub fn new() -> Self {
         let types = Self(Arena<TypeData>.new(), Arena<TypeDefinition>.new(), HashMap<TypeKey, TypeId>.new());
         // Builtin records occupy the fixed 0..22 prefix; later types allocate from 23 onwards.
@@ -330,7 +330,7 @@ impl TypeStore {
     }
 }
 
-impl Drop for TypeStore {
+impl Drop for TypeSpace {
     pub fn drop() {
         for entry in self.index.entries() {
             entry[0].drop();

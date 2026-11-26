@@ -9,7 +9,7 @@ from yianc.analysis.constant.floating import round_float;
 from yianc.common.ids import HirId, PatternId, SymbolId, TypeId;
 from yianc.common.traversal import WalkControl;
 from yianc.diagnostics.model import AnalysisError;
-from yianc.types.store import INT_LITERAL_TYPE_ID, FLOAT_LITERAL_TYPE_ID, I32_TYPE_ID, F64_TYPE_ID;
+from yianc.types.space import INT_LITERAL_TYPE_ID, FLOAT_LITERAL_TYPE_ID, I32_TYPE_ID, F64_TYPE_ID;
 
 // Context-free literals use the language defaults only after all contextual typing has run.
 fn concrete(type_id: TypeId) -> TypeId {

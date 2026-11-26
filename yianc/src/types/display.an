@@ -1,9 +1,9 @@
 from yianc.common.names import NameInterner;
 from yianc.common.ids import TypeId;
-from yianc.types.store import TypeStore;
+from yianc.types.space import TypeSpace;
 from std.core.iter import Iterator, IntoIterator;
 
-fn append(types: TypeStore&, names: NameInterner&, id: TypeId, text: String&, depth: u64) {
+fn append(types: TypeSpace&, names: NameInterner&, id: TypeId, text: String&, depth: u64) {
     if depth > 64 {
         text.push_str("...");
         return;
@@ -134,8 +134,8 @@ fn append(types: TypeStore&, names: NameInterner&, id: TypeId, text: String&, de
     }
 }
 
-// The caller owns the resulting message buffer; it borrows no type-store text.
-pub fn stored_type_text(types: TypeStore&, names: NameInterner&, id: TypeId) -> String {
+// The caller owns the resulting message buffer; it borrows no type-space text.
+pub fn stored_type_text(types: TypeSpace&, names: NameInterner&, id: TypeId) -> String {
     let text = String.new();
     append(types, names, id, &text, 0);
     text

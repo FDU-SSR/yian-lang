@@ -17,7 +17,7 @@ from std.core.iter import Iterator, IntoIterator;
 from yianc.common.location import SourceSpan;
 from yianc.frontend.source import Span;
 from std.core.convert import From;
-from yianc.types.store import BOOL_TYPE_ID, ERROR_TYPE_ID, NEVER_TYPE_ID, STR_TYPE_ID, VOID_TYPE_ID;
+from yianc.types.space import BOOL_TYPE_ID, ERROR_TYPE_ID, NEVER_TYPE_ID, STR_TYPE_ID, VOID_TYPE_ID;
 
 impl ExprChecker {
     fn condition(condition: Condition&) -> Result<HirId, AnalysisError> {

@@ -10,7 +10,7 @@ from yianc.frontend.source import Span;
 from yianc.diagnostics.model import AnalysisError, DiagnosticCode, AnalysisErrorKind;
 from yianc.analysis.ty.relations import default_type;
 from std.core.iter import Iterator, IntoIterator;
-from yianc.types.store import ERROR_TYPE_ID, VOID_TYPE_ID;
+from yianc.types.space import ERROR_TYPE_ID, VOID_TYPE_ID;
 from yianc.common.ids import TypeId;
 
 pub fn evaluate_constants(ctx: ResolutionContext&) -> Result<(), AnalysisError> {

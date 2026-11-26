@@ -7,7 +7,7 @@ from yianc.frontend.driver import FrontendDriver;
 from yianc.telemetry.trace import CompilerTrace;
 from yianc.analysis.driver import MiddleEndDriver;
 from yianc.types.layout import TypeSizeProvider;
-from yianc.types.store import TypeStore;
+from yianc.types.space import TypeSpace;
 from yianc.diagnostics.model import DiagnosticCode, DiagnosticLocation, UserDiagnostic, DiagnosticReporter;
 from yianc.frontend.source import SourceFile, SourceMap, SourceTable;
 from yianc.frontend.unit import UnitTable;
@@ -20,7 +20,7 @@ from std.core.convert import From;
 from std.core.fs import resolve;
 from std.core.iter import Iterator, IntoIterator;
 
-// Output and HIR IDs refer to these owned tables. Release them before the stable type store.
+// Output and HIR IDs refer to these owned tables. Release them before the stable type space.
 pub struct CompilerAnalysis {
     pub units: UnitTable,
     pub packages: Option<PackageMap>,
@@ -30,7 +30,7 @@ pub struct CompilerAnalysis {
     pub stdlib: Vec<bool>,
     pub output: AnalysisOutput,
     warnings: Option<Vec<LspDiagnostic>>,
-    types: TypeStore*,
+    types: TypeSpace*,
 }
 
 impl CompilerAnalysis {
@@ -155,7 +155,7 @@ pub fn analyze(documents: Vec<SourceDocument>&, trust: SourceTrust, packages: Op
     defer { if !analysis_transferred { units.drop(); } };
 
     // Each analysis owns these shared tables; the middle end borrows them during the run.
-    let types = dyn TypeStore.new();
+    let types = dyn TypeSpace.new();
     defer { if !analysis_transferred { types.drop(); del types; } };
     let symbols = SymbolStore.new();
     let hir = HirStore.new();

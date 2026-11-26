@@ -1,5 +1,5 @@
 from yianc.types.callable import store_substitutions, store_signature;
-from yianc.types.store import TypeStore;
+from yianc.types.space import TypeSpace;
 from yianc.common.names import NameInterner;
 from yianc.types.substitution import substitute;
 from yianc.common.ids import TypeId, NameId;
@@ -12,7 +12,7 @@ fn before(left: TypeId&, right: TypeId&) -> bool {
     left.index < right.index
 }
 
-fn mentions(store: TypeStore&, type_id: TypeId, self_type: TypeId) -> Result<bool, AnalysisError> {
+fn mentions(store: TypeSpace&, type_id: TypeId, self_type: TypeId) -> Result<bool, AnalysisError> {
     if type_id == self_type {
         return Result<bool, AnalysisError>.Ok(true);
     }
@@ -56,7 +56,7 @@ fn mentions(store: TypeStore&, type_id: TypeId, self_type: TypeId) -> Result<boo
 
 // Declaration IDs give dynamic slots a deterministic order independent of hash buckets.
 // Static methods have no dynamic slot. Instance signatures cannot depend on concrete Self.
-pub fn store_object_methods(store: TypeStore&, names: NameInterner&, trait_id: TypeId) -> Result<Vec<TypeId>, AnalysisError> {
+pub fn store_object_methods(store: TypeSpace&, names: NameInterner&, trait_id: TypeId) -> Result<Vec<TypeId>, AnalysisError> {
     let definition = match store.require(trait_id)? {
         Nominal(id, _) => *id, _ => @panic("trait object has invalid trait identity")
     };

@@ -16,7 +16,7 @@ from std.collections.sort import sort_by;
 from std.core.iter import Iterator, IntoIterator;
 from std.collections.hash_set import HashSet;
 from yianc.frontend.text import is_printable;
-from yianc.types.store import CHAR_TYPE_ID;
+from yianc.types.space import CHAR_TYPE_ID;
 
 typedef Cell = Option<PatternId>;
 

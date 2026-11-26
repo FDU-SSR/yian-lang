@@ -1,4 +1,4 @@
-from yianc.types.store import TypeStore;
+from yianc.types.space import TypeSpace;
 from yianc.common.integer_value import IntegerValue;
 from yianc.common.integer import integer_unary, integer_binary, magnitude;
 from yianc.common.ids import TypeId;
@@ -7,7 +7,7 @@ from yianc.frontend.ast.operator import UnaryOperator, BinaryOperator;
 from yianc.diagnostics.model import AnalysisError, DiagnosticCode;
 
 // Symbolic nodes retain declaration identities until a concrete substitution makes them evaluable.
-pub fn const_unary(store: TypeStore&, op: UnaryOperator, operand: TypeId, span: Option<SourceSpan>) -> Result<TypeId, AnalysisError> {
+pub fn const_unary(store: TypeSpace&, op: UnaryOperator, operand: TypeId, span: Option<SourceSpan>) -> Result<TypeId, AnalysisError> {
     match store.require(operand)? {
         LiteralValue(bits, negative, type_id) => {
             let value = match integer_unary(op, IntegerValue.untyped(*bits, *negative)) {
@@ -20,7 +20,7 @@ pub fn const_unary(store: TypeStore&, op: UnaryOperator, operand: TypeId, span: 
     }
 }
 
-pub fn const_binary(store: TypeStore&, op: BinaryOperator, left: TypeId, right: TypeId, span: Option<SourceSpan>) -> Result<TypeId, AnalysisError> {
+pub fn const_binary(store: TypeSpace&, op: BinaryOperator, left: TypeId, right: TypeId, span: Option<SourceSpan>) -> Result<TypeId, AnalysisError> {
     match store.require(left)? {
         LiteralValue(left_bits, left_negative, left_type) => match store.require(right)? {
             LiteralValue(right_bits, right_negative, _) => {

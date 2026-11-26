@@ -1,16 +1,16 @@
-from yianc.types.store import TypeStore, INT_LITERAL_TYPE_ID, FLOAT_LITERAL_TYPE_ID;
+from yianc.types.space import TypeSpace, INT_LITERAL_TYPE_ID, FLOAT_LITERAL_TYPE_ID;
 from yianc.types.model import TypeData;
 from yianc.common.ids import TypeId;
 from std.collections.hash_set import HashSet;
 
 // CFG values describe runtime storage, so semantic literal placeholders never cross this boundary.
-pub fn assert_cfg_type(types: TypeStore&, type_id: TypeId) {
+pub fn assert_cfg_type(types: TypeSpace&, type_id: TypeId) {
     let visited = HashSet<u64>.new();
     defer visited.drop();
     assert_visit(types, type_id, &visited);
 }
 
-fn assert_visit(types: TypeStore&, type_id: TypeId, visited: HashSet<u64>&) {
+fn assert_visit(types: TypeSpace&, type_id: TypeId, visited: HashSet<u64>&) {
     if type_id.index == INT_LITERAL_TYPE_ID || type_id.index == FLOAT_LITERAL_TYPE_ID {
         @panic("literal type reached CFG");
     }

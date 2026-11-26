@@ -7,7 +7,7 @@ from yianc.frontend.ast.node import Item, Identifier, GenericParam, Attr;
 from yianc.frontend.ast.atoms import AttrKind;
 from yianc.diagnostics.model import DiagnosticCode, AnalysisError, AnalysisErrorKind, AnalysisStage;
 from std.core.iter import Iterator, IntoIterator;
-from yianc.types.store import ERROR_TYPE_ID;
+from yianc.types.space import ERROR_TYPE_ID;
 
 pub fn has_attr(attrs: Vec<Attr&>&, kind: AttrKind) -> bool {
     for attr in *attrs {

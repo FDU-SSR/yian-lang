@@ -14,7 +14,7 @@ from yianc.analysis.ty.impl_registry import ImplRecord, ImplCondition;
 from yianc.analysis.ty.validation import contains_ffi;
 from std.collections.hash_map import HashMap;
 from std.core.iter import Iterator, IntoIterator;
-from yianc.types.store import VOID_TYPE_ID;
+from yianc.types.space import VOID_TYPE_ID;
 
 fn drop_conditions(conditions: Vec<ImplCondition>&) {
     for condition in *conditions {

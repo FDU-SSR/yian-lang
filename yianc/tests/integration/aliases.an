@@ -15,7 +15,7 @@ from yianc.analysis.resolution.declarations import collect_declarations;
 from yianc.analysis.resolution.definitions import resolve_definitions;
 from yianc.analysis.passes.type_check import check_procedures;
 from yianc.types.queries import struct_fields;
-from yianc.types.store import TypeStore;
+from yianc.types.space import TypeSpace;
 from yianc.types.layout import TypeSizeProvider;
 from yianc.common.ids import UnitId, TypeId;
 from yianc.diagnostics.model import AnalysisError, DiagnosticReporter, UserDiagnostic;
@@ -71,7 +71,7 @@ fn parse_units(source: str, path: str, names: NameInterner&) -> UnitTable {
     units
 }
 
-fn analyze_success(source: str, path: str, types: TypeStore&) -> AliasSymbols {
+fn analyze_success(source: str, path: str, types: TypeSpace&) -> AliasSymbols {
     let names = NameInterner.new();
     let units = parse_units(source, path, &names);
     let symbols = SymbolStore.new();
@@ -90,7 +90,7 @@ fn analyze_success(source: str, path: str, types: TypeStore&) -> AliasSymbols {
     AliasSymbols(names, symbols)
 }
 
-fn analyze_failure(source: str, path: str, types: TypeStore&) -> AnalysisError {
+fn analyze_failure(source: str, path: str, types: TypeSpace&) -> AnalysisError {
     let names = NameInterner.new();
     let units = parse_units(source, path, &names);
     let symbols = SymbolStore.new();
@@ -123,7 +123,7 @@ fn symbol_type(fixture: AliasSymbols&, name: str) -> TypeId {
 
 fn nested_aliases_share_structural_identity() {
     let source = "typedef Int = i32;\nstruct Box<T> { value: T }\ntrait View<T> { fn get() -> T; }\ntypedef Left = (Box<Int>, Int*, Int&, Int[], Int[4], Fn<(Int,), Int>, View<Int>&);\ntypedef Right = (Box<i32>, i32*, i32&, i32[], i32[4], Fn<(i32,), i32>, View<i32>&);\nstruct Vec<T> { value: T }\ntypedef AliasVec = Vec<Int>;\ntypedef DirectVec = Vec<i32>;\nfn main() { let left: Left; let right: Right; let alias: AliasVec; let direct: DirectVec; }\n";
-    let types = TypeStore.new();
+    let types = TypeSpace.new();
     defer types.drop();
     let fixture = analyze_success(source, "/tmp/yian-native-alias-identities.an", &types);
     assert symbol_type(&fixture, "Left") == symbol_type(&fixture, "Right"):
@@ -135,7 +135,7 @@ fn nested_aliases_share_structural_identity() {
 
 fn alias_binders_resolve_in_declaration_order() {
     let source = "struct Pair<A, B> { left: A, right: B }\ntypedef Reverse<A, B> = Pair<B, A>;\ntypedef Duplicate<T> = Pair<T, T>;\ntypedef First<A, B> = A;\ntypedef Chain<X, Y> = Reverse<Y, X>;\ntypedef Count = u64;\ntypedef Arr<T, const N: Count> = T[N];\ntypedef Reordered = Chain<i32, u64>;\ntypedef Expected = Pair<i32, u64>;\ntypedef Repeated = Duplicate<i32>;\ntypedef ExpectedRepeated = Pair<i32, i32>;\ntypedef Unused = First<i32, u64>;\ntypedef Array = Arr<i32, 4>;\ntypedef DirectArray = i32[4];\ntypedef Typed<T, const N: T> = T[N];\ntypedef Dependent = Typed<u64, 4>;\ntypedef DirectDependent = u64[4];\ntypedef DirectInt = i32;\nfn check_reordered(value: Reordered) -> Expected { value }\nfn check_repeated(value: Repeated) -> ExpectedRepeated { value }\nfn check_array(value: Array) -> DirectArray { value }\nfn check_dependent(value: Dependent) -> DirectDependent { value }\nfn check_unused(value: Unused) -> DirectInt { value }\nfn main() {}\n";
-    let types = TypeStore.new();
+    let types = TypeSpace.new();
     defer types.drop();
     let fixture = analyze_success(source, "/tmp/yian-native-alias-binders.an", &types);
     assert symbol_type(&fixture, "Reordered") == symbol_type(&fixture, "Expected"):
@@ -147,7 +147,7 @@ fn alias_binders_resolve_in_declaration_order() {
     fixture.drop();
 }
 
-fn registered_definition_count(source: str, path: str, types: TypeStore&) -> u64 {
+fn registered_definition_count(source: str, path: str, types: TypeSpace&) -> u64 {
     let names = NameInterner.new();
     defer names.drop();
     let units = parse_units(source, path, &names);
@@ -190,7 +190,7 @@ fn registered_definition_count(source: str, path: str, types: TypeStore&) -> u64
 
 fn explicit_and_inferred_alias_calls_analyze() {
     let source = "typedef Int = i32;\nstruct Box<T> { value: T }\ntypedef AliasBox<T> = Box<T>;\nfn identity<T>(value: T) -> T { value }\nfn main() {\n    identity<AliasBox<Int>>(AliasBox<Int>(1));\n    identity<Box<i32>>(Box<i32>(2));\n    identity(AliasBox<i32>(3));\n}\n";
-    let types = TypeStore.new();
+    let types = TypeSpace.new();
     defer types.drop();
     let registered = registered_definition_count(source, "/tmp/yian-native-alias-instances.an", &types);
     assert registered == 3u64:
@@ -198,7 +198,7 @@ fn explicit_and_inferred_alias_calls_analyze() {
 }
 
 fn check_alias_failure(source: str, message: str, code: str) {
-    let types = TypeStore.new();
+    let types = TypeSpace.new();
     defer types.drop();
     let error = analyze_failure(source, "/tmp/yian-native-alias-cycle.an", &types);
     assert error.message.as_str().contains(message):
@@ -214,7 +214,7 @@ fn alias_cycles_and_recursive_nominal_fields_keep_their_boundaries() {
     check_alias_failure("typedef A = Missing;\nfn main() {}\n", "Undefined type: Missing", "E302");
 
     let source = "typedef Node = Link;\nstruct Link { next: Node* }\nfn main() { let node: Node; }\n";
-    let types = TypeStore.new();
+    let types = TypeSpace.new();
     defer types.drop();
     let fixture = analyze_success(source, "/tmp/yian-native-alias-recursive-field.an", &types);
     let node = symbol_type(&fixture, "Node");
@@ -230,7 +230,7 @@ fn check_alias_argument_failure(declaration: str, use: str, message: str, code: 
     source.push_str("\nfn main() { let value: ");
     source.push_str(use);
     source.push_str("; }\n");
-    let types = TypeStore.new();
+    let types = TypeSpace.new();
     defer types.drop();
     let error = analyze_failure(source.as_str(), "/tmp/yian-native-alias-argument.an", &types);
     assert error.code.text() == code: "alias argument diagnostic keeps its code";

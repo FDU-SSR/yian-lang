@@ -1,4 +1,4 @@
-from yianc.types.store import TypeStore;
+from yianc.types.space import TypeSpace;
 from yianc.types.model import TypeData;
 from yianc.types.const_expression import const_unary, const_binary;
 from yianc.common.location import SourceSpan;
@@ -8,7 +8,7 @@ from std.collections.hash_map import HashMap;
 from std.core.iter import Iterator, IntoIterator;
 
 // Substitutions are caller-owned and isolated for each candidate or function instance.
-pub fn substitute(store: TypeStore&, type_id: TypeId, substitutions: HashMap<TypeId, TypeId>&) -> Result<TypeId, AnalysisError> {
+pub fn substitute(store: TypeSpace&, type_id: TypeId, substitutions: HashMap<TypeId, TypeId>&) -> Result<TypeId, AnalysisError> {
     match substitutions.get(&type_id) {
         Some(value) => return Result<TypeId, AnalysisError>.Ok(*value),
         None => {},
@@ -46,7 +46,7 @@ pub fn substitute(store: TypeStore&, type_id: TypeId, substitutions: HashMap<Typ
     Result<TypeId, AnalysisError>.Ok(result)
 }
 
-pub fn substitute_list(store: TypeStore&, values: Vec<TypeId>&, substitutions: HashMap<TypeId, TypeId>&) -> Result<Vec<TypeId>, AnalysisError> {
+pub fn substitute_list(store: TypeSpace&, values: Vec<TypeId>&, substitutions: HashMap<TypeId, TypeId>&) -> Result<Vec<TypeId>, AnalysisError> {
     let result = Vec<TypeId>.new();
     let accepted = false;
     defer {
@@ -63,7 +63,7 @@ pub fn substitute_list(store: TypeStore&, values: Vec<TypeId>&, substitutions: H
     Result<Vec<TypeId>, AnalysisError>.Ok(result)
 }
 
-pub fn infer(store: TypeStore&, pattern: TypeId, actual: TypeId, substitutions: HashMap<TypeId, TypeId>&) -> bool {
+pub fn infer(store: TypeSpace&, pattern: TypeId, actual: TypeId, substitutions: HashMap<TypeId, TypeId>&) -> bool {
     if pattern == actual {
         return true;
     }
@@ -133,7 +133,7 @@ pub fn infer(store: TypeStore&, pattern: TypeId, actual: TypeId, substitutions: 
     }
 }
 
-fn infer_list(store: TypeStore&, patterns: Vec<TypeId>&, values: Vec<TypeId>&, substitutions: HashMap<TypeId, TypeId>&) -> bool {
+fn infer_list(store: TypeSpace&, patterns: Vec<TypeId>&, values: Vec<TypeId>&, substitutions: HashMap<TypeId, TypeId>&) -> bool {
     if patterns.len() != values.len() {
         return false;
     }
@@ -151,7 +151,7 @@ fn infer_list(store: TypeStore&, patterns: Vec<TypeId>&, values: Vec<TypeId>&, s
     true
 }
 
-pub fn has_generic(store: TypeStore&, type_id: TypeId) -> bool {
+pub fn has_generic(store: TypeSpace&, type_id: TypeId) -> bool {
     match *store.get(type_id).unwrap() {
         Generic(_) => true, ConstGeneric(_, _) => true, SelfType(_) => true,
         Pointer(inner) => has_generic(store, *inner),

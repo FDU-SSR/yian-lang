@@ -13,7 +13,7 @@ from yianc.diagnostics.model import AnalysisError;
 from yianc.analysis.ty.impl_registry import ImplRecord, ImplCondition;
 from std.collections.hash_map import HashMap;
 from std.core.iter import Iterator, IntoIterator;
-from yianc.types.store import BOOL_TYPE_ID;
+from yianc.types.space import BOOL_TYPE_ID;
 
 fn truth(arena: AstArena&, span: Span, value: bool) -> Block& {
     let literal = arena.alloc_bool_literal(BoolLiteralData(value), span);

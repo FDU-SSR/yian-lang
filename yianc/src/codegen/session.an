@@ -1,4 +1,4 @@
-from yianc.types.store import TypeStore;
+from yianc.types.space import TypeSpace;
 from yianc.codegen.types import BackendTypes;
 from yianc.codegen.error import CodegenError;
 from yianc.config import OutputKind;
@@ -90,14 +90,14 @@ fn end_profile(trace: Option<CompilerTrace&>, pass_id: str, success: bool) {
 }
 
 // LLVM's owning module has a stable heap address across shallow return-value transfers.
-// The caller owns the layout and keeps the analysis type store alive for every borrow.
+// The caller owns the layout and keeps the analysis type space alive for every borrow.
 pub struct TargetLayout {
     module: Module*,
     types: BackendTypes,
 }
 
 impl TargetLayout {
-    static pub fn new(store: TypeStore&, raw_pointers: bool, optimization: u8,
+    static pub fn new(store: TypeSpace&, raw_pointers: bool, optimization: u8,
         runtime_profile: bool, trace: Option<CompilerTrace&>) -> Result<Self, CodegenError> {
         start_profile(trace, "backend.initialize");
         let success = false;

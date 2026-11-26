@@ -1,7 +1,7 @@
 from yianc.common.names import NameInterner;
 from yianc.types.model import DefinitionHeader, NominalKind, TypeData;
 from yianc.types.c_scalar import CScalarKind;
-from yianc.types.store import TypeStore;
+from yianc.types.space import TypeSpace;
 from yianc.common.ids import UnitId, TypeId;
 from yianc.common.location import SourceSpan;
 from yianc.frontend.source import Position, Span;
@@ -9,7 +9,7 @@ from std.core.ops import Index;
 
 fn main() {
     let names = NameInterner.new(); defer names.drop();
-    let types = TypeStore.new(); defer types.drop();
+    let types = TypeSpace.new(); defer types.drop();
 
     let i32_type = *types.primitive(TypeData.Integer(32u32, true)).unwrap();
     let u64_type = *types.primitive(TypeData.Integer(64u32, false)).unwrap();

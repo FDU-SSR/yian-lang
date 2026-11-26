@@ -11,7 +11,7 @@ from yianc.diagnostics.model import AnalysisError;
 from yianc.analysis.ty.relations import compatible, default_type, is_numeric, is_integer, has_literal;
 from yianc.analysis.ty.validation import contains_ffi;
 from std.core.iter import Iterator, IntoIterator;
-from yianc.types.store import BOOL_TYPE_ID, CHAR_TYPE_ID;
+from yianc.types.space import BOOL_TYPE_ID, CHAR_TYPE_ID;
 
 impl ExprChecker {
     pub fn call(span: Span, callee: Expr&, args: Vec<Argument&>&) -> Result<HirId, AnalysisError> {

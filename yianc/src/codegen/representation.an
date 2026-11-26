@@ -1,6 +1,6 @@
 from yianc.types.model import TypeData;
 from yianc.types.properties import store_is_zst;
-from yianc.types.store import TypeStore;
+from yianc.types.space import TypeSpace;
 from yianc.common.ids import TypeId;
 from yianc.diagnostics.model import AnalysisError;
 
@@ -24,7 +24,7 @@ pub struct TypeRepresentation {
     pub representation: PointerRepresentation,
 }
 
-pub fn classify_representation(store: TypeStore&, type_id: TypeId, raw: bool)
+pub fn classify_representation(store: TypeSpace&, type_id: TypeId, raw: bool)
 -> Result<PointerRepresentation, AnalysisError> {
     if store_is_zst(store, type_id)? {
         return Result<PointerRepresentation, AnalysisError>.Ok(PointerRepresentation.ZeroSized);

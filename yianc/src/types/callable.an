@@ -1,5 +1,5 @@
 from yianc.types.model import Parameter;
-from yianc.types.store import TypeStore;
+from yianc.types.space import TypeSpace;
 from yianc.types.substitution import substitute;
 from yianc.common.ids import TypeId, DefId;
 from yianc.diagnostics.model import AnalysisError;
@@ -23,7 +23,7 @@ impl Drop for CallableSignature {
 }
 
 // This query borrows only session-owned records and remains valid after resolution ends.
-pub fn store_substitutions(store: TypeStore&, type_id: TypeId) -> Result<HashMap<TypeId, TypeId>, AnalysisError> {
+pub fn store_substitutions(store: TypeSpace&, type_id: TypeId) -> Result<HashMap<TypeId, TypeId>, AnalysisError> {
     let map = HashMap<TypeId, TypeId>.new();
     let accepted = false;
     defer {
@@ -54,8 +54,8 @@ pub fn store_substitutions(store: TypeStore&, type_id: TypeId) -> Result<HashMap
     Result<HashMap<TypeId, TypeId>, AnalysisError>.Ok(map)
 }
 
-// The returned parameter list belongs to the caller; identities belong to the type store.
-pub fn store_signature(store: TypeStore&, type_id: TypeId) -> Result<CallableSignature, AnalysisError> {
+// The returned parameter list belongs to the caller; identities belong to the type space.
+pub fn store_signature(store: TypeSpace&, type_id: TypeId) -> Result<CallableSignature, AnalysisError> {
     let substitutions = store_substitutions(store, type_id)?;
     defer substitutions.drop();
     let id = match store.require(type_id)? {

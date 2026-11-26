@@ -90,7 +90,7 @@ yian-fmt -w yianc/src/main.an
 
 ## 测试
 
-编译器测试位于 `yianc/tests/`：`unit/` 覆盖词法、语法、AST、去糖、类型存储、HIR 验证、
+编译器测试位于 `yianc/tests/`：`unit/` 覆盖词法、语法、AST、去糖、类型空间、HIR 验证、
 常量和 codegen；`integration/` 覆盖前端单元表、源码、生命周期和端到端行为。
 
 包测试由原生 `anx` 驱动：

@@ -14,7 +14,7 @@ from yianc.diagnostics.model import AnalysisError;
 from yianc.analysis.ty.relations import default_type;
 from std.collections.hash_map import HashMap;
 from std.core.iter import Iterator, IntoIterator;
-from yianc.types.store import VOID_TYPE_ID;
+from yianc.types.space import VOID_TYPE_ID;
 
 impl ExprChecker {
     pub fn closure(span: Span, captures: Vec<CaptureItem&>&, syntax_parameters: Vec<SyntaxParameter>&, return_type: Option<TypeSyntax&>&, body: Block&) -> Result<HirId, AnalysisError> {

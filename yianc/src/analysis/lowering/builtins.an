@@ -13,7 +13,7 @@ from yianc.analysis.ty.relations import is_u64_range;
 from std.core.iter import Iterator, IntoIterator;
 from std.core.convert import From;
 from std.core.fmt import ToString;
-from yianc.types.store import I32_TYPE_ID, NEVER_TYPE_ID, STR_TYPE_ID, U64_TYPE_ID, VOID_TYPE_ID;
+from yianc.types.space import I32_TYPE_ID, NEVER_TYPE_ID, STR_TYPE_ID, U64_TYPE_ID, VOID_TYPE_ID;
 
 fn arity(kind: BuiltinKind) -> (u64, u64) {
     match &kind {

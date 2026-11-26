@@ -9,7 +9,7 @@ from yianc.frontend.source import Span;
 from yianc.diagnostics.model import AnalysisError;
 from yianc.analysis.ty.relations import default_type, compatible;
 from std.core.iter import Iterator, IntoIterator;
-from yianc.types.store import NEVER_TYPE_ID, U64_TYPE_ID;
+from yianc.types.space import NEVER_TYPE_ID, U64_TYPE_ID;
 
 impl ExprChecker {
     pub fn dynamic_buffer(span: Span, size: Expr&, element: Expr&) -> Result<HirId, AnalysisError> {

@@ -1,6 +1,6 @@
 from yianc.analysis.resolution.context import ResolutionContext;
 from yianc.types.substitution import infer, substitute;
-from yianc.types.store import TypeStore, VOID_TYPE_ID;
+from yianc.types.space import TypeSpace, VOID_TYPE_ID;
 from yianc.types.model import Parameter;
 from yianc.types.display import stored_type_text;
 from yianc.analysis.ty.display import type_text;
@@ -451,7 +451,7 @@ fn match_arguments(ctx: ResolutionContext&, method: TypeId, arguments: Option<Ve
 }
 
 // Omitted trait arguments are query variables, not bindings shared by competing impls.
-fn match_trait(store: TypeStore&, pattern: TypeId, required: TypeId, substitutions: HashMap<TypeId, TypeId>&) -> bool {
+fn match_trait(store: TypeSpace&, pattern: TypeId, required: TypeId, substitutions: HashMap<TypeId, TypeId>&) -> bool {
     match *store.get(pattern).unwrap() {
         Nominal(definition, arguments) => match *store.get(required).unwrap() {
             Nominal(other, requested) => {

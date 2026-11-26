@@ -5,7 +5,7 @@ from yianc.common.ids import TypeId, NameId;
 from yianc.common.location import SourceSpan;
 from yianc.frontend.ast.operator import BinaryOperator, UnaryOperator;
 from yianc.frontend.ast.atoms import BuiltinKind;
-from yianc.types.store import TypeStore, INT_LITERAL_TYPE_ID, FLOAT_LITERAL_TYPE_ID;
+from yianc.types.space import TypeSpace, INT_LITERAL_TYPE_ID, FLOAT_LITERAL_TYPE_ID;
 from std.collections.arena import Arena;
 from std.collections.hash_map import HashMap;
 from std.core.iter import Iterator, IntoIterator;
@@ -478,7 +478,7 @@ impl Drop for CfgFunction {
 }
 
 pub struct CfgModule {
-    owner: TypeStore&,
+    owner: TypeSpace&,
     functions: Arena<CfgFunction>,
     index: HashMap<TypeId, FunctionId>,
     pub entry: Option<TypeId>,
@@ -487,12 +487,12 @@ pub struct CfgModule {
 }
 
 impl CfgModule {
-    static pub fn new(owner: TypeStore&, entry: Option<TypeId>) -> Self {
+    static pub fn new(owner: TypeSpace&, entry: Option<TypeId>) -> Self {
         Self(owner, Arena<CfgFunction>.new(), HashMap<TypeId, FunctionId>.new(), entry,
             SafetyStage.Neutral, Vec<TypeRepresentation>.new())
     }
 
-    pub fn type_store() -> TypeStore& { self.owner }
+    pub fn type_space() -> TypeSpace& { self.owner }
 
     pub fn len() -> u64 { self.functions.len() }
 

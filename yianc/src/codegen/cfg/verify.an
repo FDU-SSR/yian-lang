@@ -6,7 +6,7 @@ from yianc.codegen.types import BackendTypes;
 from yianc.codegen.cfg.type_contract import assert_cfg_type;
 from yianc.codegen.cfg.passes.activation import verify_prepared;
 from yianc.codegen.cfg.passes.eliminate import verify_optimized;
-from yianc.types.store import TypeStore, INT_LITERAL_TYPE_ID, FLOAT_LITERAL_TYPE_ID;
+from yianc.types.space import TypeSpace, INT_LITERAL_TYPE_ID, FLOAT_LITERAL_TYPE_ID;
 from yianc.types.callable import store_signature;
 from yianc.types.queries import struct_fields, enum_variants;
 from yianc.common.ids import TypeId;
@@ -446,7 +446,7 @@ fn verify_instruction(function: CfgFunction&, types: BackendTypes&, instruction:
 }
 
 // Scope identity is structural: parents precede children and locals belong to a declared scope.
-fn verify_scopes(function: CfgFunction&, store: TypeStore&) -> Result<(), CodegenError> {
+fn verify_scopes(function: CfgFunction&, store: TypeSpace&) -> Result<(), CodegenError> {
     if function.scopes.len() == 0u64 {
         @panic("CFG function has no root scope");
     }
@@ -660,7 +660,7 @@ pub fn verify_structure(module: CfgModule&) -> Result<(), CodegenError> {
             structural_literal(function.local(LocalId(local_index))?.type_id);
         }
 
-        verify_scopes(function, module.type_store())?;
+        verify_scopes(function, module.type_space())?;
         if function.block_count() == 0u64 {
             @panic("CFG function has no entry block");
         }

@@ -6,7 +6,7 @@ from lsp.analysis.compiler import CompilerAnalysis;
 from yianc.types.callable import store_signature;
 from yianc.types.display import stored_type_text;
 from yianc.types.model import DefinitionBody, NominalKind, StructField, EnumVariant;
-from yianc.types.store import TypeStore;
+from yianc.types.space import TypeSpace;
 from yianc.common.ids import DefId, HirId, NameId, PatternId, SymbolId, TypeId, UnitId;
 from yianc.common.location import SourceSpan;
 from yianc.common.traversal import WalkControl;
@@ -158,7 +158,7 @@ fn assign_type_text(index: SourceIndex&, decl: u64, text: String) {
 }
 
 // Const generic arguments render as numbers or constant names and are valid inside a type.
-fn displayable_argument(types: TypeStore&, type_id: TypeId, depth: u64) -> bool {
+fn displayable_argument(types: TypeSpace&, type_id: TypeId, depth: u64) -> bool {
     let data = match types.get(type_id) {
         Some(value) => value,
         None => return false,
@@ -174,7 +174,7 @@ fn displayable_argument(types: TypeStore&, type_id: TypeId, depth: u64) -> bool 
 
 // A binding is hinted only when its analyzed type has a stable source-level rendering. Literal
 // types stay context-dependent, and the remaining variants are internal or non-value forms.
-fn displayable_type(types: TypeStore&, type_id: TypeId, depth: u64) -> bool {
+fn displayable_type(types: TypeSpace&, type_id: TypeId, depth: u64) -> bool {
     if depth > 64u64 { return false; }
     let data = match types.get(type_id) {
         Some(value) => value,
@@ -363,7 +363,7 @@ fn enrich_symbols(analysis: CompilerAnalysis&, index: SourceIndex&) {
     }
 }
 
-fn nominal_definition(types: TypeStore&, type_id: TypeId) -> Option<DefId> {
+fn nominal_definition(types: TypeSpace&, type_id: TypeId) -> Option<DefId> {
     match types.get(type_id) {
         Some(Nominal(value, _)) => Option<DefId>.Some(*value),
         Some(Reference(inner)) | Some(Pointer(inner)) | Some(TraitObject(inner)) => nominal_definition(types, *inner),

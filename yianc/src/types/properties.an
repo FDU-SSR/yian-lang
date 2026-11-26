@@ -1,17 +1,17 @@
 from yianc.types.callable import store_substitutions;
-from yianc.types.store import TypeStore;
+from yianc.types.space import TypeSpace;
 from yianc.types.substitution import substitute;
 from yianc.common.ids import TypeId;
 from yianc.diagnostics.model import AnalysisError;
 from std.collections.hash_set import HashSet;
 
-pub fn store_is_zst(store: TypeStore&, type_id: TypeId) -> Result<bool, AnalysisError> {
+pub fn store_is_zst(store: TypeSpace&, type_id: TypeId) -> Result<bool, AnalysisError> {
     let visiting = HashSet<TypeId>.new();
     defer visiting.drop();
     zst_inner(store, type_id, &visiting)
 }
 
-fn zst_inner(store: TypeStore&, type_id: TypeId, visiting: HashSet<TypeId>&) -> Result<bool, AnalysisError> {
+fn zst_inner(store: TypeSpace&, type_id: TypeId, visiting: HashSet<TypeId>&) -> Result<bool, AnalysisError> {
     // Reference cycles carry an address; they do not make an aggregate a ZST.
 
     if !visiting.insert(type_id) {

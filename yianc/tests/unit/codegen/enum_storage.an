@@ -9,7 +9,7 @@ from yianc.frontend.driver import FrontendDriver;
 from yianc.frontend.unit import UnitTable;
 from yianc.telemetry.trace import CompilerTrace;
 from yianc.analysis.driver import MiddleEndDriver;
-from yianc.types.store import TypeStore;
+from yianc.types.space import TypeSpace;
 from yianc.common.names import NameInterner;
 from yianc.analysis.symbol.scope import SymbolStore;
 from yianc.analysis.hir.store import HirStore;
@@ -60,7 +60,7 @@ fn load_source(path: str, text: str, names: NameInterner&) -> SourceTable {
     }
 }
 
-fn definition(types: TypeStore&, names: NameInterner&, name_text: str, kind: NominalKind, location: SourceSpan, generics: Vec<TypeId>) -> DefId {
+fn definition(types: TypeSpace&, names: NameInterner&, name_text: str, kind: NominalKind, location: SourceSpan, generics: Vec<TypeId>) -> DefId {
     let name = names.intern(name_text);
     types.register(DefinitionHeader(kind, name, location, UnitId(0u64)), generics)
 }
@@ -81,7 +81,7 @@ fn reject(result: Result<(), CodegenError>, label: str) {
 }
 
 // Builds a tagged enum with one unit variant and one two-field payload variant.
-fn build_types(types: TypeStore&, names: NameInterner&, location: SourceSpan) -> Fixture {
+fn build_types(types: TypeSpace&, names: NameInterner&, location: SourceSpan) -> Fixture {
     let nothing = *types.primitive(TypeData.Void).unwrap();
     let integer = *types.primitive(TypeData.Integer(32u32, true)).unwrap();
     let long = *types.primitive(TypeData.Integer(64u32, true)).unwrap();
@@ -134,7 +134,7 @@ struct Skeleton {
     integer_address: ValueId,
 }
 
-fn skeleton(types: TypeStore&, fixture: Fixture&, location: SourceSpan) -> Skeleton {
+fn skeleton(types: TypeSpace&, fixture: Fixture&, location: SourceSpan) -> Skeleton {
     let module = dyn Module.new("enum-storage-probe", 0u8);
     // The probe checks the generic access obligations, which raw mode attaches per access.
     let backend_types = BackendTypes.new(types, &*module, true);
@@ -170,7 +170,7 @@ fn finish(skeleton: Skeleton&) -> Result<(), CodegenError> {
     verify_cfg(&skeleton.cfg, &skeleton.types)
 }
 
-fn check_valid(types: TypeStore&, fixture: Fixture&, location: SourceSpan) {
+fn check_valid(types: TypeSpace&, fixture: Fixture&, location: SourceSpan) {
     let values = skeleton(types, fixture, location);
     defer release(&values);
     let number = values.function.add_value(fixture.integer, ValueKind.Integer(7u64));
@@ -261,7 +261,7 @@ fn count_of(checks: Vec<SafetyCheck>&, name: str) -> u64 {
     total
 }
 
-fn check_wrong_pointee(types: TypeStore&, fixture: Fixture&, location: SourceSpan) {
+fn check_wrong_pointee(types: TypeSpace&, fixture: Fixture&, location: SourceSpan) {
     let values = skeleton(types, fixture, location);
     defer release(&values);
     let number = values.function.add_value(fixture.integer, ValueKind.Integer(7u64));
@@ -274,7 +274,7 @@ fn check_wrong_pointee(types: TypeStore&, fixture: Fixture&, location: SourceSpa
     reject(finish(&values), "a non-enum destination is rejected");
 }
 
-fn check_invalid_variant(types: TypeStore&, fixture: Fixture&, location: SourceSpan) {
+fn check_invalid_variant(types: TypeSpace&, fixture: Fixture&, location: SourceSpan) {
     let values = skeleton(types, fixture, location);
     defer release(&values);
     effect(values.entry, &values.function, location,
@@ -282,7 +282,7 @@ fn check_invalid_variant(types: TypeStore&, fixture: Fixture&, location: SourceS
     reject(finish(&values), "an unknown discriminant is rejected");
 }
 
-fn check_invalid_field_type(types: TypeStore&, fixture: Fixture&, location: SourceSpan) {
+fn check_invalid_field_type(types: TypeSpace&, fixture: Fixture&, location: SourceSpan) {
     let values = skeleton(types, fixture, location);
     defer release(&values);
     let number = values.function.add_value(fixture.integer, ValueKind.Integer(7u64));
@@ -295,7 +295,7 @@ fn check_invalid_field_type(types: TypeStore&, fixture: Fixture&, location: Sour
     reject(finish(&values), "a swapped payload field is rejected");
 }
 
-fn check_unit_fields(types: TypeStore&, fixture: Fixture&, location: SourceSpan) {
+fn check_unit_fields(types: TypeSpace&, fixture: Fixture&, location: SourceSpan) {
     let values = skeleton(types, fixture, location);
     defer release(&values);
     let fields = Vec<ValueId>.new();
@@ -305,7 +305,7 @@ fn check_unit_fields(types: TypeStore&, fixture: Fixture&, location: SourceSpan)
     reject(finish(&values), "payload fields on a unit variant are rejected");
 }
 
-fn check_field_on_unit(types: TypeStore&, fixture: Fixture&, location: SourceSpan) {
+fn check_field_on_unit(types: TypeSpace&, fixture: Fixture&, location: SourceSpan) {
     let values = skeleton(types, fixture, location);
     defer release(&values);
     append(values.entry, &values.function, location, Option<TypeId>.Some(fixture.integer),
@@ -313,7 +313,7 @@ fn check_field_on_unit(types: TypeStore&, fixture: Fixture&, location: SourceSpa
     reject(finish(&values), "a field read on a unit variant is rejected");
 }
 
-fn check_tag_type(types: TypeStore&, fixture: Fixture&, location: SourceSpan) {
+fn check_tag_type(types: TypeSpace&, fixture: Fixture&, location: SourceSpan) {
     let values = skeleton(types, fixture, location);
     defer release(&values);
     append(values.entry, &values.function, location, Option<TypeId>.Some(fixture.integer),
@@ -334,7 +334,7 @@ fn probe_units(names: NameInterner&) -> UnitTable {
     units
 }
 
-fn analyze_probe(units: UnitTable&, types: TypeStore&, names: NameInterner&,
+fn analyze_probe(units: UnitTable&, types: TypeSpace&, names: NameInterner&,
     symbols: SymbolStore&, hir: HirStore&, reporter: DiagnosticReporter&) -> AnalysisOutput {
     let driver = MiddleEndDriver.new(units, Option<PackageMap&>.None, names, types, symbols,
         hir, trust(), false, AnalysisOptions.new(), reporter);
@@ -348,7 +348,7 @@ fn analyze_probe(units: UnitTable&, types: TypeStore&, names: NameInterner&,
 
 // One malformed graph per process; the invariant panic terminates the child.
 fn run_negative(index: u64) {
-    let types = TypeStore.new();
+    let types = TypeSpace.new();
     defer types.drop();
     let names = NameInterner.new();
     defer names.drop();
@@ -415,7 +415,7 @@ fn main() {
     for argument in arguments { argument.drop(); }
     arguments.drop();
 
-    let types = TypeStore.new();
+    let types = TypeSpace.new();
     defer types.drop();
     let names = NameInterner.new();
     defer names.drop();

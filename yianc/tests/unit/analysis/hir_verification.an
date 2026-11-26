@@ -23,7 +23,7 @@ from yianc.analysis.passes.finalize_hir_types import finalize_hir_types;
 from yianc.types.model import AccessMode, AggregateDefinition, CallableDefinition, DefinitionBody,
 DefinitionHeader, NominalKind, Parameter, StructField;
 from yianc.analysis.ty.validation import validate_concrete_value;
-from yianc.types.store import TypeStore, BOOL_TYPE_ID, ERROR_TYPE_ID, I32_TYPE_ID, NEVER_TYPE_ID, U64_TYPE_ID, VOID_TYPE_ID;
+from yianc.types.space import TypeSpace, BOOL_TYPE_ID, ERROR_TYPE_ID, I32_TYPE_ID, NEVER_TYPE_ID, U64_TYPE_ID, VOID_TYPE_ID;
 from yianc.common.ids import DefId, HirId, NameId, SymbolId, TypeId, UnitId;
 from yianc.common.location import SourceSpan;
 from yianc.diagnostics.model import AnalysisError, AnalysisErrorKind, DiagnosticLocation, DiagnosticReporter;
@@ -99,7 +99,7 @@ fn load_source(path: str, text: str, names: NameInterner&) -> SourceTable {
 
 struct VerificationFixture {
     units: UnitTable,
-    types: TypeStore,
+    types: TypeSpace,
     names: NameInterner,
     symbols: SymbolStore,
     hir: HirStore,
@@ -132,7 +132,7 @@ impl VerificationFixture {
             permissions.push(SourcePermissions(stdlib, restricted, stdlib));
             index += 1;
         }
-        Self(units, TypeStore.new(), names, SymbolStore.new(), HirStore.new(), trust,
+        Self(units, TypeSpace.new(), names, SymbolStore.new(), HirStore.new(), trust,
             permissions, DefinitionRegistry.new(), DefinitionWorklist.new(), ImplRegistry.new())
     }
 
@@ -178,7 +178,7 @@ impl Drop for VerificationFixture {
     }
 }
 
-fn definition(types: TypeStore&, names: NameInterner&, name_text: str, kind: NominalKind, location: SourceSpan, generics: Vec<TypeId>) -> DefId {
+fn definition(types: TypeSpace&, names: NameInterner&, name_text: str, kind: NominalKind, location: SourceSpan, generics: Vec<TypeId>) -> DefId {
     let name = names.intern(name_text);
     types.register(DefinitionHeader(kind, name, location, UnitId(0u64)), generics)
 }

@@ -1,5 +1,5 @@
 from yianc.analysis.resolution.context import ResolutionContext;
-from yianc.types.store import TypeStore;
+from yianc.types.space import TypeSpace;
 from yianc.analysis.ty.callable import instance_substitutions;
 from yianc.types.substitution import substitute;
 from yianc.types.substitution import has_generic;
@@ -118,7 +118,7 @@ pub fn validate_unsized(ctx: ResolutionContext&) -> Result<(), AnalysisError> {
 }
 
 // Opaque wrappers may hide C fields; these queries inspect exposed type syntax and arguments.
-pub fn contains_ffi(store: TypeStore&, type_id: TypeId, opaque_only: bool) -> bool {
+pub fn contains_ffi(store: TypeSpace&, type_id: TypeId, opaque_only: bool) -> bool {
     match *store.get(type_id).unwrap() {
         Opaque(_, _) => true,
         CScalar(_) => !opaque_only,
@@ -158,7 +158,7 @@ pub fn contains_ffi(store: TypeStore&, type_id: TypeId, opaque_only: bool) -> bo
     }
 }
 
-pub fn c_abi_type(store: TypeStore&, type_id: TypeId, result: bool, incomplete: bool) -> bool {
+pub fn c_abi_type(store: TypeSpace&, type_id: TypeId, result: bool, incomplete: bool) -> bool {
     match *store.get(type_id).unwrap() {
         Void => result,
         Integer(_, _) => true,

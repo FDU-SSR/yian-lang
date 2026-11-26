@@ -10,7 +10,7 @@ from yianc.frontend.source import Span;
 from yianc.diagnostics.model import AnalysisError;
 from yianc.analysis.ty.relations import compatible, is_integer, is_numeric, default_type;
 from std.core.iter import Iterator, IntoIterator;
-from yianc.types.store import BOOL_TYPE_ID, CHAR_TYPE_ID, VOID_TYPE_ID;
+from yianc.types.space import BOOL_TYPE_ID, CHAR_TYPE_ID, VOID_TYPE_ID;
 
 fn assignment_operator(op: BinaryOperator) -> bool {
     match &op {

@@ -1,5 +1,5 @@
 from yianc.common.ids import DefId, TypeId, SymbolId, HirId, UnitId, NameId;
-from yianc.types.store import TypeStore;
+from yianc.types.space import TypeSpace;
 from yianc.types.layout import TypeSizeProvider;
 from yianc.telemetry.trace import CompilerTrace;
 from yianc.common.location import SourceSpan;
@@ -39,18 +39,18 @@ impl Drop for AnalyzedProcedure {
     }
 }
 
-// The output owns its procedure and definition lists. Its type store is borrowed
+// The output owns its procedure and definition lists. Its type space is borrowed
 // from the compilation entry point and must remain alive while the output is used.
 pub struct AnalysisOutput {
     pub checked: Vec<DefId>,
     pub procedures: Vec<AnalyzedProcedure>,
     pub entry: Option<TypeId>,
-    pub types: TypeStore&,
+    pub types: TypeSpace&,
     pub raw_pointers: bool,
 }
 
 impl AnalysisOutput {
-    static pub fn new(types: TypeStore&, raw_pointers: bool) -> Self {
+    static pub fn new(types: TypeSpace&, raw_pointers: bool) -> Self {
         Self(Vec<DefId>.new(), Vec<AnalyzedProcedure>.new(), Option<TypeId>.None, types, raw_pointers)
     }
 }

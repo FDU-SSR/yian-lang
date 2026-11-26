@@ -1,4 +1,4 @@
-from yianc.types.store import TypeStore;
+from yianc.types.space import TypeSpace;
 from yianc.types.model import StructField, EnumVariant;
 from yianc.types.callable import store_substitutions;
 from yianc.types.substitution import substitute;
@@ -7,7 +7,7 @@ from yianc.diagnostics.model import AnalysisError;
 from std.core.iter import Iterator, IntoIterator;
 
 // Result buffers are caller-owned; fields contain borrowed session identities only.
-pub fn struct_fields(store: TypeStore&, type_id: TypeId) -> Result<Vec<StructField>, AnalysisError> {
+pub fn struct_fields(store: TypeSpace&, type_id: TypeId) -> Result<Vec<StructField>, AnalysisError> {
     let definition = match store.require(type_id)? {
         Nominal(id, _) => *id,
         _ => @panic("expected a nominal structure"),
@@ -35,7 +35,7 @@ pub fn struct_fields(store: TypeStore&, type_id: TypeId) -> Result<Vec<StructFie
     Result<Vec<StructField>, AnalysisError>.Ok(fields)
 }
 
-pub fn enum_variants(store: TypeStore&, type_id: TypeId) -> Result<Vec<EnumVariant>, AnalysisError> {
+pub fn enum_variants(store: TypeSpace&, type_id: TypeId) -> Result<Vec<EnumVariant>, AnalysisError> {
     let definition = match store.require(type_id)? {
         Nominal(id, _) => *id,
         _ => @panic("expected a nominal enumeration"),
