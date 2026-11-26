@@ -1,14 +1,16 @@
+from yianc.common.names import NameInterner;
 from yianc.frontend.lex.lexer import Lexer;
-from yianc.frontend.lex.token import drop_tokens;
 from yianc.frontend.parse.state import Parser;
 from yianc.frontend.parse.items import parse_program;
 from yianc.frontend.ast.atoms import AttrKind;
 from std.core.ops import Index;
 
 fn main() {
-    let tokens = *Lexer.new("from pkg.api import A as B; struct Pair<T> { pub left: T, right: u64 } enum Choice { Empty, Full { value: u64 } } trait Show { fn show() -> str; fn ready() -> bool { true } } impl Show for Pair<u64> { pub fn show() -> str { \"ok\" } } opaque type Handle; extern \"C\" { fn count(p: cptr<Handle>) -> c_int; } pub ffi fn wrap() -> u64 { let f = |n=1|(x: u64) -> u64 { n + x }; f(2) }").run().unwrap();
-    defer drop_tokens(&tokens);
-    let parser = Parser.new(&tokens);
+    let names = NameInterner.new();
+    defer names.drop();
+    let tokens = *Lexer.new("from pkg.api import A as B; struct Pair<T> { pub left: T, right: u64 } enum Choice { Empty, Full { value: u64 } } trait Show { fn show() -> str; fn ready() -> bool { true } } impl Show for Pair<u64> { pub fn show() -> str { \"ok\" } } opaque type Handle; extern \"C\" { fn count(p: cptr<Handle>) -> c_int; } pub ffi fn wrap() -> u64 { let f = |n=1|(x: u64) -> u64 { n + x }; f(2) }", &names).run().unwrap();
+    defer tokens.drop();
+    let parser = Parser.new(&tokens, &names);
     let tree = *parse_program(&parser).unwrap(); defer tree.drop();
     let items = tree.root.data.items;
     assert items.len() == 8: "declaration count";

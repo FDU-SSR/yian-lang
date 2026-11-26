@@ -265,7 +265,7 @@ fn extern_item(parser: Parser&, attrs: Vec<Attr&>&) -> Option<Item&> {
     parser.take_punct(PunctuatorKind.RBrace);
     parser.ready()?;
 
-    Option<Item&>.Some(val=parser.arena.alloc_item(ItemData.ExternBlock(attrs=attrs.take(), abi=String.from(&"C"), functions=functions.take()), span))
+    Option<Item&>.Some(val=parser.arena.alloc_item(ItemData.ExternBlock(attrs=attrs.take(), abi=parser.names.intern_text("C"), functions=functions.take()), span))
 }
 
 fn const_item(parser: Parser&, attrs: Vec<Attr&>&) -> Option<Item&> {

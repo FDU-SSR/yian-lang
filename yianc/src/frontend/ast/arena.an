@@ -213,11 +213,6 @@ impl AstArena {
 impl Drop for AstArena {
     pub fn drop() {
         // Release the payloads of every node category before freeing all node storage chunks.
-        drop_payloads(&self.identifier);
-        drop_payloads(&self.int_literal);
-        drop_payloads(&self.float_literal);
-        drop_payloads(&self.char_literal);
-        drop_payloads(&self.str_literal);
         drop_payloads(&self.bool_literal);
         drop_payloads(&self.program);
         drop_payloads(&self.block);

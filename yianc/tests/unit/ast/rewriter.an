@@ -1,9 +1,9 @@
+from yianc.common.names import NameInterner;
 from yianc.frontend.ast.arena import AstArena;
 from yianc.frontend.ast.node import Expr, ExprData, IdentifierData, BlockData, PatternLet;
 from yianc.frontend.ast.operator import BinaryOperator;
 from yianc.frontend.ast.traversal import AstRewriter, rewrite_expr_children;
 from yianc.frontend.source import Span, Position;
-from std.core.convert import From;
 from std.core.ops import Index;
 
 struct Rewriter { replacement: Expr&, visits: u64, recurse: bool, revisit: bool }
@@ -20,8 +20,8 @@ impl AstRewriter for Rewriter {
 fn main() {
     let arena = AstArena.new(); defer arena.drop();
     let span = Span(Position(0, 0), Position(0, 0));
-    let old = arena.alloc_expr(ExprData.Identifier(arena.alloc_identifier(IdentifierData(String.from(&"old"), false), span)), span);
-    let new = arena.alloc_expr(ExprData.Identifier(arena.alloc_identifier(IdentifierData(String.from(&"new"), false), span)), span);
+    let old = arena.alloc_expr(ExprData.Identifier(arena.alloc_identifier(IdentifierData(names.intern_text("old"), false), span)), span);
+    let new = arena.alloc_expr(ExprData.Identifier(arena.alloc_identifier(IdentifierData(names.intern_text("new"), false), span)), span);
     let root = arena.alloc_expr(ExprData.Binary(BinaryOperator.Add, old, old), span);
     let pass = Rewriter(new, 0u64, false, false);
     pass.rewrite_expr(root);

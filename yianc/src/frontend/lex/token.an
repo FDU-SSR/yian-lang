@@ -1,3 +1,4 @@
+from yianc.common.names import InternedText;
 from yianc.frontend.source import Span;
 
 pub enum KeywordKind {
@@ -493,41 +494,31 @@ impl FloatSuffix {
 // Text tokens own string storage; numeric tokens store decoded values and suffixes.
 pub enum TokenPayload {
     Keyword { value: KeywordKind },
-    Identifier { value: String },
+    Identifier { value: InternedText },
     Punctuator { value: PunctuatorKind },
     Integer { value: u64, suffix: IntSuffix },
     Float { value: f64, suffix: FloatSuffix },
-    Character { value: String },
-    StringLiteral { value: String },
+    Character { value: InternedText },
+    StringLiteral { value: InternedText },
     FStrStart,
-    FStrLiteral { value: String },
+    FStrLiteral { value: InternedText },
     FStrExprBegin,
     FStrExprEnd,
     FStrEnd,
     // Interpolation-context spelling that has no ordinary numeric decoding; the parser decides its meaning.
-    FStrFormatText { value: String },
+    FStrFormatText { value: InternedText },
     EndOfFile,
-}
-
-impl Drop for TokenPayload {
-    pub fn drop() {
-        match self {
-            Identifier(value) | Character(value) | StringLiteral(value) |
-            FStrLiteral(value) | FStrFormatText(value) => value.drop(),
-            _ => {},
-        }
-    }
 }
 
 pub struct Token {
     payload: TokenPayload,
     pub span: Span,
-    pub raw: String,
+    pub raw: str,
 }
 
 impl Token {
     static pub fn new(payload: TokenPayload, span: Span) -> Self {
-        return Self(payload=payload, span=span, raw=String.new());
+        return Self(payload=payload, span=span, raw="");
     }
 
     pub fn kind() -> TokenPayload& { return &self.payload; }
@@ -612,22 +603,4 @@ impl Token {
             _ => false,
         }
     }
-}
-
-impl Drop for Token {
-    pub fn drop() {
-        self.payload.drop();
-        self.raw.drop();
-    }
-}
-
-// Dropping Vec does not recursively clean up elements; release each token's text first.
-pub fn drop_tokens(tokens: Vec<Token>&) {
-    let index: u64 = 0u64;
-
-    while index < tokens.len() {
-        tokens[index].drop();
-        index += 1u64;
-    }
-    tokens.drop();
 }

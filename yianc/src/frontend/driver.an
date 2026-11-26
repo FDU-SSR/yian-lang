@@ -1,3 +1,4 @@
+from yianc.common.names import NameInterner;
 from yianc.common.ids import UnitId;
 from yianc.diagnostics.model import DiagnosticCode, DiagnosticLocation, UserDiagnostic;
 from yianc.diagnostics.output import OutputError;
@@ -39,12 +40,12 @@ fn stage_complete(observer: PreparationObserver&, stage: PreparationStage, prepa
 }
 
 // Each stage processes the entire frozen input set before the next stage starts.
-fn prepare_session(preparation: FrontendPreparation&, observer: PreparationObserver&) -> Result<(), FrontendError> {
+fn prepare_session(preparation: FrontendPreparation&, observer: PreparationObserver&, names: NameInterner&) -> Result<(), FrontendError> {
     let index: u64 = 0;
     while index < preparation.source_count() {
         let unit = UnitId(index);
         observer.begin("frontend.lex");
-        let result = preparation.prepare_source(unit);
+        let result = preparation.prepare_source(unit, names);
         observer.finish("frontend.lex", match &result { Ok(_) => true, Err(_) => false });
         let prepared = match result {
             Ok(value) => value,
@@ -60,7 +61,7 @@ fn prepare_session(preparation: FrontendPreparation&, observer: PreparationObser
         let unit = UnitId(index);
         let staged = preparation.unit(unit).unwrap();
         observer.begin("frontend.parse");
-        let result = staged.parse(unit);
+        let result = staged.parse(unit, names);
         observer.finish("frontend.parse", match &result { Ok(_) => true, Err(_) => false });
         match preparation.finish_preparation(result, unit) {
             Ok(_) => {},
@@ -76,7 +77,7 @@ fn prepare_session(preparation: FrontendPreparation&, observer: PreparationObser
         let staged = preparation.unit(unit).unwrap();
         let file = preparation.source(unit);
         observer.begin("frontend.desugar");
-        let result = staged.desugar(unit, file.path());
+        let result = staged.desugar(unit, file.path(), names);
         observer.finish("frontend.desugar", match &result { Ok(_) => true, Err(_) => false });
         match preparation.finish_preparation(result, unit) {
             Ok(_) => {},
@@ -91,13 +92,14 @@ fn prepare_session(preparation: FrontendPreparation&, observer: PreparationObser
 pub struct FrontendDriver {
     preparation: Option<FrontendPreparation>,
     trace: CompilerTrace&,
+    names: NameInterner&,
     attempted: bool,
     dump: bool,
 }
 
 impl FrontendDriver {
-    static pub fn new(sources: SourceTable, dump: bool, trace: CompilerTrace&) -> Self {
-        Self(Option<FrontendPreparation>.Some(FrontendPreparation.new(sources)), trace, false, dump)
+    static pub fn new(sources: SourceTable, dump: bool, trace: CompilerTrace&, names: NameInterner&) -> Self {
+        Self(Option<FrontendPreparation>.Some(FrontendPreparation.new(sources)), trace, names, false, dump)
     }
 
     // The completed table is the result; a failed run keeps the preparation for source_table() reporting.
@@ -110,7 +112,7 @@ impl FrontendDriver {
                 Some(value) => value,
                 None => @panic("frontend preparation is not available"),
             };
-            prepare_session(preparation, &dumps)?;
+            prepare_session(preparation, &dumps, self.names)?;
         }
         match self.preparation.take() {
             Some(value) => {

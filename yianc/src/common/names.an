@@ -4,6 +4,13 @@ from std.core.convert import From;
 from std.core.iter import Iterator, IntoIterator;
 from std.core.ops import Index;
 
+// A read-only view into text owned by a NameInterner.
+pub struct InternedText { value: str }
+
+impl InternedText {
+    pub fn as_str() -> str { self.value }
+}
+
 // Strings own their buffers; index keys borrow those buffers across vector growth.
 pub struct NameInterner {
     names: Vec<String>,
@@ -26,6 +33,11 @@ impl NameInterner {
         self.index.insert(owned.as_str(), id);
         self.names.push(owned);
         id
+    }
+
+    pub fn intern_text(text: str) -> InternedText {
+        let id = self.intern(text);
+        InternedText(self.text(id))
     }
 
     pub fn get(id: NameId) -> Option<str> {

@@ -1,7 +1,6 @@
 from std.core.fs import resolve;
 from yianc.common.ids import UnitId;
 from yianc.frontend.lex.lexer import Lexer;
-from yianc.frontend.lex.token import drop_tokens;
 from yianc.frontend.parse.state import Parser;
 from yianc.frontend.parse.items import parse_program;
 from yianc.frontend.desugar import desugar;
@@ -40,19 +39,25 @@ impl AstVisitor for Counter {
     }
 }
 fn success() {
+    let names = NameInterner.new();
+    defer names.drop();
     let source = String.from(&"fn owned() { let text = \"中😀\"; for x in values() { consume(x); } }");
-    let tokens = *Lexer.new(source.as_str()).run().unwrap();
+    let tokens = *Lexer.new(source.as_str(), &names).run().unwrap();
     source.drop();
-    assert tokens[1].value() == "owned": "tokens own identifier after source release";
-    let parser = Parser.new(&tokens);
+    assert tokens[1].value() == "owned": "interned token identifier survives source release";
+    let distinct = names.len();
+    names.intern("owned");
+    names.intern("中😀");
+    assert names.len() == distinct: "identifier and decoded literal are already interned";
+    let parser = Parser.new(&tokens, &names);
     defer parser.drop();
     let tree = *parse_program(&parser).unwrap();
     defer tree.drop();
-    drop_tokens(&tokens);
+    tokens.drop();
     let counter = Counter(0u64);
     walk_program(tree.root, &counter);
     assert counter.owned_names == 1: "AST names survive token release";
-    desugar(&tree, "owned.an").unwrap();
+    desugar(&tree, "owned.an", &names).unwrap();
     let writer = Writer.with_max_depth(512u64);
     defer writer.drop();
     let formatter = AstFormatter.new(&writer);
@@ -63,36 +68,42 @@ fn success() {
     json.drop();
 }
 fn lex_failure() {
+    let names = NameInterner.new();
+    defer names.drop();
     let source = String.from(&"let name = \"owned\"; \"unterminated");
-    let result = Lexer.new(source.as_str()).run();
+    let result = Lexer.new(source.as_str(), &names).run();
     source.drop();
     match result {
         Err(error) => { assert error.message().contains("Unterminated"): "lex error survives source release"; error.drop(); },
-        Ok(tokens) => { drop_tokens(&tokens); @panic("lex failure accepted"); },
+        Ok(tokens) => { tokens.drop(); @panic("lex failure accepted"); },
     }
 }
 fn parse_failure() {
+    let names = NameInterner.new();
+    defer names.drop();
     let source = String.from(&"struct Owned { field: str } fn broken() { let text = \"owned\"; call(");
-    let tokens = *Lexer.new(source.as_str()).run().unwrap();
+    let tokens = *Lexer.new(source.as_str(), &names).run().unwrap();
     source.drop();
-    let parser = Parser.new(&tokens);
+    let parser = Parser.new(&tokens, &names);
     defer parser.drop();
     let result = parse_program(&parser);
-    drop_tokens(&tokens);
+    tokens.drop();
     match result {
         Err(error) => { assert error.message().as_slice().len() != 0: "parse error survives token release"; error.drop(); },
         Ok(tree) => { tree.drop(); @panic("parse failure accepted"); },
     }
 }
 fn desugar_failure() {
+    let names = NameInterner.new();
+    defer names.drop();
     let source = String.from(&"const VALUE: i32 = source()?;");
-    let tokens = *Lexer.new(source.as_str()).run().unwrap();
+    let tokens = *Lexer.new(source.as_str(), &names).run().unwrap();
     source.drop();
-    let parser = Parser.new(&tokens);
+    let parser = Parser.new(&tokens, &names);
     defer parser.drop();
     let tree = *parse_program(&parser).unwrap();
-    drop_tokens(&tokens);
-    let result = desugar(&tree, "owned.an");
+    tokens.drop();
+    let result = desugar(&tree, "owned.an", &names);
     tree.drop();
     match result {
         Err(error) => {
@@ -104,21 +115,23 @@ fn desugar_failure() {
     }
 }
 fn unfinished_parser() {
-    let tokens = *Lexer.new("name").run().unwrap();
-    defer drop_tokens(&tokens);
-    let parser = Parser.new(&tokens);
+    let names = NameInterner.new();
+    defer names.drop();
+    let tokens = *Lexer.new("name", &names).run().unwrap();
+    defer tokens.drop();
+    let parser = Parser.new(&tokens, &names);
     defer parser.drop();
     parser.identifier().unwrap();
     parser.error("owned error", tokens[0].span);
 }
 
-fn load_source(path: str, text: str) -> SourceTable {
+fn load_source(path: str, text: str, names: NameInterner&) -> SourceTable {
     let canonical = match resolve(path) {
         Ok(value) => value,
         Err(error) => { error.drop(); @panic("fixture source path resolution failed"); },
     };
     let files = Vec<SourceFile>.new();
-    files.push(SourceFile.new(canonical, String.from(&text)));
+    files.push(SourceFile.new(canonical, String.from(&text), names));
     match SourceTable.from_files(files) {
         Ok(value) => value,
         Err(error) => { error.drop(); @panic("fixture source load failed"); },
@@ -132,10 +145,10 @@ fn trust() -> SourceTrust {
     }
 }
 
-fn strict_lifecycle_units() -> UnitTable {
+fn strict_lifecycle_units(names: NameInterner&) -> UnitTable {
     let trace = CompilerTrace.disabled();
     defer trace.drop();
-    let frontend = FrontendDriver.new(load_source("/tmp/yian-native-strict-lifecycle.an", "struct Record { field: i32 }\nfn helper(value: Record) -> Record { value }\nconst SIZE: u64 = 8;\nfn main() { helper(Record(1)); }\n"), false, &trace);
+    let frontend = FrontendDriver.new(load_source("/tmp/yian-native-strict-lifecycle.an", "struct Record { field: i32 }\nfn helper(value: Record) -> Record { value }\nconst SIZE: u64 = 8;\nfn main() { helper(Record(1)); }\n", names), false, &trace, names);
     defer frontend.drop();
     let units = match frontend.run() {
         Ok(value) => value,
@@ -145,12 +158,12 @@ fn strict_lifecycle_units() -> UnitTable {
 }
 
 fn check_strict_lifecycle(raw: bool) {
-    let units = strict_lifecycle_units();
+    let names = NameInterner.new();
+    defer names.drop();
+    let units = strict_lifecycle_units(&names);
     defer units.drop();
     let types = TypeStore.new();
     defer types.drop();
-    let names = NameInterner.new();
-    defer names.drop();
     let symbols = SymbolStore.new();
     defer symbols.drop();
     let hir = HirStore.new();
@@ -173,12 +186,12 @@ fn check_strict_lifecycle(raw: bool) {
 
 // The second analysis violates the driver attempt guard; the caller isolates the panic.
 fn repeat_analysis(raw: bool) {
-    let units = strict_lifecycle_units();
+    let names = NameInterner.new();
+    defer names.drop();
+    let units = strict_lifecycle_units(&names);
     defer units.drop();
     let types = TypeStore.new();
     defer types.drop();
-    let names = NameInterner.new();
-    defer names.drop();
     let symbols = SymbolStore.new();
     defer symbols.drop();
     let hir = HirStore.new();
@@ -233,9 +246,11 @@ fn strict_analysis_lifecycle() {
 }
 
 fn strict_analysis_reports_first_error() {
+    let names = NameInterner.new();
+    defer names.drop();
     let trace = CompilerTrace.disabled();
     defer trace.drop();
-    let frontend = FrontendDriver.new(load_source("/tmp/yian-native-strict-error.an", "fn bad_one() { let value: i32 = true; }\nfn bad_two() { let value: bool = \"wrong\"; }\nfn main() {}\n"), false, &trace);
+    let frontend = FrontendDriver.new(load_source("/tmp/yian-native-strict-error.an", "fn bad_one() { let value: i32 = true; }\nfn bad_two() { let value: bool = \"wrong\"; }\nfn main() {}\n", &names), false, &trace, &names);
     defer frontend.drop();
     let units = match frontend.run() {
         Ok(value) => value,
@@ -244,8 +259,6 @@ fn strict_analysis_reports_first_error() {
     defer units.drop();
     let types = TypeStore.new();
     defer types.drop();
-    let names = NameInterner.new();
-    defer names.drop();
     let symbols = SymbolStore.new();
     defer symbols.drop();
     let hir = HirStore.new();
@@ -267,6 +280,8 @@ fn strict_analysis_reports_first_error() {
 
 // The frontend hands over one completed unit per source, indexed by UnitId.
 fn unit_table_contract() {
+    let names = NameInterner.new();
+    defer names.drop();
     let trace = CompilerTrace.disabled();
     defer trace.drop();
     let first_path = match resolve("/tmp/yian-native-unit-table-first.an") {
@@ -278,13 +293,13 @@ fn unit_table_contract() {
         Err(error) => { error.drop(); @panic("fixture source path resolution failed"); },
     };
     let files = Vec<SourceFile>.new();
-    files.push(SourceFile.new(first_path, String.from(&"fn first() {}\n")));
-    files.push(SourceFile.new(second_path, String.from(&"fn second() {}\n")));
+    files.push(SourceFile.new(first_path, String.from(&"fn first() {}\n"), &names));
+    files.push(SourceFile.new(second_path, String.from(&"fn second() {}\n"), &names));
     let sources = match SourceTable.from_files(files) {
         Ok(value) => value,
         Err(error) => { error.drop(); @panic("fixture source load failed"); },
     };
-    let frontend = FrontendDriver.new(sources, false, &trace);
+    let frontend = FrontendDriver.new(sources, false, &trace, &names);
     defer frontend.drop();
     let table = match frontend.run() {
         Ok(value) => value,

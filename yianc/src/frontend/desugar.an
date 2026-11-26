@@ -1,3 +1,4 @@
+from yianc.common.names import NameInterner;
 from yianc.frontend.ast.arena import AstTree;
 from yianc.frontend.desugar.error import DesugarError;
 from yianc.frontend.desugar.parameters import normalize_parameters;
@@ -7,14 +8,14 @@ from yianc.frontend.desugar.propagation import validate_propagation, lower_propa
 from yianc.frontend.desugar.print import lower_print_arguments;
 
 // Validation failures leave the AST untouched; successful lowering represents syntax sugar as ordinary control flow and calls.
-pub fn desugar(tree: AstTree&, path: str) -> Result<void, DesugarError> {
+pub fn desugar(tree: AstTree&, path: str, names: NameInterner&) -> Result<void, DesugarError> {
     validate_propagation(tree.root)?;
 
     // Normalize parameter bindings and control flow before expanding propagation in the existing callable context.
-    normalize_parameters(tree);
-    lower_control(tree, path);
-    lower_expressions(tree);
-    lower_propagation(tree);
+    normalize_parameters(tree, names);
+    lower_control(tree, names, path);
+    lower_expressions(tree, names);
+    lower_propagation(tree, names);
     lower_print_arguments(tree);
 
     Result<void, DesugarError>.Ok({})

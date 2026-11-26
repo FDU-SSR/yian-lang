@@ -30,7 +30,7 @@ fn append_token(output: Writer&, token: Token&) {
     output.write_string(token_kind(token));
 
     output.key("raw");
-    output.write_string(token.raw.as_str());
+    output.write_string(token.raw);
 
     output.key("value");
     match token.kind() {

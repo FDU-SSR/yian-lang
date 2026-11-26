@@ -1,5 +1,5 @@
+from yianc.common.names import NameInterner;
 from yianc.frontend.lex.lexer import Lexer;
-from yianc.frontend.lex.token import drop_tokens;
 from yianc.frontend.parse.state import Parser;
 from yianc.frontend.parse.items import parse_program;
 from yianc.frontend.ast.arena import AstTree;
@@ -14,8 +14,10 @@ fn expression(tree: AstTree&) -> Expr& {
     }
 }
 fn check(source: str, kind: u64) {
-    let tokens = *Lexer.new(source).run().unwrap(); defer drop_tokens(&tokens);
-    let parser = Parser.new(&tokens);
+    let names = NameInterner.new();
+    defer names.drop();
+    let tokens = *Lexer.new(source, &names).run().unwrap(); defer tokens.drop();
+    let parser = Parser.new(&tokens, &names);
     let tree = *parse_program(&parser).unwrap(); defer tree.drop();
     assert parser.at_end(): "whole program consumed";
     let node = expression(&tree);

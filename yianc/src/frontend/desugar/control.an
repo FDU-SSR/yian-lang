@@ -1,3 +1,4 @@
+from yianc.common.names import NameInterner;
 from yianc.frontend.ast.arena import AstArena, AstTree;
 from yianc.frontend.ast.node import Expr, ExprData, Block, Pattern, PatternData, TypeSyntax, TypeData, Condition, MatchArm, PatternArguments, Argument, StrLiteralData, BoolLiteralData, Literal, ElifBranch;
 from yianc.frontend.ast.atoms import BuiltinKind, MatchArmOrigin;
@@ -25,7 +26,7 @@ fn assertion_message(path: str, span: Span) -> String {
     text.push(')');
     text
 }
-struct ControlLowerer { arena: AstArena&, path: str }
+struct ControlLowerer { arena: AstArena&, names: NameInterner&, path: str }
 impl ControlLowerer {
     // Build fallback branches from the end to preserve source-order evaluation of elif conditions.
     fn lower_if(span: Span, cond: Condition, yes: Block&, branches: Vec<ElifBranch&>&, no: Option<Block&>) -> Expr& {
@@ -65,18 +66,18 @@ impl ControlLowerer {
 
     // Evaluate iterator initialization once; match next on each iteration and retain the loop-variable origin tag.
     fn lower_for(span: Span, pattern: Pattern&, iterable: Expr&, body: Block&) -> Expr& {
-        let name = identifier(self.arena, span, "%iter", true);
-        let init = method_call(self.arena, iterable.span, iterable, "into_iter", Vec<Argument&>.new());
+        let name = identifier(self.arena, self.names, span, "%iter", true);
+        let init = method_call(self.arena, self.names, iterable.span, iterable, "into_iter", Vec<Argument&>.new());
         let ty = self.arena.alloc_type_syntax(TypeData.DeducedType, span);
         let decl = self.arena.alloc_expr(ExprData.VarDecl(name=name, var_type=ty, init_expr=Option<Expr&>.Some(val=init)), span);
 
-        let receiver = name_expr(self.arena, identifier(self.arena, span, "%iter", true));
-        let next = method_call(self.arena, span, receiver, "next", Vec<Argument&>.new());
+        let receiver = name_expr(self.arena, identifier(self.arena, self.names, span, "%iter", true));
+        let next = method_call(self.arena, self.names, span, receiver, "next", Vec<Argument&>.new());
         let positional = Vec<Pattern&>.new();
         positional.push(pattern);
-        let some = self.arena.alloc_pattern(PatternData.ConstructPattern(name=identifier(self.arena, pattern.span, "Some", true),
+        let some = self.arena.alloc_pattern(PatternData.ConstructPattern(name=identifier(self.arena, self.names, pattern.span, "Some", true),
             qualifier=Option<TypeSyntax&>.None, arguments=PatternArguments.Positional(values=positional), rest=false), pattern.span);
-        let none = self.arena.alloc_pattern(PatternData.NamePattern(name=identifier(self.arena, span, "None", true)), span);
+        let none = self.arena.alloc_pattern(PatternData.NamePattern(name=identifier(self.arena, self.names, span, "None", true)), span);
 
         let arms = Vec<MatchArm&>.new();
         arms.push(arm(self.arena, some, body, MatchArmOrigin.ForItem));
@@ -107,10 +108,12 @@ impl ControlLowerer {
     fn lower_assert(span: Span, cond: Expr&, message: Option<Expr&>) -> Expr& {
         let value = if message.is_some() { *message.unwrap() } else {
             let text = assertion_message(self.path, span);
+            defer text.drop();
             let raw = String.from(&"\"");
+            defer raw.drop();
             raw.push_str(text.as_str());
             raw.push('"');
-            let literal = self.arena.alloc_str_literal(StrLiteralData(value=text, raw=raw), span);
+            let literal = self.arena.alloc_str_literal(StrLiteralData(value=self.names.intern_text(text.as_str()), raw=self.names.intern_text(raw.as_str())), span);
             self.arena.alloc_expr(ExprData.Literal(literal=Literal.StringLiteral(value=literal)), span)
         };
 
@@ -139,7 +142,7 @@ impl AstRewriter for ControlLowerer {
 }
 
 // Expand conditions, loops, and assertions in child-first order; path supplies default assertion messages.
-pub fn lower_control(tree: AstTree&, path: str) {
-    let pass = ControlLowerer(arena=&tree.arena, path=path);
+pub fn lower_control(tree: AstTree&, names: NameInterner&, path: str) {
+    let pass = ControlLowerer(arena=&tree.arena, names=names, path=path);
     tree.root = pass.rewrite_program(tree.root);
 }

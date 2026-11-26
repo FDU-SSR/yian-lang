@@ -84,14 +84,14 @@ pub fn register_automatic(ctx: ResolutionContext&) -> Result<(), AnalysisError> 
                     nested.push(arm(&tree.arena, same, truth(&tree.arena, span, true), MatchArmOrigin.Synthetic));
                     let wildcard = tree.arena.alloc_pattern(PatternData.WildcardPattern, span);
                     nested.push(arm(&tree.arena, wildcard, truth(&tree.arena, span, false), MatchArmOrigin.Synthetic));
-                    let other = name_expr(&tree.arena, identifier(&tree.arena, span, "other", true));
+                    let other = name_expr(&tree.arena, identifier(&tree.arena, ctx.names, span, "other", true));
                     let other_value = tree.arena.alloc_expr(ExprData.Unary(UnaryOperator.Deref, other), span);
                     let body = one_block(&tree.arena, span, match_expr(&tree.arena, span, other_value, nested));
                     let pattern = tree.arena.alloc_pattern(PatternData.NamePattern(variant.data.name), variant.span);
                     arms.push(arm(&tree.arena, pattern, body, MatchArmOrigin.Synthetic));
                 }
 
-                let receiver = name_expr(&tree.arena, identifier(&tree.arena, span, "self", true));
+                let receiver = name_expr(&tree.arena, identifier(&tree.arena, ctx.names, span, "self", true));
                 let receiver_value = tree.arena.alloc_expr(ExprData.Unary(UnaryOperator.Deref, receiver), span);
                 let body = one_block(&tree.arena, span, match_expr(&tree.arena, span, receiver_value, arms));
                 let name = ctx.names.intern("eq");

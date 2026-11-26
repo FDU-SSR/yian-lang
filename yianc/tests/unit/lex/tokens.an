@@ -1,10 +1,13 @@
+from yianc.common.names import NameInterner;
 from yianc.frontend.lex.lexer import Lexer;
-from yianc.frontend.lex.token import KeywordKind, PunctuatorKind, drop_tokens;
+from yianc.frontend.lex.token import KeywordKind, PunctuatorKind;
 from std.core.ops import Index;
 
 fn main() {
-    let tokens = *Lexer.new("let letter = value >>= 2; value >> 1 >= 0 > -1; a .. b -> c => d ? != == <= && ||").run().unwrap();
-    defer drop_tokens(&tokens);
+    let names = NameInterner.new();
+    defer names.drop();
+    let tokens = *Lexer.new("let letter = value >>= 2; value >> 1 >= 0 > -1; a .. b -> c => d ? != == <= && ||", &names).run().unwrap();
+    defer tokens.drop();
     assert tokens[0].is_keyword(KeywordKind.Let): "keyword";
     assert tokens[1].is_identifier() && tokens[1].value() == "letter": "keyword prefix identifier";
     assert tokens[4].is_punct(PunctuatorKind.GreaterGreaterEqual): "longest shift assignment";

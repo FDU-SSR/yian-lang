@@ -1,3 +1,4 @@
+from yianc.common.names import NameInterner;
 from yianc.frontend.ast.arena import AstArena, AstTree;
 from yianc.frontend.ast.node import Program, Item, ItemData, MethodDef, Block, Expr, ExprData, TypeSource, PatternData, PatternArguments, Argument, Identifier, MatchArm, Pattern, TypeSyntax;
 from yianc.frontend.ast.atoms import MatchArmOrigin;
@@ -79,22 +80,22 @@ pub fn validate_propagation(program: Program&) -> Result<void, DesugarError> {
     }
 }
 
-struct TryLowerer { arena: AstArena&, next_binding: u64, imports: Vec<Item&> }
+struct TryLowerer { arena: AstArena&, names: NameInterner&, next_binding: u64, imports: Vec<Item&> }
 impl TryLowerer {
     fn hidden(span: Span, prefix: str, index: u64) -> Identifier& {
         let name = f"{prefix}{index}";
         defer name.drop();
-        identifier(self.arena, span, name.as_str(), true)
+        identifier(self.arena, self.names, span, name.as_str(), true)
     }
 
     fn add_import(span: Span, target: str, alias: str) {
         let paths = Vec<Identifier&>.new();
-        paths.push(identifier(self.arena, span, "std", true));
-        paths.push(identifier(self.arena, span, "core", true));
-        paths.push(identifier(self.arena, span, "try", true));
+        paths.push(identifier(self.arena, self.names, span, "std", true));
+        paths.push(identifier(self.arena, self.names, span, "core", true));
+        paths.push(identifier(self.arena, self.names, span, "try", true));
         self.imports.push(self.arena.alloc_item(ItemData.Import(paths=paths,
-            target=identifier(self.arena, span, target, true),
-            alias=Option<Identifier&>.Some(identifier(self.arena, span, alias, true)),
+            target=identifier(self.arena, self.names, span, target, true),
+            alias=Option<Identifier&>.Some(identifier(self.arena, self.names, span, alias, true)),
             end=Option<Position>.None), span));
     }
 
@@ -104,9 +105,9 @@ impl TryLowerer {
         arg.span = span;
         args.push(arg);
         self.arena.alloc_expr(ExprData.TraitCall(
-            trait_expr=name_expr(self.arena, identifier(self.arena, span, trait, true)),
+            trait_expr=name_expr(self.arena, identifier(self.arena, self.names, span, trait, true)),
             self_type=self_type, trait_args=trait_args,
-            method_name=identifier(self.arena, span, method, true), args=args), span)
+            method_name=identifier(self.arena, self.names, span, method, true), args=args), span)
     }
 
     // Infer trait type parameters from arguments; record only the type sources required by semantic analysis here.
@@ -137,7 +138,7 @@ impl TryLowerer {
             let positional = Vec<Pattern&>.new();
             positional.push(self.arena.alloc_pattern(PatternData.NamePattern(bindings[i]), span));
             let pattern = self.arena.alloc_pattern(PatternData.ConstructPattern(
-                name=identifier(self.arena, span, variants[i], true), qualifier=Option<TypeSyntax&>.None,
+                name=identifier(self.arena, self.names, span, variants[i], true), qualifier=Option<TypeSyntax&>.None,
                 arguments=PatternArguments.Positional(positional), rest=false), span);
             arms.push(arm(self.arena, pattern, one_block(self.arena, span, results[i]), MatchArmOrigin.Synthetic));
             i += 1;
@@ -188,8 +189,8 @@ impl AstRewriter for TryLowerer {
 }
 
 // Rewrite propagation and prepend required trait imports in order of first use.
-pub fn lower_propagation(tree: AstTree&) {
-    let pass = TryLowerer(arena=&tree.arena, next_binding=0u64, imports=Vec<Item&>.new());
+pub fn lower_propagation(tree: AstTree&, names: NameInterner&) {
+    let pass = TryLowerer(arena=&tree.arena, names=names, next_binding=0u64, imports=Vec<Item&>.new());
     defer pass.imports.drop();
     tree.root = pass.rewrite_program(tree.root);
 

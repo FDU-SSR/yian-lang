@@ -84,13 +84,13 @@ fn trust() -> SourceTrust {
     }
 }
 
-fn load_source(path: str, text: str) -> SourceTable {
+fn load_source(path: str, text: str, names: NameInterner&) -> SourceTable {
     let canonical = match resolve(path) {
         Ok(value) => value,
         Err(error) => { error.drop(); @panic("fixture source path resolution failed"); },
     };
     let files = Vec<SourceFile>.new();
-    files.push(SourceFile.new(canonical, String.from(&text)));
+    files.push(SourceFile.new(canonical, String.from(&text), names));
     match SourceTable.from_files(files) {
         Ok(value) => value,
         Err(error) => { error.drop(); @panic("fixture source load failed"); },
@@ -112,9 +112,10 @@ struct VerificationFixture {
 
 impl VerificationFixture {
     static fn new(source: str, path: str) -> Self {
+        let names = NameInterner.new();
         let trace = CompilerTrace.disabled();
         defer trace.drop();
-        let frontend = FrontendDriver.new(load_source(path, source), false, &trace);
+        let frontend = FrontendDriver.new(load_source(path, source, &names), false, &trace, &names);
         defer frontend.drop();
         let units = match frontend.run() {
             Ok(value) => value,
@@ -131,7 +132,7 @@ impl VerificationFixture {
             permissions.push(SourcePermissions(stdlib, restricted, stdlib));
             index += 1;
         }
-        Self(units, TypeStore.new(), NameInterner.new(), SymbolStore.new(), HirStore.new(), trust,
+        Self(units, TypeStore.new(), names, SymbolStore.new(), HirStore.new(), trust,
             permissions, DefinitionRegistry.new(), DefinitionWorklist.new(), ImplRegistry.new())
     }
 
@@ -171,9 +172,9 @@ impl Drop for VerificationFixture {
         self.impls.drop();
         self.hir.drop();
         self.symbols.drop();
-        self.names.drop();
         self.types.drop();
         self.units.drop();
+        self.names.drop();
     }
 }
 

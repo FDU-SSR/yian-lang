@@ -1,5 +1,5 @@
+from yianc.common.names import NameInterner;
 from yianc.frontend.lex.lexer import Lexer;
-from yianc.frontend.lex.token import drop_tokens;
 from yianc.frontend.parse.state import Parser;
 from yianc.frontend.parse.items import parse_program;
 from yianc.frontend.desugar import desugar;
@@ -64,18 +64,20 @@ impl AstVisitor for Check {
     }
 }
 fn main() {
-    let tokens = *Lexer.new("fn f((x,y): (i32,i32)) { source()?; source()??; (&source())?; let run = |captured = source()?| () { source()? }; false && source()? == 1; source()?.field; source()?[0]; source()?(); defer cleanup(); }").run().unwrap();
-    defer drop_tokens(&tokens);
-    let parser = Parser.new(&tokens); defer parser.drop();
+    let names = NameInterner.new();
+    defer names.drop();
+    let tokens = *Lexer.new("fn f((x,y): (i32,i32)) { source()?; source()??; (&source())?; let run = |captured = source()?| () { source()? }; false && source()? == 1; source()?.field; source()?[0]; source()?(); defer cleanup(); }", &names).run().unwrap();
+    defer tokens.drop();
+    let parser = Parser.new(&tokens, &names); defer parser.drop();
     let tree = *parse_program(&parser).unwrap(); defer tree.drop();
-    desugar(&tree, "propagation.an").unwrap();
+    desugar(&tree, "propagation.an", &names).unwrap();
     let check = Check(0u64, 0u64, 0u64, 0u64, Vec<str>.new()); defer check.bindings.drop();
     walk_program(tree.root, &check);
     assert check.tries == 0 && check.branches == 10 && check.conversions == 10: "all propagation expanded";
     assert check.sources == 9 && check.bindings.len() == 20: "operands evaluated once";
     assert tree.root.data.items.len() == 3: "two imports and function";
     let allocated = tree.arena.len();
-    desugar(&tree, "propagation.an").unwrap();
+    desugar(&tree, "propagation.an", &names).unwrap();
     assert tree.root.data.items.len() == 3 && tree.arena.len() == allocated: "repeat lowering has no additions";
     match &tree.root.data.items[0].data { Import(_, target, alias, _) => {
         assert target.data.name.as_str() == "Try" && alias.unwrap().data.synthetic: "Try import";

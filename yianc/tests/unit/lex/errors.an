@@ -1,26 +1,30 @@
+from yianc.common.names import NameInterner;
 from yianc.frontend.lex.lexer import Lexer;
-from yianc.frontend.lex.token import drop_tokens;
 from std.core.ops import Index;
 
 fn reject(text: str, message: str) {
-    match Lexer.new(text).run() {
+    let names = NameInterner.new();
+    defer names.drop();
+    match Lexer.new(text, &names).run() {
         Err(error) => {
             assert error.message().contains(message): "lexical error category";
             assert error.span().start.row == 0: "lexical error location";
             error.drop();
         },
-        Ok(tokens) => { drop_tokens(&tokens); @panic("invalid source accepted"); },
+        Ok(tokens) => { tokens.drop(); @panic("invalid source accepted"); },
     }
 }
 fn main() {
+    let names = NameInterner.new();
+    defer names.drop();
     reject("\"unterminated", "Unterminated");
     reject("'unterminated", "Unterminated");
     reject("/* unterminated", "Unterminated block comment");
     reject("\"\\q\"", "escape");
-    let empty = *Lexer.new("").run().unwrap();
+    let empty = *Lexer.new("", &names).run().unwrap();
     assert empty.len() == 1 && empty[0].is_eof(): "empty source EOF";
-    drop_tokens(&empty);
-    let comments = *Lexer.new("// line\n/* text /* ends at first close */").run().unwrap();
+    empty.drop();
+    let comments = *Lexer.new("// line\n/* text /* ends at first close */", &names).run().unwrap();
     assert comments.len() == 1 && comments[0].is_eof(): "line and non-nested block comments";
-    drop_tokens(&comments);
+    comments.drop();
 }

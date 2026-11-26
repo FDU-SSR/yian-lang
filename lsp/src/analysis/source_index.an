@@ -9,7 +9,7 @@ from yianc.frontend.ast.node import MatchArm, MethodDecl, MethodDef, ExternFuncD
 from yianc.frontend.ast.node import GenericParam, Program, TraitMember, TypeData, TypeGenericParam, TypeSyntax, VarInfo, VariantInfo;
 from yianc.frontend.ast.walk import TryAstVisitor, try_walk_program;
 from yianc.frontend.lex.lexer import Lexer;
-from yianc.frontend.lex.token import KeywordKind, Token, TokenPayload, drop_tokens;
+from yianc.frontend.lex.token import KeywordKind, Token, TokenPayload;
 from yianc.frontend.parse.items import parse_program;
 from yianc.frontend.parse.state import Parser;
 from yianc.frontend.source import Position, SourceMap, Span;
@@ -772,7 +772,7 @@ impl SourceIndex {
             let file = units.file(source);
             let path = String.from(&file.path());
             let is_stdlib = stdlib[source_index];
-            let scanned = match Lexer.new(file.text()).run() {
+            let scanned = match Lexer.new(file.text(), names).run() {
                 Ok(value) => value,
                 Err(error) => {
                     defer error.drop();
@@ -780,13 +780,13 @@ impl SourceIndex {
                     return Result<Self, String>.Err(String.from(&"could not lex an analyzed source"));
                 },
             };
-            let parser = Parser.new(&scanned);
+            let parser = Parser.new(&scanned, names);
             defer parser.drop();
             let tree = match parse_program(&parser) {
                 Ok(value) => value,
                 Err(error) => {
                     defer error.drop();
-                    drop_tokens(&scanned);
+                    scanned.drop();
                     path.drop();
                     return Result<Self, String>.Err(String.from(&"could not parse an analyzed source"));
                 },
@@ -1411,7 +1411,7 @@ impl Drop for SourceIndex {
             match tree { Some(value) => value.drop(), None => {}, }
         }
         self.asts.drop();
-        for tokens in self.tokens { drop_tokens(tokens); }
+        for tokens in self.tokens { tokens.drop(); }
         self.tokens.drop();
         for names in self.module_names { names.drop(); }
         self.module_names.drop();

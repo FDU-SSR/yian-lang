@@ -1,9 +1,9 @@
+from yianc.common.names import NameInterner;
 from yianc.frontend.ast.arena import AstArena;
 from yianc.frontend.ast.node import Identifier, IdentifierData, Expr, ExprData, PatternData, PatternLetData, TypeData, BlockData, PatternLet, Block;
 from yianc.frontend.ast.operator import BinaryOperator;
 from yianc.frontend.ast.traversal import AstVisitor, walk_expr, walk_block;
 from yianc.frontend.source import Span, Position;
-from std.core.convert import From;
 
 struct Recorder { trace: String, prune: bool }
 impl AstVisitor for Recorder {
@@ -17,7 +17,7 @@ impl AstVisitor for Recorder {
 fn main() {
     let arena = AstArena.new(); defer arena.drop();
     let span = Span(Position(0, 0), Position(0, 0));
-    let name = arena.alloc_identifier(IdentifierData(String.from(&"leaf"), false), span);
+    let name = arena.alloc_identifier(IdentifierData(names.intern_text("leaf"), false), span);
     let leaf = arena.alloc_expr(ExprData.Identifier(name), span);
     let root = arena.alloc_expr(ExprData.Binary(BinaryOperator.Add, leaf, leaf), span);
     let visitor = Recorder(String.new(), false); defer visitor.trace.drop();
@@ -31,12 +31,12 @@ fn main() {
     walk_expr(try_node, &visitor);
     assert visitor.trace.as_str() == "++leaf--": "try operand traversal";
     visitor.trace.clear();
-    let bound = arena.alloc_identifier(IdentifierData(String.from(&"bound"), false), span);
+    let bound = arena.alloc_identifier(IdentifierData(names.intern_text("bound"), false), span);
     let pattern = arena.alloc_pattern(PatternData.NamePattern(bound), span);
     let ty = arena.alloc_type_syntax(TypeData.DeducedType, span);
     let binding = arena.alloc_pattern_let(PatternLetData(pattern, ty, leaf, Option<Block&>.None, true), span);
     let bindings = Vec<PatternLet&>.new(); bindings.push(binding);
-    let body = arena.alloc_expr(ExprData.Identifier(arena.alloc_identifier(IdentifierData(String.from(&"body"), false), span)), span);
+    let body = arena.alloc_expr(ExprData.Identifier(arena.alloc_identifier(IdentifierData(names.intern_text("body"), false), span)), span);
     let statements = Vec<Expr&>.new(); statements.push(body);
     let block = arena.alloc_block(BlockData(statements, Option<Position>.None, bindings), span);
     walk_block(block, &visitor);

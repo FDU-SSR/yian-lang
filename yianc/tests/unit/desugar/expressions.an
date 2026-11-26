@@ -1,5 +1,5 @@
+from yianc.common.names import NameInterner;
 from yianc.frontend.lex.lexer import Lexer;
-from yianc.frontend.lex.token import drop_tokens;
 from yianc.frontend.parse.state import Parser;
 from yianc.frontend.parse.items import parse_program;
 from yianc.frontend.desugar import desugar;
@@ -23,11 +23,13 @@ fn function_body(tree: AstTree&) -> Block& {
 }
 
 fn main() {
-    let tokens = *Lexer.new("fn f() { 1..4; x in values; assert ready(): \"message\"; assert ready(); value()?; }").run().unwrap();
-    defer drop_tokens(&tokens);
-    let parser = Parser.new(&tokens); defer parser.drop();
+    let names = NameInterner.new();
+    defer names.drop();
+    let tokens = *Lexer.new("fn f() { 1..4; x in values; assert ready(): \"message\"; assert ready(); value()?; }", &names).run().unwrap();
+    defer tokens.drop();
+    let parser = Parser.new(&tokens, &names); defer parser.drop();
     let tree = *parse_program(&parser).unwrap(); defer tree.drop();
-    desugar(&tree, "expressions.an").unwrap();
+    desugar(&tree, "expressions.an", &names).unwrap();
     let body = function_body(&tree);
     match &body.data.stmts[0].data { Semi(expr) => match &expr.data {
         Call(callee, args) => {

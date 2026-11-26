@@ -1,5 +1,5 @@
+from yianc.common.names import NameInterner;
 from yianc.frontend.lex.lexer import Lexer;
-from yianc.frontend.lex.token import drop_tokens;
 from yianc.frontend.parse.state import Parser;
 from yianc.frontend.parse.items import parse_program;
 from yianc.frontend.desugar import desugar;
@@ -43,9 +43,11 @@ impl AstVisitor for Check {
     }
 }
 fn main() {
+    let names = NameInterner.new();
+    defer names.drop();
     let source = "struct Pair { pub left: u64, right: u64 } enum Maybe { None, Some { value: u64 } } fn f((x, y): (u64, u64)) { let label = \"中😀\"; for (a, b) in items() { if let Some(v) = load(a)? { consume(v); } } }";
-    let tokens = *Lexer.new(source).run().unwrap();
-    defer drop_tokens(&tokens);
+    let tokens = *Lexer.new(source, &names).run().unwrap();
+    defer tokens.drop();
     let token_writer = Writer.new();
     defer token_writer.drop();
     append_token_file(&token_writer, "memory.an", &tokens);
@@ -67,11 +69,11 @@ fn main() {
     let end = *field(&token_array[0], "end").as_array().unwrap();
     unsigned(&end[0], 0);
     unsigned(&end[1], 6);
-    let parser = Parser.new(&tokens);
+    let parser = Parser.new(&tokens, &names);
     defer parser.drop();
     let tree = *parse_program(&parser).unwrap();
     defer tree.drop();
-    desugar(&tree, "memory.an").unwrap();
+    desugar(&tree, "memory.an", &names).unwrap();
     let check = Check(0u64, 0u64, 0u64, 0u64);
     walk_program(tree.root, &check);
     assert check.for_nodes == 0 && check.while_nodes == 0: "control sugar removed";

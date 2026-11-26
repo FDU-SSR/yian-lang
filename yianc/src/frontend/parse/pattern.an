@@ -19,9 +19,9 @@ fn pattern_literal(parser: Parser&) -> Option<Literal> {
             Integer(value) => {
                 value.data.negative = true;
                 let raw = String.from(&"-");
+                defer raw.drop();
                 raw.push_str(value.data.raw.as_str());
-                value.data.raw.drop();
-                value.data.raw = raw;
+                value.data.raw = parser.names.intern_text(raw.as_str());
                 value.span = minus + value.span;
             },
             _ => {},
@@ -160,7 +160,7 @@ fn pattern_atom(parser: Parser&) -> Option<Pattern&> {
     }
     let message = String.from(&"Unexpected token '");
     defer message.drop();
-    message.push_str(if token.is_eof() { token.value() } else { token.raw.as_str() });
+    message.push_str(if token.is_eof() { token.value() } else { token.raw });
     message.push_str("' in pattern");
     parser.error(message.as_str(), span);
     Option<Pattern&>.None

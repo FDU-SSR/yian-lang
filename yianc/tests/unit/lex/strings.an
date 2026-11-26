@@ -1,10 +1,12 @@
+from yianc.common.names import NameInterner;
 from yianc.frontend.lex.lexer import Lexer;
-from yianc.frontend.lex.token import drop_tokens;
 from std.core.ops import Index;
 
 fn main() {
-    let tokens = *Lexer.new("\"中😀\\n\\t\\\"\\\\\" '\\n' '\\u{4e2d}' f\"before {name} after\"").run().unwrap();
-    defer drop_tokens(&tokens);
+    let names = NameInterner.new();
+    defer names.drop();
+    let tokens = *Lexer.new("\"中😀\\n\\t\\\"\\\\\" '\\n' '\\u{4e2d}' f\"before {name} after\"", &names).run().unwrap();
+    defer tokens.drop();
     match tokens[0].kind() { StringLiteral(text) => { assert text.as_str() == "中😀\n\t\"\\": "decoded string"; }, _ => @panic("string kind") };
     match tokens[1].kind() { Character(text) => { assert text.as_str() == "\n": "escaped character"; }, _ => @panic("character kind") };
     match tokens[2].kind() { Character(text) => { assert text.as_str() == "中": "unicode escape"; }, _ => @panic("unicode character") };

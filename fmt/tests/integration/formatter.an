@@ -1,6 +1,7 @@
+from yianc.common.names import NameInterner;
 from fmt.api import format_text;
 from yianc.frontend.lex.lexer import Lexer;
-from yianc.frontend.lex.token import Token, TokenPayload, drop_tokens;
+from yianc.frontend.lex.token import Token, TokenPayload;
 from std.core.fs import read_to_string;
 from std.core.ops import Index;
 
@@ -22,9 +23,10 @@ fn same_tokens(left: Vec<Token>&, right: Vec<Token>&) -> bool {
             FStrExprBegin => match right_kind { FStrExprBegin => true, _ => false },
             FStrExprEnd => match right_kind { FStrExprEnd => true, _ => false },
             FStrEnd => match right_kind { FStrEnd => true, _ => false },
+            FStrFormatText(_) => match right_kind { FStrFormatText(_) => true, _ => false },
             EndOfFile => match right_kind { EndOfFile => true, _ => false },
         };
-        if !same_kind || left[index].raw.as_str() != right[index].raw.as_str() ||
+        if !same_kind || left[index].raw != right[index].raw ||
         left[index].value() != right[index].value() ||
         left[index].suffix() != right[index].suffix() {
             return false;
@@ -62,6 +64,8 @@ fn layout_is_clean(text: str) -> bool {
 }
 
 fn check_fixture(input_path: str, expected_path: str) -> String {
+    let names = NameInterner.new();
+    defer names.drop();
     let input = read_to_string(input_path).unwrap(); defer input.drop();
     let expected = read_to_string(expected_path).unwrap(); defer expected.drop();
     let formatted = *format_text(input.as_str(), input_path).unwrap().unwrap();
@@ -74,8 +78,8 @@ fn check_fixture(input_path: str, expected_path: str) -> String {
     assert formatted_again.as_str() == formatted.as_str(): "formatting is idempotent";
     formatted_again.drop();
 
-    let before = Lexer.new(input.as_str()).run().unwrap(); defer drop_tokens(before);
-    let after = Lexer.new(formatted.as_str()).run().unwrap(); defer drop_tokens(after);
+    let before = Lexer.new(input.as_str(), &names).run().unwrap(); defer before.drop();
+    let after = Lexer.new(formatted.as_str(), &names).run().unwrap(); defer after.drop();
     assert same_tokens(before, after): "formatting preserves token kind, spelling and order";
     formatted
 }

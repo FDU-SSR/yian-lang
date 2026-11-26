@@ -134,7 +134,7 @@ fn primary(parser: Parser&) -> Option<Expr&> {
 
     if parser.at_keyword(KeywordKind.IsRawMode) {
         parser.advance();
-        return Option<Expr&>.Some(val=parser.arena.alloc_expr(ExprData.CompileConfig(name=String.from(&"IS_RAW_MODE")), span));
+        return Option<Expr&>.Some(val=parser.arena.alloc_expr(ExprData.CompileConfig(name=parser.names.intern_text("IS_RAW_MODE")), span));
     }
 
     if parser.at_keyword(KeywordKind.For) {
@@ -895,9 +895,9 @@ fn fstring(parser: Parser&) -> Option<Expr&> {
     loop {
         let token = parser.peek();
         match token.kind() {
-            FStrLiteral(_) => {
+            FStrLiteral(text) => {
                 // The lexer decodes escapes; the template keeps only the decoded text and source span.
-                parts.push(FormatPart.Literal(text=String.from(&token.value()), span=token.span));
+                parts.push(FormatPart.Literal(text=*text, span=token.span));
                 parser.advance();
             },
             FStrExprBegin => {

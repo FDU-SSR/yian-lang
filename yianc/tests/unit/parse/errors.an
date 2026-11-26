@@ -1,11 +1,13 @@
+from yianc.common.names import NameInterner;
 from yianc.frontend.lex.lexer import Lexer;
-from yianc.frontend.lex.token import drop_tokens;
 from yianc.frontend.parse.state import Parser;
 from yianc.frontend.parse.items import parse_program;
 
 fn reject(source: str, part: str) {
-    let tokens = *Lexer.new(source).run().unwrap(); defer drop_tokens(&tokens);
-    let parser = Parser.new(&tokens);
+    let names = NameInterner.new();
+    defer names.drop();
+    let tokens = *Lexer.new(source, &names).run().unwrap(); defer tokens.drop();
+    let parser = Parser.new(&tokens, &names);
     match parse_program(&parser) {
         Err(error) => { assert error.message().contains(part): error.message(); assert error.span().start.row == 0: "error position"; error.drop(); },
         Ok(tree) => { tree.drop(); @panic("invalid program accepted"); },

@@ -296,9 +296,8 @@ impl ExprChecker {
             Literal(value) => match value {
                 StringLiteral(text) => {
                     let temporary = Vec<FormatPart>.new();
-                    temporary.push(FormatPart.Literal(text=String.from(&text.data.value.as_str()), span=template.span));
+                    temporary.push(FormatPart.Literal(text=text.data.value, span=template.span));
                     let result = lower_format(self, span, destination, &temporary);
-                    for part in temporary { part.drop(); }
                     temporary.drop();
                     result
                 },

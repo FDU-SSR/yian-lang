@@ -1,3 +1,4 @@
+from yianc.common.names import NameInterner;
 from yianc.frontend.ast.arena import AstArena, AstTree;
 from yianc.frontend.ast.node import Identifier, IdentifierData, Program, Expr;
 from yianc.frontend.lex.token import Token, KeywordKind, PunctuatorKind;
@@ -20,14 +21,15 @@ pub struct Parser {
     tokens: Vec<Token>&,
     index: u64,
     pub arena: AstArena,
+    pub names: NameInterner&,
     failed: bool,
     problem: ParseError,
 }
 
 impl Parser {
-    static pub fn new(tokens: Vec<Token>&) -> Self {
+    static pub fn new(tokens: Vec<Token>&, names: NameInterner&) -> Self {
         let zero = Position(row=0, column=0);
-        Self(tokens=tokens, index=0, arena=AstArena.new(), failed=false,
+        Self(tokens=tokens, names=names, index=0, arena=AstArena.new(), failed=false,
             problem=ParseError(message=String.new(), span=Span(start=zero, end=zero)))
     }
 
@@ -128,7 +130,7 @@ impl Parser {
     }
 
     pub fn named_identifier(span: Span, name: str, synthetic: bool) -> Identifier& {
-        self.arena.alloc_identifier(IdentifierData(name=String.from(&name), synthetic=synthetic), span)
+        self.arena.alloc_identifier(IdentifierData(name=self.names.intern_text(name), synthetic=synthetic), span)
     }
 
     pub fn identifier() -> Option<Identifier&> {

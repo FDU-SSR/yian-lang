@@ -1,13 +1,15 @@
+from yianc.common.names import NameInterner;
 from yianc.frontend.lex.lexer import Lexer;
-from yianc.frontend.lex.token import drop_tokens;
 from yianc.frontend.parse.state import Parser;
 from yianc.frontend.parse.items import parse_program;
 from std.core.ops import Index;
 
 fn main() {
-    let tokens = *Lexer.new("typedef A<T, const N: u64> = Vec<(T&, u8[N + 1])>; typedef B = fn(i32*, u8[]) -> cptr<c_char>;").run().unwrap();
-    defer drop_tokens(&tokens);
-    let parser = Parser.new(&tokens);
+    let names = NameInterner.new();
+    defer names.drop();
+    let tokens = *Lexer.new("typedef A<T, const N: u64> = Vec<(T&, u8[N + 1])>; typedef B = fn(i32*, u8[]) -> cptr<c_char>;", &names).run().unwrap();
+    defer tokens.drop();
+    let parser = Parser.new(&tokens, &names);
     let tree = *parse_program(&parser).unwrap(); defer tree.drop();
     assert tree.root.data.items.len() == 2: "aliases";
     match &tree.root.data.items[0].data { Alias(_, name, generics, target) => {

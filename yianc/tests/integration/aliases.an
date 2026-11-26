@@ -27,13 +27,13 @@ from yianc.package.provenance import SourceTrust;
 struct IgnoreDiagnostics {}
 impl DiagnosticReporter for IgnoreDiagnostics { pub fn report(diagnostic: UserDiagnostic&) {} }
 
-fn load_source(path: str, text: str) -> SourceTable {
+fn load_source(path: str, text: str, names: NameInterner&) -> SourceTable {
     let canonical = match resolve(path) {
         Ok(value) => value,
         Err(error) => { error.drop(); @panic("fixture source path resolution failed"); },
     };
     let files = Vec<SourceFile>.new();
-    files.push(SourceFile.new(canonical, String.from(&text)));
+    files.push(SourceFile.new(canonical, String.from(&text), names));
     match SourceTable.from_files(files) {
         Ok(value) => value,
         Err(error) => { error.drop(); @panic("fixture source load failed"); },
@@ -59,10 +59,10 @@ impl Drop for AliasSymbols {
     }
 }
 
-fn parse_units(source: str, path: str) -> UnitTable {
+fn parse_units(source: str, path: str, names: NameInterner&) -> UnitTable {
     let trace = CompilerTrace.disabled();
     defer trace.drop();
-    let frontend = FrontendDriver.new(load_source(path, source), false, &trace);
+    let frontend = FrontendDriver.new(load_source(path, source, names), false, &trace, names);
     defer frontend.drop();
     let units = match frontend.run() {
         Ok(value) => value,
@@ -72,8 +72,8 @@ fn parse_units(source: str, path: str) -> UnitTable {
 }
 
 fn analyze_success(source: str, path: str, types: TypeStore&) -> AliasSymbols {
-    let units = parse_units(source, path);
     let names = NameInterner.new();
+    let units = parse_units(source, path, &names);
     let symbols = SymbolStore.new();
     let hir = HirStore.new();
     let reporter = IgnoreDiagnostics();
@@ -91,8 +91,8 @@ fn analyze_success(source: str, path: str, types: TypeStore&) -> AliasSymbols {
 }
 
 fn analyze_failure(source: str, path: str, types: TypeStore&) -> AnalysisError {
-    let units = parse_units(source, path);
     let names = NameInterner.new();
+    let units = parse_units(source, path, &names);
     let symbols = SymbolStore.new();
     let hir = HirStore.new();
     let reporter = IgnoreDiagnostics();
@@ -104,8 +104,8 @@ fn analyze_failure(source: str, path: str, types: TypeStore&) -> AnalysisError {
             driver.drop();
             hir.drop();
             symbols.drop();
-            names.drop();
             units.drop();
+            names.drop();
             error
         },
     }
@@ -148,10 +148,10 @@ fn alias_binders_resolve_in_declaration_order() {
 }
 
 fn registered_definition_count(source: str, path: str, types: TypeStore&) -> u64 {
-    let units = parse_units(source, path);
-    defer units.drop();
     let names = NameInterner.new();
     defer names.drop();
+    let units = parse_units(source, path, &names);
+    defer units.drop();
     let symbols = SymbolStore.new();
     defer symbols.drop();
     let hir = HirStore.new();

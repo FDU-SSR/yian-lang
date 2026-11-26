@@ -5,7 +5,6 @@ from yianc.frontend.parse.literal import parse_literal;
 from yianc.frontend.parse.state import Parser;
 from yianc.frontend.source import Span;
 from std.core.ops import Index;
-from std.core.convert import From;
 
 fn primitive(name: KeywordKind) -> Option<TypeData> {
     match name {
@@ -58,7 +57,7 @@ fn type_base(parser: Parser&) -> Option<TypeSyntax&> {
         let name = parser.identifier()?;
         let spelling = name.data.name.as_str();
         let data = if spelling == "c_int" || spelling == "c_uint" || spelling == "c_size" || spelling == "c_char" {
-            TypeData.CScalarType(name=String.from(&spelling))
+            TypeData.CScalarType(name=parser.names.intern_text(spelling))
         } else { TypeData.NamedType(name=name) };
         return Option<TypeSyntax&>.Some(val=parser.arena.alloc_type_syntax(data, span));
     }

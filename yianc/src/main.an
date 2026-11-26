@@ -41,16 +41,18 @@ fn main() {
     trace.start_pass("compiler.total", "main", "compiler.total", ProfileKind.Stage);
     if !check { trace.event("main", LogLevel.Info, "compiling source inputs", Option<str>.None); }
 
+    let names = NameInterner.new();
+
     // Load packages, build trust, and collect source files
     trace.start_pass("preprocessing", "main", "preprocessing", ProfileKind.Stage);
     let packages = load_packages(&config, &trace);
     let trust = build_trust(&config, &trace, packages.as_ref());
-    let sources = collect_sources(&config, &trace);
+    let sources = collect_sources(&config, &trace, &names);
     trace.finish("preprocessing");
 
     // Run the frontend driver
     trace.start_pass("frontend", "main", "frontend", ProfileKind.Stage);
-    let frontend = FrontendDriver.new(sources, config.dump, &trace);
+    let frontend = FrontendDriver.new(sources, config.dump, &trace, &names);
     let units = match frontend.run() {
         Ok(value) => value,
         Err(problem) => {
@@ -63,7 +65,6 @@ fn main() {
 
     // Shared semantic tables remain owned by the compiler entry point.
     let types = TypeStore.new();
-    let names = NameInterner.new();
     let symbols = SymbolStore.new();
     let hir = HirStore.new();
 

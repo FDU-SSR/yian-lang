@@ -47,19 +47,14 @@ fn release_diagnostics(values: Vec<LspDiagnostic>&) {
     values.drop();
 }
 
-fn release_files(files: Vec<SourceFile>&) {
-    for file in *files { file.drop(); }
-    files.drop();
-}
-
 impl Drop for CompilerAnalysis {
     pub fn drop() {
         match self.warnings.take() { Some(values) => release_diagnostics(&values), None => {}, }
         self.output.drop();
         self.hir.drop();
         self.symbols.drop();
-        self.names.drop();
         self.units.drop();
+        self.names.drop();
         self.stdlib.drop();
         match self.packages.take() { Some(value) => value.drop(), None => {}, }
         self.types.drop();
@@ -114,9 +109,11 @@ pub fn analyze(documents: Vec<SourceDocument>&, trust: SourceTrust, packages: Op
     };
     let analysis_transferred = false;
     defer { if !analysis_transferred { match &packages { Some(value) => value.drop(), None => {}, } } };
+    let names = NameInterner.new();
+    defer { if !analysis_transferred { names.drop(); } };
     let files = Vec<SourceFile>.new();
     let files_transferred = false;
-    defer { if !files_transferred { release_files(&files); } };
+    defer { if !files_transferred { files.drop(); } };
     for document in *documents {
         let canonical = match resolve(document.path.as_str()) {
             Ok(value) => value,
@@ -130,7 +127,7 @@ pub fn analyze(documents: Vec<SourceDocument>&, trust: SourceTrust, packages: Op
                 return Result<CompilerAnalysis, CompilerFailure>.Err(CompilerFailure.single(&diagnosis, &empty));
             },
         };
-        files.push(SourceFile.new(canonical, String.from(&document.text.as_str())));
+        files.push(SourceFile.new(canonical, String.from(&document.text.as_str()), &names));
     }
     let built = SourceTable.from_files(files);
     files_transferred = true;
@@ -145,7 +142,7 @@ pub fn analyze(documents: Vec<SourceDocument>&, trust: SourceTrust, packages: Op
     };
     let sources_moved = false;
     defer { if !sources_moved { input_sources.drop(); } };
-    let frontend = FrontendDriver.new(input_sources, false, &trace);
+    let frontend = FrontendDriver.new(input_sources, false, &trace, &names);
     sources_moved = true;
     defer frontend.drop();
     let units = match frontend.run() {
@@ -160,14 +157,12 @@ pub fn analyze(documents: Vec<SourceDocument>&, trust: SourceTrust, packages: Op
     // Each analysis owns these shared tables; the middle end borrows them during the run.
     let types = dyn TypeStore.new();
     defer { if !analysis_transferred { types.drop(); del types; } };
-    let names = NameInterner.new();
     let symbols = SymbolStore.new();
     let hir = HirStore.new();
     defer {
         if !analysis_transferred {
             hir.drop();
             symbols.drop();
-            names.drop();
         }
     };
 

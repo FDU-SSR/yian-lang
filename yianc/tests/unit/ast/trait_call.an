@@ -1,3 +1,4 @@
+from yianc.common.names import NameInterner;
 from yianc.frontend.ast.arena import AstArena;
 from yianc.frontend.ast.node import Expr, ExprData, TypeData, TypeSource, TypeSyntax, Identifier, IdentifierData, Argument, ArgumentData, BlockData, PatternLet, Item, ItemData, Attr, GenericParam, Parameter, ProgramData;
 from yianc.frontend.ast.traversal import AstVisitor, AstRewriter, walk_expr;
@@ -5,7 +6,6 @@ from yianc.frontend.ast.format import AstFormatter;
 from yianc.frontend.source import Span, Position;
 from json.write import Writer;
 from json.parse import parse;
-from std.core.convert import From;
 
 struct Visitor { types: u64 }
 impl AstVisitor for Visitor {
@@ -18,7 +18,7 @@ impl AstRewriter for Rewriter {
 fn main() {
     let arena = AstArena.new(); defer arena.drop();
     let span = Span(Position(0u64, 0u64), Position(0u64, 1u64));
-    let name = arena.alloc_identifier(IdentifierData(String.from(&"trait_name"), true), span);
+    let name = arena.alloc_identifier(IdentifierData(names.intern_text("trait_name"), true), span);
     let trait = arena.alloc_expr(ExprData.Identifier(name), span);
     let int_type = arena.alloc_type_syntax(TypeData.IntType(false, 8u64), span);
     let bool_type = arena.alloc_type_syntax(TypeData.BoolType, span);

@@ -1,13 +1,15 @@
+from yianc.common.names import NameInterner;
 from yianc.frontend.lex.lexer import Lexer;
-from yianc.frontend.lex.token import drop_tokens;
 from yianc.frontend.parse.state import Parser;
 from yianc.frontend.parse.items import parse_program;
 from std.core.ops import Index;
 
 fn main() {
-    let tokens = *Lexer.new("fn f() { match value { name @ Some((a, b)) => a, [first, .., last] => last, Pair(left=x, ..) => x, 1..5 | 8 => 0, _ => 1 } if let Some(x) = next() { x; } while let Some(y) = next() { y; } }").run().unwrap();
-    defer drop_tokens(&tokens);
-    let parser = Parser.new(&tokens);
+    let names = NameInterner.new();
+    defer names.drop();
+    let tokens = *Lexer.new("fn f() { match value { name @ Some((a, b)) => a, [first, .., last] => last, Pair(left=x, ..) => x, 1..5 | 8 => 0, _ => 1 } if let Some(x) = next() { x; } while let Some(y) = next() { y; } }", &names).run().unwrap();
+    defer tokens.drop();
+    let parser = Parser.new(&tokens, &names);
     let tree = *parse_program(&parser).unwrap(); defer tree.drop();
     let body = match &tree.root.data.items[0].data { FuncDef(_, _, _, _, _, body) => *body, _ => @panic("function") };
     match &body.data.stmts[0].data { Match(_, arms) => {

@@ -1,10 +1,12 @@
+from yianc.common.names import NameInterner;
 from yianc.frontend.lex.lexer import Lexer;
-from yianc.frontend.lex.token import drop_tokens;
 from std.core.ops import Index;
 
 fn main() {
-    let tokens = *Lexer.new("\"中😀\" x\n  y\r\nz // 中😀\n").run().unwrap();
-    defer drop_tokens(&tokens);
+    let names = NameInterner.new();
+    defer names.drop();
+    let tokens = *Lexer.new("\"中😀\" x\n  y\r\nz // 中😀\n", &names).run().unwrap();
+    defer tokens.drop();
     assert tokens[0].span.start.row == 0 && tokens[0].span.start.column == 0: "initial position";
     assert tokens[0].span.end.column == 4: "codepoints not UTF-8 bytes or UTF-16 units";
     assert tokens[1].span.start.column == 5 && tokens[1].span.end.column == 6: "position after Unicode";

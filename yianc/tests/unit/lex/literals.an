@@ -1,16 +1,21 @@
+from yianc.common.names import NameInterner;
 from yianc.frontend.lex.lexer import Lexer;
-from yianc.frontend.lex.token import IntSuffix, FloatSuffix, drop_tokens;
+from yianc.frontend.lex.token import IntSuffix, FloatSuffix;
 from std.core.ops import Index;
 
 fn rejected(text: str) {
-    match Lexer.new(text).run() {
+    let names = NameInterner.new();
+    defer names.drop();
+    match Lexer.new(text, &names).run() {
         Err(error) => { assert error.message().as_slice().len() != 0: "numeric diagnostic"; error.drop(); },
-        Ok(tokens) => { drop_tokens(&tokens); @panic("invalid numeric literal accepted"); },
+        Ok(tokens) => { tokens.drop(); @panic("invalid numeric literal accepted"); },
     }
 }
 fn main() {
-    let tokens = *Lexer.new("18446744073709551615 0xff_u8 0b1010 0o17 1_000_u64 1.25_f32 0x1.8p+1_f64 1e-3").run().unwrap();
-    defer drop_tokens(&tokens);
+    let names = NameInterner.new();
+    defer names.drop();
+    let tokens = *Lexer.new("18446744073709551615 0xff_u8 0b1010 0o17 1_000_u64 1.25_f32 0x1.8p+1_f64 1e-3", &names).run().unwrap();
+    defer tokens.drop();
     match tokens[0].kind() { Integer(n, suffix) => { assert *n == 18446744073709551615u64 && *suffix == IntSuffix.Unsuffixed: "u64 maximum"; }, _ => @panic("integer payload") };
     match tokens[1].kind() { Integer(n, suffix) => { assert *n == 255 && *suffix == IntSuffix.U8: "hex suffix"; }, _ => @panic("hex payload") };
     assert tokens[2].integer_value() == 10 && tokens[3].integer_value() == 15: "integer radices";

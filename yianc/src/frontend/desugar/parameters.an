@@ -1,9 +1,10 @@
+from yianc.common.names import NameInterner;
 from yianc.frontend.ast.arena import AstArena, AstTree;
 from yianc.frontend.ast.node import Expr, Block, Pattern, PatternLetData, Parameter, VarInfoData, Item, MethodDef;
 from yianc.frontend.ast.traversal import AstVisitor, walk_program;
 from yianc.frontend.desugar.build import identifier, name_expr;
 
-struct ParameterNormalizer { arena: AstArena& }
+struct ParameterNormalizer { arena: AstArena&, names: NameInterner& }
 impl ParameterNormalizer {
     // Pattern parameters receive arguments through hidden names; original patterns are stored as body parameter bindings.
     fn normalize(params: Vec<Parameter>&, body: Block&) {
@@ -17,7 +18,7 @@ impl ParameterNormalizer {
                     let digits = i.to_string_radix(10);
                     label.push_str(digits.as_str());
                     digits.drop();
-                    let hidden = identifier(self.arena, value.span, label.as_str(), true);
+                    let hidden = identifier(self.arena, self.names, value.span, label.as_str(), true);
                     label.drop();
 
                     let info = self.arena.alloc_var_info(VarInfoData(name=hidden, var_type=value.data.var_type), value.span);
@@ -56,7 +57,7 @@ impl AstVisitor for ParameterNormalizer {
 }
 
 // Normalize pattern parameters of functions, methods, and closures in place; parameter bindings precede body statements in traversal.
-pub fn normalize_parameters(tree: AstTree&) {
-    let pass = ParameterNormalizer(arena=&tree.arena);
+pub fn normalize_parameters(tree: AstTree&, names: NameInterner&) {
+    let pass = ParameterNormalizer(arena=&tree.arena, names=names);
     walk_program(tree.root, &pass);
 }

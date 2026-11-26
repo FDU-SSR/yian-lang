@@ -1,3 +1,4 @@
+from yianc.common.names import NameInterner;
 from yianc.frontend.lex.token import Token, TokenPayload, KeywordKind, PunctuatorKind, IntSuffix, FloatSuffix;
 from yianc.frontend.source import Position, Span;
 from yianc.frontend.text import SourceText;
@@ -167,6 +168,7 @@ fn simple_escape(code: char) -> Option<char> {
 
 pub struct Lexer {
     source: str,
+    names: NameInterner&,
     cursor: Peekable<CharIter, char>,
     row: u64,
     column: u64,
@@ -174,8 +176,8 @@ pub struct Lexer {
 }
 
 impl Lexer {
-    static pub fn new(source: str) -> Self {
-        return Self(source=source, cursor=source.chars().peekable(),
+    static pub fn new(source: str, names: NameInterner&) -> Self {
+        return Self(source=source, names=names, cursor=source.chars().peekable(),
             row=0u64, column=0u64, tokens=Vec<Token>.new());
     }
 
@@ -366,14 +368,9 @@ impl Lexer {
         }
         self.advance();
 
-        let decoder = Lexer.new(body.as_str());
+        let decoder = Lexer.new(body.as_str(), self.names);
         let decoded = String.new();
-        let transferred = false;
-        defer {
-            if !transferred {
-                decoded.drop();
-            }
-        };
+        defer decoded.drop();
 
         let count: u64 = 0u64;
 
@@ -394,8 +391,8 @@ impl Lexer {
         }
 
         if quote == u32('"') {
-            transferred = true;
-            return Result<Token, LexError>.Ok(val=self.token(TokenPayload.StringLiteral(value=decoded), start));
+
+            return Result<Token, LexError>.Ok(val=self.token(TokenPayload.StringLiteral(value=self.names.intern_text(decoded.as_str())), start));
         }
 
         if count != 1u64 {
@@ -412,8 +409,8 @@ impl Lexer {
             return Result<Token, LexError>.Ok(val=self.integer_token(start,
                 u64(code), IntSuffix.U8));
         }
-        transferred = true;
-        return Result<Token, LexError>.Ok(val=self.token(TokenPayload.Character(value=decoded), start));
+
+        return Result<Token, LexError>.Ok(val=self.token(TokenPayload.Character(value=self.names.intern_text(decoded.as_str())), start));
     }
 
     fn marker(payload: TokenPayload, position: Position) -> Token {
@@ -456,16 +453,11 @@ impl Lexer {
         }
     }
 
-    // Scan until a quote or interpolation start; nonempty fragment storage is transferred to a token.
+    // Scan until a quote or interpolation start; intern the decoded fragment when nonempty.
     fn fstring_literal() -> Result<bool, LexError> {
         let segment_start = self.position();
         let literal = String.new();
-        let transferred = false;
-        defer {
-            if !transferred {
-                literal.drop();
-            }
-        };
+        defer literal.drop();
 
         while !self.at_end() && self.peek() != u32('"') && self.peek() != u32('{') {
             if self.peek() == u32('}') {
@@ -496,8 +488,8 @@ impl Lexer {
         }
 
         if !literal.is_empty() {
-            self.tokens.push(self.token(TokenPayload.FStrLiteral(value=literal), segment_start));
-            transferred = true;
+            self.tokens.push(self.token(TokenPayload.FStrLiteral(value=self.names.intern_text(literal.as_str())), segment_start));
+
         }
 
         Result<bool, LexError>.Ok(val=true)
@@ -536,6 +528,7 @@ impl Lexer {
 
     fn identifier(start: Position, code: u32) -> Token {
         let raw = String.new();
+        defer raw.drop();
         raw.push(char(code));
 
         while !self.at_end() && ident_part(self.peek()) {
@@ -543,27 +536,21 @@ impl Lexer {
         }
         match KeywordKind.from_text(raw.as_str()) {
             Some(kind) => {
-                raw.drop();
                 return self.token(TokenPayload.Keyword(value=kind), start);
             },
-            None => return self.token(TokenPayload.Identifier(value=raw), start),
+            None => return self.token(TokenPayload.Identifier(value=self.names.intern_text(raw.as_str())), start),
         }
     }
 
-    fn format_text_token(start: Position, raw: String) -> Token {
-        return self.token(TokenPayload.FStrFormatText(value=raw), start);
+    fn format_text_token(start: Position, raw: str) -> Token {
+        return self.token(TokenPayload.FStrFormatText(value=self.names.intern_text(raw)), start);
     }
 
     // Interpolation context keeps an undecodable number spelling for the parser instead of rejecting the source.
     fn number(start: Position, code: u32, interpolation: bool) -> Result<Token, LexError> {
         // Collect the full spelling before handling its numeric body and type suffix separately.
         let raw = String.new();
-        let transferred = false;
-        defer {
-            if !transferred {
-                raw.drop();
-            }
-        };
+        defer raw.drop();
         raw.push(char(code));
 
         while !self.at_end() && number_part(self.peek()) {
@@ -584,13 +571,11 @@ impl Lexer {
             let body = numeric_body(raw.as_str(), suffix.spelling());
             match f64.parse(body) {
                 Ok(value) => {
-                    transferred = true;
                     return Result<Token, LexError>.Ok(self.float_token(start, value, suffix));
                 },
                 Err(error) => {
                     if interpolation {
-                        transferred = true;
-                        return Result<Token, LexError>.Ok(self.format_text_token(start, raw));
+                        return Result<Token, LexError>.Ok(self.format_text_token(start, raw.as_str()));
                     }
                     return Result<Token, LexError>.Err(self.fail(number_error_message(error), start));
                 },
@@ -603,8 +588,7 @@ impl Lexer {
             Ok(value) => {
                 if value > suffix_max(suffix) {
                     if interpolation {
-                        transferred = true;
-                        return Result<Token, LexError>.Ok(self.format_text_token(start, raw));
+                        return Result<Token, LexError>.Ok(self.format_text_token(start, raw.as_str()));
                     }
                     let message = String.from(&"Integer literal ");
                     defer message.drop();
@@ -615,13 +599,12 @@ impl Lexer {
                     message.push_str(suffix.spelling());
                     return Result<Token, LexError>.Err(self.fail(message.as_str(), start));
                 }
-                transferred = true;
+
                 return Result<Token, LexError>.Ok(self.integer_token(start, value, suffix));
             },
             Err(error) => {
                 if interpolation {
-                    transferred = true;
-                    return Result<Token, LexError>.Ok(self.format_text_token(start, raw));
+                    return Result<Token, LexError>.Ok(self.format_text_token(start, raw.as_str()));
                 }
                 return Result<Token, LexError>.Err(self.fail(number_error_message(error), start));
             },
@@ -683,7 +666,7 @@ impl Lexer {
         return self.punctuator(start, code, previous_whitespace);
     }
 
-    // Transfer the token container on success; local cleanup releases scanned tokens on errors.
+    // Transfer the token container on success; local cleanup releases the token container on errors.
     pub fn run() -> Result<Vec<Token>, LexError> {
         defer self.drop();
         self.scan()
@@ -712,7 +695,7 @@ impl Lexer {
                         FStrStart => "f\"", FStrExprBegin => "{", FStrExprEnd => "}", FStrEnd => "\"",
                         _ => text.slice(token.span),
                     };
-                    token.raw = String.from(&raw);
+                    token.raw = self.names.intern_text(raw).as_str();
                     index += 1;
                 }
                 let output = self.tokens;
@@ -725,13 +708,5 @@ impl Lexer {
 
 
 impl Drop for Lexer {
-    pub fn drop() {
-        let index: u64 = 0u64;
-
-        while index < self.tokens.len() {
-            self.tokens[index].drop();
-            index += 1u64;
-        }
-        self.tokens.drop();
-    }
+    pub fn drop() { self.tokens.drop(); }
 }

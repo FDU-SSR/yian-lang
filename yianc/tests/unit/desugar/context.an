@@ -1,5 +1,5 @@
+from yianc.common.names import NameInterner;
 from yianc.frontend.lex.lexer import Lexer;
-from yianc.frontend.lex.token import drop_tokens;
 from yianc.frontend.parse.state import Parser;
 from yianc.frontend.parse.items import parse_program;
 from yianc.frontend.ast.arena import AstTree;
@@ -8,9 +8,9 @@ from yianc.frontend.ast.traversal import AstVisitor, walk_program;
 from yianc.frontend.desugar import desugar;
 from std.core.ops import Index;
 
-fn parsed(source: str) -> AstTree {
-    let tokens = *Lexer.new(source).run().unwrap(); defer drop_tokens(&tokens);
-    let parser = Parser.new(&tokens); defer parser.drop();
+fn parsed(source: str, names: NameInterner&) -> AstTree {
+    let tokens = *Lexer.new(source, names).run().unwrap(); defer tokens.drop();
+    let parser = Parser.new(&tokens, names); defer parser.drop();
     *parse_program(&parser).unwrap()
 }
 struct Counter { tries: u64 }
@@ -21,19 +21,23 @@ impl AstVisitor for Counter {
     }
 }
 fn allowed(source: str, expected: u64) {
-    let tree = parsed(source); defer tree.drop();
+    let names = NameInterner.new();
+    defer names.drop();
+    let tree = parsed(source, &names); defer tree.drop();
     let before = Counter(0u64); walk_program(tree.root, &before);
     assert before.tries == expected: "context syntax present";
-    desugar(&tree, "context.an").unwrap();
+    desugar(&tree, "context.an", &names).unwrap();
     let after = Counter(0u64); walk_program(tree.root, &after);
     assert after.tries == 0: "callable propagation lowered";
 }
 fn rejected(source: str) {
-    let tree = parsed(source); defer tree.drop();
+    let names = NameInterner.new();
+    defer names.drop();
+    let tree = parsed(source, &names); defer tree.drop();
     let allocated = tree.arena.len();
     let items = tree.root.data.items.len();
     let before = Counter(0u64); walk_program(tree.root, &before);
-    match desugar(&tree, "context.an") {
+    match desugar(&tree, "context.an", &names) {
         Err(problem) => {
             defer problem.drop();
             assert problem.message().contains("only allowed inside"): "context error";

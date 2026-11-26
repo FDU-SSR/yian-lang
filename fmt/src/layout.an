@@ -191,7 +191,7 @@ impl Layout {
                 index = after;
                 continue;
             }
-            self.write(token.raw.as_str());
+            self.write(token.raw);
             self.track(index);
             previous = token.span.end;
             index += 1;

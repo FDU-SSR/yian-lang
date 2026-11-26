@@ -47,13 +47,13 @@ fn trust() -> SourceTrust {
     }
 }
 
-fn load_source(path: str, text: str) -> SourceTable {
+fn load_source(path: str, text: str, names: NameInterner&) -> SourceTable {
     let canonical = match resolve(path) {
         Ok(value) => value,
         Err(error) => { error.drop(); @panic("fixture source path resolution failed"); },
     };
     let files = Vec<SourceFile>.new();
-    files.push(SourceFile.new(canonical, String.from(&text)));
+    files.push(SourceFile.new(canonical, String.from(&text), names));
     match SourceTable.from_files(files) {
         Ok(value) => value,
         Err(error) => { error.drop(); @panic("fixture source load failed"); },
@@ -322,10 +322,10 @@ fn check_tag_type(types: TypeStore&, fixture: Fixture&, location: SourceSpan) {
 }
 
 // The probe document supplies source metadata; the hand-built CFG is the tested graph.
-fn probe_units() -> UnitTable {
+fn probe_units(names: NameInterner&) -> UnitTable {
     let trace = CompilerTrace.disabled();
     defer trace.drop();
-    let frontend = FrontendDriver.new(load_source("/tmp/enum-storage-probe.an", "fn main() {}\n"), false, &trace);
+    let frontend = FrontendDriver.new(load_source("/tmp/enum-storage-probe.an", "fn main() {}\n", names), false, &trace, names);
     defer frontend.drop();
     let units = match frontend.run() {
         Ok(value) => value,
@@ -356,7 +356,7 @@ fn run_negative(index: u64) {
     defer symbols.drop();
     let hir = HirStore.new();
     defer hir.drop();
-    let units = probe_units();
+    let units = probe_units(&names);
     defer units.drop();
     let reporter = IgnoreDiagnostics();
     let output = analyze_probe(&units, &types, &names, &symbols, &hir, &reporter);
@@ -423,7 +423,7 @@ fn main() {
     defer symbols.drop();
     let hir = HirStore.new();
     defer hir.drop();
-    let units = probe_units();
+    let units = probe_units(&names);
     defer units.drop();
     let reporter = IgnoreDiagnostics();
     let output = analyze_probe(&units, &types, &names, &symbols, &hir, &reporter);

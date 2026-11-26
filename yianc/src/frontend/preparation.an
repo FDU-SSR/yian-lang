@@ -1,3 +1,4 @@
+from yianc.common.names import NameInterner;
 from yianc.common.ids import UnitId;
 from yianc.diagnostics.output import OutputError;
 from yianc.frontend.prepare import FrontendPhase, PreparedFile, FrontendStageError, PreparationStage, prepare_file;
@@ -25,9 +26,9 @@ impl FrontendPreparation {
         Self(sources, Vec<PreparedFile>.new())
     }
 
-    pub fn prepare_source(unit: UnitId) -> Result<PreparedFile, FrontendStageError> {
+    pub fn prepare_source(unit: UnitId, names: NameInterner&) -> Result<PreparedFile, FrontendStageError> {
         let file = self.sources.file(unit);
-        prepare_file(unit, file.path(), file.text(), FrontendPhase.Tokens)
+        prepare_file(unit, file.path(), file.text(), FrontendPhase.Tokens, names)
     }
 
     // A lexed file transfers here in the same order as the frozen source table.

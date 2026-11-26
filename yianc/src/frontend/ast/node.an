@@ -1,3 +1,4 @@
+from yianc.common.names import InternedText;
 from yianc.frontend.source import Position, Span;
 from yianc.frontend.lex.token import IntSuffix, FloatSuffix;
 from yianc.frontend.ast.operator import BinaryOperator, UnaryOperator;
@@ -122,30 +123,15 @@ impl Drop for PatternArguments {
     }
 }
 
-pub struct IdentifierData { pub name: String, pub synthetic: bool }
-impl Drop for IdentifierData {
-    pub fn drop() { self.name.drop(); }
-}
+pub struct IdentifierData { pub name: InternedText, pub synthetic: bool }
 
-pub struct IntLiteralData { pub value: u64, pub negative: bool, pub suffix: IntSuffix, pub raw: String }
-impl Drop for IntLiteralData {
-    pub fn drop() { self.raw.drop(); }
-}
+pub struct IntLiteralData { pub value: u64, pub negative: bool, pub suffix: IntSuffix, pub raw: InternedText }
 
-pub struct FloatLiteralData { pub value: f64, pub suffix: FloatSuffix, pub raw: String }
-impl Drop for FloatLiteralData {
-    pub fn drop() { self.raw.drop(); }
-}
+pub struct FloatLiteralData { pub value: f64, pub suffix: FloatSuffix, pub raw: InternedText }
 
-pub struct CharLiteralData { pub value: String, pub raw: String }
-impl Drop for CharLiteralData {
-    pub fn drop() { self.value.drop(); self.raw.drop(); }
-}
+pub struct CharLiteralData { pub value: InternedText, pub raw: InternedText }
 
-pub struct StrLiteralData { pub value: String, pub raw: String }
-impl Drop for StrLiteralData {
-    pub fn drop() { self.value.drop(); self.raw.drop(); }
-}
+pub struct StrLiteralData { pub value: InternedText, pub raw: InternedText }
 
 pub struct BoolLiteralData { pub value: bool }
 impl Drop for BoolLiteralData {
@@ -290,19 +276,8 @@ pub struct FormatSpec {
 
 // Formatted template parts keep decoded literal text and borrow interpolation expressions from the arena.
 pub enum FormatPart {
-    Literal { text: String, span: Span },
+    Literal { text: InternedText, span: Span },
     Value { expr: Expr&, span: Span, spec: Option<FormatSpec> },
-}
-
-impl Drop for FormatPart {
-    pub fn drop() {
-        match self {
-            Literal(text, span) => {
-                text.drop();
-            },
-            Value(expr, span, spec) => {},
-        }
-    }
 }
 
 // Expression and statement syntax data; all child expressions refer to Expr nodes.
@@ -341,7 +316,7 @@ pub enum ExprData {
     Delete { target: Expr& },
     Semi { expr: Expr& },
     ClosureExpr { captures: Vec<CaptureItem&>, params: Vec<Parameter>, return_type: Option<TypeSyntax&>, body: Block& },
-    CompileConfig { name: String },
+    CompileConfig { name: InternedText },
     FormatTemplate { parts: Vec<FormatPart> },
 }
 
@@ -406,15 +381,8 @@ impl Drop for ExprData {
                 captures.drop();
                 params.drop();
             },
-            CompileConfig(name) => {
-                name.drop();
-            },
-            FormatTemplate(parts) => {
-                for part in *parts {
-                    part.drop();
-                }
-                parts.drop();
-            },
+            CompileConfig(_) => {},
+            FormatTemplate(parts) => parts.drop(),
         }
     }
 }
@@ -429,7 +397,7 @@ pub enum TypeData {
     VoidType,
     NeverType,
     DeducedType,
-    CScalarType { name: String },
+    CScalarType { name: InternedText },
     CPtrType { pointee_type: TypeSyntax& },
     NamedType { name: Identifier& },
     ArrayType { element_type: TypeSyntax&, size: ConstExpr& },
@@ -452,9 +420,7 @@ impl Drop for TypeData {
             VoidType => {},
             NeverType => {},
             DeducedType => {},
-            CScalarType(name) => {
-                name.drop();
-            },
+            CScalarType(_) => {},
             CPtrType(pointee_type) => {},
             NamedType(name) => {},
             ArrayType(element_type, size) => {},
@@ -538,7 +504,7 @@ pub enum ItemData {
     FuncDef { attrs: Vec<Attr&>, name: Identifier&, generics: Vec<GenericParam>, params: Vec<Parameter>, ret_type: Option<TypeSyntax&>, body: Block& },
     ConstDef { attrs: Vec<Attr&>, name: Identifier&, const_type: TypeSyntax&, value: Expr& },
     OpaqueTypeDef { attrs: Vec<Attr&>, name: Identifier& },
-    ExternBlock { attrs: Vec<Attr&>, abi: String, functions: Vec<ExternFuncDecl&> },
+    ExternBlock { attrs: Vec<Attr&>, abi: InternedText, functions: Vec<ExternFuncDecl&> },
     StructDef { attrs: Vec<Attr&>, name: Identifier&, generics: Vec<GenericParam>, fields: Vec<FieldInfo&> },
     EnumDef { attrs: Vec<Attr&>, name: Identifier&, generics: Vec<GenericParam>, variants: Vec<VariantInfo&> },
     TraitDef { attrs: Vec<Attr&>, name: Identifier&, generics: Vec<GenericParam>, items: Vec<TraitMember> },
@@ -566,9 +532,8 @@ impl Drop for ItemData {
             OpaqueTypeDef(attrs, name) => {
                 attrs.drop();
             },
-            ExternBlock(attrs, abi, functions) => {
+            ExternBlock(attrs, _, functions) => {
                 attrs.drop();
-                abi.drop();
                 functions.drop();
             },
             StructDef(attrs, name, generics, fields) => {

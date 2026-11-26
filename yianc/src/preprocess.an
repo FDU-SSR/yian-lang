@@ -1,3 +1,4 @@
+from yianc.common.names import NameInterner;
 from yianc.config import CompilerConfig;
 from yianc.diagnostics.model import DiagnosticCode, DiagnosticLocation;
 from yianc.diagnostics.report import report;
@@ -89,7 +90,7 @@ pub fn build_trust(config: CompilerConfig&, trace: CompilerTrace&, packages: Opt
     trust
 }
 
-pub fn collect_sources(config: CompilerConfig&, trace: CompilerTrace&) -> SourceTable {
+pub fn collect_sources(config: CompilerConfig&, trace: CompilerTrace&, names: NameInterner&) -> SourceTable {
     start_profile(trace, "input.collect_sources");
     let paths_result = collect_source_paths(&config.inputs);
     finish_profile(trace, "input.collect_sources", match &paths_result { Ok(_) => true, Err(_) => false });
@@ -100,7 +101,7 @@ pub fn collect_sources(config: CompilerConfig&, trace: CompilerTrace&) -> Source
     };
     defer release_paths(&paths);
     start_profile(trace, "input.read_sources");
-    let read_result = SourceTable.from_paths(&paths);
+    let read_result = SourceTable.from_paths(&paths, names);
     finish_profile(trace, "input.read_sources", match &read_result { Ok(_) => true, Err(_) => false });
     match read_result {
         Ok(value) => value,

@@ -1,11 +1,12 @@
+from yianc.common.names import NameInterner;
 from yianc.frontend.ast.arena import AstArena;
 from yianc.frontend.ast.node import Identifier, IdentifierData, Expr, ExprData, Block, BlockData, Pattern, PatternData, PatternLet, TypeSyntax, Condition, ElifBranch, MatchArm, MatchArmData, Argument, ArgumentData;
 from yianc.frontend.ast.operator import UnaryOperator;
 from yianc.frontend.ast.atoms import MatchArmOrigin;
 from yianc.frontend.source import Span, Position;
 
-pub fn identifier(arena: AstArena&, span: Span, name: str, synthetic: bool) -> Identifier& {
-    arena.alloc_identifier(IdentifierData(name=String.from(&name), synthetic=synthetic), span)
+pub fn identifier(arena: AstArena&, names: NameInterner&, span: Span, name: str, synthetic: bool) -> Identifier& {
+    arena.alloc_identifier(IdentifierData(name=names.intern_text(name), synthetic=synthetic), span)
 }
 
 pub fn name_expr(arena: AstArena&, name: Identifier&) -> Expr& { arena.alloc_expr(ExprData.Identifier(name=name), name.span) }
@@ -53,8 +54,8 @@ pub fn conditional(arena: AstArena&, span: Span, condition: Condition, yes: Bloc
     }
 }
 
-pub fn method_call(arena: AstArena&, span: Span, receiver: Expr&, name: str, args: Vec<Argument&>) -> Expr& {
-    arena.alloc_expr(ExprData.MethodCall(receiver=receiver, method_name=identifier(arena, span, name, true), generics=Vec<TypeSyntax&>.new(), args=args), span)
+pub fn method_call(arena: AstArena&, names: NameInterner&, span: Span, receiver: Expr&, name: str, args: Vec<Argument&>) -> Expr& {
+    arena.alloc_expr(ExprData.MethodCall(receiver=receiver, method_name=identifier(arena, names, span, name, true), generics=Vec<TypeSyntax&>.new(), args=args), span)
 }
 
 pub fn argument(arena: AstArena&, value: Expr&) -> Argument& {

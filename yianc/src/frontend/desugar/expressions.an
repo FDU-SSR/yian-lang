@@ -1,10 +1,11 @@
+from yianc.common.names import NameInterner;
 from yianc.frontend.ast.arena import AstArena, AstTree;
 from yianc.frontend.ast.node import Expr, ExprData, Argument;
 from yianc.frontend.ast.operator import BinaryOperator;
 from yianc.frontend.ast.traversal import AstRewriter, rewrite_expr_children;
 from yianc.frontend.desugar.build import identifier, name_expr, method_call, argument;
 
-struct ExpressionLowerer { arena: AstArena& }
+struct ExpressionLowerer { arena: AstArena&, names: NameInterner& }
 impl AstRewriter for ExpressionLowerer {
     pub fn rewrite_expr(node: Expr&) -> Expr& {
         rewrite_expr_children(node, self);
@@ -15,14 +16,14 @@ impl AstRewriter for ExpressionLowerer {
                     let args = Vec<Argument&>.new();
                     args.push(argument(self.arena, *left));
                     args.push(argument(self.arena, *right));
-                    let callee = name_expr(self.arena, identifier(self.arena, node.span, "Range", false));
+                    let callee = name_expr(self.arena, identifier(self.arena, self.names, node.span, "Range", false));
                     return self.arena.alloc_expr(ExprData.Call(callee=callee, args=args), node.span);
                 }
 
                 if *op == BinaryOperator.In {
                     let args = Vec<Argument&>.new();
                     args.push(argument(self.arena, *left));
-                    return method_call(self.arena, node.span, *right, "contains", args);
+                    return method_call(self.arena, self.names, node.span, *right, "contains", args);
                 }
             },
             _ => {},
@@ -32,7 +33,7 @@ impl AstRewriter for ExpressionLowerer {
 }
 
 // Range expressions construct Range; membership expressions use the right operand as the contains receiver.
-pub fn lower_expressions(tree: AstTree&) {
-    let pass = ExpressionLowerer(arena=&tree.arena);
+pub fn lower_expressions(tree: AstTree&, names: NameInterner&) {
+    let pass = ExpressionLowerer(arena=&tree.arena, names=names);
     tree.root = pass.rewrite_program(tree.root);
 }

@@ -609,7 +609,7 @@ fn field_write(checker: ExprChecker&, span: Span, library: FormatLibrary&, recei
 fn ok_pattern(checker: ExprChecker&, span: Span, expected: TypeId) -> Result<PatternId, AnalysisError> {
     let unit = *checker.ctx.units.get(checker.unit).unwrap();
     let tree = &unit.tree;
-    let name = tree.arena.alloc_identifier(IdentifierData(name=String.from(&"Ok"), synthetic=true), span);
+    let name = tree.arena.alloc_identifier(IdentifierData(name=checker.ctx.names.intern_text("Ok"), synthetic=true), span);
     let values = Vec<Pattern&>.new();
     values.push(tree.arena.alloc_pattern(PatternData.WildcardPattern, span));
     let syntax = tree.arena.alloc_pattern(PatternData.ConstructPattern(name=name,
@@ -620,8 +620,8 @@ fn ok_pattern(checker: ExprChecker&, span: Span, expected: TypeId) -> Result<Pat
 fn error_pattern(checker: ExprChecker&, span: Span, expected: TypeId, symbol_name: str) -> Result<PatternId, AnalysisError> {
     let unit = *checker.ctx.units.get(checker.unit).unwrap();
     let tree = &unit.tree;
-    let variant = tree.arena.alloc_identifier(IdentifierData(name=String.from(&"Err"), synthetic=true), span);
-    let binding = tree.arena.alloc_identifier(IdentifierData(name=String.from(&symbol_name), synthetic=true), span);
+    let variant = tree.arena.alloc_identifier(IdentifierData(name=checker.ctx.names.intern_text("Err"), synthetic=true), span);
+    let binding = tree.arena.alloc_identifier(IdentifierData(name=checker.ctx.names.intern_text(symbol_name), synthetic=true), span);
     let values = Vec<Pattern&>.new();
     values.push(tree.arena.alloc_pattern(PatternData.NamePattern(name=binding), span));
     let syntax = tree.arena.alloc_pattern(PatternData.ConstructPattern(name=variant,
