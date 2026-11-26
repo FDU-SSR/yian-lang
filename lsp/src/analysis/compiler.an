@@ -167,7 +167,7 @@ pub fn analyze(documents: Vec<SourceDocument>&, trust: SourceTrust, packages: Op
         }
     };
 
-    let layout = match TargetLayout.new(&*types, raw_pointers, 0u8, false, Option<CompilerTrace&>.None) {
+    let layout = match TargetLayout.new(&*types, raw_pointers, 0u8, &trace) {
         Ok(value) => value,
         Err(error) => {
             defer error.drop();

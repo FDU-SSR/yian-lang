@@ -83,7 +83,7 @@ setup, refresh and uninstall are documented in the
 - Use `--compiler-root .` for checkout-local compiler resources. Standalone checks and compilation need `lib/src` as an explicit source input; package mode obtains the standard library through its package map.
 - `anx` selects nonempty `YIANC`, otherwise PATH `yianc`; the canonical file must be an executable ELF. Preserve the v2 package-map input used by cold recovery.
 - Use `scripts/bootstrap_toolchain.sh` for explicit cold recovery and `scripts/refresh_toolchain.sh` for normal native refresh. Both are expensive and require authorization.
-- `anx build --profile` records compiler statistics; `anx run --runtime-profile` records runtime call paths. Keep build and runtime reports distinct, and do not persist machine-local result files.
+- `anx build --profile` records compiler statistics. Do not persist machine-local result files.
 
 ## Source map
 

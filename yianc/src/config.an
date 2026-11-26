@@ -60,7 +60,6 @@ pub struct CompilerConfig {
     pub dump: bool,
     pub profile: bool,
     pub profile_output: Option<String>,
-    pub runtime_profile_dir: Option<String>,
     pub log_enabled: bool,
     pub log_spec: Option<String>,
     pub log_file: Option<String>,
@@ -155,10 +154,6 @@ impl CompilerConfig {
             Ok(Some(value)) => Option<String>.Some(String.from(&value)),
             _ => Option<String>.None,
         };
-        let runtime_profile_dir = match arg_matches.get_string("runtime-profile-dir") {
-            Ok(Some(value)) => Option<String>.Some(String.from(&value)),
-            _ => Option<String>.None,
-        };
         let log_spec = match arg_matches.get_string("log-spec") { Ok(Some(value)) => Option<String>.Some(String.from(&value)), _ => Option<String>.None, };
         let log_file = match arg_matches.get_string("log-file") { Ok(Some(value)) => Option<String>.Some(String.from(&value)), _ => Option<String>.None, };
         let link_libraries = string_values(arg_matches, "link-lib");
@@ -167,7 +162,7 @@ impl CompilerConfig {
         let eliminate_disabled = *arg_matches.get_bool("no-fat-check-elimination").unwrap().unwrap();
         let action = if check { CompilerAction.Check } else { CompilerAction.Compile };
         let config = Self(action, inputs, root, arg_matches.get_string("compiler-root").unwrap().is_some(), packages, raw, target, target_explicit, output, optimization,
-            dump, profile, profile_output, runtime_profile_dir, log_enabled, log_spec, log_file, link_libraries, link_searches,
+            dump, profile, profile_output, log_enabled, log_spec, log_file, link_libraries, link_searches,
             true, true);
         let transferred = false;
         defer { if !transferred { config.drop(); } };
@@ -180,15 +175,6 @@ impl CompilerConfig {
             Err(message) => return Result<Self, CliError>.Err(config_error(message, EXIT_USAGE_ERROR)),
         };
 
-        match &config.runtime_profile_dir {
-            Some(value) => {
-                if value.is_empty() { return Result<Self, CliError>.Err(config_error(String.from(&"--runtime-profile-dir PATH cannot be empty"), EXIT_FAILURE)); }
-                if check { return Result<Self, CliError>.Err(config_error(String.from(&"--runtime-profile-dir requires compilation without --check"), EXIT_FAILURE)); }
-                if target != OutputKind.Exe { return Result<Self, CliError>.Err(config_error(String.from(&"--runtime-profile-dir requires target exe"), EXIT_FAILURE)); }
-                if !value.as_str().starts_with("/") { return Result<Self, CliError>.Err(config_error(String.from(&"--runtime-profile-dir PATH must be absolute"), EXIT_FAILURE)); }
-            },
-            None => {},
-        }
         if !log_enabled && config.log_spec.is_some() { return Result<Self, CliError>.Err(config_error(String.from(&"--log-spec requires --log"), EXIT_FAILURE)); }
         if !log_enabled && config.log_file.is_some() { return Result<Self, CliError>.Err(config_error(String.from(&"--log-file requires --log"), EXIT_FAILURE)); }
         match &config.profile_output {
@@ -228,7 +214,6 @@ impl Drop for CompilerConfig {
         match &self.log_spec { Some(value) => value.drop(), None => {}, }
         match &self.log_file { Some(value) => value.drop(), None => {}, }
         match &self.profile_output { Some(value) => value.drop(), None => {}, }
-        match &self.runtime_profile_dir { Some(value) => value.drop(), None => {}, }
         for value in self.link_libraries { value.drop(); }
         for value in self.link_searches { value.drop(); }
         self.link_libraries.drop();
@@ -291,10 +276,6 @@ pub fn parse_args() -> CompilerConfig {
     parser.add_argument("profile-output")
     .long("profile-output").metavar("PATH")
     .help("write structured compiler profile JSON to PATH (requires --profile)");
-
-    parser.add_argument("runtime-profile-dir")
-    .long("runtime-profile-dir").metavar("PATH")
-    .help("build an instrumented executable that records runtime statistics to the absolute run directory PATH");
 
     parser.add_argument("log")
     .long("log").action(Action.StoreTrue)

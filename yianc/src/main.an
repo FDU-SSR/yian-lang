@@ -68,8 +68,7 @@ fn main() {
     let symbols = SymbolSpace.new();
 
     // The target layout uses the same type table as semantic analysis.
-    let layout = match TargetLayout.new(&types, config.raw_pointers, config.optimization,
-        config.runtime_profile_dir.is_some(), Option<CompilerTrace&>.Some(&trace)) {
+    let layout = match TargetLayout.new(&types, config.raw_pointers, config.optimization, &trace) {
         Ok(value) => value,
         Err(problem) => {
             report(&problem, &units);

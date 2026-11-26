@@ -78,15 +78,12 @@ impl Drop for Emission {
     pub fn drop() { self.bytes.drop(); }
 }
 
-fn start_profile(trace: Option<CompilerTrace&>, pass_id: str) {
-    match trace { Some(value) => value.start_pass(pass_id, "backend", pass_id, ProfileKind.Pass), None => {}, }
+fn start_profile(trace: CompilerTrace&, pass_id: str) {
+    trace.start_pass(pass_id, "backend", pass_id, ProfileKind.Pass);
 }
 
-fn end_profile(trace: Option<CompilerTrace&>, pass_id: str, success: bool) {
-    match trace {
-        Some(value) => if success { value.finish(pass_id); } else { value.fail(pass_id); },
-        None => {},
-    }
+fn end_profile(trace: CompilerTrace&, pass_id: str, success: bool) {
+    if success { trace.finish(pass_id); } else { trace.fail(pass_id); }
 }
 
 // LLVM's owning module has a stable heap address across shallow return-value transfers.
@@ -98,7 +95,7 @@ pub struct TargetLayout {
 
 impl TargetLayout {
     static pub fn new(store: TypeSpace&, raw_pointers: bool, optimization: u8,
-        runtime_profile: bool, trace: Option<CompilerTrace&>) -> Result<Self, CodegenError> {
+        trace: CompilerTrace&) -> Result<Self, CodegenError> {
         start_profile(trace, "backend.initialize");
         let success = false;
         defer end_profile(trace, "backend.initialize", success);
@@ -109,9 +106,6 @@ impl TargetLayout {
             Ok(value) => value,
             Err(message) => return Result<Self, CodegenError>.Err(CodegenError.llvm_error(message)),
         };
-        if runtime_profile {
-            value.set_merge_functions(false);
-        }
         let accepted = false;
         defer { if !accepted { value.close(); } };
         let target_bytes = value.target_triple();

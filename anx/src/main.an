@@ -4,7 +4,6 @@ from std.core.path import PathBuf;
 from std.cli import ArgumentParser, Action, ArgMatches, Nargs, ParseOutcome, ValueType, CliError;
 from anx.diagnostics.model import AX_NO_PROJECT_ROOT, Diagnostic, release_diagnostics;
 from anx.driver.build import compile_project, CompileOptions, run_executable;
-from anx.driver.runtime_profile import build_runtime_profile, RuntimeProfileBuild;
 from anx.driver.fmt import format_project;
 from anx.driver.new import scaffold;
 from anx.driver.support import load_project;
@@ -93,10 +92,6 @@ fn build_parser(command: str) -> ArgumentParser {
         parser.add_argument("log-file").long("log-file").metavar("PATH").help("Log file (requires --log)");
         parser.add_argument("profile").long("profile").action(Action.StoreTrue).help("Record compiler statistics");
         parser.add_argument("profile-dir").long("profile-dir").metavar("PATH").help("Compile report root (requires --profile)");
-        if command == "run" {
-            parser.add_argument("runtime-profile").long("runtime-profile").action(Action.StoreTrue).help("Record runtime statistics");
-            parser.add_argument("runtime-profile-dir").long("runtime-profile-dir").metavar("PATH").help("Runtime report root (requires --runtime-profile)");
-        }
     }
     parser
 }
@@ -130,17 +125,13 @@ fn build_command(argv: Vec<String>&, command: str, start: u64, end: u64, program
             defer arg_matches.drop();
             let log = argument_bool(&arg_matches, "log");
             let profiling = argument_bool(&arg_matches, "profile");
-            let runtime = if command == "run" { argument_bool(&arg_matches, "runtime-profile") } else { false };
             let log_spec = *arg_matches.get_string("log-spec").unwrap();
             let log_file = *arg_matches.get_string("log-file").unwrap();
             let profile_dir = *arg_matches.get_string("profile-dir").unwrap();
-            let runtime_dir = if command == "run" { *arg_matches.get_string("runtime-profile-dir").unwrap() } else { Option<str>.None };
             if !log && log_spec.is_some() { @eprintln("anx: --log-spec requires --log"); return 2i32; }
             if !log && log_file.is_some() { @eprintln("anx: --log-file requires --log"); return 2i32; }
             if !profiling && profile_dir.is_some() { @eprintln("anx: --profile-dir requires --profile"); return 2i32; }
-            if !runtime && runtime_dir.is_some() { @eprintln("anx: --runtime-profile-dir requires --runtime-profile"); return 2i32; }
             match profile_dir { Some(value) if value == "" => { @eprintln("anx: --profile-dir requires a non-empty path"); return 2i32; }, _ => {}, }
-            match runtime_dir { Some(value) if value == "" => { @eprintln("anx: --runtime-profile-dir requires a non-empty path"); return 2i32; }, _ => {}, }
             let project = argument_string(&arg_matches, "project", ".");
             defer project.drop();
             let level = argument_level(&arg_matches, "optimization");
@@ -156,14 +147,7 @@ fn build_command(argv: Vec<String>&, command: str, start: u64, end: u64, program
             defer { match &profile { Some(value) => value.drop(), None => {}, } };
             let observer = match &profile { Some(value) => Option<BuildProfile&>.Some(value), None => Option<BuildProfile&>.None };
             let executable = Option<PathBuf>.None;
-            let runtime_build = Option<RuntimeProfileBuild>.None;
-            let succeeded = if runtime {
-                let runtime_root = match runtime_dir { Some(value) => value, None => "" };
-                runtime_build = build_runtime_profile(project.as_str(), &options, runtime_root, observer);
-                runtime_build.is_some()
-            } else {
-                compile_project(project.as_str(), target, &options, &executable, observer)
-            };
+            let succeeded = compile_project(project.as_str(), target, &options, &executable, observer);
             match &profile {
                 Some(value) => {
                     value.finalize(succeeded, if succeeded { 0i32 } else { 1i32 });
@@ -172,9 +156,6 @@ fn build_command(argv: Vec<String>&, command: str, start: u64, end: u64, program
                 None => {},
             }
             if !succeeded { return 1i32; }
-            if runtime {
-                match runtime_build.take() { Some(value) => { let status = value.run(program_arguments); value.drop(); return status; }, None => return 1i32, }
-            }
             if command == "run" {
                 let path = match executable.take() { Some(value) => value, None => { @eprintln("error: no executable was produced"); return 1i32; }, };
                 return run_executable(path, program_arguments);

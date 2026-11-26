@@ -30,7 +30,7 @@ from yianc.frontend.text import is_alphanumeric;
 from yianc.common.ids import UnitId;
 from llvm.observation import OperationObserver;
 from std.core.convert import From;
-from std.core.fs import create_dir_all, write, rename, remove_dir, remove_file, resolve;
+from std.core.fs import create_dir_all, write, rename, remove_dir, remove_file;
 from std.core.iter import Iterator, IntoIterator;
 from std.core.path import Path;
 from std.core.process import temporary_directory;
@@ -150,15 +150,13 @@ fn finish_analysis_observed(types: BackendTypes&, trace: Option<CompilerTrace&>)
     end_profile(trace, "backend.finish_analysis", true);
 }
 
-fn lower_llvm(names: NameInterner&, units: UnitTable&, packages: Option<PackageMap&>,
-    types: BackendTypes&, module: Module&,
-    cfg: CfgModule&, program: str, runtime_profile_dir: Option<str>,
+fn lower_llvm(names: NameInterner&, types: BackendTypes&, module: Module&,
+    cfg: CfgModule&,
     trace: Option<CompilerTrace&>) -> Result<(), CodegenError> {
     start_profile(trace, "llvm.lower", ProfileKind.Pass);
     let success = false;
     defer end_profile(trace, "llvm.lower", success);
-    let lowering = LlvmLowering.new(names, units, packages, types, module, cfg.entry,
-        program, runtime_profile_dir);
+    let lowering = LlvmLowering.new(names, types, module, cfg.entry);
     defer lowering.drop();
     lowering.lower(cfg)?;
     success = true;
@@ -222,8 +220,6 @@ pub struct BackendDriver {
     attempted: bool,
     cfg: Option<CfgModule>,
     phase: BackendPhase,
-    program: String,
-    runtime_profile_dir: Option<String>,
     pass_options: CfgPassOptions,
 }
 
@@ -241,7 +237,7 @@ impl BackendDriver {
         }
         let pass_options = CfgPassOptions(config.cfg_inline, config.fat_check_elimination);
         Self(output, units, packages, names, symbols, layout, config, trace, false,
-            Option<CfgModule>.None, BackendPhase.Created, String.new(), Option<String>.None,
+            Option<CfgModule>.None, BackendPhase.Created,
             pass_options)
     }
 
@@ -252,16 +248,11 @@ impl BackendDriver {
         }
     }
 
-    fn lower(program: str, runtime_profile_dir: Option<str>,
-        trace: Option<CompilerTrace&>) -> Result<CfgModule&, CodegenError> {
+    fn lower(trace: Option<CompilerTrace&>) -> Result<CfgModule&, CodegenError> {
         if self.phase != BackendPhase.Created {
             @panic("backend lowering has already started");
         }
         self.phase = BackendPhase.Failed;
-        self.program.drop();
-        self.program = String.from(&program);
-        match &self.runtime_profile_dir { Some(value) => value.drop(), None => {}, }
-        self.runtime_profile_dir = match runtime_profile_dir { Some(value) => Option<String>.Some(String.from(&value)), None => Option<String>.None };
         finish_analysis_observed(self.layout.backend_types(), trace);
         let cfg = lower_cfg(self.output.hir(), self.symbols, self.layout.backend_types(), self.output, trace)?;
         let accepted = false;
@@ -269,9 +260,7 @@ impl BackendDriver {
         verify_structure_observed(&cfg, trace)?;
         cleanup_observed(&cfg, trace)?;
         verify_cfg_observed(&cfg, self.layout.backend_types(), trace)?;
-        if self.runtime_profile_dir.is_some() {
-            match trace { Some(observer) => observer.skip("cfg.inline", "runtime profiling keeps logical function boundaries"), None => {}, }
-        } elif self.layout.backend_types().raw_pointers() {
+        if self.layout.backend_types().raw_pointers() {
             match trace { Some(observer) => observer.skip("cfg.inline", "raw-pointer mode keeps original function boundaries"), None => {}, }
         } elif !self.pass_options.inline {
             match trace { Some(observer) => observer.skip("cfg.inline", "CFG inlining is disabled by configuration"), None => {}, }
@@ -293,10 +282,7 @@ impl BackendDriver {
         self.phase = BackendPhase.Failed;
         let cfg = self.cfg_ref();
         verify_cfg_observed(cfg, self.layout.backend_types(), trace)?;
-        let profile_dir = match &self.runtime_profile_dir { Some(value) => Option<str>.Some(value.as_str()), None => Option<str>.None };
-        lower_llvm(self.names, self.units, self.packages, self.layout.backend_types(),
-            self.layout.llvm_module(), cfg,
-            self.program.as_str(), profile_dir, trace)?;
+        lower_llvm(self.names, self.layout.backend_types(), self.layout.llvm_module(), cfg, trace)?;
         self.phase = BackendPhase.Generated;
         Result<(), CodegenError>.Ok(())
     }
@@ -361,15 +347,7 @@ impl BackendDriver {
             }
         }
         match trace { Some(value) => value.start_pass("cfg_pipeline", "cfg", "HIR to CFG", ProfileKind.Stage), None => {}, };
-        let destination_path = destination(config, self.units);
-        defer destination_path.drop();
-        let program = match resolve(destination_path.as_str()) {
-            Ok(value) => { let text = String.from(&value.as_str()); value.drop(); text },
-            Err(problem) => { problem.drop(); String.from(&destination_path.as_str()) },
-        };
-        defer program.drop();
-        let runtime_profile_dir = match &config.runtime_profile_dir { Some(value) => Option<str>.Some(value.as_str()), None => Option<str>.None };
-        let lowered = self.lower(program.as_str(), runtime_profile_dir, trace);
+        let lowered = self.lower(trace);
         let cfg = match lowered {
             Ok(value) => { match trace { Some(observer) => observer.finish("cfg_pipeline"), None => {}, }; value },
             Err(problem) => {
@@ -485,7 +463,7 @@ impl BackendDriver {
             match trace { Some(observer) => observer.finish("native.prepare"), None => {}, }
             defer driver.drop();
             match driver.link_observed(object.as_str(), temporary.as_str(), config.optimization,
-                &config.link_libraries, &config.link_searches, config.runtime_profile_dir.is_some(), trace) {
+                &config.link_libraries, &config.link_searches, trace) {
                 Ok(artifact) => artifact.drop(),
                 Err(problem) => {
                     match trace { Some(observer) => observer.fail("native_pipeline"), None => {}, }
@@ -526,7 +504,5 @@ impl Drop for BackendDriver {
             Some(value) => value.drop(),
             None => {},
         }
-        self.program.drop();
-        match &self.runtime_profile_dir { Some(value) => value.drop(), None => {}, }
     }
 }

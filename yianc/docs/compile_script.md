@@ -107,30 +107,7 @@ lower/验证/清理/check insertion、LLVM lowering/优化前后验证/优化/na
 `--check` 和编译模式都将 `input.source_roots`、`input.collect_sources` 等输入预处理计时归入 `preprocessing` 阶段，前端 lex/parse/desugar 与转储归入 `frontend` 阶段；`analysis.classify_sources` 归入 `semantic_analysis`，并在 `analysis.restricted` 之前执行。
 
 `--profile-output` 可用于编译模式与 `--check`；编译报告的目标为 `"exe"`、`"ll"` 或 `"bc"`，检查报告的目标为 `"check"`。报告写入失败作为 `W601` 非致命警告经统一诊断输出，不改变原编译结果；编译失败时不发布报告。`anx build --profile` 用该接口保存每次 compiler 调用的独立明细并生成命令级报告；命令选项见
-[anx CLI](../../docs/anx/03.cli.md)。`anx run --profile` 在启动产物前发布编译报告；运行时统计使用下节的插桩接口。
-
-### 2.5.1 `--runtime-profile-dir PATH` — 运行时插桩构建
-
-```bash
-yianc --runtime-profile-dir /abs/run/dir -O2 -o build/app lib/src main.an
-```
-
-该 native 选项只用于生成插桩可执行文件。`PATH` 必须是非空绝对路径，目标必须是 `exe`；与 `--check`、
-`-t ll`/`-t bc` 一起使用会报配置错误。`anx run --runtime-profile` 自动分配本次 run 目录并传入该选项，
-普通构建不传。
-
-编译为本次构建中的每个生成 callable 分配 `function_id`，输出只读的描述符表与
-`__yian_profile_config`，并在函数真实入口和每个正常 `ret` 前调用 `__yian_profile_enter(uint64_t)` /
-`__yian_profile_leave(uint64_t)`；extern、头文件声明和 ABI thunk 不单独插桩。描述符包含包、模块、
-规范源码路径、从 1 开始的行列号（列按 Unicode scalar value 计数）、函数/方法/闭包类别、方法所属类型、
-具体泛型实参和生成来源。插桩函数加 `noinline`、`nomerge` 与 `"disable-tail-calls"="true"` 字符串属性，
-profiling session 将 `MergeFunctions` 设为 `false`；优化级别仍按 `-O`/`--release` 保留，不降级到 `-O0`。
-
-配置结构含 ABI 版本、报告目录、run id、程序绝对路径、指针模式、优化级别、描述符数量和描述符指针。
-所有字符串是 UTF-8 字节切片，带显式长度，不需要 NUL 结尾。报告目录由运行环境创建；collector 在
-`main` 正常返回后写 `profile.json` 与 `summary.txt`。格式、计时口径和正常返回保证见
-[anx CLI 的 `run --runtime-profile`](../../docs/anx/03.cli.md)。report 目录缺失、时钟或分配故障属于 profiling 故障边界，
-不改变普通编译或既有安全错误协议；普通编译既不定义 collector，也不引用插桩符号。
+[anx CLI](../../docs/anx/03.cli.md)。`anx run --profile` 在启动产物前发布编译报告。
 
 ### 2.6 `--packages` — 包名导入解析
 
@@ -223,7 +200,6 @@ definite-assignment 检查；不进入 CFG/LLVM，不生成编译器产物。诊
 位置带 `--> path:line:column` 与源码摘录。不要求 `main`，存在时校验其签名。
 `--check` 接受 `--packages`、`--compiler-root`、`--raw-pointers`、`-O`、`--dump`、
 `--profile`、`--profile-output` 和日志选项；显式 `-t`、`-o`、`--link-lib`、`--link-search` 会报配置错误。
-`--runtime-profile-dir` 只用于插桩 `exe` 构建，与 `--check` 组合会报配置错误。
 `--dump` 只写 `tokens.txt`、`ast.txt` 和成功分析时的 `hir.txt`。
 
 ### 2.11 `--no-cfg-inline` 与 `--no-fat-check-elimination` — 关闭 CFG 优化
@@ -238,7 +214,7 @@ yianc --no-cfg-inline --no-fat-check-elimination lib/src main.an
 
 对应环境变量为 `YIAN_CFG_INLINE` 与 `YIAN_FAT_CHECK_ELIMINATION`：未设置或为空时使用默认值（开启），`0` 关闭，`1` 开启；其他非空值作为用法错误退出 2。命令行禁用优先于环境变量。
 
-关闭优化不关闭安全激活：检查插入、逻辑子帧和表示选择仍然执行，程序语义不变。`--raw-pointers` 下不插入胖指针生命周期检查或帧锁，原有裸指针边界与范围检查保留。`--runtime-profile-dir` 构建跳过 CFG 内联，以保持插桩函数的逻辑边界。`--check` 接受这两个开关，但不运行后端 pass。
+关闭优化不关闭安全激活：检查插入、逻辑子帧和表示选择仍然执行，程序语义不变。`--raw-pointers` 下不插入胖指针生命周期检查或帧锁，原有裸指针边界与范围检查保留。`--check` 接受这两个开关，但不运行后端 pass。
 
 ### 2.12 格式化源码 — `yian-fmt`
 

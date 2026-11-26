@@ -93,7 +93,7 @@ anx new myapp
 cd myapp
 anx run
 anx build --profile       # Save compiler pass timings under build/profile/<run-id>/.
-anx run --runtime-profile # Build, run and save function/call-path statistics.
+anx run --profile         # Build, save compiler statistics, and run.
 anx check
 anx test
 anx fmt --check
