@@ -1,5 +1,5 @@
 from yianc.common.ids import DefId, TypeId, SymbolId, HirId, UnitId, NameId;
-from yianc.types.space import TypeSpace;
+from yianc.analysis.hir.store import HirStore;
 from yianc.types.layout import TypeSizeProvider;
 from yianc.telemetry.trace import CompilerTrace;
 from yianc.common.location import SourceSpan;
@@ -39,19 +39,37 @@ impl Drop for AnalyzedProcedure {
     }
 }
 
-// The output owns its procedure and definition lists. Its type space is borrowed
-// from the compilation entry point and must remain alive while the output is used.
+// The output owns its procedure and definition lists. A successful
+// MiddleEndDriver.run transfers the middle-end HIR store into the output.
 pub struct AnalysisOutput {
     pub checked: Vec<DefId>,
     pub procedures: Vec<AnalyzedProcedure>,
     pub entry: Option<TypeId>,
-    pub types: TypeSpace&,
+    hir_store: Option<HirStore>,
     pub raw_pointers: bool,
 }
 
 impl AnalysisOutput {
-    static pub fn new(types: TypeSpace&, raw_pointers: bool) -> Self {
-        Self(Vec<DefId>.new(), Vec<AnalyzedProcedure>.new(), Option<TypeId>.None, types, raw_pointers)
+    static pub fn new(raw_pointers: bool) -> Self {
+        Self(Vec<DefId>.new(), Vec<AnalyzedProcedure>.new(), Option<TypeId>.None,
+            Option<HirStore>.None, raw_pointers)
+    }
+
+    // The middle-end driver transfers its HIR store exactly once on success.
+    pub fn attach_hir(hir: HirStore) {
+        match &self.hir_store {
+            Some(_) => @panic("analysis output already owns a HIR store"),
+            None => {},
+        }
+        self.hir_store = Option<HirStore>.Some(hir);
+    }
+
+    // Valid after a successful MiddleEndDriver.run or explicit attach_hir.
+    pub fn hir() -> HirStore& {
+        match &self.hir_store {
+            Some(value) => value,
+            None => @panic("analysis output has no HIR store"),
+        }
     }
 }
 
@@ -63,6 +81,7 @@ impl Drop for AnalysisOutput {
 
         self.checked.drop();
         self.procedures.drop();
+        match self.hir_store.take() { Some(value) => value.drop(), None => {}, }
     }
 }
 

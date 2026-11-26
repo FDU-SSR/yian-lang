@@ -17,7 +17,6 @@ from std.core.process import Command, ExitStatus;
 from yianc.types.space import TypeSpace;
 from yianc.common.names import NameInterner;
 from yianc.analysis.symbol.scope import SymbolSpace;
-from yianc.analysis.hir.store import HirStore;
 from yianc.frontend.driver import FrontendDriver;
 from yianc.telemetry.trace import CompilerTrace;
 from yianc.analysis.driver import MiddleEndDriver;
@@ -166,11 +165,9 @@ fn check_strict_lifecycle(raw: bool) {
     defer types.drop();
     let symbols = SymbolSpace.new();
     defer symbols.drop();
-    let hir = HirStore.new();
-    defer hir.drop();
     let reporter = DiagnosticCounter(0);
     let driver = MiddleEndDriver.new(&units, Option<PackageMap&>.None, &names, &types,
-        &symbols, &hir, trust(), raw, AnalysisOptions.new(), &reporter);
+        &symbols, trust(), raw, AnalysisOptions.new(), &reporter);
     let analysis = driver.run();
     driver.drop();
     let output = match analysis {
@@ -194,11 +191,9 @@ fn repeat_analysis(raw: bool) {
     defer types.drop();
     let symbols = SymbolSpace.new();
     defer symbols.drop();
-    let hir = HirStore.new();
-    defer hir.drop();
     let reporter = DiagnosticCounter(0);
     let driver = MiddleEndDriver.new(&units, Option<PackageMap&>.None, &names, &types,
-        &symbols, &hir, trust(), raw, AnalysisOptions.new(), &reporter);
+        &symbols, trust(), raw, AnalysisOptions.new(), &reporter);
     defer driver.drop();
     let output = match driver.run() {
         Ok(value) => value,
@@ -261,11 +256,9 @@ fn strict_analysis_reports_first_error() {
     defer types.drop();
     let symbols = SymbolSpace.new();
     defer symbols.drop();
-    let hir = HirStore.new();
-    defer hir.drop();
     let reporter = DiagnosticCounter(0);
     let driver = MiddleEndDriver.new(&units, Option<PackageMap&>.None, &names, &types,
-        &symbols, &hir, trust(), false, AnalysisOptions.new(), &reporter);
+        &symbols, trust(), false, AnalysisOptions.new(), &reporter);
     defer driver.drop();
     match driver.run() {
         Ok(output) => @panic("invalid strict fixture passed analysis"),

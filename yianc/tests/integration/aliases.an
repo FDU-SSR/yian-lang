@@ -75,17 +75,15 @@ fn analyze_success(source: str, path: str, types: TypeSpace&) -> AliasSymbols {
     let names = NameInterner.new();
     let units = parse_units(source, path, &names);
     let symbols = SymbolSpace.new();
-    let hir = HirStore.new();
     let reporter = IgnoreDiagnostics();
     let driver = MiddleEndDriver.new(&units, Option<PackageMap&>.None, &names, types,
-        &symbols, &hir, trust(), IS_RAW_MODE, AnalysisOptions.new(), &reporter);
+        &symbols, trust(), IS_RAW_MODE, AnalysisOptions.new(), &reporter);
     let output = match driver.run() {
         Ok(value) => value,
         Err(_) => @panic("strict fixture analysis failed"),
     };
     output.drop();
     driver.drop();
-    hir.drop();
     units.drop();
     AliasSymbols(names, symbols)
 }
@@ -94,15 +92,13 @@ fn analyze_failure(source: str, path: str, types: TypeSpace&) -> AnalysisError {
     let names = NameInterner.new();
     let units = parse_units(source, path, &names);
     let symbols = SymbolSpace.new();
-    let hir = HirStore.new();
     let reporter = IgnoreDiagnostics();
     let driver = MiddleEndDriver.new(&units, Option<PackageMap&>.None, &names, types,
-        &symbols, &hir, trust(), IS_RAW_MODE, AnalysisOptions.new(), &reporter);
+        &symbols, trust(), IS_RAW_MODE, AnalysisOptions.new(), &reporter);
     match driver.run() {
         Ok(output) => @panic("invalid fixture passed strict analysis"),
         Err(error) => {
             driver.drop();
-            hir.drop();
             symbols.drop();
             units.drop();
             names.drop();

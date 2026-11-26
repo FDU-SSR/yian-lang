@@ -16,7 +16,6 @@ from yianc.telemetry.trace import CompilerTrace;
 from yianc.types.space import TypeSpace;
 from yianc.common.names import NameInterner;
 from yianc.analysis.symbol.scope import SymbolSpace;
-from yianc.analysis.hir.store import HirStore;
 from std.core.io import Stderr, Write;
 
 const EXIT_FAILURE: i32 = 1;
@@ -67,7 +66,6 @@ fn main() {
     // Shared semantic tables remain owned by the compiler entry point.
     let types = TypeSpace.new();
     let symbols = SymbolSpace.new();
-    let hir = HirStore.new();
 
     // The target layout uses the same type table as semantic analysis.
     let layout = match TargetLayout.new(&types, config.raw_pointers, config.optimization,
@@ -89,7 +87,7 @@ fn main() {
     // The reporter borrows the unit table for the duration of analysis.
     let reporter = CliReporter(&units);
     trace.start_pass("semantic_analysis", "main", "semantic analysis", ProfileKind.Stage);
-    let middle = MiddleEndDriver.new(&units, packages.as_ref(), &names, &types, &symbols, &hir,
+    let middle = MiddleEndDriver.new(&units, packages.as_ref(), &names, &types, &symbols,
         trust, config.raw_pointers, options, &reporter);
     let output = match middle.run() {
         Ok(value) => value,
@@ -102,7 +100,7 @@ fn main() {
     trace.finish("semantic_analysis");
 
     if config.dump {
-        match hir_dump(&hir, &output) {
+        match hir_dump(output.hir(), &output) {
             Ok(_) => {},
             Err(problem) => {
                 report(&problem, &units);
@@ -118,8 +116,8 @@ fn main() {
         }
         trace.finish("compiler.total");
     } else {
-        let backend = BackendDriver.new(&output, &units, packages.as_ref(), &names, &hir, &symbols,
-            &layout, &config, Option<CompilerTrace&>.Some(&trace));
+        let backend = BackendDriver.new(&output, &units, packages.as_ref(), &names, &symbols,
+            &types, &layout, &config, Option<CompilerTrace&>.Some(&trace));
         let compile_result = backend.run();
         trace.finish("compiler.total");
         match compile_result {

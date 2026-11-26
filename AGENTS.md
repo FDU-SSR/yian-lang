@@ -66,102 +66,53 @@ full-regression success.
 
 The supported environment is Linux, Python 3.12+ and LLVM 22: clang and LLVM
 tools plus llvmlite 0.49 for cold recovery. Dependencies are declared in
-`python/requirements.txt` and `python/pyproject.toml`. Installation details:
-[bootstrap manual](yianc/docs/dev/21.bootstrap.md),
+`python/requirements.txt` and `python/pyproject.toml`. Installation, toolchain
+setup, refresh and uninstall are documented in the
+[bootstrap manual](yianc/docs/dev/21.bootstrap.md) and
 [installation guide](docs/anx/06.install.md).
 
-| Entry | Purpose and effects |
-| --- | --- |
-| `scripts/setup_llvm_toolchain.sh` | Installs missing C/LLVM packages with sudo and selects LLVM 22 commands; installs no Python packages. `--check` only reports versions. |
-| `scripts/bootstrap_toolchain.sh` | Explicit cold recovery through Python; builds/publishes raw native `yianc`, `anx`, `yian-fmt` and shared resources with source/builder/artifact identities. Does not build LSP. |
-| `scripts/refresh_toolchain.sh` | Freezes compatible native seeds, rebuilds raw/O2 `yianc`, `anx`, `yian-fmt`, `yian-lsp`, checks staged formatter/LSP behavior and publishes resources transactionally. No Python or cold fallback. |
-| `scripts/uninstall.sh --prefix PATH` | Removes managed commands/resources. `--lsp-only` retains other tools/resources; `--python PATH` handles recognized legacy Python launchers. |
-
-- Native verification must use binaries matching the relevant sources, environment and install prefix. Verify identity before treating results as evidence. Reuse a verified current binary; do not reinstall unnecessarily. Refresh/cold bootstrap are expensive operations subject to authorization, including for LSP checks. Missing prerequisites may be reported to the user for setup; record checks that could not run.
+- Native verification must use binaries matching the relevant sources, environment and install prefix. Verify identity before treating results as evidence. Reuse a verified current binary; do not reinstall unnecessarily. Missing prerequisites may be reported to the user for setup; record checks that could not run.
 - Native linking and package C-shim compilation select `YIAN_CC`, then `clang`, then `cc`. `runtime/build.py` independently uses `clang` and `llvm-ar` on PATH. LLVM consumer packages validate their native requirements.
-- Installed tools use associated resources and need no Python/source checkout at runtime. Pass `--compiler-root .` for deterministic checkout-local compiler resources. Standalone semantic checks/compilation need `lib/src` as an explicit source input; root configuration alone does not add it. Package mode obtains standard-library sources through its package map.
+- Installed tools use associated resources and need no Python/source checkout at runtime.
 - `YIAN_LIB` names the standard-library source directory; `YIAN_ROOT` names a checkout root. Native runtime lookup uses `--compiler-root`, nonempty `YIAN_ROOT`, then installation resources. Native `anx` resolves standard-library resources from these environment roots or its installation and has no `--compiler-root` flag.
 - Trust and package ownership use canonical roots and path-component boundaries, never a directory merely named `lib`, `std` or `tests`. Restricted-operation and FFI permissions are distinct; raw-pointer mode grants neither.
 
 ## Daily commands and recovery boundary
 
-Examples below remain subject to source identity and the local-verification policy:
-
-```bash
-conda run --no-capture-output -n yian-env yianc --check --compiler-root . lib/src tests/basic/array/access.an
-conda run --no-capture-output -n yian-env yianc --compiler-root . -O2 -o build/access lib/src tests/basic/array/access.an
-conda run --no-capture-output -n yian-env yian-fmt --check yianc/src/main.an
-```
-
-- Native `yianc --check` runs frontend/middle-end checks through HIR validation, coverage and definite assignment; it accepts no target/output/native-link options. Compilation targets are `exe` (default), `ll` and `bc`. Checks need no `main` but validate one when present; compilation needs an entry. Use explicit `-o` paths when names matter. `-t ll` emits unoptimized IR.
-- `--dump` observes tokens/AST/HIR/CFG/IR as stages complete (through HIR for `--check`). Native `--profile --profile-output PATH` writes JSON and a `.txt` summary. `--runtime-profile-dir` needs an absolute path and an `exe` build. Details: [compiler CLI](yianc/docs/compile_script.md).
-- Formatting belongs to `yian-fmt` in `fmt/`. `anx fmt` and LSP select it through nonempty `YIAN_FMT`, their executable's directory, then PATH. Native `yianc` rejects `--format`, `--format-check`, `-w`, `--write`, `--analyze`, `--json` and `--frontend-json`. See [formatter contracts](docs/manual/28.formatter.md).
-- Use `scripts/bootstrap_toolchain.sh` for explicit cold recovery. Update/check the recovery implementation only when changed sources or contracts participate in that workflow.
-- `anx/` owns `package.anx`, dependency graphs and the v2/v3 compiler package map. Maps with `nativeC` or `nativeRoots` use v3; other maps retain v2. Native `yianc` accepts both. Preserve the v2 package-map input used by cold recovery. Build/check/run/test select nonempty `YIANC`, otherwise PATH `yianc`; the canonical file must be executable ELF. There is no shell/Python fallback. `[dev-dependencies]` is visible only to `anx test`; `lib` packages use `check`/`test` without an executable build. See [anx](docs/anx/index.md) and [the package-map contract](docs/manual/23.anx_graph.md).
-- `anx build --profile` records compiler statistics without running the program; `anx run --runtime-profile` builds an instrumented executable and records function/call paths. `--profile-dir` and `--runtime-profile-dir` resolve relative to the project root. Keep build statistics, instrumented artifacts and runtime reports distinct; paths/options are in [the anx CLI guide](docs/anx/03.cli.md).
+- Use the installed native `yianc`, `anx` and `yian-fmt`. Compiler, package-manager and formatter options are documented in the [compiler CLI](yianc/docs/compile_script.md), [anx CLI](docs/anx/03.cli.md) and [formatter contracts](docs/manual/28.formatter.md).
+- Use `--compiler-root .` for checkout-local compiler resources. Standalone checks and compilation need `lib/src` as an explicit source input; package mode obtains the standard library through its package map.
+- `anx` selects nonempty `YIANC`, otherwise PATH `yianc`; the canonical file must be an executable ELF. Preserve the v2 package-map input used by cold recovery.
+- Use `scripts/bootstrap_toolchain.sh` for explicit cold recovery and `scripts/refresh_toolchain.sh` for normal native refresh. Both are expensive and require authorization.
+- `anx build --profile` records compiler statistics; `anx run --runtime-profile` records runtime call paths. Keep build and runtime reports distinct, and do not persist machine-local result files.
 
 ## Source map
 
 Native pipeline:
 `.an → tokens → AST → desugared AST → HIR → address-storage normalization → CFG → LLVM IR → native output`.
 
-| Location | Responsibility |
+| Path | Responsibility |
 | --- | --- |
-| `yianc/src/{main.an,config.an}` | CLI parsing, stage sequencing and the process exit path. |
-| `yianc/src/{preprocess.an,input_error.an}` | Package-map loading, source-root/trust setup, source collection and their terminal diagnostics. |
-| `yianc/src/telemetry/`, `yianc/src/{host.an,roots.an}` | Logging/timing/profile recording; host resource and source/runtime root resolution. |
-| `yianc/src/frontend/` | Source/unit ownership, lexer/parser, AST, desugaring, traversal and stage dumps; `driver.an` composes the stage. |
-| `yianc/src/analysis/` | Driver/output, permission classification, resolution, symbols/definitions, HIR, constants, lowering, checking passes and HIR dump; type registration, relations, impls, callable/object wrappers and validation stay here; `driver.an` owns the pass sequence. |
-| `yianc/src/types/` | Shared type model, structural interning store, substitutions, constant expressions, display/properties queries and the target-size service interface; independent of analysis and codegen. |
-| `yianc/src/codegen/` | CFG, LLVM lowering, pointer-check enforcement, native linking and stage dumps; `driver.an` owns emission and publication. |
-| `yianc/src/{common,diagnostics,package}/` | IDs/positions, name interning and shared integer values; owned diagnostics and stderr reporting; package-map validation/provenance. |
-| `anx/src/{manifest,project,driver}/` | TOML manifests, layouts/dependencies/ownership, command/test drivers. |
-| `fmt/`, `lsp/`, `ide-support/` | Standalone formatter, native stdio LSP, VS Code extension. |
-| `lib/src/` | Core types, containers, numeric operations, I/O, paths, processes and FFI helpers. |
-| `runtime/src/`, `runtime/include/` | C allocation/failure/Linux I/O and shared ABI; optional profiling under `YIAN_RUNTIME_PROFILE`. |
-| `bootstrap/` | JSON/JSON-RPC/LSP/TOML and LLVM/FFI support packages; LLVM 22 bindings and C shims. |
-| `python/` | Explicit cold recovery and its dependencies. |
-| `tests/`, `scripts/`, `bench/`, `cve/` | Compiler fixtures, orchestration, measurements and separate vulnerability witnesses. |
-| `yianc/docs/`, `docs/grammar/`, `docs/manual/`, `docs/anx/` | Compiler implementation, language, remaining toolchain and package-manager guides; site configured by `mkdocs_cn.yml`. |
-
-## Compiler invariants
-
-- `main` creates one `NameInterner` before source collection. `preprocess.an` loads the package map, resolves source roots and trust, and collects the source files once into an immutable `SourceTable` with paths and contents stored in the interner. `FrontendDriver.new` takes the table and borrows the interner; `FrontendDriver.run` performs lex/parse/desugar and returns the completed `UnitTable`; the CLI or LSP owns the unit table, package map, `NameInterner`, `SymbolSpace` and `HirStore`, creates one `TypeSpace`, and creates a `TargetLayout` from that same type space before semantic analysis. `UnitTable` owns each unit's source record, token storage and desugared AST by `UnitId`. It implements `SourceMap` after the frontend completes. Source records, tokens and AST nodes borrow immutable text from the interner, which outlives those records. `MiddleEndDriver` borrows those shared tables and package map, owns `SourceTrust`, source permissions and its definition/worklist/impl registries, classifies sources before restricted-operation checks, and grants FFI permission only through a source's owning package. It stores the options by value, borrows the services referenced by those options and the reporter, and returns `AnalysisOutput`; the output owns its lists and refers to the caller-owned unit, type, symbol and HIR records. `TargetLayout` owns the LLVM module and backend type cache while borrowing the caller's type space; `BackendDriver` is built only for compilation after analysis succeeds, verifies that its output and layout reference the same type space and that output, layout and configuration raw-pointer modes match, and owns CFG lowering and native publication. Keep `common` independent of analysis, package loading independent of AST/HIR, the `types` layer independent of analysis/codegen, and diagnostic models separate from rendering. HIR models do not depend on checkers or constant evaluation. Constant arithmetic/intervals do not depend on HIR; typed evaluation does. Reusable containers belong in `lib`.
-- Fatal user errors outside CLI initialization return through `Result` to `main`; command-line argument and log-configuration failures render and exit inside `parse_args` and `CompilerTrace.new`, respectively; warnings are delivered synchronously through `DiagnosticReporter` and are emitted immediately; the first user error terminates analysis and returns through `Result`; internal invariant violations panic where they are detected. Each source file owns one `UnitId`; the frozen `SourceTable` is the frontend input and the completed `UnitTable` is its output, both implement `SourceMap`, and `SourceMap.file` panics for an unassigned ID. `render(diagnostic, sources)` produces the single CLI text form.
-- `MiddleEndDriver` is single-run: it marks the attempt before source classification and rejects a second run. It borrows the caller-owned tables, so an error leaves those tables available while the caller reports the diagnostic. `AnalysisOutput` owns its lists but refers to those shared records; release output before the HIR, symbol and type tables. Never persist or mix IDs across compilations. CLI and LSP report diagnostics while the owning source map lives; LSP records kept beyond that lifetime copy the message, path and span.
-- Escaping references require stable storage. `Arena<T>` preserves addresses on allocation and has O(1) indexed lookup. `clear`/`drop` invalidate references without dropping payloads: owners release payloads before storage. Do not shallow-copy owning stores and release both copies.
-- Structural types use `TypeSpace` interning; do not mutate a value against its key. Nominal identities distinguish declared/complete definitions; reject queries requiring completion on incomplete records.
-- Read-only AST traversal lives in `frontend/ast/walk.an` (`TryAstVisitor<E>`); `traversal.an` adapts infallible visitors and separates rewriting. Skip omits children and `leave`; errors omit ancestor `leave`; shared nodes are visited per incoming edge. Use `defer` for error cleanup; do not alter graph edges during read-only traversal.
-- AST additions cover cleanup, allocation, JSON, traversal/rewriting and relevant frontend/lowering dispatch. HIR additions cover cleanup, traversal, verification and consuming passes.
-- Native analysis checks root procedures and discovered concrete instances beyond calls reachable from `main`. Preserve the distinction between checked definitions and those selected for code generation. Compile-time branch selection lowers only the chosen branch; coverage/assignment inspect HIR.
-- Normalize data-address operands and implicit storage consumers into places or local place blocks before HIR verification/coverage/assignment. CFG address lowering requires normalized storage and must not invent rvalue fallback locals. Function addresses and slice-element addresses keep dedicated paths.
-- Tagged enums with tag/payload storage use `EnumInitAt`, `EnumTagAt`, `EnumFieldAt`, `EnumCopyAt` place operations; copies are shallow snapshots. ZST/niche representations keep value operations. Classify callable linkage once: module-local generated functions are internal for every LLVM target; entry/extern declarations retain external names.
-- `?` desugaring evaluates its operand once through trait-qualified `Try.branch` and `FromResidual.from_residual`; preserve generated type/pattern metadata. `IS_RAW_MODE` is supplied by the active compilation configuration.
-- Ordinary `sizeof` retains its queried type through HIR/CFG until backend lowering. Immediate evaluation uses the selected target's layout only when execution reaches the operation. Do not use Python host sizes or infer layouts in semantic passes. Short-circuited operations do not query sizes; unselected compile-time branches are not type-checked.
-- Native `yianc` exposes strict analysis without editor facts/query APIs. LSP owns its source/semantic indexes and detached snapshots. Do not infer native editor capabilities from recovery Python APIs. LSP stdout is protocol-only; logs use stderr or a configured file. See [LSP contracts](docs/manual/27.language_server.md).
-- Preserve shallow copy semantics in lowering. Introduce resource transfers, deep copies and cleanup only through explicit source operations.
-- In the common bare representation, non-ZST references to concrete non-trait `T` have the same data-pointer ABI and size as `T*`. Trait references are trait objects with dynamic dispatch. Native `yianc` and the C runtime define the safety metadata and checks independently of the bare ABI.
-- Keep Linux syscall ABI and `errno` handling in the thin C runtime layer, with owned errors and UTF-8 APIs in YIAN. Preserve the shared runtime ABI. The [cold recovery scope](#daily-commands-and-recovery-boundary) governs Python compatibility.
+| `yianc/src/` | Native compiler CLI and compilation stages. |
+| `anx/`, `fmt/`, `lsp/`, `ide-support/` | Package manager, formatter, language server and editor integration. |
+| `lib/src/`, `runtime/`, `bootstrap/` | Standard library, C runtime and support packages. |
+| `tests/`, `scripts/`, `bench/`, `cve/` | Compiler fixtures, orchestration, benchmarks and vulnerability witnesses. |
+| `python/` | Explicit cold-recovery toolchain. |
+| `yianc/docs/`, `docs/grammar/`, `docs/manual/`, `docs/anx/` | Compiler, language, toolchain and package-manager documentation. |
 
 ## Tests and evidence
 
 - Do not write tests of tests or automate validation of test logic itself, including test/benchmark runners, case selection, assertions, expected-result handling and result-reporting logic. Review this logic manually; the local-verification and fixture-extension rules do not authorize meta-tests.
 - If such an automated probe is indispensable, keep its code and generated files in a temporary directory outside the repository and delete them after use. Never place, stage or commit these meta-tests or their artifacts in the repository, including ignored paths, fixtures, scripts, CI configuration or embedded checks added solely to test test logic.
-- `scripts/run_tests.py` runs `basic` (default), `safety`, `package`, `bootstrap` with installed native ELF tools and never refreshes/installs them. The supported implementation is `native`; legacy `python`/`both` values fail with exit 2. `--prefix` or `YIAN_INSTALL_PREFIX` selects installation. Package/bootstrap use native `anx` with the selected canonical `yianc`.
-- Target modes default to both; `--pointer-mode fat|raw|both` selects them. Safety raw cases are N/A with reasons, not passes; all-N/A exits nonzero. Direct `anx test` also defaults to both; its `--raw-pointers` alias conflicts with an explicit mode. Outer package tests pass one explicit mode; `graph` runs once.
-- `-f` is a substring filter, not an exact selector. Inspect selected cases and nested package tests before running. `--no-run` uses `yianc --check`/`anx check` and still performs analysis. `-x` includes experimental sources; `run_safety_tests.py` wraps safety. Full suites, parity `full`, LSP protocol matrices and runtime self-test builds need explicit authorization.
-- Sources: `tests/<suite>/`; expected output: `tests/output/<suite>/`. `.err.an` must fail compilation with its `.ans` substring. Normal `.ans` specifies stdout; leading `Exit code <N>` specifies a nonzero runtime exit. Directory fixtures use `<dir>.ans`/`<dir>.err.ans`. Arguments/stdin: `tests/input/<suite>/<name>.args`/`.stdin`; package `.command` selects build/check/test/graph plus arguments. Inspect nested fixture effects.
-- `<test>.compile.json` adds named variants with string-array `compiler_args` and at most one compile-error substring or runtime exit code. Accept the legacy array or object form. Optional `pointer_modes` must be unique, nonempty and include fat; excluding raw requires `raw_inapplicable_reason`. N/A is never a pass. See [fixture contracts](docs/manual/25.anx_tests.md).
-- `scripts/check_toolchain_parity.py` validates existing native tools against fixed oracles; it neither refreshes tools nor compares Python. `--list` previews commands, repeated `--case ID` selects exact cases, and `--pointer-mode fat|raw|both` defaults to both. Inspect scope before execution.
-- `runtime/build.py --check-consistency-only` checks native/C ABI declarations without building/self-tests. `--check` builds/runs normal self-tests; `--asan` runs sanitized self-tests. Distinguish costs. Use target-file Python checks instead of automatically running project-wide Pyright or compileall.
+- `scripts/run_tests.py` runs the selected suite with installed native tools and never refreshes them. Full suites, parity runs, LSP protocol matrices and runtime self-test builds need explicit authorization.
+- `-f` is a substring filter, not an exact selector. Inspect selected cases and nested package tests before running; `--no-run` still performs analysis.
+- Fixture layout, expected outputs, compile variants, pointer modes and runner semantics are documented in [fixture contracts](docs/manual/25.anx_tests.md).
 - For product regression tests, prefer extending an existing relevant fixture/compilation unit. Create a separate file for incompatible expectations, distinct diagnostics or setup; do not mask failures by combining cases. Product tests may accompany implementation/documentation in the same scoped commit.
 
 ## CVE witnesses and benchmarks
 
 - Translation/equivalence review uses [docs/c-to-yian.md](docs/c-to-yian.md) as the sole translation specification. Keep general rules there and concrete mappings, differences and evidence in case READMEs. Earlier audits do not establish conformance to the current rules.
-- `cve/` is separate from compiler self-tests: 40 vulnerable C/YIAN pairs, one README per pair, seventeen source-mapped to upstream records, no fixed variants. Packaging or a guard hit alone does not prove faithful upstream reproduction. See [provenance and runner semantics](cve/README.md).
-- `python scripts/run_cve.py --case CVE-2021-33304` selects one YIAN witness; `--language c|both` adds the ASan C reference. `--list`/`--check-layout` start no tools. `--all` requires explicit batch authorization.
-- [bench/README.md](bench/README.md) defines sets, scales, runners and result files; [bench/SUITES.md](bench/SUITES.md) records sources/licenses. Check benchmark count, states, scale, warmups and samples before running. Measurement requires explicit authorization. `bench/results/` is machine-local, Git-ignored output; do not force-add result files. Performance results contain only numeric measurements/statistics/ratios and benchmark/state labels. Do not persist source/tool/environment/parameter/validation metadata, sidecars, logs or archives. Runtime checks remain transient; historical samples do not validate changed sources.
+- `cve/` and `bench/` are separate from compiler self-tests. Provenance, case counts, runner semantics, benchmark sets and result-file rules are documented in [cve/README.md](cve/README.md) and [bench/README.md](bench/README.md).
+- `--all` for CVE runs and benchmark measurement require explicit batch authorization. `bench/results/` is machine-local, Git-ignored output; do not force-add result files or persist source/tool/environment metadata, sidecars or logs.
 
 ## Coding, navigation and documentation
 

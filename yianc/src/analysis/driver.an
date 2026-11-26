@@ -40,7 +40,7 @@ pub struct MiddleEndDriver {
     names: NameInterner&,
     types: TypeSpace&,
     symbols: SymbolSpace&,
-    hir: HirStore&,
+    hir: Option<HirStore>,
     trust: SourceTrust,
     raw_pointers: bool,
     pub permissions: Vec<SourcePermissions>,
@@ -74,11 +74,18 @@ fn at_stage(result: Result<(), AnalysisError>, pass_id: str, stage: AnalysisStag
 
 impl MiddleEndDriver {
     static pub fn new(units: UnitTable&, packages: Option<PackageMap&>, names: NameInterner&,
-        types: TypeSpace&, symbols: SymbolSpace&, hir: HirStore&, trust: SourceTrust,
+        types: TypeSpace&, symbols: SymbolSpace&, trust: SourceTrust,
         raw_pointers: bool, options: AnalysisOptions, reporter: DiagnosticReporter&) -> Self {
-        Self(units, packages, names, types, symbols, hir, trust, raw_pointers,
+        Self(units, packages, names, types, symbols, Option<HirStore>.Some(HirStore.new()), trust, raw_pointers,
             Vec<SourcePermissions>.new(), DefinitionRegistry.new(), DefinitionWorklist.new(),
             ImplRegistry.new(), options, reporter, false)
+    }
+
+    fn hir_store() -> HirStore& {
+        match &self.hir {
+            Some(value) => value,
+            None => @panic("middle-end HIR store is not available"),
+        }
     }
 
     fn classify_sources() {
@@ -118,7 +125,7 @@ impl MiddleEndDriver {
         at_stage(check_restricted(self.units, &self.permissions), "analysis.restricted", AnalysisStage.Restricted, &options)?;
         start_stage(&options, "analysis.context", AnalysisStage.Resolve);
         let context_result = ResolutionContext.new(self.units, self.packages, self.names, self.types,
-            self.symbols, self.hir, self.trust.stdlib_root(), &self.permissions, &self.definitions,
+            self.symbols, self.hir_store(), self.trust.stdlib_root(), &self.permissions, &self.definitions,
             &self.worklist, &self.impls, self.raw_pointers, options.sizes,
             Option<DiagnosticReporter&>.Some(reporter));
         match &context_result {
@@ -126,7 +133,8 @@ impl MiddleEndDriver {
             Err(_) => finish_stage(&options, "analysis.context", false),
         }
         let context = context_result?;
-        defer context.drop();
+        let context_live = true;
+        defer { if context_live { context.drop(); } };
         start_stage(&options, "analysis.collect_declarations", AnalysisStage.Resolve);
         at_stage(collect_declarations(&context), "analysis.collect_declarations", AnalysisStage.Resolve, &options)?;
         start_stage(&options, "analysis.resolve_imports", AnalysisStage.Resolve);
@@ -204,6 +212,13 @@ impl MiddleEndDriver {
             }
         }
 
+        context.drop();
+        context_live = false;
+        let hir = match self.hir.take() {
+            Some(value) => value,
+            None => @panic("middle-end HIR store is not available"),
+        };
+        output.attach_hir(hir);
         accepted_output = true;
         Result<AnalysisOutput, AnalysisError>.Ok(output)
     }
@@ -216,5 +231,6 @@ impl Drop for MiddleEndDriver {
         self.worklist.drop();
         self.definitions.drop();
         self.impls.drop();
+        match self.hir.take() { Some(value) => value.drop(), None => {}, }
     }
 }

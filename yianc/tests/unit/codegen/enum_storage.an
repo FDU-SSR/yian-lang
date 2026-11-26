@@ -12,7 +12,6 @@ from yianc.analysis.driver import MiddleEndDriver;
 from yianc.types.space import TypeSpace;
 from yianc.common.names import NameInterner;
 from yianc.analysis.symbol.scope import SymbolSpace;
-from yianc.analysis.hir.store import HirStore;
 from yianc.types.model import AccessMode, AggregateDefinition, DefinitionBody, DefinitionHeader, EnumDefinition, EnumVariant, NominalKind, StructField, TypeData;
 from yianc.codegen.cfg.ids import BlockId, FunctionId, ValueId;
 from yianc.codegen.cfg.model import CfgFunction, CfgModule, Operation, SafetyCheck, Terminator, ValueKind;
@@ -335,9 +334,9 @@ fn probe_units(names: NameInterner&) -> UnitTable {
 }
 
 fn analyze_probe(units: UnitTable&, types: TypeSpace&, names: NameInterner&,
-    symbols: SymbolSpace&, hir: HirStore&, reporter: DiagnosticReporter&) -> AnalysisOutput {
+    symbols: SymbolSpace&, reporter: DiagnosticReporter&) -> AnalysisOutput {
     let driver = MiddleEndDriver.new(units, Option<PackageMap&>.None, names, types, symbols,
-        hir, trust(), false, AnalysisOptions.new(), reporter);
+        trust(), false, AnalysisOptions.new(), reporter);
     let analysis = driver.run();
     driver.drop();
     match analysis {
@@ -354,12 +353,10 @@ fn run_negative(index: u64) {
     defer names.drop();
     let symbols = SymbolSpace.new();
     defer symbols.drop();
-    let hir = HirStore.new();
-    defer hir.drop();
     let units = probe_units(&names);
     defer units.drop();
     let reporter = IgnoreDiagnostics();
-    let output = analyze_probe(&units, &types, &names, &symbols, &hir, &reporter);
+    let output = analyze_probe(&units, &types, &names, &symbols, &reporter);
     defer output.drop();
     let location = SourceSpan(UnitId(0u64), Span(Position(0u64, 0u64), Position(0u64, 0u64)));
     let fixture = build_types(&types, &names, location);
@@ -421,12 +418,10 @@ fn main() {
     defer names.drop();
     let symbols = SymbolSpace.new();
     defer symbols.drop();
-    let hir = HirStore.new();
-    defer hir.drop();
     let units = probe_units(&names);
     defer units.drop();
     let reporter = IgnoreDiagnostics();
-    let output = analyze_probe(&units, &types, &names, &symbols, &hir, &reporter);
+    let output = analyze_probe(&units, &types, &names, &symbols, &reporter);
     defer output.drop();
 
     let location = SourceSpan(UnitId(0u64), Span(Position(0u64, 0u64), Position(0u64, 0u64)));

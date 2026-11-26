@@ -29,7 +29,7 @@ fn root_unit(ctx: ResolutionContext&, unit: UnitId) -> bool {
 }
 
 pub fn check_procedures(ctx: ResolutionContext&, options: AnalysisOptions&) -> Result<AnalysisOutput, AnalysisError> {
-    let output = AnalysisOutput.new(ctx.types, ctx.raw_pointers);
+    let output = AnalysisOutput.new(ctx.raw_pointers);
     let accepted = false;
     defer {
         if !accepted {

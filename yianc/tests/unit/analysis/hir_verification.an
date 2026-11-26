@@ -542,7 +542,7 @@ fn shared_break_output(fixture: VerificationFixture&, output: AnalysisOutput&) -
     }
     if !located { @panic("the entry procedure is not exported"); }
 
-    let modified = AnalysisOutput.new(output.types, output.raw_pointers);
+    let modified = AnalysisOutput.new(output.raw_pointers);
     for checked_definition in output.checked {
         modified.checked.push(*checked_definition);
     }

@@ -215,7 +215,6 @@ pub struct BackendDriver {
     units: UnitTable&,
     packages: Option<PackageMap&>,
     names: NameInterner&,
-    hir: HirStore&,
     symbols: SymbolSpace&,
     layout: TargetLayout&,
     config: CompilerConfig&,
@@ -230,11 +229,10 @@ pub struct BackendDriver {
 
 impl BackendDriver {
     static pub fn new(output: AnalysisOutput&, units: UnitTable&, packages: Option<PackageMap&>,
-        names: NameInterner&, hir: HirStore&, symbols: SymbolSpace&, layout: TargetLayout&,
+        names: NameInterner&, symbols: SymbolSpace&, types: TypeSpace&, layout: TargetLayout&,
         config: CompilerConfig&, trace: Option<CompilerTrace&>) -> Self {
         let layout_store: TypeSpace& = layout.backend_types().semantic_store();
-        let output_store: TypeSpace& = output.types;
-        if !same_type_space(layout_store, output_store) {
+        if !same_type_space(layout_store, types) {
             @panic("backend layout uses a different type space");
         }
         if layout.backend_types().raw_pointers() != output.raw_pointers
@@ -242,7 +240,7 @@ impl BackendDriver {
             @panic("inconsistent backend configuration");
         }
         let pass_options = CfgPassOptions(config.cfg_inline, config.fat_check_elimination);
-        Self(output, units, packages, names, hir, symbols, layout, config, trace, false,
+        Self(output, units, packages, names, symbols, layout, config, trace, false,
             Option<CfgModule>.None, BackendPhase.Created, String.new(), Option<String>.None,
             pass_options)
     }
@@ -265,7 +263,7 @@ impl BackendDriver {
         match &self.runtime_profile_dir { Some(value) => value.drop(), None => {}, }
         self.runtime_profile_dir = match runtime_profile_dir { Some(value) => Option<String>.Some(String.from(&value)), None => Option<String>.None };
         finish_analysis_observed(self.layout.backend_types(), trace);
-        let cfg = lower_cfg(self.hir, self.symbols, self.layout.backend_types(), self.output, trace)?;
+        let cfg = lower_cfg(self.output.hir(), self.symbols, self.layout.backend_types(), self.output, trace)?;
         let accepted = false;
         defer { if !accepted { cfg.drop(); } };
         verify_structure_observed(&cfg, trace)?;
