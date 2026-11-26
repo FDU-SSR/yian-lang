@@ -12,7 +12,7 @@ from yianc.analysis.permissions import SourcePermissions;
 from yianc.analysis.definition.registry import DefinitionRegistry;
 from yianc.analysis.definition.worklist import DefinitionWorklist;
 from yianc.analysis.ty.impl_registry import ImplRegistry;
-from yianc.analysis.symbol.scope import SymbolStore;
+from yianc.analysis.symbol.scope import SymbolSpace;
 from yianc.analysis.hir.store import HirStore;
 from yianc.analysis.resolution.declarations import collect_declarations;
 from yianc.analysis.resolution.definitions import resolve_definitions;
@@ -101,7 +101,7 @@ struct VerificationFixture {
     units: UnitTable,
     types: TypeSpace,
     names: NameInterner,
-    symbols: SymbolStore,
+    symbols: SymbolSpace,
     hir: HirStore,
     trust: SourceTrust,
     permissions: Vec<SourcePermissions>,
@@ -132,7 +132,7 @@ impl VerificationFixture {
             permissions.push(SourcePermissions(stdlib, restricted, stdlib));
             index += 1;
         }
-        Self(units, TypeSpace.new(), names, SymbolStore.new(), HirStore.new(), trust,
+        Self(units, TypeSpace.new(), names, SymbolSpace.new(), HirStore.new(), trust,
             permissions, DefinitionRegistry.new(), DefinitionWorklist.new(), ImplRegistry.new())
     }
 

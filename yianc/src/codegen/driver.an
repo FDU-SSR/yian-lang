@@ -2,7 +2,7 @@ from yianc.config import CompilerConfig, OutputKind;
 from yianc.analysis.session.output import AnalysisOutput;
 from yianc.common.names import NameInterner;
 from yianc.analysis.hir.store import HirStore;
-from yianc.analysis.symbol.scope import SymbolStore;
+from yianc.analysis.symbol.scope import SymbolSpace;
 from yianc.types.space import TypeSpace;
 from yianc.frontend.unit import UnitTable;
 from yianc.package.model import PackageMap;
@@ -80,7 +80,7 @@ fn same_type_space(left: TypeSpace&, right: TypeSpace&) -> bool {
     left == right
 }
 
-fn lower_cfg(hir: HirStore&, symbols: SymbolStore&, types: BackendTypes&, output: AnalysisOutput&,
+fn lower_cfg(hir: HirStore&, symbols: SymbolSpace&, types: BackendTypes&, output: AnalysisOutput&,
     trace: Option<CompilerTrace&>) -> Result<CfgModule, CodegenError> {
     start_profile(trace, "cfg.lower", ProfileKind.Pass);
     let success = false;
@@ -216,7 +216,7 @@ pub struct BackendDriver {
     packages: Option<PackageMap&>,
     names: NameInterner&,
     hir: HirStore&,
-    symbols: SymbolStore&,
+    symbols: SymbolSpace&,
     layout: TargetLayout&,
     config: CompilerConfig&,
     trace: Option<CompilerTrace&>,
@@ -230,7 +230,7 @@ pub struct BackendDriver {
 
 impl BackendDriver {
     static pub fn new(output: AnalysisOutput&, units: UnitTable&, packages: Option<PackageMap&>,
-        names: NameInterner&, hir: HirStore&, symbols: SymbolStore&, layout: TargetLayout&,
+        names: NameInterner&, hir: HirStore&, symbols: SymbolSpace&, layout: TargetLayout&,
         config: CompilerConfig&, trace: Option<CompilerTrace&>) -> Self {
         let layout_store: TypeSpace& = layout.backend_types().semantic_store();
         let output_store: TypeSpace& = output.types;

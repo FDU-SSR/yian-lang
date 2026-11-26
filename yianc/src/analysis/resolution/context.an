@@ -6,7 +6,7 @@ from yianc.analysis.definition.registry import DefinitionRegistry;
 from yianc.analysis.definition.worklist import DefinitionWorklist;
 from yianc.analysis.hir.store import HirStore;
 from yianc.analysis.ty.impl_registry import ImplRegistry;
-from yianc.analysis.symbol.scope import SymbolStore;
+from yianc.analysis.symbol.scope import SymbolSpace;
 from yianc.analysis.symbol.model import SymbolKind;
 from yianc.analysis.constant.evaluate import ConstantEvaluator;
 from yianc.types.space import TypeSpace;
@@ -45,7 +45,7 @@ pub struct ResolutionContext {
     pub packages: Option<PackageMap&>,
     pub names: NameInterner&,
     pub types: TypeSpace&,
-    pub symbols: SymbolStore&,
+    pub symbols: SymbolSpace&,
     pub hir: HirStore&,
     pub stdlib_root: str,
     pub permissions: Vec<SourcePermissions>&,
@@ -66,7 +66,7 @@ pub struct ResolutionContext {
 
 impl ResolutionContext {
     static pub fn new(units: UnitTable&, packages: Option<PackageMap&>, names: NameInterner&,
-        types: TypeSpace&, symbols: SymbolStore&, hir: HirStore&, stdlib_root: str,
+        types: TypeSpace&, symbols: SymbolSpace&, hir: HirStore&, stdlib_root: str,
         permissions: Vec<SourcePermissions>&, definitions: DefinitionRegistry&,
         worklist: DefinitionWorklist&, impls: ImplRegistry&, raw_pointers: bool,
         sizes: Option<TypeSizeProvider&>, reporter: Option<DiagnosticReporter&>) -> Result<Self, AnalysisError> {

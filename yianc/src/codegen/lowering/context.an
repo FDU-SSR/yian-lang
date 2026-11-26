@@ -1,6 +1,6 @@
 from yianc.analysis.session.output import AnalysisOutput, AnalyzedProcedure;
 from yianc.analysis.hir.store import HirStore;
-from yianc.analysis.symbol.scope import SymbolStore;
+from yianc.analysis.symbol.scope import SymbolSpace;
 from yianc.codegen.types import BackendTypes;
 from yianc.codegen.cfg.ids import FunctionId, BlockId, ValueId, LocalId, ScopeId;
 from yianc.codegen.cfg.model import CfgModule, CfgFunction, ValueKind, Operation, Terminator;
@@ -36,7 +36,7 @@ impl Drop for LoopTarget {
 // Lowering borrows the HIR and symbol tables and owns per-function lowering state.
 pub struct Lowering {
     pub hir: HirStore&,
-    pub symbols: SymbolStore&,
+    pub symbols: SymbolSpace&,
     pub types: BackendTypes&,
     pub function: CfgFunction&,
     pub current: Option<BlockId>,
@@ -48,7 +48,7 @@ pub struct Lowering {
 }
 
 impl Lowering {
-    static pub fn new(hir: HirStore&, symbols: SymbolStore&, types: BackendTypes&,
+    static pub fn new(hir: HirStore&, symbols: SymbolSpace&, types: BackendTypes&,
         function: CfgFunction&, dependencies: Vec<TypeId>&) -> Self {
         Self(hir, symbols, types, function, Option<BlockId>.Some(function.add_block()),
             HashMap<SymbolId, LocalId>.new(), HashMap<SymbolId, ValueId>.new(), Vec<CleanupScope>.new(), Vec<LoopTarget>.new(), dependencies)
@@ -187,7 +187,7 @@ impl Drop for Lowering {
     }
 }
 
-pub fn lower_module(hir: HirStore&, symbols: SymbolStore&, types: BackendTypes&, output: AnalysisOutput&)
+pub fn lower_module(hir: HirStore&, symbols: SymbolSpace&, types: BackendTypes&, output: AnalysisOutput&)
 -> Result<CfgModule, CodegenError> {
     let module = CfgModule.new(types.semantic_store(), output.entry);
     let accepted = false;

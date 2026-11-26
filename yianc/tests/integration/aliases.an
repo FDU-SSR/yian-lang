@@ -4,7 +4,7 @@ from yianc.telemetry.trace import CompilerTrace;
 from yianc.analysis.driver import MiddleEndDriver;
 from yianc.analysis.session.output import AnalysisOptions;
 from yianc.common.names import NameInterner;
-from yianc.analysis.symbol.scope import SymbolStore;
+from yianc.analysis.symbol.scope import SymbolSpace;
 from yianc.analysis.hir.store import HirStore;
 from yianc.analysis.definition.registry import DefinitionRegistry;
 from yianc.analysis.definition.worklist import DefinitionWorklist;
@@ -49,7 +49,7 @@ fn trust() -> SourceTrust {
 
 struct AliasSymbols {
     names: NameInterner,
-    symbols: SymbolStore,
+    symbols: SymbolSpace,
 }
 
 impl Drop for AliasSymbols {
@@ -74,7 +74,7 @@ fn parse_units(source: str, path: str, names: NameInterner&) -> UnitTable {
 fn analyze_success(source: str, path: str, types: TypeSpace&) -> AliasSymbols {
     let names = NameInterner.new();
     let units = parse_units(source, path, &names);
-    let symbols = SymbolStore.new();
+    let symbols = SymbolSpace.new();
     let hir = HirStore.new();
     let reporter = IgnoreDiagnostics();
     let driver = MiddleEndDriver.new(&units, Option<PackageMap&>.None, &names, types,
@@ -93,7 +93,7 @@ fn analyze_success(source: str, path: str, types: TypeSpace&) -> AliasSymbols {
 fn analyze_failure(source: str, path: str, types: TypeSpace&) -> AnalysisError {
     let names = NameInterner.new();
     let units = parse_units(source, path, &names);
-    let symbols = SymbolStore.new();
+    let symbols = SymbolSpace.new();
     let hir = HirStore.new();
     let reporter = IgnoreDiagnostics();
     let driver = MiddleEndDriver.new(&units, Option<PackageMap&>.None, &names, types,
@@ -152,7 +152,7 @@ fn registered_definition_count(source: str, path: str, types: TypeSpace&) -> u64
     defer names.drop();
     let units = parse_units(source, path, &names);
     defer units.drop();
-    let symbols = SymbolStore.new();
+    let symbols = SymbolSpace.new();
     defer symbols.drop();
     let hir = HirStore.new();
     defer hir.drop();

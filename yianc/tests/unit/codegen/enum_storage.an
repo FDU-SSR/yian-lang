@@ -11,7 +11,7 @@ from yianc.telemetry.trace import CompilerTrace;
 from yianc.analysis.driver import MiddleEndDriver;
 from yianc.types.space import TypeSpace;
 from yianc.common.names import NameInterner;
-from yianc.analysis.symbol.scope import SymbolStore;
+from yianc.analysis.symbol.scope import SymbolSpace;
 from yianc.analysis.hir.store import HirStore;
 from yianc.types.model import AccessMode, AggregateDefinition, DefinitionBody, DefinitionHeader, EnumDefinition, EnumVariant, NominalKind, StructField, TypeData;
 from yianc.codegen.cfg.ids import BlockId, FunctionId, ValueId;
@@ -335,7 +335,7 @@ fn probe_units(names: NameInterner&) -> UnitTable {
 }
 
 fn analyze_probe(units: UnitTable&, types: TypeSpace&, names: NameInterner&,
-    symbols: SymbolStore&, hir: HirStore&, reporter: DiagnosticReporter&) -> AnalysisOutput {
+    symbols: SymbolSpace&, hir: HirStore&, reporter: DiagnosticReporter&) -> AnalysisOutput {
     let driver = MiddleEndDriver.new(units, Option<PackageMap&>.None, names, types, symbols,
         hir, trust(), false, AnalysisOptions.new(), reporter);
     let analysis = driver.run();
@@ -352,7 +352,7 @@ fn run_negative(index: u64) {
     defer types.drop();
     let names = NameInterner.new();
     defer names.drop();
-    let symbols = SymbolStore.new();
+    let symbols = SymbolSpace.new();
     defer symbols.drop();
     let hir = HirStore.new();
     defer hir.drop();
@@ -419,7 +419,7 @@ fn main() {
     defer types.drop();
     let names = NameInterner.new();
     defer names.drop();
-    let symbols = SymbolStore.new();
+    let symbols = SymbolSpace.new();
     defer symbols.drop();
     let hir = HirStore.new();
     defer hir.drop();

@@ -16,7 +16,7 @@ from std.core.ops import Index;
 from std.core.process import Command, ExitStatus;
 from yianc.types.space import TypeSpace;
 from yianc.common.names import NameInterner;
-from yianc.analysis.symbol.scope import SymbolStore;
+from yianc.analysis.symbol.scope import SymbolSpace;
 from yianc.analysis.hir.store import HirStore;
 from yianc.frontend.driver import FrontendDriver;
 from yianc.telemetry.trace import CompilerTrace;
@@ -164,7 +164,7 @@ fn check_strict_lifecycle(raw: bool) {
     defer units.drop();
     let types = TypeSpace.new();
     defer types.drop();
-    let symbols = SymbolStore.new();
+    let symbols = SymbolSpace.new();
     defer symbols.drop();
     let hir = HirStore.new();
     defer hir.drop();
@@ -192,7 +192,7 @@ fn repeat_analysis(raw: bool) {
     defer units.drop();
     let types = TypeSpace.new();
     defer types.drop();
-    let symbols = SymbolStore.new();
+    let symbols = SymbolSpace.new();
     defer symbols.drop();
     let hir = HirStore.new();
     defer hir.drop();
@@ -259,7 +259,7 @@ fn strict_analysis_reports_first_error() {
     defer units.drop();
     let types = TypeSpace.new();
     defer types.drop();
-    let symbols = SymbolStore.new();
+    let symbols = SymbolSpace.new();
     defer symbols.drop();
     let hir = HirStore.new();
     defer hir.drop();

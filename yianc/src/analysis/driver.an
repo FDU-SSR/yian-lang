@@ -5,7 +5,7 @@ from yianc.analysis.definition.registry import DefinitionRegistry;
 from yianc.analysis.definition.worklist import DefinitionWorklist;
 from yianc.analysis.hir.store import HirStore;
 from yianc.analysis.ty.impl_registry import ImplRegistry;
-from yianc.analysis.symbol.scope import SymbolStore;
+from yianc.analysis.symbol.scope import SymbolSpace;
 from yianc.analysis.session.output import AnalysisOptions, AnalysisOutput;
 from yianc.analysis.resolution.context import ResolutionContext;
 from yianc.analysis.resolution.declarations import collect_declarations;
@@ -39,7 +39,7 @@ pub struct MiddleEndDriver {
     packages: Option<PackageMap&>,
     names: NameInterner&,
     types: TypeSpace&,
-    symbols: SymbolStore&,
+    symbols: SymbolSpace&,
     hir: HirStore&,
     trust: SourceTrust,
     raw_pointers: bool,
@@ -74,7 +74,7 @@ fn at_stage(result: Result<(), AnalysisError>, pass_id: str, stage: AnalysisStag
 
 impl MiddleEndDriver {
     static pub fn new(units: UnitTable&, packages: Option<PackageMap&>, names: NameInterner&,
-        types: TypeSpace&, symbols: SymbolStore&, hir: HirStore&, trust: SourceTrust,
+        types: TypeSpace&, symbols: SymbolSpace&, hir: HirStore&, trust: SourceTrust,
         raw_pointers: bool, options: AnalysisOptions, reporter: DiagnosticReporter&) -> Self {
         Self(units, packages, names, types, symbols, hir, trust, raw_pointers,
             Vec<SourcePermissions>.new(), DefinitionRegistry.new(), DefinitionWorklist.new(),

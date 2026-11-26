@@ -51,12 +51,12 @@ impl Drop for Scope {
     }
 }
 
-pub struct SymbolStore {
+pub struct SymbolSpace {
     symbols: Arena<Symbol>,
     scopes: Arena<Scope>
 }
 
-impl SymbolStore {
+impl SymbolSpace {
     static pub fn new() -> Self {
         Self(Arena<Symbol>.new(), Arena<Scope>.new())
     }
@@ -208,7 +208,7 @@ impl SymbolStore {
     }
 }
 
-impl Drop for SymbolStore {
+impl Drop for SymbolSpace {
     pub fn drop() {
         for scope in self.scopes {
             scope.drop();
